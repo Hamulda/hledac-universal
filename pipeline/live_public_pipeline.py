@@ -181,6 +181,8 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     zero_hit_accessible_fetch_count: int = 0
     # Sprint F188B: CT winner slice — bounded CT-discovered subdomain count (additive)
     ct_subdomain_injected: int = 0
+    # F192E: CommonCrawl CDX — bounded CC-discovered archive URL count (additive)
+    cc_archive_injected: int = 0
     # zero_hit_quality_reason_counts: breakdown of WHY zero-hit pages failed
     # keys are the specific quality_reason values from PipelinePageResult
     zero_hit_quality_reason_counts: dict = {}
@@ -1166,6 +1168,105 @@ async def _inject_ct_subdomain_hits(
     return ct_hits + hits
 
 
+# F192E: CommonCrawl domain discovery injection
+_CC_SCANNER_LOOKUP: Any = None
+
+
+def _query_looks_like_domain_for_cc(query: str) -> bool:
+    """
+    F192E: Detect if query is a domain name suitable for CommonCrawl CDX lookup.
+
+    Returns True for "example.com", "*.example.com", "site:example.com".
+    Returns False for "apple inc", "what is DNS", etc.
+    """
+    q = query.strip()
+    if not q or len(q) > 253:
+        return False
+    # Match: "example.com", "*.example.com", "site:example.com", "domain:example.com"
+    import re
+    _CC_DOMAIN_RE = re.compile(
+        r"^(?:\*?\.)?[a-zA-Z0-9][a-zA-Z0-9.\-*[a-zA-Z0-9]\.[a-zA-Z]{2,}$"
+        r"|^(?:site|domain):"
+    )
+    return bool(_CC_DOMAIN_RE.match(q))
+
+
+async def _inject_commoncrawl_hits(
+    hits: tuple,
+    query: str,
+) -> tuple:
+    """
+    F192E: Thin CommonCrawl CDX injection as discovery augmentation.
+
+    CommonCrawl CDX API is a domain index (historical URL archive), not a
+    general search engine. It only activates for domain-like queries.
+
+    This is NOT a new discovery world — it augments existing discovery hits
+    with CC-sourced archived URLs within the same fetch batch.
+
+    Fail-soft: CC errors or non-domain queries return hits unchanged.
+    Bounded: at most 20 CC results injected.
+    M1-safe: adapter owns its HTTP calls, shared session reuse.
+    """
+    global _CC_SCANNER_LOOKUP
+
+    if not hits or not _query_looks_like_domain_for_cc(query):
+        return hits
+
+    # Lazy-patch CommonCrawl scanner
+    if _CC_SCANNER_LOOKUP is None:
+        try:
+            from hledac.universal.tools.commoncrawl_adapter import CommonCrawlAdapter
+
+            class _MinimalStealth:
+                async def get(self, url: str) -> str:
+                    from hledac.universal.network.session_runtime import async_get_aiohttp_session
+                    s = await async_get_aiohttp_session()
+                    async with s.get(url) as r:
+                        return await r.text()
+
+            _CC_SCANNER_LOOKUP = CommonCrawlAdapter(stealth=_MinimalStealth())
+        except Exception:
+            return hits
+
+    # Extract domain from query (strip site:/domain: prefix)
+    import re
+    clean_domain = re.sub(r"^(site|domain):", "", query.strip(), flags=re.IGNORECASE).strip()
+    if not clean_domain:
+        return hits
+
+    try:
+        cc_results: list = await _CC_SCANNER_LOOKUP.search(clean_domain, max_results=20)
+    except Exception:
+        return hits
+
+    if not cc_results:
+        return hits
+
+    # Synthesize CC hits as simple attribute-based objects (same interface as CT hits)
+    class _CCHit:
+        __slots__ = ("url", "title", "snippet", "rank", "score", "reason")
+        def __init__(self, url: str, title: str, snippet: str, rank: int):
+            self.url = url
+            self.title = title
+            self.snippet = snippet
+            self.rank = rank
+            self.score = 0.75  # F192E: CC hits get strong baseline score
+            self.reason = "commoncrawl_archive"
+
+    cc_hits = tuple(
+        _CCHit(
+            url=r.get("url", ""),
+            title=r.get("title", ""),
+            snippet=r.get("snippet", ""),
+            rank=idx,
+        )
+        for idx, r in enumerate(cc_results[:20])
+    )
+    # Prepend CC hits to give them priority in the fetch batch
+    return cc_hits + hits
+
+
 async def async_run_live_public_pipeline(
     query: str,
     store: "DuckDBShadowStore | None" = None,
@@ -1285,6 +1386,13 @@ async def async_run_live_public_pipeline(
     original_hit_count = len(hits)
     hits = await _inject_ct_subdomain_hits(hits, query)
     ct_injected = len(hits) - original_hit_count
+
+    # F192E: CommonCrawl CDX domain injection — thin archival URL augmentation
+    # One bounded adapter: _inject_commoncrawl_hits. Fail-soft, domain queries only.
+    # NOT a new discovery world — same fetch batch processes DDG, CT, and CC hits.
+    original_hit_count = len(hits)
+    hits = await _inject_commoncrawl_hits(hits, query)
+    cc_injected = len(hits) - original_hit_count
 
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
@@ -1693,6 +1801,7 @@ async def async_run_live_public_pipeline(
         public_zero_hit_summary=public_zero_hit_summary,
         # Sprint F188B: CT winner-slice telemetry
         ct_subdomain_injected=ct_injected,
+        cc_archive_injected=cc_injected,
     )
 
 

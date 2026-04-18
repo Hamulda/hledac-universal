@@ -362,9 +362,9 @@ def load_model(
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # F650G H2-FIX: Cannot use run_until_complete in a running loop.
-                    # Caller must await the engine.load() themselves. Do NOT claim
-                    # loaded=True since the load did NOT actually happen.
+                    # F192B: Caller must await the engine.load() themselves.
+                    # Shadow-state NOT updated (load deferred) — caller is
+                    # responsible for tracking state after await completes.
                     logger.warning(
                         "[LIFECYCLE] Async load() in running loop — "
                         "caller must await engine.load() directly; "
@@ -459,10 +459,10 @@ def unload_model(
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # F650G H3-FIX: Cannot use run_until_complete in a running loop.
-                    # Caller must await the engine.unload() themselves. Do NOT claim
-                    # unload completed via legacy fallback since that path does NOT
-                    # correctly unload async engines — it would lie about shadow-state.
+                    # F192B: Caller must await the engine.unload() themselves.
+                    # Shadow-state NOT updated (unload deferred) — caller is
+                    # responsible for calling clear_emergency_unload_request()
+                    # after the await completes.
                     logger.warning(
                         "[LIFECYCLE] Async unload() in running loop — "
                         "caller must await engine.unload() directly; "

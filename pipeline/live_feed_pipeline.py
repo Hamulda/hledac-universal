@@ -94,6 +94,7 @@ def _compute_entry_quality_signal(
     entry_author: str,
     feed_title: str,
     feed_language: str,
+    adapter_quality_score: float | None = None,
 ) -> EntryQualitySignal:
     """
     Compute lightweight quality signal from entry metadata.
@@ -166,8 +167,25 @@ def _compute_entry_quality_signal(
         else:
             reason_tags.append("no_content")
 
+    # F192D DF-2 FIX (cascading bug): original_band preserves the initial band
+    # for all adapter downgrade checks. Without this, reassigning `band` between
+    # if/elif branches causes cascading downgrade (high→medium→low→unknown
+    # instead of just high→medium).
+    original_band = band
+    final_band = band
+    if adapter_quality_score is not None and adapter_quality_score < 0.3:
+        # Adapter detected spam/low-quality content — downgrade band
+        # Use original_band to avoid cascading reassignment bug
+        if original_band == "high":
+            final_band = "medium"
+        elif original_band == "medium":
+            final_band = "low"
+        elif original_band == "low":
+            final_band = "unknown"
+        reason_tags.append("adapter_low_quality")
+
     return EntryQualitySignal(
-        quality_band=band,
+        quality_band=final_band,
         quality_score=score,
         quality_reason_tag=",".join(reason_tags),
         metadata_boost=metadata_boost,
@@ -1219,7 +1237,7 @@ async def _async_scan_feed_text(text: str) -> list:
     """
     Offload pattern scan to thread executor with shared semaphore.
 
-    PatternMatcher.match_text() handles casefolding internally.
+    PatternMatcher.match_text() handles lowercasing internally.
     Empty registry = empty list (valid zero-findings state).
 
     Raises:
@@ -1229,15 +1247,11 @@ async def _async_scan_feed_text(text: str) -> list:
     if not text:
         return []
 
-    # Sprint 8AU: normalize text before scan to recover morphology variants
-    # (e.g. "vulnerabilities" -> "vulnerabilities" via casefold ensures hits)
-    normalized = text.casefold()
-
     # Bounded concurrency via shared semaphore
     sem = _get_pattern_offload_semaphore()
 
     async with sem:
-        hits: list = await _ASYNC_PATTERN_OFFLOAD(match_text, normalized)
+        hits: list = await _ASYNC_PATTERN_OFFLOAD(match_text, text)
     return hits
 
 
@@ -1551,6 +1565,8 @@ async def _entry_to_pattern_findings(
         entry_url = f"urn:feed:entry:{title[:64]}"
 
     # Quality signal — computed before assembly
+    # F192D DF-2: pass adapter quality_score for richer quality signal
+    adapter_qs: float | None = _float_attr(entry, "quality_score", None)
     quality_signal = _compute_entry_quality_signal(
         title=title,
         summary=summary,
@@ -1558,6 +1574,7 @@ async def _entry_to_pattern_findings(
         entry_author=entry_author,
         feed_title=feed_title,
         feed_language=feed_language,
+        adapter_quality_score=adapter_qs,
     )
 
     # Assembly substance classification — used for signal-loss diagnosis
@@ -1680,11 +1697,15 @@ async def _entry_to_pattern_findings(
         # F182D: matched_patterns=0 is the canonical post-scan truth.
         # F183E fix: use post_fallback_hits_count (computed from fallback scan),
         # not matched_patterns (=0 from this empty final scan).
+        # F192D DF-1 FIX: findings_lost_to_dedup = pre_fallback_hits_count when
+        # fallback was used but produced no new hits (all pre-hits were deduped).
+        # The hardcoded 0 was wrong: it discarded the actual dedup loss count.
+        findings_lost_to_dedup_early = pre_fallback_hits_count
         return (
             [], patterns_configured, matched_patterns, assembled_text_len,
             scan_text, enrichment_phase, article_fallback_used, article_fallback_attempted,
             quality_signal, fallback_decision, assembly_tier,
-            pre_fallback_hits_count, post_fallback_hits_count, 0,
+            pre_fallback_hits_count, findings_lost_to_dedup_early,
             article_decode_replacement_count,
         )
 
@@ -2069,10 +2090,24 @@ async def async_run_live_feed_pipeline(
                 _fallback_useful_count += 1
 
             # Track feed-native signal presence
+            # F192D DF-3 FIX: _feed_branch_signal_present must be True when fallback
+            # provides signal even if pre_fallback_hits == 0. Previously only set when
+            # pre_fallback_hits > 0, so fallback-only signal was invisible.
+            # F192D DF-4 FIX: When pre > 0 AND fallback was helpful, only pre's own hits
+            # should be attributed to rich_feed. Fallback's new findings (beyond pre count)
+            # go to fallback. Using min(pre, len(findings)) correctly handles both:
+            # - skipped fallback: all matched are pre-native
+            # - helpful fallback: matched = pre + fallback_new, rich_feed gets min(pre, matched)
             if pre_fallback_hits > 0:
                 _feed_branch_signal_present = True
-                _findings_from_rich_feed += len(findings)
+                rich_feed_gets = min(pre_fallback_hits, len(findings))
+                _findings_from_rich_feed += rich_feed_gets
+                # Any findings beyond pre's hits are fallback's contribution
+                fallback_new = len(findings) - rich_feed_gets
+                if fallback_new > 0:
+                    _findings_from_fallback += fallback_new
             elif fd.helpful:
+                _feed_branch_signal_present = True
                 _findings_from_fallback += len(findings)
 
             # Squandered: forced fallback on high-quality entry with no yield
@@ -2095,8 +2130,13 @@ async def async_run_live_feed_pipeline(
             _post_fallback_hits_total += post_fallback_hits
 
             # F185A DF-6: structured zero-hit evidence — entries with matched == 0
-            # (mirrors live_public_pipeline.py zero-hit surface at lines 1487-1529)
-            if matched == 0:
+            # AND no pre-fallback signal (pre_fallback_hits == 0).
+            # F192D DF-2 FIX: matched == 0 alone is insufficient — if pre_fallback_hits > 0,
+            # signal existed but was all deduped away. Those entries should NOT appear
+            # in zero-hit evidence (they belong in findings_build_loss diagnosis).
+            # Skip: entries with pre-fallback hits (signal existed, was filtered by dedup).
+            # Also skip: skipped fallback due to pre_hits (fallback never ran — not a true zero-hit).
+            if matched == 0 and pre_fallback_hits == 0:
                 _zero_hit_feed_fetch_count += 1
                 # quality_reason_tag from EntryQualitySignal — why content had no hits
                 _reason_key = quality_signal.quality_reason_tag or "unknown"

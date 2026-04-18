@@ -621,7 +621,10 @@ def match_text(
     # Case-insensitive search: normalize text once
     text_lower = text.lower()
 
-    for end_idx, (pattern, label) in automaton.iter(text_lower):
+    # Sprint F192D DF-1 FIX: reuse text_lower in regex post-pass (was re-assigned redundantly)
+    automaton_text = text_lower
+
+    for end_idx, (pattern, label) in automaton.iter(automaton_text):
         start_idx = end_idx - len(pattern) + 1
         value = text[start_idx:end_idx + 1]
 
@@ -643,8 +646,8 @@ def match_text(
         )
 
     # Sprint 8QB V4 + Sprint 8SC V5: regex post-pass for structured patterns
-    # Run after AC scan so both literal+regex hits are returned
-    text_lower = text.lower()
+    # Run after AC scan so both literal+regex hits are returned.
+    # text_lower is already defined from AC scan path above.
     for _pattern, _label in [
         (_RE_CVE, "cve_identifier"),
         (_RE_GHSA, "ghsa_identifier"),

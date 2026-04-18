@@ -300,8 +300,6 @@ class SprintSchedulerResult:
     # Dedup preload telemetry
     dedup_preload_count: int | None = None
     dedup_preload_elapsed_s: float | None = None
-    # Sprint F169E: True ACTIVE phase entry (separate from pre-loop guard time)
-    entered_active_phase_at_monotonic: float | None = None
     # Sprint F169E: Feed branch blocker aggregation (additive, fail-soft)
     # Set to True when corresponding signal_stage/zero_signal_reason appears in any feed cycle
     feed_zero_yield_detected: bool = False        # zero_signal_reason was set
@@ -836,9 +834,6 @@ class SprintScheduler:
                 # ── Sprint 8SA: Source scoring re-ordering ───────────────────
                 # Re-prioritize at the start of each ACTIVE cycle using latest graph stats
                 current_phase_str = adapter._current_phase
-                # Sprint F169E: Capture true ACTIVE phase entry (separate from pre-loop guard)
-                if current_phase_str == "ACTIVE" and self._result.entered_active_phase_at_monotonic is None:
-                    self._result.entered_active_phase_at_monotonic = _time.monotonic() - self._wall_clock_start
                 if current_phase_str == "ACTIVE":
                     ordered_sources = self.prioritize_sources(
                         ordered_sources, _graph_stats

@@ -30,6 +30,7 @@ Sprint 8AJ — Feed Source Discovery + Curated Seeds:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import re
 import time
 import urllib.parse
@@ -276,7 +277,7 @@ def _parse_published_ts(raw: str | None) -> float | None:
     # Try RFC 3339 / ISO 8601 via fromisoformat
     try:
         normalized = _ISO_Z_RE.sub("+00:00", raw)
-        dt = __import__("datetime").datetime.fromisoformat(normalized)
+        dt = datetime.datetime.fromisoformat(normalized)
         return dt.timestamp()
     except Exception:
         pass
@@ -381,11 +382,11 @@ def _is_spam_domain(url: str) -> bool:
 
 
 # F178E: SEO spam / title-manipulation patterns
-_SEO_SPAM_TITLE_RE = __import__("re").compile(
+_SEO_SPAM_TITLE_RE = re.compile(
     r"(?:\b\w+\b\s*){30,}", re.IGNORECASE  # title with 30+ words = likely keyword-stuffed
 )
-_REPEATED_DOTS_RE = __import__("re").compile(r"^\.{3,}$")  # "..." only title
-_TEMPLATE_NOISE_RE = __import__("re").compile(
+_REPEATED_DOTS_RE = re.compile(r"^\.{3,}$")  # "..." only title
+_TEMPLATE_NOISE_RE = re.compile(
     r"^\s*(?:title|untitled|article|post|page)\s*$", re.IGNORECASE
 )
 
@@ -408,7 +409,7 @@ def _is_seo_spam_title(title: str) -> bool:
 
 
 # F178E: snippet noise patterns — "title • description" template
-_SNIPPET_TEMPLATE_RE = __import__("re").compile(
+_SNIPPET_TEMPLATE_RE = re.compile(
     r"^\s*[\w\s\-]+\s*[•·|\-\"']\s*[\w\s\-]+\s*$"
 )
 

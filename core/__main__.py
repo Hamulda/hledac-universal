@@ -57,7 +57,7 @@ from hledac.universal.runtime.sprint_scheduler import (
     SprintSchedulerConfig,
 )
 from hledac.universal.transport.tor_transport import TorTransport
-from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, _PHASE_ORDER
 from hledac.universal.export.sprint_exporter import export_sprint
 
 logger = logging.getLogger(__name__)
@@ -408,24 +408,10 @@ async def run_sprint(
         _windup_mark = _phase_times.get("WINDUP", _phase_times.get("TEARDOWN", _phase_times["BOOT"]))
         scheduler_wall_s = _windup_mark - _phase_times.get("WARMUP", _phase_times["BOOT"])
 
-        # F166C: Pre-ACTIVE starvation detection.
-        # starvation = scheduler ran (WARMUP→WINDUP) but ACTIVE was never reached,
-        # OR ACTIVE was reached but zero cycles completed before windup.
-        # This is distinct from "depleted" (smoke, scheduler never ran).
-        # F167B fix: use result.entered_active_at_monotonic (set by scheduler) instead of
-        # non-existent _phase_times["ACTIVE"]. Use result.first_cycle_started_at_monotonic
-        # instead of cycles_completed > 0 (which means cycle finished, not started).
-        _entered_active = result.entered_active_at_monotonic is not None
-        _first_cycle_started = result.first_cycle_started_at_monotonic is not None
-        if not _entered_active:
-            _pre_active_starvation = True
-            _pre_active_blocker = "never_entered_active"
-        elif _entered_active and result.cycles_started > 0 and result.cycles_completed == 0:
-            _pre_active_starvation = True
-            _pre_active_blocker = "zero_cycles_completed_before_windup"
-        else:
-            _pre_active_starvation = False
-            _pre_active_blocker = None
+        # F166C: Pre-ACTIVE starvation — scheduler already computes this;
+        # __main__ re-derives for timing_truth only (not stored back to result).
+        # Uses result.entered_active_at_monotonic (set by scheduler at loop guard)
+        # and result.first_cycle_started_at_monotonic (set at first cycles_started += 1).
 
         # UMA peak
         uma_peak_gib = sample_uma_status().system_used_gib
@@ -447,8 +433,8 @@ async def run_sprint(
 
         _phase_times["TEARDOWN"] = time.monotonic()
 
-        # Sprint 8SA: Phase timing profile
-        phases = ["BOOT", "WARMUP", "ACTIVE", "WINDUP", "TEARDOWN"]
+        # Sprint 8SA: Phase timing profile — uses _PHASE_ORDER from sprint_lifecycle
+        phases = _PHASE_ORDER
         for i, ph in enumerate(phases):
             if ph in _phase_times:
                 next_ph = phases[i + 1] if i + 1 < len(phases) else "END"
@@ -485,12 +471,13 @@ async def run_sprint(
                 if result.entered_active_at_monotonic is not None
                 else "entry_only"
             ),
-            # F167B fix: use _first_cycle_started (first cycle STARTED) not cycles_completed (>0 means finished)
-            "entered_active_truth": _entered_active,
-            "first_cycle_truth": _first_cycle_started,
-            # F166C: Pre-ACTIVE starvation — scheduler ran but active window never produced cycles
-            "pre_active_starvation": _pre_active_starvation,
-            "pre_active_blocker": _pre_active_blocker,
+            # F167B fix: use result fields (first cycle STARTED not cycles_completed)
+            "entered_active_truth": result.entered_active_at_monotonic is not None,
+            "first_cycle_truth": result.first_cycle_started_at_monotonic is not None,
+            # F166C: Pre-ACTIVE starvation — scheduler computes pre_active_starved and
+            # pre_loop_blocker_reason; use directly from result (not re-derived locally).
+            "pre_active_starvation": result.pre_active_starved,
+            "pre_active_blocker": result.pre_loop_blocker_reason or None,
             # F166C: Full budget view for canonical runtime consumption
             "canonical_runtime_budget_view": {
                 "pre_boot_s": round(pre_scheduler_boot_s, 2),
@@ -507,29 +494,11 @@ async def run_sprint(
         feed_fnd = result.accepted_findings - result.public_accepted_findings
         public_pct = (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0
 
-        # F169F: inline helper — must be defined before verdict heuristics and _ckpt_category
-        # "httpx" anchor prevents "Error" substring false-positive on generic errors
-        _public_backend_degraded = bool(
-            result.public_error
-            and (
-                "httpx" in result.public_error
-                or any(
-                    err in result.public_error
-                    for err in (
-                        "NetworkProxyError", "ClientProxyError",
-                        "HTTPStatusError",
-                        "ClientConnectorError", "ClientConnectorSSLError",
-                    )
-                )
-            )
-        )
-        _feed_zero = result.accepted_findings == 0 and feed_fnd == 0
-        _cross_branch_fail = (
-            result.accepted_findings == 0
-            and result.total_pattern_hits > 0
-            and not _public_backend_degraded
-            and not result.public_error
-        )
+        # F169F: Use scheduler result fields directly — no local duplication.
+        # Scheduler SprintSchedulerResult.public_backend_degraded is pre-computed.
+        # DF-1: _public_backend_degraded, _feed_zero, _cross_branch_fail now
+        # computed ONCE in _ckpt_category section below; verdict uses inline checks.
+        _public_backend_degraded = result.public_backend_degraded
 
         # Source mix
         src_mix: list[str] = []
@@ -538,8 +507,7 @@ async def run_sprint(
         src_mix_str = ", ".join(src_mix) if src_mix else "none"
 
         # Verdict heuristics — F176A+F169F: hardware-limited smoke is distinct from depleted query.
-        # _is_hardware_limited is computed after this block (at line ~625).
-        # Use inline check for verdict since it precedes the full detection.
+        # _is_hardware_limited computed once below; verdict uses same condition inline.
         _inline_hardware_limited = (
             result.accepted_findings == 0
             and result.total_pattern_hits == 0
@@ -759,25 +727,14 @@ async def run_sprint(
         #   describes a feed infrastructure failure. short_signal moved BEFORE true_depleted_query
         #   because it requires is_meaningful=True (distinct from true_depleted_query's zero-findings
         #   verdict which doesn't distinguish meaningful vs non-meaningful query execution).
-        _public_backend_degraded = bool(
-            result.public_error
-            and (
-                "httpx" in result.public_error
-                or any(
-                    err in result.public_error
-                    for err in (
-                        "NetworkProxyError", "ClientProxyError",
-                        "HTTPStatusError",
-                        "ClientConnectorError", "ClientConnectorSSLError",
-                    )
-                )
-            )
-        )
-        _feed_zero = result.accepted_findings == 0 and feed_fnd == 0
-        _cross_branch_fail = (
+        # F192A DF-1/2/3: Use scheduler result fields directly — eliminated duplicate
+        # _public_backend_degraded, _feed_zero, _cross_branch_fail local computations.
+        _public_backend = result.public_backend_degraded
+        _feed_zero_check = result.accepted_findings == 0 and feed_fnd == 0
+        _cross_branch_fail_check = (
             result.accepted_findings == 0
             and result.total_pattern_hits > 0
-            and not _public_backend_degraded
+            and not _public_backend
             and not result.public_error
         )
         _ckpt_category = (
@@ -795,30 +752,30 @@ async def run_sprint(
             if _is_hardware_limited
             # F169F: explicit backend degraded first (httpx/network errors)
             else "public_backend_degraded"
-            if _public_backend_degraded
+            if _public_backend
             # F169F: degraded_public_blocker (non-backend public errors)
             else "degraded_public_blocker"
             if result.public_error
-            # F189A: meaningful_empty_run BEFORE _feed_zero guards — meaningful query with zero hits
+            # F189A: meaningful_empty_run BEFORE _feed_zero_check guards — meaningful query with zero hits
             # is a distinct bucket from feed_source_inaccessible (feed infrastructure failure).
             else "meaningful_empty_run"
             if is_meaningful and result.total_pattern_hits == 0 and result.accepted_findings == 0
             # F169F: feed_ingress_blocker — feed zero but public found signal
             else "feed_ingress_blocker"
-            if _feed_zero and result.public_discovered > 0
+            if _feed_zero_check and result.public_discovered > 0
             # F169F: feed source inaccessible — feed failed AND total hits=0 AND no infra error
             else "feed_source_inaccessible"
-            if _feed_zero and result.total_pattern_hits == 0 and not result.public_error
+            if _feed_zero_check and result.total_pattern_hits == 0 and not result.public_error
             # F189A: short_signal BEFORE true_depleted_query — short_signal requires is_meaningful=True
             # (query had real runtime/hits evidence) while true_depleted_query is broader.
             else "short_signal"
             if is_meaningful and result.total_pattern_hits > 0 and result.accepted_findings == 0
             # F169F: true depleted query — hits seen but pattern matched nothing accepted
             else "true_depleted_query"
-            if result.accepted_findings == 0 and result.total_pattern_hits > 0 and not _public_backend_degraded
+            if result.accepted_findings == 0 and result.total_pattern_hits > 0 and not _public_backend
             # F169F: cross-branch source inaccessible — hits seen but blocked by source-level failure
             else "cross_branch_source_inaccessible"
-            if _cross_branch_fail
+            if _cross_branch_fail_check
             else "windup_export_fail_soft"
             if result.accepted_findings == 0 and _phase_times.get("WINDUP", 0) > 0 and is_meaningful
             else "depleted"
@@ -840,7 +797,7 @@ async def run_sprint(
             if result.accepted_findings > 0
             # F169F: backend degraded — httpx/network errors
             else f"public_backend_degraded:{result.public_error}"
-            if _public_backend_degraded
+            if _public_backend
             else f"degraded_public_branch_blocked:{result.public_error}"
             if result.public_error
             # F190A: meaningful_empty_run BEFORE feed guards (aligns with _ckpt_category F189A order)
@@ -857,9 +814,9 @@ async def run_sprint(
             if is_meaningful and result.total_pattern_hits > 0
             # F169F: true depleted query — hits seen but nothing accepted, no infra error
             else "true_depleted_query:hits_without_acceptance"
-            if result.accepted_findings == 0 and result.total_pattern_hits > 0 and not _public_backend_degraded
+            if result.accepted_findings == 0 and result.total_pattern_hits > 0 and not _public_backend
             else "cross_branch_source_inaccessible"
-            if _cross_branch_fail
+            if _cross_branch_fail_check
             else "depleted_no_pattern_hits"
         )
         _export_finish_status = (

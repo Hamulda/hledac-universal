@@ -1,5 +1,6 @@
 # hledac/universal/export/sprint_markdown_reporter.py
 # Sprint 8VJ §B: Sprint markdown rendering delegation
+# Sprint F192F: orjson centralized at module level + consolidated JSON parsing
 # Pure function, side-effect-free — moved from __main__.py
 """
 Canonical sprint markdown renderer for export plane.
@@ -28,6 +29,28 @@ from typing import Any
 __all__ = [
     "render_sprint_markdown",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Sprint F192F: Centralized JSON parsing with graceful fallback
+# ---------------------------------------------------------------------------
+def _try_parse_json(raw: str) -> dict | list | None:
+    """
+    Sprint F192F §3: Centralized JSON parsing with single fallback path.
+
+    Previously: inline orjson.loads inside try/except at call site, duplicated.
+    Now: single helper used by all JSON-field parsing sites.
+
+    Returns parsed dict/list, or None if parsing fails.
+    Never raises — caller decides what to do with None.
+    """
+    if not raw:
+        return None
+    try:
+        import orjson
+        return orjson.loads(raw)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -149,20 +172,20 @@ def render_sprint_markdown(
     novel = scorecard.get("semantic_novelty", 1.0)
     outl = scorecard.get("outlines_used", False)
 
-    # Parse JSON fields (orjson may not be available)
+    # Sprint F192F §3: Centralized JSON parsing — single call site for both fields
     src_y: dict[str, int] = {}
-    try:
-        import orjson
-        src_y = orjson.loads(scorecard.get("source_yield_json", "{}"))
-    except Exception:
-        pass
+    raw_src = scorecard.get("source_yield_json")
+    if isinstance(raw_src, str):
+        parsed = _try_parse_json(raw_src)
+        if isinstance(parsed, dict):
+            src_y = parsed
 
     phase: dict[str, float] = {}
-    try:
-        import orjson
-        phase = orjson.loads(scorecard.get("phase_timings_json", "{}"))
-    except Exception:
-        pass
+    raw_phase = scorecard.get("phase_timings_json")
+    if isinstance(raw_phase, str):
+        parsed = _try_parse_json(raw_phase)
+        if isinstance(parsed, dict):
+            phase = parsed
 
     # Extract report fields (graceful degradation)
     summary = report.summary if report and hasattr(report, "summary") else "_Synthesis failed or unavailable_"

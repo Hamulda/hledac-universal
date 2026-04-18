@@ -60,6 +60,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Sprint F192F §1: PVS helper — type-safe numeric coercion for scorecard reads
+# Consolidates isinstance guard pattern used throughout _build_product_value_summary.
+# Guards against MagicMock / non-numeric values in test or degraded scenarios.
+# ---------------------------------------------------------------------------
+
+def _pvs_num(val: Any, default: float | int) -> float | int:
+    """Type-safe numeric coercion — returns default for non-numeric values."""
+    return val if isinstance(val, (int, float)) else default
+
+
+def _pvs_n(scorecard: dict, key: str, default: float | int) -> float | int:
+    """Type-safe scorecard numeric read with key-level default."""
+    return _pvs_num(scorecard.get(key, default), default)
+
+
 async def export_sprint(
     store: Any,
     handoff: "ExportHandoff",  # type: ignore[name-defined]
@@ -126,7 +142,20 @@ async def export_sprint(
         sec_coordinator = UniversalSecurityCoordinator(max_concurrent=2)
         await sec_coordinator.initialize()
         gate_result = await sec_coordinator.sanitize_outbound(boundary_text, force_fallback=True)
-        sanitized_scorecard_raw = gate_result.get("sanitized", boundary_text)
+        # Sprint F192F §2: Check for sanitized key BEFORE using the value.
+        # If gate returned without 'sanitized' key (partial failure), do NOT fall back
+        # to boundary_text (unsanitized). Use degraded structure instead.
+        if "sanitized" in gate_result:
+            sanitized_scorecard_raw = gate_result["sanitized"]
+        else:
+            # Partial success (gate ran but produced no sanitized output) — safe degraded
+            logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key — using degraded structure")
+            degraded = {
+                "_sanitize_failure": True,
+                "sprint_id": _sprint_id,
+                "report": "sanitization_failed_degraded_export",
+            }
+            sanitized_scorecard_raw = json.dumps(degraded, default=str)
         # Log audit metadata (non-blocking)
         if gate_result.get("pii_count"):
             logger.info("[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
@@ -634,15 +663,11 @@ def _build_product_value_summary(
     scorecard = eh.scorecard if eh.scorecard else {}
 
     # 1. Základní scorecard facts
-    # Sprint F150I §1: all numeric fields use isinstance guards to prevent
-    # TypeError when scorecard contains MagicMock or other non-numeric values
-    def _num(val, default):
-        return val if isinstance(val, (int, float)) else default
-    def _n(key, default):
-        return _num(scorecard.get(key, default), default)
-    accepted = _n("accepted_findings", 0) or _n("accepted_findings_count", 0)
-    findings_per_minute = _n("findings_per_minute", 0.0)
-    ioc_density = _n("ioc_density", 0.0)
+    # Sprint F192F §1: use module-level _pvs_num / _pvs_n helpers
+    # (previously local _num / _n closures — now consolidated at module scope)
+    accepted = _pvs_n(scorecard, "accepted_findings", 0) or _pvs_n(scorecard, "accepted_findings_count", 0)
+    findings_per_minute = _pvs_n(scorecard, "findings_per_minute", 0.0)
+    ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
     peak_rss_mb = scorecard.get("peak_rss_mb", None)
     if peak_rss_mb is not None and not isinstance(peak_rss_mb, (int, float)):
         peak_rss_mb = None
@@ -661,7 +686,13 @@ def _build_product_value_summary(
             pass
 
     if dedup_status:
-        accepted = dedup_status.get("accepted_count", accepted)
+        # Sprint F192F §1: accepted_count from dedup_status is RUNTIME STATE (in-memory
+        # counter, not persisted fact). Scorecard accepted_findings is the authoritative
+        # persisted fact. Only use dedup_status accepted_count as secondary when
+        # scorecard has no accepted_findings (e.g., scorecard-only builds).
+        # Previously: dedup_status.accepted_count OVERRODE scorecard fact — DF-1 drift.
+        _dedup_accepted = dedup_status.get("accepted_count", 0)
+        accepted = accepted if accepted > 0 else _dedup_accepted
         reject_breakdown = {
             "low_information": dedup_status.get("low_information_rejected_count", 0),
             "in_memory_duplicate": dedup_status.get("in_memory_duplicate_rejected_count", 0),

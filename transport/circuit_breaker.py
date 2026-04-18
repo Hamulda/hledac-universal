@@ -142,6 +142,16 @@ async def resilient_fetch(
     anonymity_required=True → preskočí clearnet, jde rovnou na Tor/Nym.
     Nym NIKDY v automatickém fallback pro normální tasky — 2-10s latence
     by zablokovala semaphore slot a snížila throughput sprintu.
+
+    Transport separation (F192C):
+      - clearnet: uses shared session_runtime aiohttp session (TCPConnector pool)
+      - tor: owns its own ProxyConnector-based session — ProxyConnector is
+        architecturally incompatible with the shared plain-TCP TCPConnector pool
+      - nym: uses NymTransport directly
+
+    F192C: clearnet path now uses async_get_aiohttp_session() instead of
+    creating an ad-hoc per-call ClientSession. This reduces session proliferation
+    and consolidates TCP connector state onto the shared pool.
     """
     from urllib.parse import urlparse
     domain = urlparse(url).netloc
@@ -156,25 +166,36 @@ async def resilient_fetch(
             return None
 
     if transport == "clearnet":
-        # Direct fetch pres aiohttp
+        # F192C: use shared session_runtime session instead of ad-hoc ClientSession
         try:
-            import aiohttp
-            timeout = kwargs.get("timeout", 15.0)
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        return await resp.text()
-                    return None
+            from hledac.universal.network.session_runtime import (
+                async_get_aiohttp_session,
+                HTML_CONNECT_TIMEOUT_S,
+                HTML_READ_TIMEOUT_S,
+            )
+            session = await async_get_aiohttp_session()
+            timeout_s = kwargs.get("timeout", HTML_READ_TIMEOUT_S)
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(
+                    connect=HTML_CONNECT_TIMEOUT_S,
+                    sock_read=timeout_s,
+                ),
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+                return None
+        except asyncio.TimeoutError:
+            return None
         except Exception:
             return None
 
     elif transport == "tor":
         cb = get_breaker(f"tor:{domain}")
         try:
-            # Tor fetch pres SOCKS5 proxy (Tor daemon musí běžet na 9050)
-            import aiohttp
+            # Tor fetch pres SOCKS5 proxy (Tor daemon musí běžet na 9050).
+            # ProxyConnector owns its connector — incompatible with shared TCPConnector.
+            # Each Tor fetch gets its own session; Tor is low-volume so no pooling needed.
             from aiohttp_socks import ProxyConnector
             timeout = kwargs.get("timeout", 15.0)
             connector = ProxyConnector.from_url("socks5://127.0.0.1:9050", rdns=True)

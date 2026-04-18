@@ -702,8 +702,13 @@ class Hermes3Engine:
                     logger.warning(f"Outlines init failed: {e}, continuing without it")
                     self._outlines_model = None
 
-            # Sprint 75: Initialize draft model with memory guard
-            await self._init_draft_model()
+            # Sprint F192B: Emergency guard — skip draft model if emergency requested
+            # (emergency flag set after main model load began; draft load is optional)
+            if is_emergency_unload_requested is not None and is_emergency_unload_requested():
+                logger.warning("[HERMES] Emergency unload requested — skipping draft model init")
+            else:
+                # Sprint 75: Initialize draft model with memory guard
+                await self._init_draft_model()
 
             # Sprint 75: Initialize persistent system-prompt cache
             await self._init_system_prompt_cache()
@@ -996,6 +1001,15 @@ class Hermes3Engine:
 
         self._kv_cache_stats['cache_uses'] += 1
         response = mlx_generate(**generate_kwargs)
+
+        # F192B: mx.eval([]) barrier AFTER inference before clear_cache
+        # (consistent with canonical 7K order used in unload())
+        try:
+            import mlx.core as _mx
+            _mx.eval([])
+        except Exception:
+            pass
+
         return response.strip()
 
     async def generate(
@@ -1925,6 +1939,17 @@ Do not include any other text. Output valid JSON only."""
                 logger.debug(f"[SUSTAIN] prompt_cache experiment failed: {e}")
 
         response = mlx_generate(**generate_kwargs)
+
+        # F192B: mx.eval([]) barrier + clear_cache after inference (canonical 7K order)
+        try:
+            import mlx.core as _mx
+            _mx.eval([])
+            if hasattr(_mx.metal, 'clear_cache'):
+                _mx.metal.clear_cache()
+            elif hasattr(_mx, 'clear_cache'):
+                _mx.clear_cache()
+        except Exception:
+            pass
 
         # Log memory snapshot (best-effort)
         try:

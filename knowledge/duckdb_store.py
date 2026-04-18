@@ -393,7 +393,7 @@ _SCHEMA_SQL = """
         ioc_new_this_sprint INT DEFAULT 0,
         uma_peak_gib REAL DEFAULT 0,
         synthesis_success BOOL DEFAULT false,
-        findings_per_min REAL DEFAULT 0,
+        findings_per_minute REAL DEFAULT 0,
         top_source_type TEXT,
         synthesis_confidence REAL DEFAULT 0
     );
@@ -1115,6 +1115,15 @@ class DuckDBShadowStore:
         """
         ALTER TABLE ADD COLUMN for any sprint_delta columns missing from old DBs.
         DuckDB doesn't have IF NOT EXISTS for ALTER, so we catch and ignore errors.
+
+        Sprint F192F §2: findings_per_min → findings_per_minute rename.
+        Migration order matters — add new column first, then handle legacy column:
+          1. Add findings_per_minute (new canonical name, matches sprint_scorecard)
+          2. Add top_source_type (may already exist on very old DBs)
+          3. Add synthesis_confidence (may already exist on very old DBs)
+        Legacy findings_per_min column is retained but not written to (inserts use
+        findings_per_minute). Queries read findings_per_minute which is populated
+        by current insert logic.
         """
         if self._db_path is None:
             return  # :memory: mode — nothing to migrate
@@ -1122,10 +1131,10 @@ class DuckDBShadowStore:
         conn = duckdb.connect(str(self._db_path))
         try:
             conn.execute(
-                "ALTER TABLE sprint_delta ADD COLUMN findings_per_min REAL DEFAULT 0"
+                "ALTER TABLE sprint_delta ADD COLUMN findings_per_minute REAL DEFAULT 0"
             )
         except Exception:
-            pass  # column already exists
+            pass  # column already exists (new schema via CREATE, or prior migration)
         try:
             conn.execute(
                 "ALTER TABLE sprint_delta ADD COLUMN top_source_type TEXT"
@@ -1316,7 +1325,11 @@ class DuckDBShadowStore:
     # ── Sprint 8RC: sync helpers ─────────────────────────────────────────────
 
     def _sync_insert_sprint_delta(self, row: dict) -> bool:
-        """Sync insert — MUST be called on the worker thread."""
+        """
+        Sync insert — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
         try:
             if self._db_path:
                 # MODE A: Use persistent _file_conn (always initialized before writes)
@@ -1331,7 +1344,7 @@ class DuckDBShadowStore:
                         row.get("dedup_hits", 0), row.get("ioc_nodes", 0),
                         row.get("ioc_new_this_sprint", 0), row.get("uma_peak_gib", 0),
                         row.get("synthesis_success", False),
-                        row.get("findings_per_min", 0),
+                        row.get("findings_per_minute", 0),
                         row.get("top_source_type"),
                         row.get("synthesis_confidence", 0),
                     ],
@@ -1348,7 +1361,7 @@ class DuckDBShadowStore:
                         row.get("dedup_hits", 0), row.get("ioc_nodes", 0),
                         row.get("ioc_new_this_sprint", 0), row.get("uma_peak_gib", 0),
                         row.get("synthesis_success", False),
-                        row.get("findings_per_min", 0),
+                        row.get("findings_per_minute", 0),
                         row.get("top_source_type"),
                         row.get("synthesis_confidence", 0),
                     ],
@@ -1394,7 +1407,7 @@ class DuckDBShadowStore:
                 result = self._file_conn.execute(
                     """
                     SELECT sprint_id, ts, new_findings, ioc_nodes,
-                           findings_per_min, synthesis_success, uma_peak_gib
+                           findings_per_minute, synthesis_success, uma_peak_gib
                     FROM sprint_delta
                     ORDER BY ts DESC
                     LIMIT ?
@@ -1406,7 +1419,7 @@ class DuckDBShadowStore:
                 result = self._persistent_conn.execute(
                     """
                     SELECT sprint_id, ts, new_findings, ioc_nodes,
-                           findings_per_min, synthesis_success, uma_peak_gib
+                           findings_per_minute, synthesis_success, uma_peak_gib
                     FROM sprint_delta
                     ORDER BY ts DESC
                     LIMIT ?
@@ -1417,7 +1430,7 @@ class DuckDBShadowStore:
                 {
                     "sprint_id": r[0], "ts": r[1],
                     "new_findings": r[2], "ioc_nodes": r[3],
-                    "findings_per_min": r[4],
+                    "findings_per_minute": r[4],
                     "synthesis_success": bool(r[5]) if r[5] is not None else False,
                     "uma_peak_gib": r[6] or 0.0,
                 }
@@ -2617,7 +2630,7 @@ class DuckDBShadowStore:
         `lookback` sprints. Returns a delta dict with absolute values of
         current sprint and the delta vs the rolling mean of prior sprints.
 
-        Covers: new_findings, ioc_new_this_sprint, dedup_hits, findings_per_min,
+        Covers: new_findings, ioc_new_this_sprint, dedup_hits, findings_per_minute,
         uma_peak_gib, synthesis_confidence.
 
         Use for: "how is this sprint tracking vs history" without ad-hoc SQL.
@@ -2636,7 +2649,11 @@ class DuckDBShadowStore:
     def _sync_query_delta_comparison(
         self, current_sprint_id: str, lookback: int
     ) -> dict:
-        """Sync — MUST be called on the worker thread."""
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -2645,7 +2662,7 @@ class DuckDBShadowStore:
             current_rows = conn.execute(
                 """
                 SELECT new_findings, ioc_new_this_sprint, dedup_hits,
-                       findings_per_min, uma_peak_gib, synthesis_confidence
+                       findings_per_minute, uma_peak_gib, synthesis_confidence
                 FROM sprint_delta
                 WHERE sprint_id = ?
                 """,
@@ -2658,7 +2675,7 @@ class DuckDBShadowStore:
             prior_rows = conn.execute(
                 """
                 SELECT new_findings, ioc_new_this_sprint, dedup_hits,
-                       findings_per_min, uma_peak_gib, synthesis_confidence
+                       findings_per_minute, uma_peak_gib, synthesis_confidence
                 FROM sprint_delta
                 WHERE sprint_id != ?
                 ORDER BY ts DESC
@@ -2670,7 +2687,7 @@ class DuckDBShadowStore:
             cur = current_rows[0]
             fields = [
                 "new_findings", "ioc_new_this_sprint", "dedup_hits",
-                "findings_per_min", "uma_peak_gib", "synthesis_confidence",
+                "findings_per_minute", "uma_peak_gib", "synthesis_confidence",
             ]
             cur_vals = [cur[0] or 0, cur[1] or 0, cur[2] or 0,
                         cur[3] or 0.0, cur[4] or 0.0, cur[5] or 0.0]
@@ -2872,11 +2889,14 @@ class DuckDBShadowStore:
     def get_scorecard_consistency_check(self, sprint_id: str) -> dict:
         """
         Sprint F150I: Compare findings_per_minute from sprint_scorecard vs
-        findings_per_min from sprint_delta for the same sprint.
+        findings_per_minute from sprint_delta for the same sprint.
         Returns ratio and warns if divergence > 2x.
 
         Use for: detecting scorecard / delta sync issues.
         Fail-soft — returns empty dict on any error.
+
+        NOTE: As of Sprint F192F, both tables use findings_per_minute (renamed from
+        findings_per_min in sprint_delta). The JOIN now compares two same-named columns.
         """
         if not self._initialized or self._closed:
             return {}
@@ -2889,7 +2909,11 @@ class DuckDBShadowStore:
             return {}
 
     def _sync_query_consistency_check(self, sprint_id: str) -> dict:
-        """Sync — MUST be called on the worker thread."""
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: both sprint_scorecard and sprint_delta now use findings_per_minute.
+        """
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -2899,7 +2923,7 @@ class DuckDBShadowStore:
                 SELECT
                     c.sprint_id,
                     c.findings_per_minute,
-                    COALESCE(d.findings_per_min, 0) AS delta_fpm,
+                    COALESCE(d.findings_per_minute, 0) AS delta_fpm,
                     d.new_findings,
                     d.duration_s
                 FROM sprint_scorecard c
@@ -2942,7 +2966,11 @@ class DuckDBShadowStore:
             return []
 
     def _sync_query_best_sprints(self, last_n: int) -> list[dict]:
-        """Sync — MUST be called on the worker thread."""
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -2950,7 +2978,7 @@ class DuckDBShadowStore:
             rows = conn.execute(
                 """
                 SELECT sprint_id, ts, new_findings, duration_s,
-                       findings_per_min, synthesis_confidence,
+                       findings_per_minute, synthesis_confidence,
                        ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)
                        AS yield_per_min
                 FROM sprint_delta
@@ -2966,7 +2994,7 @@ class DuckDBShadowStore:
                     "ts": r[1],
                     "new_findings": r[2] or 0,
                     "duration_s": r[3] or 0.0,
-                    "findings_per_min": r[4] or 0.0,
+                    "findings_per_minute": r[4] or 0.0,
                     "synthesis_confidence": r[5] or 0.0,
                     "yield_per_min": r[6] or 0.0,
                 }
@@ -2992,7 +3020,11 @@ class DuckDBShadowStore:
             return []
 
     def _sync_query_worst_sprints(self, last_n: int) -> list[dict]:
-        """Sync — MUST be called on the worker thread."""
+        """
+        Sync — MUST be called on the worker thread.
+
+        Sprint F192F §2: uses findings_per_minute (matches sprint_scorecard naming).
+        """
         try:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
@@ -3000,7 +3032,7 @@ class DuckDBShadowStore:
             rows = conn.execute(
                 """
                 SELECT sprint_id, ts, new_findings, duration_s,
-                       findings_per_min, synthesis_confidence,
+                       findings_per_minute, synthesis_confidence,
                        ROUND(new_findings / MAX(duration_s / 60, 0.001), 4)
                        AS yield_per_min
                 FROM sprint_delta

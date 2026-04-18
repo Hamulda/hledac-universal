@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import aiohttp
 
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.utils.query_expansion import (
     ExpansionStrategy,
     MultiStrategyExpander,
@@ -328,8 +329,8 @@ class ArxivAdapter(BaseSourceAdapter):
             if async_session is not None:
                 return await _do_search(async_session)
             else:
-                async with aiohttp.ClientSession() as session:
-                    return await _do_search(session)
+                shared = await async_get_aiohttp_session()
+                return await _do_search(shared)
 
         except asyncio.TimeoutError:
             self.logger.warning("ArXiv search timed out")
@@ -337,7 +338,7 @@ class ArxivAdapter(BaseSourceAdapter):
         except Exception as e:
             self.logger.error(f"ArXiv search error: {e}")
             return []
-    
+
     def _parse_results(self, xml_content: str) -> List[SearchResult]:
         """Parse ArXiv API XML response."""
         results = []
@@ -492,8 +493,8 @@ class CrossrefAdapter(BaseSourceAdapter):
             if async_session is not None:
                 return await _do_search(async_session)
             else:
-                async with aiohttp.ClientSession() as session:
-                    return await _do_search(session)
+                shared = await async_get_aiohttp_session()
+                return await _do_search(shared)
 
         except asyncio.TimeoutError:
             self.logger.warning("Crossref search timed out")
@@ -501,7 +502,7 @@ class CrossrefAdapter(BaseSourceAdapter):
         except Exception as e:
             self.logger.error(f"Crossref search error: {e}")
             return []
-    
+
     def _parse_results(self, data: Dict) -> List[SearchResult]:
         """Parse Crossref API JSON response."""
         results = []
@@ -659,8 +660,8 @@ class SemanticScholarAdapter(BaseSourceAdapter):
             if async_session is not None:
                 return await _do_search(async_session)
             else:
-                async with aiohttp.ClientSession() as session:
-                    return await _do_search(session)
+                shared = await async_get_aiohttp_session()
+                return await _do_search(shared)
 
         except asyncio.TimeoutError:
             self.logger.warning("Semantic Scholar search timed out")
@@ -668,7 +669,7 @@ class SemanticScholarAdapter(BaseSourceAdapter):
         except Exception as e:
             self.logger.error(f"Semantic Scholar search error: {e}")
             return []
-    
+
     def _parse_results(self, data: Dict) -> List[SearchResult]:
         """Parse Semantic Scholar API JSON response."""
         results = []

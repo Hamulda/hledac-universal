@@ -514,7 +514,8 @@ class ModelManager:
                 )
                 await self._release_current_async()
 
-            # F178D: Memory barrier — force MLX lazy eval to settle before admission check.
+            # F192B: Settle MLX lazy eval before admission check — prevents
+            # stale GPU state from causing spurious admission failures.
             mx = _get_mlx_safe()
             if MLX_AVAILABLE and mx is not None:
                 try:

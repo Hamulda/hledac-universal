@@ -260,6 +260,24 @@ _PARKED_DOMAIN_RE = _re.compile(
     _re.IGNORECASE,
 )
 
+# F192E: CDN/package noise patterns — these are not primary content sources
+# Exclude: CDN-hosted JS libraries, npm packages, GitHub raw content, cloud storage
+_CDN_NOISE_PATTERNS = (
+    "cdn.jsdelivr.net",
+    "unpkg.com",
+    "cdnjs.cloudflare.com",
+    "raw.githubusercontent.com",
+    "github.com/-/raw/",
+    "storage.googleapis.com",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+    "assets.wire.com",
+    "staticaly.com",
+    "fastly.net",
+    "cloudfront.net",
+    "jsdelivr.com",
+)
+
 
 def _is_noise_result(title: str, url: str, snippet: str, query: str = "") -> bool:
     """
@@ -323,6 +341,10 @@ def _is_noise_result(title: str, url: str, snippet: str, query: str = "") -> boo
 
     # F178E: parked / placeholder domain
     if _PARKED_DOMAIN_RE.search(u):
+        return True
+
+    # F192E: CDN / package noise — these are JS library pages, not real content
+    if any(p in u for p in _CDN_NOISE_PATTERNS):
         return True
 
     # F178E: query term density — query term repeated >5× in title = spam signal
@@ -874,19 +896,63 @@ async def _query_rdap(target: str) -> dict:
     return {}
 
 
+async def _search_commoncrawl_domain(
+    query: str, max_results: int = 20
+) -> list[dict]:
+    """
+    F192E: CommonCrawl CDX domain discovery — thin seam, no new framework.
+
+    CommonCrawl CDX API is domain-specific, not a general search engine.
+    Only activates for domain-like queries (e.g. "example.com", "site:example.com").
+
+    Returns:
+        List of dicts with title/url/snippet/source/timestamp.
+    """
+    import re as _re
+    _DOMAIN_CCX_RE = _re.compile(
+        r"^(?:\*?\.)?[a-zA-Z0-9][a-zA-Z0-9.\-*[a-zA-Z0-9]\.[a-zA-Z]{2,}$"
+        r"|^(?:site|domain):[a-zA-Z0-9]"
+    )
+    clean = re.sub(r"^(site|domain):", "", query.strip(), flags=re.IGNORECASE).strip()
+    if not _DOMAIN_CCX_RE.match(clean):
+        return []
+
+    try:
+        from hledac.universal.tools.commoncrawl_adapter import CommonCrawlAdapter
+
+        class _MinimalStealth:
+            """Minimal StealthManager-compatible wrapper for CommonCrawlAdapter."""
+            async def get(self, url: str) -> str:
+                from hledac.universal.network.session_runtime import async_get_aiohttp_session
+                s = await async_get_aiohttp_session()
+                async with s.get(url) as r:
+                    return await r.text()
+
+        adapter = CommonCrawlAdapter(stealth=_MinimalStealth())
+        results = await adapter.search(clean, max_results=max_results)
+        await adapter.close()
+        return results
+    except Exception as e:
+        logger.debug(f"[CommonCrawl domain search] {e}")
+        return []
+
+
 async def search_multi_engine(
     query: str, max_results: int = 30
 ) -> list[dict]:
     """
-    Parallel search: DDG + Mojeek with URL deduplication.
+    F192E: Parallel search: DDG + Mojeek + CommonCrawl(domain query only).
     Bing excluded — actively blocks + CAPTCHA.
+
+    CommonCrawl CDX API is domain-specific (domain index, not general search).
     """
     ddg_task    = async_search_public_web(query, max_results=max_results // 2)
     mojeek_task = _scrape_mojeek(query, max_results // 2)
+    cc_task     = _search_commoncrawl_domain(query, max_results=max_results // 4)
 
     all_results: list[dict] = []
     for batch in await asyncio.gather(
-        ddg_task, mojeek_task,
+        ddg_task, mojeek_task, cc_task,
         return_exceptions=True
     ):
         if isinstance(batch, DiscoveryBatchResult) and batch.hits:

@@ -6,13 +6,13 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional, Set
 
-from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.network.session_runtime import (
+    async_get_aiohttp_session,
+    CT_CONNECT_TIMEOUT_S,
+    CT_READ_TIMEOUT_S,
+)
 
 logger = logging.getLogger(__name__)
-
-# Canonical timeout constants for CT scan — use with asyncio.timeout()
-_CT_CONNECT_TIMEOUT_S: float = 10.0
-_CT_READ_TIMEOUT_S: float = 15.0
 
 try:
     import aiohttp
@@ -88,8 +88,8 @@ class _CTLogScanner:
             async with session.get(
                 url,
                 timeout=_aiohttp.ClientTimeout(
-                    connect=_CT_CONNECT_TIMEOUT_S,
-                    sock_read=_CT_READ_TIMEOUT_S,
+                    connect=CT_CONNECT_TIMEOUT_S,
+                    sock_read=CT_READ_TIMEOUT_S,
                 ),
             ) as resp:
                 if resp.status != 200:
