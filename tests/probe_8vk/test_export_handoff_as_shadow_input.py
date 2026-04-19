@@ -14,7 +14,7 @@ class TestExportHandoffAsShadowInput:
 
     def test_export_handoff_from_windup_is_usable(self):
         """ExportHandoff.from_windup() produces usable typed handoff."""
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
         from hledac.universal.runtime.shadow_inputs import collect_export_handoff_facts
 
         scorecard = {
@@ -42,7 +42,7 @@ class TestExportHandoffAsShadowInput:
 
     def test_export_handoff_vs_scorecard_parity(self):
         """ExportHandoff and scorecard dict produce equivalent facts."""
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
         from hledac.universal.runtime.shadow_inputs import collect_export_handoff_facts
 
         scorecard = {
@@ -94,7 +94,7 @@ class TestCanonicalProducerHandoffPath:
 
     def test_export_handoff_typed_construction(self):
         """ExportHandoff constructed directly from typed fields — no dict extraction needed."""
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
 
         # Simulate what __main__ SHOULD do post-cutover:
         # windup returns typed ExportHandoff directly with pre-populated top_nodes
@@ -124,7 +124,7 @@ class TestCanonicalProducerHandoffPath:
         After windup cutover: __main__ calls ExportHandoff(...) directly,
         and from_windup(scorecard) becomes unnecessary.
         """
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
 
         scorecard = {
             "sprint_id": "sprint-compat",
@@ -146,7 +146,7 @@ class TestCanonicalProducerHandoffPath:
 
     def test_ensure_export_handoff_passes_through_typed(self):
         """ensure_export_handoff() returns typed ExportHandoff unchanged — primary path."""
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
         from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
 
         handoff = ExportHandoff(

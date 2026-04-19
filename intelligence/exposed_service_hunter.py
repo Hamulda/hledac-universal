@@ -1333,6 +1333,305 @@ class ExposedServiceHunter:
         }
 
 
+class APICache:
+    """
+    Simple sqlite-based API cache with TTL.
+
+    Used for rate-limited APIs like Shodan and Censys.
+    """
+
+    def __init__(self, cache_dir: Optional[str] = None, ttl_seconds: int = 3600):
+        """
+        Initialize API cache.
+
+        Args:
+            cache_dir: Directory for cache DB (default: temp)
+            ttl_seconds: Cache TTL in seconds (default: 1 hour)
+        """
+        import sqlite3
+        import os
+        from pathlib import Path
+
+        self.ttl_seconds = ttl_seconds
+
+        if cache_dir:
+            cache_path = Path(cache_dir)
+            cache_path.mkdir(parents=True, exist_ok=True)
+            self._db_path = cache_path / "api_cache.db"
+        else:
+            import tempfile
+            self._db_path = Path(tempfile.gettempdir()) / "hledac_api_cache.db"
+
+        # Initialize DB
+        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS api_cache (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                timestamp REAL
+            )
+        """)
+        self._conn.commit()
+
+    def get(self, key: str) -> Optional[str]:
+        """
+        Get cached value if not expired.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            Cached value or None if expired/missing
+        """
+        import time
+
+        cursor = self._conn.execute(
+            "SELECT value, timestamp FROM api_cache WHERE key = ?",
+            (key,)
+        )
+        row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        value, timestamp = row
+        if time.time() - timestamp > self.ttl_seconds:
+            # Expired
+            self._conn.execute("DELETE FROM api_cache WHERE key = ?", (key,))
+            self._conn.commit()
+            return None
+
+        return value
+
+    def set(self, key: str, value: str) -> None:
+        """
+        Set cached value with current timestamp.
+
+        Args:
+            key: Cache key
+            value: Value to cache
+        """
+        import time
+
+        self._conn.execute(
+            "INSERT OR REPLACE INTO api_cache (key, value, timestamp) VALUES (?, ?, ?)",
+            (key, value, time.time())
+        )
+        self._conn.commit()
+
+    def clear(self) -> None:
+        """Clear all cached entries."""
+        self._conn.execute("DELETE FROM api_cache")
+        self._conn.commit()
+
+    def close(self) -> None:
+        """Close database connection."""
+        self._conn.close()
+
+
+async def search_shodan(
+    query: str,
+    api_key: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Search Shodan using free API (no key or community key).
+
+    Args:
+        query: Search query (e.g., "apache", "nginx", "product:cisco")
+        api_key: Shodan API key (default: SHODAN_API_KEY env var)
+
+    Returns:
+        List of dicts with structure:
+        [{'ip': str, 'port': int, 'service': str, 'banner': str}]
+
+    Anti-patterns:
+      - Rate limited (uses APICache with 1-hour TTL)
+      - No API key hardcoded (uses .env)
+    """
+    import os
+    import json
+
+    results: List[Dict[str, Any]] = []
+
+    # Get API key from env if not provided
+    if not api_key:
+        api_key = os.environ.get("SHODAN_API_KEY", "")
+
+    # Check cache first
+    cache = APICache(ttl_seconds=3600)
+    cache_key = f"shodan:{query}:{api_key}"
+    cached = cache.get(cache_key)
+
+    if cached:
+        try:
+            results = json.loads(cached)
+            logger.info(f"Shodan cache hit for query: {query}")
+            cache.close()
+            return results
+        except json.JSONDecodeError:
+            pass
+
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Shodan API endpoint (free tier)
+            base_url = "https://api.shodan.io/shodan/host/search"
+
+            params = {
+                "key": api_key if api_key else "free",
+                "query": query,
+                "minify": True,
+            }
+
+            async with session.get(base_url, params=params, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+
+                    matches = data.get("matches", [])
+                    for match in matches[:50]:  # Limit results
+                        try:
+                            result = {
+                                "ip": match.get("ip_str", ""),
+                                "port": match.get("port", 0),
+                                "service": match.get("product", match.get("proto", "unknown")),
+                                "banner": match.get("data", "")[:500],  # Truncate banners
+                                "org": match.get("org", ""),
+                                "asn": match.get("asn", ""),
+                                "transport": match.get("transport", ""),
+                                "timestamp": match.get("timestamp", ""),
+                            }
+                            results.append(result)
+
+                        except Exception as e:
+                            logger.debug(f"Error parsing Shodan match: {e}")
+                            continue
+
+                    # Cache results
+                    cache.set(cache_key, json.dumps(results))
+
+                elif resp.status == 429:
+                    logger.warning("Shodan rate limited")
+                else:
+                    logger.debug(f"Shodan API returned status {resp.status}")
+
+    except Exception as e:
+        logger.debug(f"Shodan search failed for '{query}': {e}")
+
+    cache.close()
+    logger.info(f"search_shodan('{query}'): {len(results)} results")
+    return results
+
+
+async def search_censys(
+    query: str,
+    api_id: Optional[str] = None,
+    api_secret: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Search Censys using free API (Censys data API).
+
+    Args:
+        query: Search query (e.g., "services.tls.certificates.leaf_data.subject.common_name: example.com")
+        api_id: Censys API ID (default: CENSYS_API_ID env var)
+        api_secret: Censys API Secret (default: CENSYS_API_SECRET env var)
+
+    Returns:
+        List of dicts with structure:
+        [{'ip': str, 'port': int, 'service': str, 'banner': str}]
+
+    Anti-patterns:
+      - Rate limited (uses APICache with 1-hour TTL)
+      - No API credentials hardcoded (uses .env)
+    """
+    import base64
+    import os
+    import json
+
+    results: List[Dict[str, Any]] = []
+
+    # Get credentials from env if not provided
+    if not api_id:
+        api_id = os.environ.get("CENSYS_API_ID", "")
+    if not api_secret:
+        api_secret = os.environ.get("CENSYS_API_SECRET", "")
+
+    # Check cache first
+    cache = APICache(ttl_seconds=3600)
+    cache_key = f"censys:{query}"
+    cached = cache.get(cache_key)
+
+    if cached:
+        try:
+            results = json.loads(cached)
+            logger.info(f"Censys cache hit for query: {query}")
+            cache.close()
+            return results
+        except json.JSONDecodeError:
+            pass
+
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Censys Search API v2
+            base_url = "https://search.censys.io/api/v1/search"
+
+            # Build auth header if credentials provided
+            headers = {"Accept": "application/json"}
+            if api_id and api_secret:
+                auth_str = f"{api_id}:{api_secret}"
+                auth_bytes = base64.b64encode(auth_str.encode()).decode()
+                headers["Authorization"] = f"Basic {auth_bytes}"
+
+            params = {
+                "q": query,
+                "max_records": 50,
+            }
+
+            async with session.get(base_url, params=params, headers=headers, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+
+                    results_list = data.get("results", [])
+                    for result in results_list[:50]:  # Limit results
+                        try:
+                            # Extract IP and services info
+                            ip = result.get("ip", "")
+                            services = result.get("services", [])
+
+                            for svc in services:
+                                result_entry = {
+                                    "ip": ip,
+                                    "port": svc.get("port", 0),
+                                    "service": svc.get("service", "unknown"),
+                                    "banner": svc.get("banner", "")[:500],
+                                    "transport": svc.get("transport", ""),
+                                }
+                                results.append(result_entry)
+
+                        except Exception as e:
+                            logger.debug(f"Error parsing Censys result: {e}")
+                            continue
+
+                    # Cache results
+                    cache.set(cache_key, json.dumps(results))
+
+                elif resp.status == 429:
+                    logger.warning("Censys rate limited")
+                elif resp.status == 401:
+                    logger.warning("Censys auth failed")
+                else:
+                    logger.debug(f"Censys API returned status {resp.status}")
+
+    except Exception as e:
+        logger.debug(f"Censys search failed for '{query}': {e}")
+
+    cache.close()
+    logger.info(f"search_censys('{query}'): {len(results)} results")
+    return results
+
+
 # Convenience functions
 async def quick_hunt(target: str) -> Dict[str, List[ExposedService]]:
     """Quick exposed service hunt."""
@@ -1376,4 +1675,8 @@ __all__ = [
     "quick_hunt",
     "check_s3_bucket",
     "scan_graphql_endpoint",
+    # Phase 15 additions
+    "search_shodan",
+    "search_censys",
+    "APICache",
 ]

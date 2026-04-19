@@ -6,6 +6,13 @@ This module provides:
 - QuantumPathConfig: Configuration for quantum pathfinding
 """
 
+# Graph Manager (pyvis visualization layer)
+try:
+    from .graph_manager import GraphManager, GRAPH_AVAILABLE
+except ImportError:
+    GRAPH_AVAILABLE = False
+    GraphManager = None
+
 # Quantum Pathfinder (lazy-loaded)
 try:
     from .quantum_pathfinder import (
@@ -24,6 +31,9 @@ except ImportError:
         return None
 
 __all__ = [
+    # Graph Manager
+    "GraphManager",
+    "GRAPH_AVAILABLE",
     # Quantum Pathfinder
     "QuantumInspiredPathFinder",
     "QuantumPathConfig",

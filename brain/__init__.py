@@ -150,6 +150,16 @@ try:
 except ImportError:
     NER_ENGINE_AVAILABLE = False
 
+# P13: Embedding model lifecycle management
+try:
+    from ..embedding_pipeline import (
+        load_embedding_model,
+        unload_embedding_model,
+    )
+    EMBEDDING_AVAILABLE = True
+except ImportError:
+    EMBEDDING_AVAILABLE = False
+
 __all__ = [
     "Hermes3Engine",
     "DecisionEngine",
@@ -218,4 +228,8 @@ __all__ = [
     # NER/IOC (Sprint 8VG)
     "extract_iocs_from_text",
     "IOCScorer",
+    # P13: Embedding Model Lifecycle
+    "load_embedding_model",
+    "unload_embedding_model",
+    "EMBEDDING_AVAILABLE",
 ]

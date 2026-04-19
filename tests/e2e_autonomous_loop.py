@@ -10,7 +10,7 @@ import tempfile
 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator, DiscoveryDepth
 from hledac.universal.evidence_log import EvidenceLog
 from hledac.universal.budget_manager import BudgetManager, BudgetConfig
-from hledac.universal.types import ResearchMode
+from hledac.universal.project_types import ResearchMode
 
 
 class TestNoReActReferences:

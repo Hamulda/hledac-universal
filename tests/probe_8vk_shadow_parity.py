@@ -209,7 +209,7 @@ class TestModelControlFactsBundle:
     def test_from_analyzer_result(self):
         """ModelControlFactsBundle.from_analyzer_result extracts tools/sources."""
         from hledac.universal.runtime.shadow_inputs import ModelControlFactsBundle
-        from hledac.universal.types import AnalyzerResult
+        from hledac.universal.project_types import AnalyzerResult
 
         result = AnalyzerResult(
             tools={"cve", "ioc"},
@@ -1186,7 +1186,7 @@ class TestFactStabilityClassification:
     def test_model_control_bundle_stable_from_analyzer_result(self):
         """from_analyzer_result sets fact_stability=STABLE."""
         from hledac.universal.runtime.shadow_inputs import ModelControlFactsBundle
-        from hledac.universal.types import AnalyzerResult
+        from hledac.universal.project_types import AnalyzerResult
 
         result = AnalyzerResult(
             tools={"cve"},

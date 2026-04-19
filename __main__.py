@@ -2585,7 +2585,7 @@ async def _print_scorecard_report(
     # REMOVAL CONDITION: ExportHandoff.top_nodes always populated in all windup paths.
     try:
         from export.sprint_exporter import export_sprint as _export_sprint
-        from .types import ExportHandoff
+        from .project_types import ExportHandoff
 
         # Sprint 8VZ §B: Construct typed handoff directly — canonical producer truth
         # top_nodes from store seam (DuckPGQGraph-backed store.get_top_seed_nodes)

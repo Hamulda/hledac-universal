@@ -1039,6 +1039,69 @@ Piš v češtině, buď konkrétní a stručný."""
         await self.release_all()
 
     # ========================================================================
+    # P13: Embedding Model Lifecycle Management
+    # ========================================================================
+
+    def load_embedding_model(self) -> bool:
+        """
+        Initialize the ModernBERTEmbedding singleton for embedding pipeline.
+
+        Uses the singleton embedder from embedding_pipeline module.
+        Returns True if embedder is ready, False on error.
+        """
+        try:
+            from hledac.universal.embedding_pipeline import _get_embedder
+            embedder = _get_embedder()
+            if embedder is not None:
+                logger.info("[EMBED] Embedding model loaded via ModelManager")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"[EMBED] Failed to load embedding model: {e}")
+            return False
+
+    def unload_embedding_model(self) -> None:
+        """
+        Unload the ModernBERTEmbedding singleton from memory.
+
+        Called after batch embedding operations to free GPU/RAM.
+        """
+        try:
+            from hledac.universal.embedding_pipeline import _release_embedder
+            _release_embedder()
+            logger.info("[EMBED] Embedding model unloaded via ModelManager")
+        except Exception as e:
+            logger.debug(f"[EMBED] Failed to unload embedding model: {e}")
+
+    @asynccontextmanager
+    async def embedding_lifecycle(self):
+        """
+        Context manager for embedding model lifecycle.
+
+        On entry: loads the embedding model.
+        On exit: releases the embedding model and clears MLX cache.
+
+        Usage:
+            async with manager.embedding_lifecycle():
+                embeddings = await generate_embeddings_async(texts)
+
+        This ensures proper memory management on M1 8GB.
+        """
+        self.load_embedding_model()
+        try:
+            yield
+        finally:
+            self.unload_embedding_model()
+            # Clear MLX cache after embedding operations
+            mx = _get_mlx_safe()
+            if MLX_AVAILABLE and mx is not None:
+                try:
+                    mx.eval([])
+                    mx.clear_cache()
+                except Exception:
+                    pass
+
+    # ========================================================================
     # Sprint 55: ANE Embedder Integration (get_embedder method below)
     # ========================================================================
 

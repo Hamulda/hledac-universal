@@ -236,7 +236,7 @@ class TestSprint83BLiveAudit:
 
     def test_network_recon_live_audit_skipped_if_offline(self):
         """Verify offline mode fast-fails."""
-        from hledac.universal.types import is_offline_mode
+        from hledac.universal.project_types import is_offline_mode
 
         # This test verifies offline detection works
         original = os.environ.get("HLEDAC_OFFLINE")

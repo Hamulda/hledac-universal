@@ -19,6 +19,7 @@ __all__ = [
     "KEYS_ROOT",
     "TOR_ROOT",
     "NYM_ROOT",
+    "I2P_ROOT",
     "RUNS_ROOT",
     "SOCKETS_ROOT",
     "SPRINT_STORE_ROOT",
@@ -260,6 +261,7 @@ EVIDENCE_ROOT: Path = RAMDISK_ROOT / "evidence"
 KEYS_ROOT: Path = RAMDISK_ROOT / "keys"
 TOR_ROOT: Path = RAMDISK_ROOT / "tor"
 NYM_ROOT: Path = RAMDISK_ROOT / "nym"
+I2P_ROOT: Path = RAMDISK_ROOT / "i2p"
 RUNS_ROOT: Path = RAMDISK_ROOT / "runs"
 SOCKETS_ROOT: Path = RAMDISK_ROOT / "sockets"
 
@@ -369,7 +371,7 @@ for _dir in [DB_ROOT, LMDB_ROOT, SPRINT_LMDB_ROOT, EVIDENCE_ROOT, RUNS_ROOT, SOC
     _ensure_dir(_dir)
 
 # Initialize security-sensitive directories with 0o700
-for _dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT]:
+for _dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT, I2P_ROOT]:
     _ensure_dir(_dir, mode=0o700)
 
 

@@ -669,6 +669,7 @@ async def _fetch_and_process_page(
     session_id: str | None = None,
     discovery_score: float | None = None,
     discovery_reason: str | None = None,
+    vector_store: Any | None = None,
 ) -> PipelinePageResult:
     """
     Fetch one URL, extract text, scan patterns, optionally store findings.
@@ -1043,6 +1044,36 @@ async def _fetch_and_process_page(
                 # accepted_count/stored_count already set to 0 (pre-loop init) on error
                 pass
 
+            # P13: Store page text embedding in vector store
+            # Only for html/text content, not binary
+            if vector_store is not None and extracted_text and len(extracted_text) > 50:
+                try:
+                    from hledac.universal.embedding_pipeline import generate_embeddings
+
+                    # Use extracted_text (not enriched scan_text) for embedding
+                    loop = asyncio.get_running_loop()
+                    embeddings = await loop.run_in_executor(
+                        None, generate_embeddings, [extracted_text]
+                    )
+                    if embeddings is not None and len(embeddings) > 0:
+                        # Use URL-based ID for vector lookup
+                        finding_id_for_vec = _make_finding_id(
+                            query=query,
+                            url=hit_url,
+                            label="page_text",
+                            pattern="embedding",
+                            value=extracted_text[:100]
+                        )
+                        vector_store.add_vectors(
+                            [finding_id_for_vec],
+                            embeddings,
+                            index_type="text"
+                        )
+                        logger.debug(f"[P13] Stored embedding for {hit_url[:50]}")
+                except Exception:
+                    # Fail-soft: vector storage errors don't fail the page
+                    pass
+
         usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
             fetched=True, matched_patterns=matched_count,
             stored_findings=stored_count,
@@ -1122,9 +1153,11 @@ async def _generate_and_store_report(
     pages: tuple,
     store: Any | None,
     hermes_engine: Any | None,
+    vector_store: Any | None = None,
 ) -> str:
     """
     P6: Generate OSINT report from top findings and store in DuckDB.
+    P13: Integrate vector search, MMR reranking, and RRF fusion for RAG context.
 
     Collects top 5 pages by matched_patterns count, generates report via Hermes
     (if available), and stores with source_type='report'.
@@ -1136,12 +1169,35 @@ async def _generate_and_store_report(
         pages: Tuple of PipelinePageResult
         store: Optional DuckDBShadowStore instance
         hermes_engine: Optional Hermes3Engine instance (if None, report generation skipped)
+        vector_store: Optional VectorStore instance for semantic search
 
     Returns:
         Generated report text, or empty string if skipped/failed
     """
     if hermes_engine is None:
         return ""  # No Hermes, skip report generation
+
+    # P13: Vector search for RAG context with MMR reranking
+    vector_candidates: list[tuple[str, float]] = []
+    if vector_store is not None:
+        try:
+            from hledac.universal.embedding_pipeline import embed_query_async
+            from hledac.universal.context_optimization.mmr import maximal_marginal_relevance
+            from utils.ranking import rrf_fuse
+
+            # Generate query embedding
+            query_vec = await embed_query_async(query)
+
+            # Query vector store for similar documents
+            raw_similar = vector_store.query(query_vec, k=10, index_type="text")
+            if raw_similar:
+                logger.info(f"[P13] Vector search found {len(raw_similar)} similar docs")
+                vector_candidates = raw_similar
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[P13] Vector search failed: {e}")
+            vector_candidates = []
 
     # Collect top N pages by matched_patterns (proxy for IOC density)
     sorted_pages = sorted(
@@ -1154,20 +1210,59 @@ async def _generate_and_store_report(
     if not top_pages:
         return ""  # No findings to report on
 
-    # Build context from top pages
-    context_items: list[str] = []
+    # P13: Build pattern_matcher ranked list for RRF fusion
+    pattern_ranked: list[tuple[str, float]] = []
     for p in top_pages:
-        # Format page info as context item
-        ioc_count = p.matched_patterns or 0
-        accepted = p.accepted_findings or 0
         url = getattr(p, 'url', '') or ''
-        title = getattr(p, 'discovery_reason', '') or getattr(p, 'quality_reason', '') or url
+        score = (p.matched_patterns or 0) + (p.accepted_findings or 0) * 0.5
+        if url:
+            pattern_ranked.append((url, score))
+
+    # P13: Fuse vector search results with pattern matcher results using RRF
+    if vector_candidates and pattern_ranked:
+        try:
+            fused_ids = rrf_fuse([vector_candidates, pattern_ranked], k=60)
+            logger.info(f"[P13] RRF fused {len(fused_ids)} results")
+            # Use fused order for context building
+            fused_url_order = fused_ids[:_REPORT_TOP_N]
+        except Exception:
+            # Fallback to pattern matcher order if RRF fails
+            fused_url_order = [url for url, _ in pattern_ranked[:_REPORT_TOP_N]]
+    else:
+        fused_url_order = [url for url, _ in pattern_ranked[:_REPORT_TOP_N]]
+
+    # Build context from fused/ranked pages
+    context_items: list[str] = []
+    url_to_page = {getattr(p, 'url', ''): p for p in pages}
+
+    for url in fused_url_order:
+        page = url_to_page.get(url)
+        if page is None:
+            continue
+        # Format page info as context item
+        ioc_count = page.matched_patterns or 0
+        accepted = page.accepted_findings or 0
+        title = getattr(page, 'discovery_reason', '') or getattr(page, 'quality_reason', '') or url
 
         context_items.append(
             f"URL: {url}\n"
             f"Title/Reason: {title}\n"
             f"IOC count: {ioc_count}, Accepted findings: {accepted}"
         )
+
+    # If no context from fusion, fall back to top_pages
+    if not context_items:
+        for p in top_pages:
+            ioc_count = p.matched_patterns or 0
+            accepted = p.accepted_findings or 0
+            url = getattr(p, 'url', '') or ''
+            title = getattr(p, 'discovery_reason', '') or getattr(p, 'quality_reason', '') or url
+
+            context_items.append(
+                f"URL: {url}\n"
+                f"Title/Reason: {title}\n"
+                f"IOC count: {ioc_count}, Accepted findings: {accepted}"
+            )
 
     # Generate report via Hermes3Engine
     try:
@@ -1461,6 +1556,7 @@ async def async_run_live_public_pipeline(
     graph: Any | None = None,
     memory_manager: Any | None = None,
     session_id: str | None = None,
+    vector_store: Any | None = None,
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -1696,6 +1792,7 @@ async def async_run_live_public_pipeline(
                 session_id=session_id,
                 discovery_score=hit_score,
                 discovery_reason=hit_reason,
+                vector_store=vector_store,
             )
         )
         tasks.append(task)
@@ -2036,6 +2133,7 @@ async def async_run_live_public_pipeline(
                 pages=tuple(all_page_results),
                 store=store,
                 hermes_engine=hermes_engine,
+                vector_store=vector_store,
             )
         except Exception:
             pass  # Fail-soft: report generation errors don't fail the pipeline

@@ -517,6 +517,40 @@ def extract_high_precision_entities(text: str) -> list[ExtractedEntity]:
     return validated
 
 
+def extract_structured_entities(text: str) -> list[dict]:
+    """
+    Extract IOCs and return as structured list of dicts for GraphManager.
+
+    FÁZE P9: Pipeline consumable format — list[dict] with entity_type + value.
+    Combines both AC automaton hits and regex post-pass results.
+    Memory-bounded: max 1000 entries per call (M1 8GB safe).
+
+    Returns:
+        List of {"entity_type": str, "value": str, "label": str} dicts.
+        Deduplicated by (entity_type, value) pair.
+    """
+    hits = match_text(text)
+    if not hits:
+        return []
+
+    seen: set[tuple[str, str]] = set()
+    entities: list[dict] = []
+    max_entries = 1000
+
+    for hit in hits:
+        key = (hit.label or "unknown", hit.value)
+        if key in seen or len(entities) >= max_entries:
+            continue
+        seen.add(key)
+        entities.append({
+            "entity_type": hit.label or "unknown",
+            "value": hit.value,
+            "label": hit.pattern,
+        })
+
+    return entities
+
+
 # -----------------------------------------------------------------------------
 # Seed registry — ONLY for infrastructure tests, not production OSINT
 # -----------------------------------------------------------------------------

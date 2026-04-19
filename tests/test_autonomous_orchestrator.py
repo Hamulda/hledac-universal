@@ -13815,7 +13815,7 @@ class TestSprint14Types:
 
     def test_enable_mod_removed(self):
         """Verify ResearchConfig has no enable_mod attribute."""
-        from hledac.universal.types import ResearchConfig
+        from hledac.universal.project_types import ResearchConfig
 
         # enable_mod should not be in annotations
         assert "enable_mod" not in ResearchConfig.__annotations__, \
@@ -13840,7 +13840,7 @@ class TestSprint15Comm:
         """Verify _execute_query fallback returns success=False."""
         from unittest.mock import MagicMock, AsyncMock, patch
         from hledac.universal.layers.communication_layer import CommunicationLayer
-        from hledac.universal.types import CommunicationConfig
+        from hledac.universal.project_types import CommunicationConfig
 
         config = CommunicationConfig()
         layer = CommunicationLayer(config)

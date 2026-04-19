@@ -23,7 +23,7 @@ import pytest
 from hledac.universal.layers.communication_layer import CommunicationLayer, _BatchItem
 from hledac.universal.brain.hermes3_engine import Hermes3Engine
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, ZstdCompressor
-from hledac.universal.types import CommunicationConfig
+from hledac.universal.project_types import CommunicationConfig
 
 
 class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):

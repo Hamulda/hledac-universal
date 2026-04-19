@@ -21,7 +21,7 @@ import pytest
 
 from hledac.universal.capabilities import CapabilityRouter, Capability
 from hledac.universal.tool_registry import create_default_registry
-from hledac.universal.types import AnalyzerResult
+from hledac.universal.project_types import AnalyzerResult
 from hledac.universal.autonomous_analyzer import AutoResearchProfile
 
 
@@ -385,7 +385,7 @@ class TestEnforcementHappensInRegistryNotAnalyzer:
 
     def test_analyzer_recommends_not_enforces(self):
         """AnalyzerResult does NOT enforce - it only recommends."""
-        from hledac.universal.types import AnalyzerResult
+        from hledac.universal.project_types import AnalyzerResult
 
         profile = AutoResearchProfile(tools={"academic_search"})
         result = AnalyzerResult.from_profile(profile)
@@ -438,7 +438,7 @@ class TestToolExecLogCorrelation:
 
     def test_run_correlation_to_dict(self):
         """RunCorrelation.to_dict() produces correct structure."""
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(run_id="run_1", branch_id="branch_a", provider_id="mlx")
         d = corr.to_dict()
@@ -1238,7 +1238,7 @@ class TestGhostBridgeSeam:
     def test_correlation_passthrough_in_bridge(self):
         """GhostBridge preserves RunCorrelation through conversion."""
         from hledac.universal.execution.ghost_executor import GhostBridge
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(run_id="run-123", branch_id="branch-1")
         req = GhostBridge.to_execution_request(

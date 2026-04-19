@@ -148,7 +148,7 @@ async def test_export_handoff_direct_construction():
 
         try:
             from export.sprint_exporter import export_sprint
-            from hledac.universal.types import ExportHandoff
+            from hledac.universal.project_types import ExportHandoff
 
             # Mock store with get_top_seed_nodes (canonical source post-8VZ)
             mock_store = MagicMock()
@@ -210,7 +210,7 @@ async def test_from_windup_still_works_for_legacy():
 
         try:
             from export.sprint_exporter import export_sprint
-            from hledac.universal.types import ExportHandoff
+            from hledac.universal.project_types import ExportHandoff
 
             # Legacy scorecard with top_graph_nodes (old windup path)
             legacy_scorecard = {

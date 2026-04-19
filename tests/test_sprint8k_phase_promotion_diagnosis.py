@@ -303,7 +303,7 @@ class TestLivePrerequisiteReport(unittest.TestCase):
         # 1. OFFLINE_REPLAY uses mock/synthetic data
         # 2. Live network has variable latency
         # 3. Benchmark truth is about correctness, not speed
-        from hledac.universal.types import is_offline_mode
+        from hledac.universal.project_types import is_offline_mode
         # is_offline_mode() checks HLEDAC_OFFLINE env var
         # Just verify the function exists and is callable
         self.assertTrue(callable(is_offline_mode))

@@ -175,7 +175,7 @@ class TestSprint83ANetworkRecon:
     def test_network_recon_offline_fast_fail_truthful(self):
         """Test 8: network_recon respects offline mode fast-fail."""
         # Check that offline mode detection exists in types
-        from hledac.universal.types import is_offline_mode, OfflineModeError
+        from hledac.universal.project_types import is_offline_mode, OfflineModeError
 
         # Test offline mode detection
         original = os.getenv("HLEDAC_OFFLINE")

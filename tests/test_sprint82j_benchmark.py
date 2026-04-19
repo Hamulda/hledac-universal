@@ -631,7 +631,7 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
 
     def test_action_result_type_enum_exists(self):
         """Verify ActionResultType enum has all required values."""
-        from hledac.universal.types import ActionResultType
+        from hledac.universal.project_types import ActionResultType
 
         expected = {
             "SUCCESS", "EMPTY", "NETWORK_UNAVAILABLE",
@@ -643,7 +643,7 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
     def test_offline_mode_detection(self):
         """Verify offline mode can be detected via environment variable."""
         import os
-        from hledac.universal.types import is_offline_mode
+        from hledac.universal.project_types import is_offline_mode
 
         # Test default (should be False)
         os.environ.pop("HLEDAC_OFFLINE", None)
@@ -652,7 +652,7 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
     def test_offline_mode_enabled(self):
         """Verify offline mode is True when HLEDAC_OFFLINE=1."""
         import os
-        from hledac.universal.types import is_offline_mode
+        from hledac.universal.project_types import is_offline_mode
 
         os.environ["HLEDAC_OFFLINE"] = "1"
         try:
@@ -662,7 +662,7 @@ class TestSprint82QPhase6TruthfulBenchmark(unittest.TestCase):
 
     def test_offline_mode_error_exists(self):
         """Verify OfflineModeError exception exists."""
-        from hledac.universal.types import OfflineModeError
+        from hledac.universal.project_types import OfflineModeError
 
         with self.assertRaises(OfflineModeError):
             raise OfflineModeError("test")

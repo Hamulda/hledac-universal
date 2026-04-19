@@ -156,6 +156,8 @@ class ImageMetadata:
     iso: Optional[int] = None
     flash: Optional[bool] = None
     orientation: Optional[int] = None
+    caption: Optional[str] = None  # MLX-VLM generated description
+    tags: List[str] = field(default_factory=list)  # MLX-VLM generated keywords
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -175,6 +177,8 @@ class ImageMetadata:
             "iso": self.iso,
             "flash": self.flash,
             "orientation": self.orientation,
+            "caption": self.caption,
+            "tags": self.tags,
         }
 
 
@@ -413,6 +417,33 @@ class GenericMetadata:
 
 
 @dataclass
+class SteganalysisMetadata:
+    """Steganalysis results for images."""
+    lsb_suspicious: bool = False
+    lsb_score: float = 0.0
+    histogram_suspicious: bool = False
+    histogram_score: float = 0.0
+    chi_square_score: float = 0.0
+    stegdetect_result: Optional[str] = None
+    stegdetect_available: bool = False
+    overall_suspicious: bool = False
+    confidence: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "lsb_suspicious": self.lsb_suspicious,
+            "lsb_score": self.lsb_score,
+            "histogram_suspicious": self.histogram_suspicious,
+            "histogram_score": self.histogram_score,
+            "chi_square_score": self.chi_square_score,
+            "stegdetect_result": self.stegdetect_result,
+            "stegdetect_available": self.stegdetect_available,
+            "overall_suspicious": self.overall_suspicious,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass
 class MetadataResult:
     """Complete metadata extraction result."""
     file_path: str
@@ -425,6 +456,7 @@ class MetadataResult:
     audio: Optional[AudioMetadata] = None
     video: Optional[VideoMetadata] = None
     archive: Optional[ArchiveMetadata] = None
+    steganalysis: Optional[SteganalysisMetadata] = None
     timeline: List[TimelineEvent] = field(default_factory=list)
     attribution: Optional[AttributionData] = None
     scrubbing: Optional[ScrubbingAnalysis] = None
@@ -444,6 +476,7 @@ class MetadataResult:
             "audio": self.audio.to_dict() if self.audio else None,
             "video": self.video.to_dict() if self.video else None,
             "archive": self.archive.to_dict() if self.archive else None,
+            "steganalysis": self.steganalysis.to_dict() if self.steganalysis else None,
             "timeline": [e.to_dict() for e in self.timeline],
             "attribution": self.attribution.to_dict() if self.attribution else None,
             "scrubbing": self.scrubbing.to_dict() if self.scrubbing else None,
@@ -803,11 +836,56 @@ class UniversalMetadataExtractor:
 
                 # Image files
                 if ext in {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".gif", ".webp"}:
+                    # Primary: PIL-based EXIF extraction
                     result.image = await self._extract_image_exif(file_path)
+
+                    # Enhanced: Try piexif for more accurate EXIF
+                    piexif_metadata = await self._extract_image_piexif(file_path)
+                    if piexif_metadata and result.image:
+                        # Merge piexif data into result.image if PIL didn't get it
+                        if not result.image.exif and piexif_metadata.exif:
+                            result.image.exif = piexif_metadata.exif
+                        if not result.image.gps and piexif_metadata.gps:
+                            result.image.gps = piexif_metadata.gps
+                        if not result.image.camera_make and piexif_metadata.camera_make:
+                            result.image.camera_make = piexif_metadata.camera_make
+                        if not result.image.camera_model and piexif_metadata.camera_model:
+                            result.image.camera_model = piexif_metadata.camera_model
+                        if not result.image.lens and piexif_metadata.lens:
+                            result.image.lens = piexif_metadata.lens
+                        if piexif_metadata.focal_length is not None and result.image.focal_length is None:
+                            result.image.focal_length = piexif_metadata.focal_length
+                        if piexif_metadata.f_number is not None and result.image.f_number is None:
+                            result.image.f_number = piexif_metadata.f_number
+                        if piexif_metadata.iso is not None and result.image.iso is None:
+                            result.image.iso = piexif_metadata.iso
+
+                    # Steganography analysis for images
+                    result.steganalysis = await self._extract_steganography(file_path)
+
+                    # MLX-VLM image captioning
+                    caption, tags = await self.extract_image_caption(file_path)
+                    if caption and result.image:
+                        result.image.caption = caption
+                        result.image.tags = tags
 
                 # PDF files
                 elif ext == ".pdf":
+                    # Primary: pypdf extraction
                     result.pdf = await self._extract_pdf_metadata(file_path)
+
+                    # Enhanced: Try PyMuPDF for more detailed metadata
+                    mupdf_metadata = await self._extract_pdf_mupdf(file_path)
+                    if mupdf_metadata and result.pdf:
+                        # Merge PyMuPDF data into result.pdf
+                        if not result.pdf.pdf_version and mupdf_metadata.pdf_version:
+                            result.pdf.pdf_version = mupdf_metadata.pdf_version
+                        if not result.pdf.is_encrypted:
+                            result.pdf.is_encrypted = mupdf_metadata.is_encrypted
+                        if not result.pdf.permissions and mupdf_metadata.permissions:
+                            result.pdf.permissions = mupdf_metadata.permissions
+                        if not result.pdf.embedded_files and mupdf_metadata.embedded_files:
+                            result.pdf.embedded_files = mupdf_metadata.embedded_files
 
                 # DOCX files
                 elif ext == ".docx":
@@ -1145,6 +1223,337 @@ class UniversalMetadataExtractor:
 
         except Exception:
             return None
+
+    async def _extract_pdf_mupdf(self, file_path: str) -> Optional[PDFMetadata]:
+        """Extract metadata from PDF using PyMuPDF (fitz).
+
+        PyMuPDF provides more detailed metadata than pypdf including
+        metadata from document info streams and embedded files.
+
+        Args:
+            file_path: Path to PDF file
+
+        Returns:
+            PDFMetadata object or None
+        """
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            return None
+
+        try:
+            # Limit file read for large PDFs (streaming approach)
+            file_size = os.path.getsize(file_path)
+            if file_size > 5 * 1024 * 1024:
+                # For large files, only extract basic metadata
+                with fitz.open(file_path, stream=open(file_path, "rb").read()[:5 * 1024 * 1024]) as doc:
+                    metadata = PDFMetadata(
+                        num_pages=len(doc),
+                    )
+                    return metadata
+
+            with fitz.open(file_path) as doc:
+                metadata = PDFMetadata(
+                    num_pages=len(doc),
+                    pdf_version=doc.pdf_version() if hasattr(doc, "pdf_version") else None,
+                )
+
+                # Extract metadata from doc.metadata
+                info = doc.metadata
+                if info:
+                    metadata.title = info.get("title")
+                    metadata.author = info.get("author")
+                    metadata.subject = info.get("subject")
+                    metadata.creator = info.get("creator")
+                    metadata.producer = info.get("producer")
+
+                    # Parse dates
+                    creation_date = info.get("creationDate")
+                    if creation_date:
+                        metadata.creation_date = self._parse_pdf_date(creation_date)
+                    mod_date = info.get("modDate")
+                    if mod_date:
+                        metadata.modification_date = self._parse_pdf_date(mod_date)
+
+                # Check encryption
+                metadata.is_encrypted = doc.is_encrypted
+
+                # Extract permissions
+                if not metadata.is_encrypted:
+                    try:
+                        permissions = doc.permissions
+                        metadata.permissions = {
+                            "read": bool(permissions & 1),
+                            "write": bool(permissions & 2),
+                            "print": bool(permissions & 4),
+                            "copy": bool(permissions & 8),
+                        }
+                    except Exception:
+                        pass
+
+                # Extract embedded files (attachments)
+                try:
+                    for xref in range(1, doc.xref_length()):
+                        if doc.xref_get_key(xref, "Type") == "/EmbeddedFiles":
+                            metadata.embedded_files.append(f"xref:{xref}")
+                except Exception:
+                    pass
+
+                return metadata
+
+        except Exception:
+            return None
+
+    async def _extract_image_piexif(self, file_path: str) -> Optional[ImageMetadata]:
+        """Extract EXIF metadata using piexif for enhanced accuracy.
+
+        piexif provides more accurate EXIF parsing than PIL for certain
+        camera makes and provides direct access to GPS IFD.
+
+        Args:
+            file_path: Path to image file
+
+        Returns:
+            ImageMetadata object or None
+        """
+        try:
+            import piexif
+        except ImportError:
+            return None
+
+        try:
+            # piexif requires JPEG images
+            exif_dict = piexif.load(file_path)
+            if not exif_dict or not any(exif_dict.get(ifd) for ifd in exif_dict):
+                return None
+
+            metadata = ImageMetadata()
+
+            # Extract from 0th IFD (main image info)
+            zeroth = exif_dict.get("0th", {})
+            if zeroth:
+                metadata.camera_make = zeroth.get(piexif.ImageIFD.Make)
+                metadata.camera_model = zeroth.get(piexif.ImageIFD.Model)
+                metadata.software = zeroth.get(piexif.ImageIFD.Software)
+                metadata.orientation = zeroth.get(piexif.ImageIFD.Orientation)
+
+            # Extract from Exif IFD
+            exif_ifd = exif_dict.get("Exif", {})
+            if exif_ifd:
+                if piexif.ExifIFD.FocalLength in exif_ifd:
+                    fl = exif_ifd[piexif.ExifIFD.FocalLength]
+                    metadata.focal_length = _exif_to_float(fl)
+
+                if piexif.ExifIFD.ExposureTime in exif_ifd:
+                    metadata.exposure_time = str(exif_ifd[piexif.ExifIFD.ExposureTime])
+
+                if piexif.ExifIFD.FNumber in exif_ifd:
+                    metadata.f_number = _exif_to_float(exif_ifd[piexif.ExifIFD.FNumber])
+
+                if piexif.ExifIFD.ISOSpeedRatings in exif_ifd:
+                    try:
+                        metadata.iso = int(_exif_to_float(exif_ifd[piexif.ExifIFD.ISOSpeedRatings]))
+                    except (ValueError, TypeError):
+                        pass
+
+                if piexif.ExifIFD.Flash in exif_ifd:
+                    flash = exif_ifd[piexif.ExifIFD.Flash]
+                    try:
+                        metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
+                    except (ValueError, TypeError):
+                        pass
+
+                metadata.lens = exif_ifd.get(piexif.ExifIFD.LensModel)
+
+            # Extract from GPS IFD
+            gps_ifd = exif_dict.get("GPS", {})
+            if gps_ifd:
+                metadata.gps = self._parse_piexif_gps(gps_ifd)
+
+            # Store raw EXIF data
+            metadata.exif = {}
+            for ifd_name, ifd_data in exif_dict.items():
+                if ifd_data:
+                    metadata.exif[ifd_name] = {
+                        k: v for k, v in ifd_data.items()
+                        if isinstance(v, (str, int, float, tuple, bytes))
+                    }
+
+            return metadata
+
+        except Exception:
+            return None
+
+    def _parse_piexif_gps(self, gps_ifd: dict) -> Optional[GPSCoordinates]:
+        """Parse GPS data from piexif GPS IFD.
+
+        Args:
+            gps_ifd: GPS IFD dict from piexif
+
+        Returns:
+            GPSCoordinates object or None
+        """
+        try:
+            def dms_to_decimal(dms, ref):
+                degrees = _exif_to_float(dms[0])
+                minutes = _exif_to_float(dms[1]) / 60.0
+                seconds = _exif_to_float(dms[2]) / 3600.0
+                decimal = degrees + minutes + seconds
+                if ref in ["S", "W"]:
+                    decimal = -decimal
+                return decimal
+
+            lat = None
+            lon = None
+            alt = None
+
+            if piexif.GPSIFD.GPSLatitude in gps_ifd and piexif.GPSIFD.GPSLatitudeRef in gps_ifd:
+                lat = dms_to_decimal(gps_ifd[piexif.GPSIFD.GPSLatitude], gps_ifd[piexif.GPSIFD.GPSLatitudeRef])
+
+            if piexif.GPSIFD.GPSLongitude in gps_ifd and piexif.GPSIFD.GPSLongitudeRef in gps_ifd:
+                lon = dms_to_decimal(gps_ifd[piexif.GPSIFD.GPSLongitude], gps_ifd[piexif.GPSIFD.GPSLongitudeRef])
+
+            if piexif.GPSIFD.GPSAltitude in gps_ifd:
+                alt_raw = gps_ifd[piexif.GPSIFD.GPSAltitude]
+                alt = _exif_to_float(alt_raw) if isinstance(alt_raw, tuple) else float(alt_raw)
+
+            if lat is not None and lon is not None:
+                return GPSCoordinates(latitude=lat, longitude=lon, altitude=alt)
+
+            return None
+
+        except Exception:
+            return None
+
+    async def _extract_steganography(self, file_path: str) -> Optional[SteganalysisMetadata]:
+        """Extract steganography analysis for images.
+
+        Performs chi-square, histogram, and LSB analysis to detect
+        hidden data in images. Uses stegdetect if available.
+
+        Args:
+            file_path: Path to image file
+
+        Returns:
+            SteganalysisMetadata object or None
+        """
+        try:
+            from .steganography_detector import analyze_image_steganography, STEGDETECT_AVAILABLE
+        except ImportError:
+            return None
+
+        try:
+            result = analyze_image_steganography(file_path)
+            if result is None:
+                return None
+
+            metadata = SteganalysisMetadata(
+                lsb_suspicious=result.lsb_suspicious,
+                lsb_score=result.lsb_score,
+                histogram_suspicious=result.histogram_suspicious,
+                histogram_score=result.histogram_score,
+                chi_square_score=result.chi_square_score,
+                stegdetect_result=result.stegdetect_result,
+                stegdetect_available=result.stegdetect_available,
+                overall_suspicious=result.overall_suspicious,
+                confidence=result.confidence,
+            )
+            return metadata
+
+        except Exception:
+            return None
+
+    async def extract_image_caption(self, file_path: str) -> Tuple[Optional[str], List[str]]:
+        """Extract image caption and tags using MLX-VLM.
+
+        Uses mlx-vlm or qwen2.5vl-3b-mlx for image captioning.
+        Lazy import to avoid loading MLX models unless needed.
+
+        Args:
+            file_path: Path to image file
+
+        Returns:
+            Tuple of (caption, tags)
+        """
+        try:
+            # Lazy import MLX VLM - only load when actually needed
+            try:
+                from mlx_vlm import load, generate
+                from mlx.core import load as mlx_load
+                MLX_VLM_AVAILABLE = True
+            except ImportError:
+                MLX_VLM_AVAILABLE = False
+
+            if not MLX_VLM_AVAILABLE:
+                return None, []
+
+            # Check file size - don't process images > 50MB (anti-pattern compliance)
+            file_size = os.path.getsize(file_path)
+            if file_size > 50 * 1024 * 1024:
+                return None, []
+
+            # Load model lazily - prefer qwen2.5vl-3b-mlx, fallback to any available
+            import os as _os
+            model_name = _os.environ.get("MLX_VLM_MODEL", "qwen2.5vl-3b-mlx")
+
+            try:
+                model = load(model_name)
+                processor = model.processor
+            except Exception:
+                # Try alternative model names
+                for alt_model in ["mlx-vlm/qwen2.5vl-3b-mlx", "qwen2.5-vl-3b-mlx"]:
+                    try:
+                        model = load(alt_model)
+                        processor = model.processor
+                        break
+                    except Exception:
+                        continue
+                else:
+                    return None, []
+
+            # Read image - use PIL for preprocessing, streaming for memory safety
+            from PIL import Image
+            with Image.open(file_path) as img:
+                # Resize if too large (max 1024px on longest side for VLM)
+                max_size = 1024
+                if max(img.size) > max_size:
+                    ratio = max_size / max(img.size)
+                    new_size = tuple(int(dim * ratio) for dim in img.size)
+                    img = img.resize(new_size, Image.LANCZOS)
+
+                # Convert to RGB if needed
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                # Save to bytes for VLM input (bounded memory)
+                import io
+                img_bytes = io.BytesIO()
+                img.save(img_bytes, format="JPEG", quality=85)
+                img_bytes.seek(0)
+
+            # Generate caption
+            prompt = "Describe this image in detail. What are the main objects, scene, text, and activities visible?"
+            caption = generate(model, processor, img_bytes, prompt=prompt)
+
+            # Generate tags/keywords
+            tag_prompt = "List 5-10 comma-separated keywords that describe this image:"
+            tags_text = generate(model, processor, img_bytes, prompt=tag_prompt)
+
+            # Parse tags from response
+            tags = [t.strip() for t in tags_text.split(",") if t.strip()]
+
+            # Clear MLX cache after use (M1 memory management)
+            try:
+                import mlx.core as mx
+                mx.eval([])
+                mx.metal.clear_cache()
+            except Exception:
+                pass
+
+            return caption, tags[:10]  # Cap at 10 tags
+
+        except Exception:
+            return None, []
 
     def _parse_pdf_date(self, date_str: str) -> Optional[datetime]:
         """Parse PDF date string.
@@ -1788,6 +2197,20 @@ class UniversalMetadataExtractor:
                 compression_ratio=a.get("compression_ratio"),
                 comment=a.get("comment"),
                 files=a.get("files", []),
+            )
+
+        if data.get("steganalysis"):
+            s = data["steganalysis"]
+            result.steganalysis = SteganalysisMetadata(
+                lsb_suspicious=s.get("lsb_suspicious", False),
+                lsb_score=s.get("lsb_score", 0.0),
+                histogram_suspicious=s.get("histogram_suspicious", False),
+                histogram_score=s.get("histogram_score", 0.0),
+                chi_square_score=s.get("chi_square_score", 0.0),
+                stegdetect_result=s.get("stegdetect_result"),
+                stegdetect_available=s.get("stegdetect_available", False),
+                overall_suspicious=s.get("overall_suspicious", False),
+                confidence=s.get("confidence", 0.0),
             )
 
         if data.get("timeline"):

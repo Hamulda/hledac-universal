@@ -45,6 +45,7 @@ class Transport(Enum):
       DIRECT    — plain TCP world (aiohttp TCPConnector)
       TOR       — proxy-aware SOCKS5 world (ProxyConnector)
       I2P       — proxy-aware SOCKS5 world (ProxyConnector)
+      FREENET   — Freenet FProxy HTTP proxy world
       INMEMORY  — test/internal only
 
     curl_cffi is a SEPARATE world (JA3 fingerprint spoofing) — not in this enum.
@@ -52,13 +53,16 @@ class Transport(Enum):
     DIRECT = auto()
     TOR = auto()
     I2P = auto()
+    FREENET = auto()
     INMEMORY = auto()
 
 
 # B6: SourceTransportMap — mandatory onion routing, no DIRECT override
 _ONION_MAP: dict[str, Transport] = {
-    ".onion": Transport.TOR,      # mandatory — never override to DIRECT
-    ".i2p": Transport.I2P,        # stub — fail-open to direct
+    ".onion": Transport.TOR,       # mandatory — never override to DIRECT
+    ".i2p": Transport.I2P,         # I2P SAM/SOCKS proxy (port 7656/7654)
+    ".b32.i2p": Transport.I2P,    # base32 I2P addresses (e.g., v4.b32.i2p)
+    ".freenet": Transport.FREENET, # Freenet FProxy HTTP proxy
 }
 
 
@@ -268,11 +272,14 @@ def get_transport_for_url(url: str) -> 'Transport':
     This is the MINIMAL SEAM — a policy gate that wraps resolve_url()
     for explicit transport classification without changing execution.
 
+    P10: Extended for .b32.i2p (base32 I2P) and .freenet addresses.
+
     Args:
         url: URL string to classify
 
     Returns:
-        Transport.TOR for .onion, Transport.I2P for .i2p, Transport.DIRECT otherwise
+        Transport.TOR for .onion, Transport.I2P for .i2p/.b32.i2p,
+        Transport.FREENET for .freenet, Transport.DIRECT otherwise
 
     Invariants:
         [4A-I1] Fast dict lookup — no network, no transport init
@@ -280,10 +287,15 @@ def get_transport_for_url(url: str) -> 'Transport':
         [4A-I3] No side effects — pure function, thread-safe
     """
     host = _extract_host(url)
+    # Check longer suffixes first (more specific)
+    if host.endswith('.b32.i2p'):
+        return Transport.I2P
     if host.endswith('.onion'):
         return Transport.TOR
     if host.endswith('.i2p'):
         return Transport.I2P
+    if host.endswith('.freenet'):
+        return Transport.FREENET
     return Transport.DIRECT
 
 

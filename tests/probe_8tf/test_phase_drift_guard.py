@@ -151,7 +151,7 @@ class TestTypesOrchestratorStateSeparation(unittest.TestCase):
 
     def test_orchestrator_state_not_same_as_workflow_phases(self):
         """OrchestratorState strings differ from workflow-level phase strings."""
-        from hledac.universal.types import OrchestratorState
+        from hledac.universal.project_types import OrchestratorState
         from hledac.universal.brain.model_phase_facts import WORKFLOW_PHASES
         oc_states = {s.value for s in OrchestratorState}
         # PLANNING != PLAN, SYNTHESIS == SYNTHESIS (coincidental)
@@ -165,7 +165,7 @@ class TestTypesOrchestratorStateSeparation(unittest.TestCase):
         also has 'BRAIN' — but they are semantically different phase systems.
         The test below verifies TOOLS and CLEANUP are absent (the meaningful drift risks).
         """
-        from hledac.universal.types import OrchestratorState
+        from hledac.universal.project_types import OrchestratorState
         from hledac.universal.brain.model_phase_facts import COARSE_GRAINED_PHASES
         oc_states = {s.value.upper() for s in OrchestratorState}
         # TOOLS, CLEANUP are the meaningful ones that should NOT appear in OrchestratorState

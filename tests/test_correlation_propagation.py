@@ -456,7 +456,7 @@ class TestCorrelationSchema:
 
     def test_run_correlation_exists(self):
         """RunCorrelation dataclass exists in types.py."""
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(
             run_id="r1",
@@ -471,7 +471,7 @@ class TestCorrelationSchema:
 
     def test_run_correlation_to_dict(self):
         """RunCorrelation.to_dict() returns serializable dict."""
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(
             run_id="run_x",
@@ -492,7 +492,7 @@ class TestCorrelationSchema:
 
     def test_run_correlation_partial(self):
         """RunCorrelation supports partial fields."""
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(run_id="run_partial")
         d = corr.to_dict()
@@ -504,7 +504,7 @@ class TestCorrelationSchema:
 
     def test_run_correlation_with_provider(self):
         """RunCorrelation.with_provider() returns new instance."""
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(run_id="run1", branch_id="branch1")
         corr2 = corr.with_provider("anthropic")
@@ -516,7 +516,7 @@ class TestCorrelationSchema:
 
     def test_run_correlation_with_action(self):
         """RunCorrelation.with_action() returns new instance."""
-        from hledac.universal.types import RunCorrelation
+        from hledac.universal.project_types import RunCorrelation
 
         corr = RunCorrelation(run_id="run2")
         corr2 = corr.with_action("action_abc")

@@ -14,7 +14,7 @@ class TestModelControlFactsCollector:
 
     def test_analyzer_result_typed_path(self):
         """AnalyzerResult (typed) can be collected."""
-        from hledac.universal.types import AnalyzerResult
+        from hledac.universal.project_types import AnalyzerResult
         from hledac.universal.runtime.shadow_inputs import collect_model_control_facts
 
         result = AnalyzerResult(
@@ -77,7 +77,7 @@ class TestModelControlFactsCollector:
 
     def test_analyzer_result_to_capability_signal(self):
         """AnalyzerResult.to_capability_signal() is called correctly."""
-        from hledac.universal.types import AnalyzerResult
+        from hledac.universal.project_types import AnalyzerResult
         from hledac.universal.runtime.shadow_inputs import collect_model_control_facts
 
         result = AnalyzerResult(

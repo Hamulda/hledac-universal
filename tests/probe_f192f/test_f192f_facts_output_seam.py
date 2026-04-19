@@ -186,7 +186,7 @@ class TestSprintF192F_CompatHandoff(unittest.TestCase):
         must be returned unchanged (no reconstruction).
         """
         from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
 
         eh = ExportHandoff(
             sprint_id="sprint-test",
@@ -219,7 +219,7 @@ class TestSprintF192F_CompatHandoff(unittest.TestCase):
         result = ensure_export_handoff(dict_handoff, default_sprint_id="default")
 
         # Must be typed ExportHandoff
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
         self.assertIsInstance(result, ExportHandoff,
             "dict handoff must be converted to typed ExportHandoff")
         self.assertEqual(result.sprint_id, "sprint-dict")
@@ -232,7 +232,7 @@ class TestSprintF192F_CompatHandoff(unittest.TestCase):
         with default_sprint_id — must NOT raise.
         """
         from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
 
         result = ensure_export_handoff(None, default_sprint_id="fallback-sprint")
 
@@ -248,7 +248,7 @@ class TestSprintF192F_CompatHandoff(unittest.TestCase):
         returns empty ExportHandoff with default_sprint_id.
         """
         from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
-        from hledac.universal.types import ExportHandoff
+        from hledac.universal.project_types import ExportHandoff
 
         result = ensure_export_handoff({}, default_sprint_id="empty-dict-sprint")
 

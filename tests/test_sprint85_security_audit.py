@@ -57,7 +57,7 @@ class TestSprint85OfflineMode:
             os.environ["HLEDAC_OFFLINE"] = "1"
 
             # Verify offline mode is active
-            from hledac.universal.types import is_offline_mode
+            from hledac.universal.project_types import is_offline_mode
             assert is_offline_mode() == True
 
         finally:

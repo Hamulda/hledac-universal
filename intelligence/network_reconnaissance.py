@@ -1006,6 +1006,55 @@ class PassiveDNSClient:
 
 
 # =============================================================================
+# FÁZE P9: GraphManager integration helpers
+# =============================================================================
+
+
+async def graph_add_domain_ip_relations(
+    domain: str,
+    ip_addresses: list[str],
+    graph: Any,
+) -> None:
+    """
+    FÁZE P9: Add domain→IP relations to GraphManager.
+
+    Streamované přidávání — voláno po každé DNS/A arch resolution.
+    """
+    if graph is None:
+        return
+    for ip in ip_addresses[:10]:  # Max 10 IPs per domain
+        try:
+            graph.add_relation(domain, ip, "resolves_to")
+        except Exception:
+            pass
+
+
+async def graph_add_ip_asn_relations(
+    ip: str,
+    asn_info: "ASNInfo | list[ASNInfo]",
+    graph: Any,
+) -> None:
+    """
+    FÁZE P9: Add IP→ASN relations to GraphManager.
+
+    Streamované přidávání — voláno po ASN lookup.
+    """
+    if graph is None:
+        return
+    if isinstance(asn_info, list):
+        for a in asn_info[:3]:  # Max 3 ASN entries per IP
+            try:
+                graph.add_relation(ip, f"AS{a.asn}", "belongs_to_asn")
+            except Exception:
+                pass
+    elif asn_info is not None:
+        try:
+            graph.add_relation(ip, f"AS{asn_info.asn}", "belongs_to_asn")
+        except Exception:
+            pass
+
+
+# =============================================================================
 # DHTProbe — Sprint 8UB: BitTorrent DHT discovery
 # =============================================================================
 
@@ -1332,4 +1381,7 @@ __all__ = [
     "CNAMERecord",
     "ASNInfo",
     "CTRawCertificate",
+    # FÁZE P9
+    "graph_add_domain_ip_relations",
+    "graph_add_ip_asn_relations",
 ]
