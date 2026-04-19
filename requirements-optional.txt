@@ -35,3 +35,6 @@ coremltools>=8.0    # ANE CoreML MiniLM-L6-v2 (~22MB, <5ms/embed)
 # Sprint 8VG-B: Dark/Hidden Internet + Extended OSINT Sources
 aiodns>=3.1.0        # Team Cymru DNS TXT (fallback: nslookup subprocess na macOS)
 websockets>=12.0     # certstream_monitor() — již v ti_feed_adapter.py
+
+# P16: Network & P2P Intelligence
+pybgpstream>=3.0.0  # arm64 unavailable — graceful fallback when missing

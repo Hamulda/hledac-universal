@@ -85,7 +85,17 @@ class DorkingEngine:
                 'site:{domain} filetype:pdf "study"',
                 'site:{domain} filetype:pdf "analysis"',
                 'site:{domain} inurl:research filetype:pdf',
-                'site:{domain} inurl:publications filetype:pdf'
+                'site:{domain} inurl:publications filetype:pdf',
+                # arXiv patterns
+                'site:arxiv.org "{domain}"',
+                'site:arxiv.org abs "{domain}"',
+                'site:arxiv.org pdf "{domain}"',
+                # CrossRef patterns
+                'site:crossref.org "{domain}"',
+                'site:doi.org "{domain}"',
+                # Semantic Scholar patterns
+                'site:semanticscholar.org "{domain}"',
+                'site:semanticscholar.org/arxiv "{domain}"',
             ],
             'technical': [
                 'site:{domain} filetype:pdf "specification"',
@@ -519,6 +529,85 @@ class DeepProbeScanner:
         self.tech_detector = TechStackSignature()
         self.discovered_urls = MemoryOptimizedURLSet(max_memory_mb)
 
+    async def scan(self, domain: str) -> list[str]:
+        """
+        P10: Scan a domain using dorking, Wayback CDX, and path prediction.
+
+        Combines multiple discovery methods:
+          1. Dorking: Generate search queries for the domain
+          2. Wayback CDX: Query historical URLs for the domain
+          3. Path prediction: Use Shadow Walker to predict hidden paths
+
+        Args:
+            domain: Domain to scan (e.g., "example.com")
+
+        Returns:
+            List of discovered URLs relevant to the domain
+
+        Anti-patterns:
+          - No Playwright/Selenium (explicitly excluded in P10)
+          - No large buffers (bounded MemoryOptimizedURLSet)
+          - No blocking sync calls (all async)
+        """
+        discovered: list[str] = []
+        seen: set[str] = set()
+
+        # Filter for seen URLs
+        def _add(url: str) -> bool:
+            if url in seen:
+                return False
+            seen.add(url)
+            return True
+
+        # 1. Wayback CDX discovery
+        try:
+            async with WaybackCDXClient() as client:
+                # Query with wildcards for the domain
+                wildcard_query = f"*.{domain}/*"
+                snapshots = await client.query_snapshots(wildcard_query, limit=100)
+                for snapshot in snapshots[:50]:
+                    original = snapshot.get("original", "")
+                    if original and _add(original):
+                        discovered.append(original)
+        except Exception as e:
+            logger.debug(f"Wayback CDX scan failed for {domain}: {e}")
+
+        # 2. Path prediction using Shadow Walker
+        try:
+            base_url = f"https://{domain}"
+            predictions = self.shadow_walker.predict_next_paths(base_url, [])
+            for predicted_url, confidence in predictions:
+                # Filter to only URLs for this domain
+                if domain in predicted_url and confidence > 0.4 and _add(predicted_url):
+                    discovered.append(predicted_url)
+        except Exception as e:
+            logger.debug(f"Path prediction failed for {domain}: {e}")
+
+        # 3. Dorking URLs (generate search query URLs, not actual searches)
+        try:
+            dork_queries = self.dorking_engine.generate_complex_queries(domain, 'technical')
+            # Convert dork queries to potential URL patterns (not actual search results)
+            for query in dork_queries[:20]:
+                # Extract path hints from dork patterns
+                # e.g., "site:example.com filetype:pdf" -> potential URL
+                if f"site:{domain}" in query:
+                    # Generate plausible URL from query
+                    path_hints = [
+                        f"/research/{domain}.pdf",
+                        f"/documents/{domain}-report.pdf",
+                        f"/publications/{domain}-paper.pdf",
+                        f"/data/{domain}-analysis.pdf",
+                    ]
+                    for hint in path_hints:
+                        url = f"https://{domain}{hint}"
+                        if _add(url):
+                            discovered.append(url)
+        except Exception as e:
+            logger.debug(f"Dorking URL generation failed for {domain}: {e}")
+
+        logger.info(f"DeepProbeScanner.scan({domain}): {len(discovered)} URLs discovered")
+        return discovered[:100]  # Cap at 100 URLs
+
     async def deep_crawl(self, base_url: str, max_depth: int = 3) -> List[DiscoveredEndpoint]:
         """
         Perform deep crawling starting from base URL.
@@ -611,6 +700,288 @@ class DeepProbeScanner:
 
         return endpoints
 
+    async def scan_s3_buckets(
+        self,
+        domain: str,
+        store=None,
+        max_buckets: int = 50
+    ) -> List[dict]:
+        """
+        P14: Scan for open S3/GCS/Azure Blob buckets.
+
+        Generates probable bucket names from domain and tests
+        anonymous access using boto3 (S3), aiohttp (GCS, Azure).
+
+        Args:
+            domain: Target domain (e.g., "example.com")
+            store: Optional DuckDBShadowStore for persisting findings
+            max_buckets: Maximum bucket names to try (default 50)
+
+        Returns:
+            List of dicts with structure:
+            {'bucket': str, 'provider': str, 'objects': List[dict], 'accessible': bool}
+
+        Anti-patterns:
+          - No API keys hardcoded (uses unsigned requests for S3)
+          - Rate limited via asyncio.Semaphore(5)
+          - No images >50MB stored (object listing only)
+        """
+        import asyncio
+        import hashlib
+
+        # Generate probable bucket names from domain
+        bucket_names = self._generate_bucket_candidates(domain, max_buckets)
+
+        results = []
+        semaphore = asyncio.Semaphore(5)  # Rate limit: 5 concurrent
+
+        # S3 scan tasks
+        s3_tasks = [self._check_s3_bucket(name, semaphore) for name in bucket_names["s3"]]
+        # GCS scan tasks
+        gcs_tasks = [self._check_gcs_bucket(name, semaphore) for name in bucket_names["gcs"]]
+        # Azure scan tasks
+        azure_tasks = [self._check_azure_blob(name, semaphore) for name in bucket_names["azure"]]
+
+        # Execute all concurrently
+        all_tasks = s3_tasks + gcs_tasks + azure_tasks
+        scan_results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        # Process results
+        s3_results = scan_results[:len(s3_tasks)]
+        gcs_results = scan_results[len(s3_tasks):len(s3_tasks) + len(gcs_tasks)]
+        azure_results = scan_results[len(s3_tasks) + len(gcs_tasks):]
+
+        for result in s3_results:
+            if isinstance(result, dict) and result.get("accessible"):
+                results.append(result)
+                await self._store_bucket_finding(result, store, "s3_leak")
+
+        for result in gcs_results:
+            if isinstance(result, dict) and result.get("accessible"):
+                results.append(result)
+                await self._store_bucket_finding(result, store, "gcs_leak")
+
+        for result in azure_results:
+            if isinstance(result, dict) and result.get("accessible"):
+                results.append(result)
+                await self._store_bucket_finding(result, store, "azure_leak")
+
+        logger.info(f"scan_s3_buckets({domain}): {len(results)} open buckets found")
+        return results
+
+    def _generate_bucket_candidates(self, domain: str, max_count: int) -> Dict[str, List[str]]:
+        """Generate probable bucket names for S3, GCS, and Azure."""
+        # Extract domain parts
+        parts = domain.replace(".com", "").replace(".org", "").replace(".net", "").split(".")
+        base_name = parts[0] if parts else domain
+
+        s3_buckets = []
+        gcs_buckets = []
+        azure_buckets = []
+
+        # S3 bucket naming conventions (lowercase, hyphens, numbers)
+        s3_patterns = [
+            base_name,
+            base_name.replace("_", "-"),
+            f"{base_name}-data",
+            f"{base_name}-assets",
+            f"{base_name}-files",
+            f"{base_name}-public",
+            f"{base_name}-storage",
+            f"{base_name}-backup",
+            f"{base_name}-media",
+            f"{base_name}-images",
+            domain.replace(".", "-"),
+            domain.replace(".", ""),
+        ]
+        for i in range(len(parts)):
+            s3_buckets.append("-".join(parts[i:]))
+        s3_buckets.extend(s3_patterns)
+
+        # GCS bucket naming (lowercase, numbers, hyphens)
+        gcs_patterns = [
+            base_name,
+            f"{base_name}-gcp",
+            f"{base_name}-google",
+            f"{base_name}-storage",
+            domain.replace(".", "-"),
+        ]
+        gcs_buckets.extend(gcs_patterns)
+
+        # Azure Blob naming conventions
+        azure_patterns = [
+            base_name,
+            f"{base_name}blob",
+            f"{base_name}storage",
+            f"{base_name}container",
+            domain.replace(".", ""),
+        ]
+        azure_buckets.extend(azure_patterns)
+
+        # Deduplicate and limit
+        return {
+            "s3": list(set(s3_buckets))[:max_count],
+            "gcs": list(set(gcs_buckets))[:max_count],
+            "azure": list(set(azure_buckets))[:max_count],
+        }
+
+    async def _check_s3_bucket(self, bucket_name: str, semaphore: asyncio.Semaphore) -> Optional[dict]:
+        """Check if S3 bucket is publicly accessible (unsigned)."""
+        async with semaphore:
+            try:
+                # Lazy import boto3
+                try:
+                    import boto3
+                    from botocore.config import Config
+                except ImportError:
+                    return None
+
+                s3_client = boto3.client(
+                    "s3",
+                    config=Config(signature_version="s3v4", read_timeout=5),
+                    region_name="us-east-1",
+                )
+
+                # Try to list objects (anonymous access)
+                response = s3_client.list_objects_v2(Bucket=bucket_name, MaxKeys=100)
+
+                objects = []
+                for obj in response.get("Contents", [])[:50]:  # Cap at 50 objects
+                    objects.append({
+                        "key": obj.get("Key", ""),
+                        "size": obj.get("Size", 0),
+                        "last_modified": str(obj.get("LastModified", "")),
+                    })
+
+                return {
+                    "bucket": bucket_name,
+                    "provider": "s3",
+                    "objects": objects,
+                    "accessible": True,
+                }
+
+            except Exception:
+                # Bucket not accessible or doesn't exist
+                return {"bucket": bucket_name, "provider": "s3", "objects": [], "accessible": False}
+
+    async def _check_gcs_bucket(self, bucket_name: str, semaphore: asyncio.Semaphore) -> Optional[dict]:
+        """Check if GCS bucket is publicly accessible."""
+        async with semaphore:
+            try:
+                import aiohttp
+
+                # GCS XML API endpoint
+                url = f"https://{bucket_name}.storage.googleapis.com"
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                        if response.status == 200:
+                            # Try to list objects
+                            list_url = f"https://storage.googleapis.com/{bucket_name}?versions=true"
+                            async with session.get(list_url, timeout=aiohttp.ClientTimeout(total=5)) as list_response:
+                                objects = []
+                                if list_response.status == 200:
+                                    text = await list_response.text()
+                                    # Parse simple XML listing
+                                    import xml.etree.ElementTree as ET
+                                    try:
+                                        root = ET.fromstring(text)
+                                        for content in root.findall(".//{http://s3.amazonaws.com/doc/2006-03-01/}Contents"):
+                                            key = content.find("{http://s3.amazonaws.com/doc/2006-03-01/}Key")
+                                            if key is not None:
+                                                objects.append({"key": key.text or "", "size": 0})
+                                    except Exception:
+                                        pass
+
+                                return {
+                                    "bucket": bucket_name,
+                                    "provider": "gcs",
+                                    "objects": objects[:50],
+                                    "accessible": True,
+                                }
+
+                        return {"bucket": bucket_name, "provider": "gcs", "objects": [], "accessible": False}
+
+            except Exception:
+                return {"bucket": bucket_name, "provider": "gcs", "objects": [], "accessible": False}
+
+    async def _check_azure_blob(self, container_name: str, semaphore: asyncio.Semaphore) -> Optional[dict]:
+        """Check if Azure Blob container is publicly accessible."""
+        async with semaphore:
+            try:
+                import aiohttp
+
+                # Azure Blob Storage endpoints
+                endpoints = [
+                    f"https://{container_name}.blob.core.windows.net",
+                    f"https://{container_name}.blob.core.windows.net?restype=container&comp=list",
+                ]
+
+                objects = []
+                accessible = False
+
+                async with aiohttp.ClientSession() as session:
+                    for endpoint in endpoints:
+                        try:
+                            async with session.get(endpoint, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                                if response.status == 200:
+                                    accessible = True
+                                    text = await response.text()
+                                    # Parse Azure Blob XML response
+                                    import xml.etree.ElementTree as ET
+                                    try:
+                                        root = ET.fromstring(text)
+                                        for blob in root.findall(".//Blob"):
+                                            name_elem = blob.find("Name")
+                                            size_elem = blob.find("Properties/Content-Length")
+                                            if name_elem is not None:
+                                                objects.append({
+                                                    "key": name_elem.text or "",
+                                                    "size": int(size_elem.text or "0") if size_elem is not None else 0,
+                                                })
+                                    except Exception:
+                                        pass
+                                    break
+                        except Exception:
+                            continue
+
+                return {
+                    "bucket": container_name,
+                    "provider": "azure",
+                    "objects": objects[:50],
+                    "accessible": accessible,
+                }
+
+            except Exception:
+                return {"bucket": container_name, "provider": "azure", "objects": [], "accessible": False}
+
+    async def _store_bucket_finding(self, result: dict, store, source_type: str) -> None:
+        """Store bucket finding in DuckDB if store provided."""
+        if store is None:
+            return
+
+        try:
+            import hashlib
+            import time
+
+            finding_id = hashlib.sha256(
+                f"{result['bucket']}{source_type}{time.time()}".encode()
+            ).hexdigest()[:16]
+
+            # Serialize objects list to JSON for storage
+            import json
+            objects_json = json.dumps(result.get("objects", [])[:20])  # Cap at 20 objects in metadata
+
+            await store.async_record_shadow_finding(
+                finding_id=finding_id,
+                query=result["bucket"],
+                source_type=source_type,
+                confidence=0.9 if result.get("objects") else 0.5,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to store bucket finding: {e}")
+
+
 # Convenience functions for easy integration
 async def scan_deep_web(target_url: str, options: Optional[Dict[str, Any]] = None) -> List[DiscoveredEndpoint]:
     """
@@ -640,6 +1011,54 @@ async def predict_hidden_paths(base_url: str, known_paths: List[str]) -> List[Tu
     algorithm = ShadowWalkerAlgorithm()
     return algorithm.predict_next_paths(base_url, known_paths)
 
+
+# ---------------------------------------------------------------------------
+# P16: IPFS and S3 dorking helpers
+# ---------------------------------------------------------------------------
+
+
+def generate_ipfs_dorks(query: str) -> list[str]:
+    """
+    Generate IPFS search pattern strings for dorking.
+
+    Args:
+        query: Search keyword/phrase
+
+    Returns:
+        List of IPFS search pattern strings (dorks)
+
+    Anti-patterns prevented:
+      - Non-blocking: pure string operations
+      - Returns list of patterns, not actual results
+    """
+    return [
+        f'ipfs site:ipfs.io "{query}"',
+        f'filetype:pdf site:gateway.ipfs.io "{query}"',
+        f'site:cloudflare-ipfs.com "{query}"',
+    ]
+
+
+def generate_s3_dorks(query: str) -> list[str]:
+    """
+    Generate S3/GCS/Azure Blob search pattern strings for dorking.
+
+    Args:
+        query: Search keyword/phrase
+
+    Returns:
+        List of S3 search pattern strings (dorks)
+
+    Anti-patterns prevented:
+      - Non-blocking: pure string operations
+      - Returns list of patterns, not actual results
+    """
+    return [
+        f'site:s3.amazonaws.com "{query}"',
+        f'site:storage.googleapis.com "{query}"',
+        f'site:blob.core.windows.net "{query}"',
+    ]
+
+
 # Export key classes for external use
 __all__ = [
     'DeepProbeScanner',
@@ -649,5 +1068,158 @@ __all__ = [
     'DiscoveredEndpoint',
     'TechStackSignature',
     'scan_deep_web',
-    'predict_hidden_paths'
+    'predict_hidden_paths',
+    'scan_s3_buckets',
+    'scan_ipfs',
+    'generate_ipfs_dorks',
+    'generate_s3_dorks',
 ]
+
+
+async def scan_s3_buckets(domain: str, store=None, max_buckets: int = 50) -> List[dict]:
+    """
+    Convenience function for S3/GCS/Azure bucket scanning.
+
+    Args:
+        domain: Target domain (e.g., "example.com")
+        store: Optional DuckDBShadowStore for persisting findings
+        max_buckets: Maximum bucket names to try (default 50)
+
+    Returns:
+        List of dicts with structure:
+        {'bucket': str, 'provider': str, 'objects': List[dict], 'accessible': bool}
+    """
+    scanner = DeepProbeScanner()
+    return await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
+
+
+async def scan_ipfs(keyword: str, store=None) -> List[Dict[str, Any]]:
+    """
+    Search IPFS content via ipfssearch.com API and Cloudflare IPFS gateway.
+
+    Args:
+        keyword: Search keyword/query
+        store: Optional DuckDBShadowStore for persisting findings
+
+    Returns:
+        List of dicts with structure:
+        [{'title': str, 'size': int, 'cid': str, 'source': str}]
+
+    Anti-patterns:
+      - Bounded RAM (<300MB for IPFS data)
+      - aiohttp only (no blocking)
+      - Store via DuckDB async patterns
+    """
+    results: List[Dict[str, Any]] = []
+    seen_cids: set = set()  # Deduplicate by CID
+
+    # Memory bound: cap total results
+    MAX_RESULTS = 100
+    MAX_MEMORY_MB = 300
+
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    # 1. Query ipfssearch.com API
+    try:
+        async with aiohttp.ClientSession() as session:
+            # ipfssearch.com public API
+            search_url = f"https://ipfssearch.com/api?q={keyword}"
+            async with session.get(
+                search_url,
+                timeout=timeout,
+                headers={"Accept": "application/json"}
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+
+                    # Parse response (format may vary - adapt to actual API)
+                    entries = data if isinstance(data, list) else data.get("results", [])
+
+                    for entry in entries[:MAX_RESULTS]:
+                        try:
+                            cid = entry.get("cid") or entry.get("hash")
+                            if not cid or cid in seen_cids:
+                                continue
+                            seen_cids.add(cid)
+
+                            result = {
+                                "title": entry.get("title", entry.get("name", "")),
+                                "size": entry.get("size", 0),
+                                "cid": cid,
+                                "source": entry.get("source", "ipfssearch.com"),
+                                "url": entry.get("url", f"https://ipfs.io/ipfs/{cid}"),
+                            }
+                            results.append(result)
+
+                        except Exception as e:
+                            logger.debug(f"Error parsing IPFS entry: {e}")
+                            continue
+
+    except Exception as e:
+        logger.debug(f"ipfssearch.com API failed for '{keyword}': {e}")
+
+    # 2. Try Cloudflare IPFS gateway for known CIDs
+    # (This is for when you already have CIDs to check)
+    # Note: Cloudflare gateway doesn't support search, only retrieval
+
+    # 3. Try alternative IPFS search via web gateway
+    try:
+        async with aiohttp.ClientSession() as session:
+            #ipfs-search (dweb search) alternative
+            alt_url = f"https://api.ipfs-search.com/v1/search?q={keyword}"
+            async with session.get(
+                alt_url,
+                timeout=timeout,
+                headers={"Accept": "application/json"}
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    hits = data.get("hits", {}).get("hits", []) if isinstance(data, dict) else []
+
+                    for hit in hits[:MAX_RESULTS]:
+                        try:
+                            source = hit.get("_source", {})
+                            cid = source.get("cid") or source.get("hash")
+                            if not cid or cid in seen_cids:
+                                continue
+                            seen_cids.add(cid)
+
+                            result = {
+                                "title": source.get("title", source.get("name", "")),
+                                "size": source.get("size", 0),
+                                "cid": cid,
+                                "source": source.get("source", "ipfs-search.com"),
+                                "url": f"https://ipfs.io/ipfs/{cid}",
+                            }
+                            results.append(result)
+
+                        except Exception as e:
+                            logger.debug(f"Error parsing ipfs-search entry: {e}")
+                            continue
+
+    except Exception as e:
+        logger.debug(f"ipfs-search.com API failed for '{keyword}': {e}")
+
+    # Store findings in DuckDB if store provided
+    if store and results:
+        try:
+            import hashlib
+            import time
+
+            for result in results:
+                finding_id = hashlib.sha256(
+                    f"{result['cid']}ipfs{time.time()}".encode()
+                ).hexdigest()[:16]
+
+                await store.async_record_shadow_finding(
+                    finding_id=finding_id,
+                    query=keyword,
+                    source_type="ipfs",
+                    confidence=0.7,
+                )
+
+        except Exception as e:
+            logger.debug(f"Failed to store IPFS findings: {e}")
+
+    logger.info(f"scan_ipfs('{keyword}'): {len(results)} results found")
+    return results

@@ -190,6 +190,7 @@ class PrivacyConfig:
     # DNS
     enable_dns_encryption: bool = True
     dns_servers: List[str] = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
+    use_doh: bool = False  # P16: DNS-over-HTTPS via resolve_doh before fetch
     
     # Encryption
     enable_encryption: bool = True

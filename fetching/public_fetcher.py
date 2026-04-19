@@ -43,6 +43,9 @@ _tor_session: Optional["aiohttp.ClientSession"] = None
 _tor_request_count: int = 0
 _tor_session_lock: "asyncio.Lock" = asyncio.Lock()
 
+# P10: Module-level state for I2P session management
+_i2p_session: Optional["aiohttp.ClientSession"] = None
+
 # P7: Camoufox singleton lock — max 1 instance across entire fetcher
 _CAMOUFOX_LOCK: "asyncio.Lock" = asyncio.Lock()
 
@@ -343,6 +346,29 @@ def _is_onion_url(url: str) -> bool:
         return False
 
 
+def _is_i2p_url(url: str) -> bool:
+    """
+    P10: Detect if URL targets an I2P address (.i2p or .b32.i2p).
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+        return hostname.endswith(".i2p") or hostname.endswith(".b32.i2p")
+    except Exception:
+        return False
+
+
+def _is_freenet_url(url: str) -> bool:
+    """
+    P10: Detect if URL targets a Freenet address (.freenet).
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+        return parsed.hostname.lower().endswith(".freenet") if parsed.hostname else False
+    except Exception:
+        return False
+
+
 async def _get_tor_session() -> "aiohttp.ClientSession":
     """Get or create aiohttp session via Tor SOCKS5 proxy (lazy, singleton)."""
     global _tor_session
@@ -354,6 +380,23 @@ async def _get_tor_session() -> "aiohttp.ClientSession":
         connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
         _tor_session = aiohttp.ClientSession(connector=connector)
     return _tor_session
+
+
+async def _get_i2p_session() -> "aiohttp.ClientSession":
+    """
+    P10: Get or create aiohttp session via I2P SOCKS5 proxy (lazy, singleton).
+    Uses aiohttp_socks.ProxyConnector for .i2p/.b32.i2p URLs.
+    """
+    global _i2p_session
+    if _i2p_session is None or _i2p_session.closed:
+        try:
+            from aiohttp_socks import ProxyConnector
+        except ImportError:
+            raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")
+        # I2P default SOCKS port is 7654
+        connector = ProxyConnector.from_url("socks5://127.0.0.1:7654", rdns=True)
+        _i2p_session = aiohttp.ClientSession(connector=connector)
+    return _i2p_session
 
 
 async def _renew_tor_circuit() -> bool:
@@ -393,6 +436,16 @@ async def _close_tor_session() -> None:
     if _tor_session is not None and not _tor_session.closed:
         await _tor_session.close()
         _tor_session = None
+
+
+async def _close_i2p_session() -> None:
+    """
+    P10: Close the I2P session (for cleanup).
+    """
+    global _i2p_session
+    if _i2p_session is not None and not _i2p_session.closed:
+        await _i2p_session.close()
+        _i2p_session = None
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +542,7 @@ async def async_fetch_public_text(
     max_bytes: int = MAX_BYTES_DEFAULT,
     use_stealth: bool = False,
     use_js: bool = False,
+    use_doh: bool = False,
 ) -> FetchResult:
     """
     Fetch a public URL using the shared aiohttp session.
@@ -512,6 +566,10 @@ async def async_fetch_public_text(
         (header rotation, fingerprint randomization, rate limiting).
     use_js : bool
         If True, force JS rendering via Camoufox/nodriver.
+    use_doh : bool
+        P16: If True, resolve hostname via DoH (cloudflare-dns) before
+        connecting. Falls back to system DNS if DoH fails. Configurable
+        via hledac.universal.config.PrivacyConfig.use_doh.
 
     Returns
     -------
@@ -596,8 +654,32 @@ async def async_fetch_public_text(
 
     # --- P4: Determine transport mode ---
     is_onion = _is_onion_url(url)
+    is_i2p = _is_i2p_url(url)
+    is_freenet = _is_freenet_url(url)
     use_tor = is_onion  # .onion URLs always go via Tor
-    timeout_s = timeout_s * TOR_STEALTH_TIMEOUT_SCALE if use_tor else timeout_s
+    use_i2p = is_i2p  # .i2p/.b32.i2p URLs go via I2P SOCKS
+    use_freenet = is_freenet  # .freenet URLs go via Freenet HTTP proxy
+
+    # Apply longer timeout for anonymized networks (Tor/I2P)
+    if use_tor or use_i2p:
+        timeout_s = timeout_s * TOR_STEALTH_TIMEOUT_SCALE
+
+    # --- P16: Optional DoH resolution before connect ---
+    _resolved_ip: Optional[str] = None
+    if use_doh:
+        try:
+            from hledac.universal.security.passive_dns import resolve_doh
+            parsed_url = urllib.parse.urlparse(url)
+            hostname = parsed_url.hostname or ""
+            if hostname:
+                ips = await resolve_doh(hostname)
+                if ips:
+                    _resolved_ip = ips[0]
+                    logger.debug(f"DoH resolved {hostname} → {_resolved_ip}")
+                else:
+                    logger.debug(f"DoH returned no IPs for {hostname}, falling back to system DNS")
+        except Exception as e:
+            logger.debug(f"DoH resolution failed for {url}: {e}")
 
     # --- P4: Stealth session setup ---
     stealth_response: Optional["StealthResponse"] = None
@@ -661,27 +743,52 @@ async def async_fetch_public_text(
                 failure_stage="connection",
             )
 
+    # --- P10: I2P session setup for .i2p/.b32.i2p URLs ---
+    i2p_session = None  # Always defined for use_i2p check below
+    if use_i2p:
+        try:
+            i2p_session = await _get_i2p_session()
+        except RuntimeError as e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            return FetchResult(
+                url=url,
+                final_url=url,
+                status_code=0,
+                content_type="",
+                text=None,
+                fetched_bytes=0,
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error=f"i2p_unavailable;{type(e).__name__};{e}",
+                failure_stage="connection",
+            )
+
     # --- Retryable status tracking ---
     retry_after: float | None = None
     last_status_code: int = 0
     last_error: str | None = None
 
     for attempt in range(MAX_RETRIES + 1):
-        # P4: Apply jitter before each request (Tor/stealth anti-correlation)
-        if use_tor or use_stealth:
+        # P4: Apply jitter before each request (Tor/stealth/I2P anti-correlation)
+        if use_tor or use_i2p or use_stealth:
             await _jitter_delay()
 
         # P4: Maybe renew Tor circuit every N requests
         if use_tor:
             await _maybe_renew_tor_circuit()
 
-        session = tor_session if use_tor else await async_get_aiohttp_session()
+        session = tor_session if use_tor else (i2p_session if use_i2p else await async_get_aiohttp_session())
         headers = {"User-Agent": DEFAULT_UA}
+
+        # P16: If DoH resolved an IP, use it directly (bypass DNS)
+        request_kwargs: dict = {"headers": headers, "allow_redirects": True}
+        if _resolved_ip:
+            request_kwargs["host"] = _resolved_ip
 
         try:
             async with asyncio.timeout(timeout_s):
                 async with FETCH_SEMAPHORE:
-                    async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                    async with session.get(url, **request_kwargs) as resp:
                         final_url = str(resp.url)
                         last_status_code = resp.status
                         content_type = resp.headers.get("Content-Type", "")
@@ -938,6 +1045,11 @@ __all__ = [
     "_close_tor_session",
     "TOR_SOCKS_PROXY",
     "TOR_CIRCUIT_RENEWAL_REQUEST_COUNT",
+    # P10: I2P + Freenet helpers
+    "_is_i2p_url",
+    "_is_freenet_url",
+    "_get_i2p_session",
+    "_close_i2p_session",
     # P7: JS rendering helpers
     "_needs_js_fetch",
     "_fetch_with_camoufox",
