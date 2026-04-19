@@ -32,7 +32,7 @@ from enum import Enum
 from typing import Any, Dict, Optional, Set, Callable, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .types import AnalyzerResult
+    from .project_types import AnalyzerResult
     MLX_AVAILABLE: bool
     mx: Any
 from dataclasses import dataclass

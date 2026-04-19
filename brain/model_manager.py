@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable, Literal
 from enum import Enum, auto
 
-from hledac.universal.resource_allocator import adjust_fetch_workers
+from hledac.universal import adjust_fetch_workers
 
 # Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
 # DO NOT add top-level `import mlx.core as mx` here.
@@ -486,6 +486,48 @@ class ModelManager:
         async with self._lock:
             return await self._load_model_async(model_name)
 
+    async def _ensure_hermes_model_downloaded(self) -> None:
+        """
+        Ensure Hermes-3 model is downloaded. If not present, downloads it.
+        During download, reduces HTTP worker pool from 25 to 3 to conserve memory.
+        After download completes, restores full concurrency.
+        """
+        try:
+            import mlx_lm
+        except ImportError:
+            logger.error("[MODEL DOWNLOAD] mlx_lm not available - cannot download Hermes")
+            raise RuntimeError("mlx_lm required for Hermes model download")
+
+        model_id = "mlx-community/Hermes-3-Llama-3.2-3B-4bit"
+
+        # Check if model exists locally (mlx_lm caches in ~/.cache/huggingface/)
+        try:
+            # Try to get model info - this will fail if not downloaded
+            mlx_lm.load(model_id)
+            logger.info(f"[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}")
+            return
+        except Exception:
+            pass  # Model not cached, proceed with download
+
+        logger.info(f"[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...")
+        logger.info("[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download")
+
+        # Reduce HTTP concurrency during download to conserve memory
+        await adjust_fetch_workers(3)
+
+        try:
+            # Download the model
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: mlx_lm.download(model_id)
+            )
+            logger.info(f"[MODEL DOWNLOAD] Hermes-3 downloaded successfully")
+        finally:
+            # Restore full HTTP concurrency
+            logger.info("[MODEL DOWNLOAD] Restoring HTTP worker pool to 25")
+            await adjust_fetch_workers(25)
+
     async def _load_model_async(self, model_name: str) -> Any:
         """Interní async implementace načtení modelu."""
         # FIX 0: Per-model lock to prevent TOCTOU race condition
@@ -494,6 +536,10 @@ class ModelManager:
             model_type = self.MODEL_REGISTRY.get(model_key)
             if model_type is None:
                 raise ValueError(f"Unknown model: {model_name}")
+
+            # P8: Ensure Hermes model is downloaded before first load
+            if model_type == ModelType.HERMES:
+                await self._ensure_hermes_model_downloaded()
 
             # FIX 8: Check RAM pressure before loading
             self._check_memory_pressure()

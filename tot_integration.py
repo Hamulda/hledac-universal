@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Import types
-from .types import ComplexityAnalysis, ResearchResult
+from .project_types import ComplexityAnalysis, ResearchResult
 
 # Lazy import ToT components to avoid heavy loading
 TOT_AVAILABLE = False

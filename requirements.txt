@@ -1,3 +1,13 @@
+# Required dependencies for Hledac Universal
+aiosqlite>=0.19.0
+camoufox[geoip]>=1.0.0
+nodriver>=0.1.0
+pytesseract>=0.3.10
+stem>=1.8.0
+dnspython>=2.4.0
+aiobtcdht>=0.1.0
+aiohttp-socks>=0.8.0
+
 # torch and torchvision are optional — install via:
 #   pip install -r requirements-optional.txt
 # or for Apple Silicon MPS:

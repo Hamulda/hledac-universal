@@ -19,7 +19,7 @@ New features go to windup_engine or types.py, not here.
 from typing import TYPE_CHECKING, Any, Dict
 
 if TYPE_CHECKING:
-    from hledac.universal.types import ExportHandoff  # noqa: F401
+    from hledac.universal.project_types import ExportHandoff  # noqa: F401
 
 
 def ensure_export_handoff(
@@ -56,7 +56,7 @@ def ensure_export_handoff(
           New features go to windup_engine or types.py ExportHandoff.from_windup().
     """
     # Import we need it at runtime
-    from hledac.universal.types import ExportHandoff as TypesExportHandoff
+    from hledac.universal.project_types import ExportHandoff as TypesExportHandoff
 
     if handoff is None:
         # Compat seam B: defensive None handling

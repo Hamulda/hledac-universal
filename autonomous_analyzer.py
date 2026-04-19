@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from .types import ComplexityAnalysis
+from .project_types import ComplexityAnalysis
 
 logger = logging.getLogger(__name__)
 

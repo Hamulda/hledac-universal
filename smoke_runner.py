@@ -4,7 +4,7 @@ SMOKE RUNNER — DIAGNOSTIC ONLY, NOT CANONICAL SPRINT PATH
 ==========================================================
 
 .. role::
-    DIAGNOSTIC_TOOL: Tento modul je DIAGNOSTICKÝ nástroj, NENÍ production sprint owner.
+    DIAGNOSTIC_TOOL: Tento modul je DIAGNICKÝ nástroj, NENÍ production sprint owner.
 
 .. canonical_path::
     Canonical sprint owner: ``core.__main__:run_sprint()``
@@ -30,9 +30,11 @@ SMOKE RUNNER — DIAGNOSTIC ONLY, NOT CANONICAL SPRINT PATH
 
 Použití:
     python smoke_runner.py
+    python smoke_runner.py --smoke  # Lightweight smoke test without network
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -46,6 +48,99 @@ logging.basicConfig(
 )
 
 log = logging.getLogger("smoke_runner")
+
+
+async def run_smoke_test() -> int:
+    """
+    Lightweight smoke test — verifies core imports and FETCH_SEMAPHORE
+    without requiring network or model downloads.
+
+    Returns:
+        0 on success, 1 on failure
+    """
+    log.info("=" * 60)
+    log.info("SMOKE TEST — initialization without network")
+    log.info("=" * 60)
+
+    errors = []
+
+    # 1. Test root package imports
+    log.info("[1/6] Testing root package imports...")
+    try:
+        import hledac.universal
+        from hledac.universal import FETCH_SEMAPHORE, AdaptiveSemaphore, adjust_fetch_workers
+        log.info("  ✓ Root package and FETCH_SEMAPHORE imports OK")
+    except Exception as e:
+        errors.append(f"Root package import failed: {e}")
+        log.error(f"  ✗ Root package import failed: {e}")
+
+    # 2. Test AdaptiveSemaphore initialization
+    log.info("[2/6] Testing AdaptiveSemaphore...")
+    try:
+        sem = AdaptiveSemaphore(initial_value=10)
+        assert sem.current_limit == 10, f"Expected limit 10, got {sem.current_limit}"
+        log.info(f"  ✓ AdaptiveSemaphore initialized with limit={sem.current_limit}")
+    except Exception as e:
+        errors.append(f"AdaptiveSemaphore test failed: {e}")
+        log.error(f"  ✗ AdaptiveSemaphore test failed: {e}")
+
+    # 3. Test FETCH_SEMAPHORE is AdaptiveSemaphore
+    log.info("[3/6] Verifying FETCH_SEMAPHORE is AdaptiveSemaphore...")
+    try:
+        assert isinstance(FETCH_SEMAPHORE, AdaptiveSemaphore), \
+            f"Expected AdaptiveSemaphore, got {type(FETCH_SEMAPHORE)}"
+        log.info(f"  ✓ FETCH_SEMAPHORE is AdaptiveSemaphore with limit={FETCH_SEMAPHORE.current_limit}")
+    except Exception as e:
+        errors.append(f"FETCH_SEMAPHORE type check failed: {e}")
+        log.error(f"  ✗ FETCH_SEMAPHORE type check failed: {e}")
+
+    # 4. Test adjust_fetch_workers modifies semaphore
+    log.info("[4/6] Testing adjust_fetch_workers dynamic adjustment...")
+    try:
+        original_limit = FETCH_SEMAPHORE.current_limit
+        await adjust_fetch_workers(5)
+        assert FETCH_SEMAPHORE._value == 5, f"Expected semaphore._value=5, got {FETCH_SEMAPHORE._value}"
+        log.info(f"  ✓ adjust_fetch_workers(5) worked — semaphore._value={FETCH_SEMAPHORE._value}")
+
+        # Restore original limit
+        await adjust_fetch_workers(25)
+        log.info(f"  ✓ Restored FETCH_SEMAPHORE to 25")
+    except Exception as e:
+        errors.append(f"adjust_fetch_workers test failed: {e}")
+        log.error(f"  ✗ adjust_fetch_workers test failed: {e}")
+
+    # 5. Test project_types import
+    log.info("[5/6] Testing project_types import (types.py stub)...")
+    try:
+        from hledac.universal import project_types
+        from hledac.universal.project_types import ResearchMode
+        assert ResearchMode is not None
+        log.info("  ✓ project_types import OK, ResearchMode accessible")
+    except Exception as e:
+        errors.append(f"project_types import failed: {e}")
+        log.error(f"  ✗ project_types import failed: {e}")
+
+    # 6. Test model_manager imports
+    log.info("[6/6] Testing model_manager imports...")
+    try:
+        from hledac.universal.brain.model_manager import ModelManager, get_model_manager
+        manager = get_model_manager()
+        assert manager is not None
+        log.info("  ✓ ModelManager singleton accessible")
+    except Exception as e:
+        errors.append(f"model_manager import failed: {e}")
+        log.error(f"  ✗ model_manager import failed: {e}")
+
+    log.info("=" * 60)
+    if errors:
+        log.error("SMOKE TEST FAILED")
+        for err in errors:
+            log.error(f"  - {err}")
+        return 1
+    else:
+        log.info("SMOKE TEST PASSED — all checks OK")
+        log.info("=" * 60)
+        return 0
 
 
 async def main() -> int:
@@ -147,10 +242,20 @@ def run_sprint_import_test() -> bool:
 
 
 if __name__ == "__main__":
-    # Nejdřív import test
-    if not run_sprint_import_test():
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Hledac Smoke Runner")
+    parser.add_argument("--smoke", action="store_true",
+                        help="Run lightweight smoke test without network")
+    args = parser.parse_args()
 
-    # Pak sprint
-    exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+    if args.smoke:
+        # Lightweight smoke test
+        exit_code = asyncio.run(run_smoke_test())
+        sys.exit(exit_code)
+    else:
+        # Nejdřív import test
+        if not run_sprint_import_test():
+            sys.exit(1)
+
+        # Pak sprint
+        exit_code = asyncio.run(main())
+        sys.exit(exit_code)

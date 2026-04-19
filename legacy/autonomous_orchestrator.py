@@ -639,7 +639,7 @@ def _map_exception_to_result_type(
         return "TIMEOUT"
 
     # OfflineModeError is explicit offline mode
-    from .types import OfflineModeError
+    from .project_types import OfflineModeError
     if isinstance(exception, OfflineModeError):
         return "NETWORK_UNAVAILABLE"
 
@@ -1644,7 +1644,7 @@ mlx_load = None
 
 # Config and types
 from .config import UniversalConfig, create_config
-from .types import (
+from .project_types import (
     ActionType, AgentState, DecisionContext, DecisionRequest,
     ExecutionContext, ExplorationStrategy, GhostConfig, MemoryConfig,
     ModelConfig, ObfuscationLevel, OperationType, OrchestratorState,
@@ -2455,7 +2455,7 @@ def _load_snn_engine():
         SNN_ENGINE_AVAILABLE = True
         from ..neuromorphic.snn_engine import SNNEngine
         SNN_ENGINE_AVAILABLE = True
-        from .types import SNNConfig, STDPParams, NeuronParameters
+        from .project_types import SNNConfig, STDPParams, NeuronParameters
 
     except ImportError:
         SNN_ENGINE_AVAILABLE = False
@@ -4321,7 +4321,7 @@ class FullyAutonomousOrchestrator:
             return ActionResult(success=False, error="No domain provided", findings=[], metadata={'v2': True})
 
         # Sprint 85: Offline mode fast-fail
-        from .types import is_offline_mode
+        from .project_types import is_offline_mode
         if is_offline_mode():
             return ActionResult(success=False, error="Offline mode", findings=[], metadata={'offline': True, 'v2': True})
 
@@ -23268,7 +23268,7 @@ class _ResearchManager:
             return False
 
         try:
-            from .types import SNNConfig, STDPParams, NeuronParameters
+            from .project_types import SNNConfig, STDPParams, NeuronParameters
 
             config = SNNConfig(
                 n_neurons=500,  # Reduced for M1 8GB

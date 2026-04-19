@@ -55,7 +55,7 @@ import pathlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from hledac.universal.types import ExportHandoff
+    from hledac.universal.project_types import ExportHandoff
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def export_sprint(
     # Canonical producer (__main__) always passes typed ExportHandoff.
     # ensure_export_handoff() normalizes typed/non-typed at consumer boundary —
     # dict/None compat preserved but NOT exercised by canonical producer.
-    from hledac.universal.types import ExportHandoff as TypesExportHandoff
+    from hledac.universal.project_types import ExportHandoff as TypesExportHandoff
     eh = ensure_export_handoff(handoff, default_sprint_id=sprint_id or "unknown")
 
     # Resolve sprint_id — prefer from handoff (typed path)

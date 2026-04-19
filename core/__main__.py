@@ -932,7 +932,7 @@ async def run_sprint(
         # public_verdict/branch_value/sprint_verdict), runtime_truth, canonical_run_summary.
         # Additive + fail-soft only — exporter failure does not crash sprint.
         try:
-            from hledac.universal.types import ExportHandoff
+            from hledac.universal.project_types import ExportHandoff
 
             top_seed_nodes: list = []
             try:

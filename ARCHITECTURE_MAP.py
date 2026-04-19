@@ -358,7 +358,7 @@ A1.3 Key finding: DUAL RUNTIME AUTHORITY
   Lines 1-100 (read):
     - from .config import UniversalConfig
     - from .autonomous_orchestrator import (70+ names)
-    - from .types import (20+ types)
+    - from .project_types import (20+ types)
     - from .coordinators import (everything)
     - from .brain import (everything)
     - from .knowledge import (duckdb, lancedb, rag)

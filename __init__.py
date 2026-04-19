@@ -52,6 +52,13 @@ from .knowledge.duckdb_store import (
     create_owned_store,
 )
 
+# Resource allocator — FETCH_SEMAPHORE at root level
+from .resource_allocator import (
+    FETCH_SEMAPHORE,
+    AdaptiveSemaphore,
+    adjust_fetch_workers,
+)
+
 
 def load_optional(name: str):
     """Load an optional module by name.
@@ -100,6 +107,10 @@ __all__ = [
     "ReplayResult",
     "CanonicalFinding",
     "create_owned_store",
+    # Resource allocator
+    "FETCH_SEMAPHORE",
+    "AdaptiveSemaphore",
+    "adjust_fetch_workers",
     # Loader
     "load_optional",
 ]

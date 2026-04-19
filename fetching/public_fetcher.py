@@ -25,7 +25,7 @@ import msgspec
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.patterns.pattern_matcher import match_text
-from hledac.universal.resource_allocator import FETCH_SEMAPHORE
+from hledac.universal import FETCH_SEMAPHORE
 
 logger = logging.getLogger(__name__)
 

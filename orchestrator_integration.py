@@ -34,7 +34,7 @@ from .autonomous_orchestrator import (
     ResearchSource,
     ComprehensiveResearchResult,
 )
-from .types import ResearchMode, OrchestratorState, PrivacyLevel
+from .project_types import ResearchMode, OrchestratorState, PrivacyLevel
 from .coordinators.agent_coordination_engine import AgentType
 
 # Try to import coordinators

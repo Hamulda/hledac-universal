@@ -68,7 +68,7 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
-from .types import (
+from .project_types import (
     UniversalResearchOrchestrator,
     ResearchConfig,
     ResearchMode,
@@ -2586,7 +2586,7 @@ class DeepResearchRequest:
         # after F11 activation. Currently stored in kwargs for seam
         # propagation — engine receives but does not yet apply it (TBD).
         if self.grounding_hints:
-            from .types import CanonicalGroundingHints
+            from .project_types import CanonicalGroundingHints
             _canonical_hints = CanonicalGroundingHints.from_shim(
                 topic_hints=tuple(self.grounding_hints.get('topics', [])),
                 domain_tags=tuple(self.grounding_hints.get('domains', [])),

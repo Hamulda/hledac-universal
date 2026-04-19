@@ -53,7 +53,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import os
 
 if TYPE_CHECKING:
-    from hledac.universal.types import (
+    from hledac.universal.project_types import (
         AnalyzerResult,
         ExportHandoff,
     )
