@@ -745,6 +745,37 @@ class TotIntegrationLayer:
                 error=str(e)
             )
 
+    async def solve_with_tot(self, prompt: str) -> str:
+        """
+        P12: Evaluate if prompt is complex and run ToT if needed.
+
+        Analyzes prompt complexity using should_activate_tot(), and if
+        complexity exceeds threshold, runs ToT solver. Otherwise returns
+        empty string.
+
+        Args:
+            prompt: The hypothesis/prompt to evaluate
+
+        Returns:
+            ToT solution string, or empty string if ToT not needed/not available
+        """
+        if not prompt or not prompt.strip():
+            return ""
+
+        # Analyze complexity
+        should_use, confidence = self.should_activate_tot(prompt)
+
+        if not should_use:
+            return ""
+
+        # Run ToT if complex
+        result = await self.solve_problem(prompt)
+
+        if result.solution:
+            return result.solution
+
+        return ""
+
     def get_capabilities(self) -> Dict[str, Any]:
         """Get ToT integration capabilities."""
         return {

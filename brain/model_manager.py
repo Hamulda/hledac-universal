@@ -880,6 +880,123 @@ class ModelManager:
             await self._cleanup_memory_async(last_released, engine=last_engine)
             logger.info("✓ All models released")
 
+    # ========================================================================
+    # P12: Report generation from graph and hypotheses
+    # ========================================================================
+
+    async def generate_report(
+        self,
+        graph_summary: str,
+        hypotheses: List[str],
+        findings: List[Any] = None,
+        output_path: str = None
+    ) -> str:
+        """
+        P12: Generate final OSINT report from graph summary and hypotheses.
+
+        Uses Hermes 3 to synthesize the research findings into a structured
+        Markdown report. Results are saved to a file.
+
+        Args:
+            graph_summary: Graph data as summary string
+            hypotheses: List of hypotheses that were investigated
+            findings: Optional list of finding dicts/objects
+            output_path: Optional path for Markdown output (default: ~/hledac_report.md)
+
+        Returns:
+            Generated report as Markdown string
+        """
+        import os
+        import time
+
+        if output_path is None:
+            output_path = os.path.expanduser("~/hledac_report.md")
+
+        # Load Hermes for generation
+        hermes = None
+        async with self.acquire_model_ctx("hermes") as hermes:
+            pass  # Model loaded in context, will be released after
+
+        # We need to use hermes3_engine directly for generate_report
+        from .hermes3_engine import Hermes3Engine
+        engine = Hermes3Engine()
+        try:
+            await engine.initialize()
+        except Exception as e:
+            logger.warning(f"[GENERATE_REPORT] Hermes init failed: {e}")
+            return ""
+
+        # Build context for report generation
+        MAX_CONTEXT = 4000
+        MAX_HYPOTHESES = 10
+        MAX_FINDINGS = 20
+
+        # Truncate hypotheses
+        hypo_lines = []
+        for i, h in enumerate(hypotheses[:MAX_HYPOTHESES], 1):
+            hypo_lines.append(f"{i}. {str(h)[:200]}")
+        hypo_text = "\n".join(hypo_lines)
+
+        # Truncate findings
+        finding_lines = []
+        for f in (findings or [])[:MAX_FINDINGS]:
+            finding_str = str(f)[:300]
+            finding_lines.append(f"- {finding_str}")
+        finding_text = "\n".join(finding_lines)
+
+        # Build final prompt
+        prompt = f"""Vytvoř strukturovaný OSINT report v Markdown formátu.
+
+Grafový souhrn:
+{graph_summary[:MAX_CONTEXT]}
+
+Hypotézy:
+{hypo_text}
+
+Zjištění (findings):
+{finding_text if finding_text else "Žádná zjištění"}
+
+Report musí obsahovat:
+1. # OSINT Report -标题
+2. ## Shrnutí (Executive Summary) - max 3 věty
+3. ## Klíčová zjištění (Key Findings)
+4. ## Hypotézy a výsledky
+5. ## Doporučení (Recommendations)
+6. ## Metadata (timestamp, version)
+
+Piš v češtině, buď konkrétní a stručný."""
+
+        try:
+            report = await engine.generate(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=2048,
+                system_msg="Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině."
+            )
+        except Exception as e:
+            logger.warning(f"[GENERATE_REPORT] Generation failed: {e}")
+            report = f"# Report Generation Failed\n\nError: {e}"
+
+        # Add metadata header
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        final_report = f"---\nGenerated: {timestamp}\nHledac OSINT Report\n---\n\n{report}"
+
+        # Save to file
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(final_report)
+            logger.info(f"[GENERATE_REPORT] Saved to {output_path}")
+        except Exception as e:
+            logger.warning(f"[GENERATE_REPORT] Failed to save: {e}")
+
+        # Cleanup engine
+        try:
+            await engine.unload()
+        except Exception:
+            pass
+
+        return final_report
+
     async def with_phase(self, phase_name: str):
         """
         Context manager pro fázové workflow.

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html.parser
+import os
 import re
 import sys
 import time
@@ -664,6 +665,8 @@ async def _fetch_and_process_page(
     fetch_timeout_s: float,
     fetch_max_bytes: int,
     store: Any | None,
+    memory_manager: Any | None = None,
+    session_id: str | None = None,
     discovery_score: float | None = None,
     discovery_reason: str | None = None,
 ) -> PipelinePageResult:
@@ -926,6 +929,10 @@ async def _fetch_and_process_page(
             hits = []
 
         matched_count = len(hits)
+
+        # FÁZE P9: Stream graph entities per-page (pattern scan results)
+        if graph is not None and hits:
+            _add_pattern_hits_to_graph(hits, graph)
         if matched_count == 0:
             usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
                 fetched=True, matched_patterns=0, stored_findings=0,
@@ -1003,6 +1010,32 @@ async def _fetch_and_process_page(
                             accepted_count += 1
                         if getattr(sr, "lmdb_success", False):
                             stored_count += 1
+
+                # P11: Write to memory manager after DuckDB storage succeeds
+                # This enables RAG context for future queries
+                if memory_manager is not None and session_id is not None:
+                    for finding in unique_findings:
+                        try:
+                            finding_id = getattr(finding, "finding_id", None) or str(hash(hit_url))
+                            memory_entry = {
+                                "finding_id": finding_id,
+                                "query": query,
+                                "url": hit_url,
+                                "timestamp": time.time(),
+                                "payload_text": getattr(finding, "payload_text", ""),
+                                "source_type": getattr(finding, "source_type", ""),
+                                "confidence": getattr(finding, "confidence", 0.0),
+                                "provenance": list(getattr(finding, "provenance", ())),
+                            }
+                            await memory_manager.put(
+                                session_id,
+                                f"finding:{finding_id}",
+                                memory_entry
+                            )
+                        except Exception:
+                            # Fail-soft: memory write errors don't fail the page
+                            pass
+
             except asyncio.CancelledError:
                 raise  # [I6]
             except Exception:
@@ -1222,6 +1255,34 @@ def _extract_base_domain(domain: str) -> str:
     return domain
 
 
+# =============================================================================
+# FÁZE P9: GraphManager integration
+# =============================================================================
+
+
+def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
+    """
+    FÁZE P9: Stream pattern hits into GraphManager.
+
+    Called per-page after pattern scan — lightweight, no heavy ops.
+    Max 1000 entries per page enforced (M1 8GB safe).
+    """
+    if graph is None or not hits:
+        return
+    try:
+        seen: set[tuple[str, str]] = set()
+        for hit in hits[:1000]:  # Hard cap per page
+            entity_type = hit.label or "unknown"
+            value = hit.value
+            key = (entity_type, value)
+            if key in seen:
+                continue
+            seen.add(key)
+            graph.add_entity(entity_type, value)
+    except Exception:
+        pass  # Fail-soft: graph errors don't fail pipeline
+
+
 async def _inject_ct_subdomain_hits(
     hits: tuple,
     query: str,
@@ -1397,12 +1458,16 @@ async def async_run_live_public_pipeline(
     fetch_max_bytes: int = 2_000_000,
     fetch_concurrency: int = 5,
     hermes_engine: Any | None = None,
+    graph: Any | None = None,
+    memory_manager: Any | None = None,
+    session_id: str | None = None,
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
 
     Orchestration-only: wires existing 8AC/8AD/8X/8W/8S components.
     P6: Optional Hermes3Engine for OSINT report generation.
+    P11: Optional MemoryManager for persistent RAG history.
 
     Parameters
     ----------
@@ -1419,6 +1484,10 @@ async def async_run_live_public_pipeline(
         Maximum bytes to fetch per page.
     fetch_concurrency:
         Maximum concurrent fetches in the batch.
+    memory_manager:
+        Optional MemoryManager instance for persistent RAG history.
+    session_id:
+        Optional session ID for memory manager. If None, uses query hash.
 
     Returns
     -------
@@ -1426,6 +1495,30 @@ async def async_run_live_public_pipeline(
     """
     # Ensure hot-path imports are resolved
     _ensure_patched()
+
+    # P11: Initialize session ID for memory manager
+    if session_id is None:
+        import hashlib
+        session_id = hashlib.sha256(query.encode()).hexdigest()[:16]
+
+    # P11: Load relevant RAG history from memory manager (if available)
+    rag_context: list[dict] = []
+    if memory_manager is not None:
+        try:
+            history = await memory_manager.get_session_history(session_id, limit=50)
+            # Extract payload_text from past findings for RAG context
+            for entry in history:
+                value = entry.get("value", {})
+                if isinstance(value, dict):
+                    payload = value.get("payload_text", "")
+                    if payload:
+                        rag_context.append({
+                            "query": value.get("query", ""),
+                            "payload": payload[:500],  # Truncate for context
+                            "timestamp": value.get("timestamp", 0),
+                        })
+        except Exception:
+            rag_context = []  # Fail-soft: memory errors don't fail pipeline
 
     # ---- UMA check -----------------------------------------------------------
     # Sprint 8AK: SSOT labels from resource_governor — no local string literals
@@ -1517,6 +1610,58 @@ async def async_run_live_public_pipeline(
     hits = await _inject_commoncrawl_hits(hits, query)
     cc_injected = len(hits) - original_hit_count
 
+    # P12: Hypothesis generation and ToT evaluation
+    # After network reconnaissance (CT/CC), generate hypotheses and evaluate
+    # complex ones via Tree-of-Thoughts before main fetch batch
+    tot_solution_count = 0
+    if memory_manager is not None and hermes_engine is not None:
+        try:
+            # Import hypothesis engine and ToT integration
+            from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+            from hledac.universal.tot_integration import TotIntegrationLayer
+
+            hypo_engine = HypothesisEngine()
+            tot_layer = TotIntegrationLayer()
+
+            # Build context for hypothesis generation
+            hypo_context = {
+                "query": query,
+                "rag_context": rag_context,
+                "graph_summary": graph.export_summary() if graph and hasattr(graph, 'export_summary') else "",
+                "existing_hypotheses": []
+            }
+
+            # Generate hypotheses using Hermes 3
+            hypotheses = await hypo_engine.generate_hypotheses_async(
+                context=hypo_context,
+                hermes_engine=hermes_engine
+            )
+
+            # Evaluate each hypothesis via ToT if complex
+            for hypo in hypotheses[:5]:  # Max 5 ToT evaluations
+                tot_result = await tot_layer.solve_with_tot(hypo)
+                if tot_result:
+                    tot_solution_count += 1
+                    # Store ToT result as synthetic finding
+                    if store is not None:
+                        try:
+                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                            tot_finding = CanonicalFinding(
+                                finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
+                                query=query,
+                                source_type="tot_synthesis",
+                                confidence=0.7,
+                                ts=time.time(),
+                                provenance=("tot", hypo[:100]),
+                                payload_text=tot_result[:1000],
+                            )
+                            await store.async_ingest_findings_batch([tot_finding])
+                        except Exception:
+                            pass  # Fail-soft
+
+        except Exception:
+            pass  # P12: fail-soft, hypothesis generation is optional
+
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
     tasks: list[asyncio.Task] = []
@@ -1547,6 +1692,8 @@ async def async_run_live_public_pipeline(
                 fetch_timeout_s=fetch_timeout_s,
                 fetch_max_bytes=fetch_max_bytes,
                 store=store,
+                memory_manager=memory_manager,
+                session_id=session_id,
                 discovery_score=hit_score,
                 discovery_reason=hit_reason,
             )
@@ -1892,6 +2039,14 @@ async def async_run_live_public_pipeline(
             )
         except Exception:
             pass  # Fail-soft: report generation errors don't fail the pipeline
+
+    # FÁZE P9: Export graph after pipeline completes
+    if graph is not None and graph.node_count() > 0:
+        try:
+            export_path = os.path.expanduser("~/new_hledac_graph.html")
+            graph.export_html(export_path)
+        except Exception:
+            pass  # Fail-soft: graph export errors don't fail pipeline
 
     return PipelineRunResult(
         query=query,

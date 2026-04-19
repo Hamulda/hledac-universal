@@ -2442,6 +2442,97 @@ class HypothesisEngine:
 
         return self.adversarial_verifier.generate_devils_advocate(hypothesis)
 
+    async def generate_hypotheses_async(
+        self, context: Dict[str, Any], hermes_engine: Any = None
+    ) -> List[str]:
+        """
+        P12: Generate hypotheses from RAG context using Hermes 3.
+
+        Uses Hermes 3 LLM to generate possible investigation paths
+        from accumulated RAG context and graph data.
+
+        Args:
+            context: Dict with keys:
+                - query: str - research query
+                - rag_context: list[str] - RAG context snippets
+                - graph_summary: str - optional graph summary
+                - existing_hypotheses: list[str] - already generated hypotheses to avoid
+            hermes_engine: Optional Hermes3Engine instance for LLM generation
+
+        Returns:
+            List of hypothesis strings (max 10, bounded)
+        """
+        MAX_HYPOTHESES = 10
+        MAX_CONTEXT_CHARS = 4000
+
+        if hermes_engine is None:
+            return []
+
+        query = context.get("query", "")
+        rag_context = context.get("rag_context", [])
+        graph_summary = context.get("graph_summary", "")
+        existing = set(context.get("existing_hypotheses", []))
+
+        # Build context string (bounded)
+        ctx_parts = []
+        total_len = 0
+        for item in rag_context[:20]:  # Max 20 context items
+            item_str = str(item)[:500]  # Max 500 chars per item
+            if total_len + len(item_str) > MAX_CONTEXT_CHARS:
+                remaining = MAX_CONTEXT_CHARS - total_len
+                if remaining > 100:
+                    ctx_parts.append(item_str[:remaining])
+                break
+            ctx_parts.append(item_str)
+            total_len += len(item_str)
+
+        context_str = "\n---\n".join(ctx_parts)
+
+        # Build prompt for OSINT hypothesis generation
+        prompt = f"""Research query: {query}
+
+RAG context:
+{context_str}
+
+{f'Graph summary: {graph_summary}' if graph_summary else ''}
+
+Navrhni možné cesty, jak získat více informací o "{query}".
+生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.
+
+Formát (pouze seznam, žádný další text):
+1. [hypotéza 1]
+2. [hypotéza 2]
+...
+"""
+
+        try:
+            response = await hermes_engine.generate(
+                prompt=prompt,
+                temperature=0.4,
+                max_tokens=1024,
+                system_msg="Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
+            )
+
+            # Parse hypotheses from response
+            hypotheses = []
+            for line in response.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                # Match lines like "1. Some hypothesis" or "1: Some hypothesis"
+                match = re.match(r"^\d+[.)]\s*(.+)", line)
+                if match:
+                    hypo = match.group(1).strip()
+                    if hypo and hypo not in existing:
+                        hypotheses.append(hypo)
+                        existing.add(hypo)
+
+            return hypotheses[:MAX_HYPOTHESES]
+
+        except Exception as e:
+            logger.warning(f"[GENERATE_HYPOTHESES] Failed: {e}")
+            return []
+
     def generate_hypotheses(
         self, observations: List[Evidence], context: Optional[Dict[str, Any]] = None
     ) -> List[Hypothesis]:
