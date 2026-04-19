@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable, Literal
 from enum import Enum, auto
 
+from hledac.universal.resource_allocator import adjust_fetch_workers
+
 # Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
 # DO NOT add top-level `import mlx.core as mx` here.
 MLX_AVAILABLE = False
@@ -551,6 +553,8 @@ class ModelManager:
                 self._loaded_models[model_type] = model
                 self._current_model = model_type
                 logger.info(f"[MODEL LOAD] {model_name} done")
+                # P3: snížit fetch concurrency při načteném LLM
+                await adjust_fetch_workers(3)
                 return model
 
             except Exception as e:
@@ -609,6 +613,8 @@ class ModelManager:
         # F182B: Pass captured model reference — registry already cleared,
         # _cleanup_memory_async cannot look it up again
         await self._cleanup_memory_async(model_type, engine=model)
+        # P3: obnovit fetch concurrency po uvolnění modelu
+        await adjust_fetch_workers(25)
 
     async def release_current(self) -> None:
         """Async uvolnění aktuálně načteného modelu."""

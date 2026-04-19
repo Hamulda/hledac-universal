@@ -1482,6 +1482,307 @@ WaybackCDXClient = WaybackCDX
 
 
 # =============================================================================
+# FÁZE P5: Wayback Machine query
+# =============================================================================
+
+
+@dataclass
+class WaybackSnapshot:
+    """Structured Wayback Machine snapshot result."""
+    timestamp: str
+    archived_url: str
+    status_code: int
+    mimetype: str
+    length: int
+    digest: str
+
+
+async def query_wayback(url: str, limit: int = 10) -> List[WaybackSnapshot]:
+    """
+    Query Wayback Machine CDX API for snapshots of a URL.
+
+    Args:
+        url: URL to query
+        limit: Maximum number of snapshots to return
+
+    Returns:
+        List of WaybackSnapshot objects with snapshot URL and timestamp
+    """
+    WAYBACK_CDX_API = "https://web.archive.org/cdx/search/cdx"
+
+    results: List[WaybackSnapshot] = []
+    try:
+        params = {
+            "url": url,
+            "output": "json",
+            "collapse": "digest",
+            "fl": "timestamp,original,statuscode,mimetype,length,digest",
+            "limit": limit,
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(WAYBACK_CDX_API, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    for rec in data:
+                        if len(rec) >= 6:
+                            results.append(WaybackSnapshot(
+                                timestamp=rec[0],
+                                archived_url=f"https://web.archive.org/web/{rec[0]}/{rec[1]}",
+                                status_code=int(rec[2]) if rec[2] else 200,
+                                mimetype=rec[3] or "unknown",
+                                length=int(rec[4]) if rec[4] else 0,
+                                digest=rec[5] or "",
+                            ))
+    except Exception as e:
+        logger.debug(f"query_wayback({url}): {e}")
+    return results
+
+
+# =============================================================================
+# FÁZE P5: Common Crawl query
+# =============================================================================
+
+
+@dataclass
+class CommonCrawlSnapshot:
+    """Structured Common Crawl result."""
+    url: str
+    timestamp: str
+    status_code: int
+    html_length: int
+    offset: int
+
+
+async def query_common_crawl(domain: str, limit: int = 10) -> List[CommonCrawlSnapshot]:
+    """
+    Query Common Crawl Index for URLs matching a domain.
+
+    Args:
+        domain: Domain to search (e.g., "example.com")
+        limit: Maximum number of results to return
+
+    Returns:
+        List of CommonCrawlSnapshot objects
+    """
+    CC_INDEX_API = "https://index.commoncrawl.org/collinfo.json"
+
+    results: List[CommonCrawlSnapshot] = []
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(CC_INDEX_API, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    col_info = await resp.json()
+                    if not col_info:
+                        return results
+
+            for col in col_info[:3]:
+                cdo = col.get("cdx-api", "")
+                if not cdo:
+                    continue
+                params = {
+                    "url": f"*.{domain}",
+                    "output": "json",
+                    "limit": limit,
+                    "fl": "url,timestamp,status,length,offset",
+                }
+                async with session.get(cdo, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        for line in text.strip().split("\n"):
+                            try:
+                                rec = json.loads(line)
+                                if len(rec) >= 5:
+                                    results.append(CommonCrawlSnapshot(
+                                        url=rec[0],
+                                        timestamp=rec[1],
+                                        status_code=int(rec[2]) if rec[2] else 0,
+                                        html_length=int(rec[3]) if rec[3] else 0,
+                                        offset=int(rec[4]) if rec[4] else 0,
+                                    ))
+                            except (json.JSONDecodeError, IndexError):
+                                continue
+                if len(results) >= limit:
+                    break
+    except Exception as e:
+        logger.debug(f"query_common_crawl({domain}): {e}")
+    return results[:limit]
+
+
+# =============================================================================
+# FÁZE P5: GitHub Dorking
+# =============================================================================
+
+
+@dataclass
+class GitHubDorkResult:
+    """GitHub search result."""
+    name: str
+    url: str
+    description: Optional[str]
+    stars: int
+    language: Optional[str]
+    updated: str
+
+
+class GitHubDorkingClient:
+    """
+    GitHub REST API search bez tokenu — rate limit 10 req/min.
+    Pro použití s GitHub Advanced Search operators v query string.
+    """
+
+    _BASE_URL = "https://api.github.com/search/code"
+    _RATE_LIMIT = 6.1  # seconds between requests (10 req/min)
+
+    def __init__(self, token: Optional[str] = None) -> None:
+        self._token = token
+        self._last_req = 0.0
+
+    async def _throttle(self) -> None:
+        elapsed = time.time() - self._last_req
+        if elapsed < self._RATE_LIMIT:
+            await asyncio.sleep(self._RATE_LIMIT - elapsed)
+        self._last_req = time.time()
+
+    async def search(
+        self,
+        query: str,
+        session: aiohttp.ClientSession,
+        limit: int = 10,
+    ) -> List[GitHubDorkResult]:
+        """
+        Search GitHub code using advanced operators.
+        Example: "leaked password" language:python extension:env
+        """
+        results: List[GitHubDorkResult] = []
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+        }
+        if self._token:
+            headers["Authorization"] = f"token {self._token}"
+
+        await self._throttle()
+        try:
+            params = {"q": query, "per_page": min(limit, 100), "page": 1}
+            async with session.get(
+                self._BASE_URL,
+                headers=headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                self._last_req = time.time()
+                if resp.status == 200:
+                    data = await resp.json()
+                    for item in data.get("items", [])[:limit]:
+                        results.append(GitHubDorkResult(
+                            name=item.get("name", ""),
+                            url=item.get("html_url", ""),
+                            description=item.get("description"),
+                            stars=item.get("stargazers_count", 0),
+                            language=item.get("language"),
+                            updated=item.get("updated_at", ""),
+                        ))
+                elif resp.status == 403:
+                    logger.warning("GitHub API rate limit exceeded")
+        except Exception as e:
+            logger.debug(f"GitHub search({query}): {e}")
+        return results
+
+
+# =============================================================================
+# FÁZE P5: Pastebin Monitor
+# =============================================================================
+
+
+@dataclass
+class PastebinResult:
+    """Pastebin scrape result."""
+    key: str
+    title: Optional[str]
+    date: str
+    size: int
+    syntax: Optional[str]
+    url: str
+    content_preview: Optional[str] = None
+
+
+class PastebinMonitorClient:
+    """
+    Pastebin scraping API — free tier, 1 req/min.
+    Filter pastes by keyword and store in evidence.
+    """
+
+    _SCRAPE_URL = "https://scrape.pastebin.com/api_scraping.php"
+    _RATE_LIMIT = 61.0
+
+    def __init__(self, cache_dir: str | Path = Path("/tmp/pastebin_cache")) -> None:
+        self._cache_dir = Path(cache_dir)
+        self._cache_ttl = 300
+        self._last_req = 0.0
+
+    async def _throttle(self) -> None:
+        elapsed = time.time() - self._last_req
+        if elapsed < self._RATE_LIMIT:
+            await asyncio.sleep(self._RATE_LIMIT - elapsed)
+        self._last_req = time.time()
+
+    async def get_recent_pastes(
+        self,
+        session: aiohttp.ClientSession,
+        limit: int = 100,
+    ) -> List[PastebinResult]:
+        """Fetch recent public pastes."""
+        results: List[PastebinResult] = []
+        await self._throttle()
+        try:
+            async with session.get(
+                f"{self._SCRAPE_URL}?limit={limit}",
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status in (403, 401, 429):
+                    logger.debug(f"Pastebin scrape: HTTP {resp.status}")
+                    return []
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    for item in data:
+                        key = item.get("key", "")
+                        results.append(PastebinResult(
+                            key=key,
+                            title=item.get("title"),
+                            date=item.get("date", ""),
+                            size=item.get("size", 0),
+                            syntax=item.get("syntax"),
+                            url=f"https://pastebin.com/raw/{key}" if key else "",
+                        ))
+                    self._last_req = time.time()
+        except Exception as e:
+            logger.debug(f"PastebinMonitor.get_recent_pastes: {e}")
+        return results
+
+    async def filter_by_keyword(
+        self,
+        session: aiohttp.ClientSession,
+        keyword: str,
+        limit: int = 50,
+    ) -> List[PastebinResult]:
+        """
+        Fetch recent pastes and filter by keyword.
+        Used for credential/component leak detection.
+        """
+        all_pastes = await self.get_recent_pastes(session, limit=limit * 3)
+        keyword_lower = keyword.lower()
+        filtered: List[PastebinResult] = []
+
+        for paste in all_pastes:
+            title = (paste.title or "").lower()
+            if keyword_lower in title:
+                filtered.append(paste)
+                if len(filtered) >= limit:
+                    break
+
+        return filtered
+
+
+# =============================================================================
 # COMPAT LAYER: wayback_cdx_lookup — search-shaped helper
 # AUTHORITY: Tato funkce je compat wrapper kolem WaybackCDX.
 # Používá se v fetch_coordinator.py pro GHOST_DEEP_RESEARCH feature.

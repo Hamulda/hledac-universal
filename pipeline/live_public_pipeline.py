@@ -37,7 +37,14 @@ MAX_METADATA_PREPEND_CHARS: int = 500
 _SOURCE_TYPE: str = "live_public_pipeline"
 """source_type value for all findings produced by this pipeline."""
 
+_REPORT_SOURCE_TYPE: str = "report"
+"""source_type value for generated OSINT reports."""
+
 _DEFAULT_CONFIDENCE: float = 0.8
+
+# P6: Top results for report generation
+_REPORT_TOP_N: int = 5
+"""Number of top results to include in OSINT report."""
 """Confidence for pipeline findings — executed but unverified."""
 
 _FINDING_ID_CONTEXT_RADIUS: int = 100
@@ -1062,6 +1069,121 @@ def _ensure_patched() -> None:
 
 
 # -----------------------------------------------------------------------------
+# P6: OSINT Report Generation
+# -----------------------------------------------------------------------------
+
+
+def _make_finding_id(
+    query: str, url: str, label: str, pattern: str, value: str
+) -> str:
+    """
+    Deterministic finding ID via SHA-256 hash of pipeline inputs.
+    hash() is forbidden (non-deterministic across processes).
+    """
+    key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+async def _generate_and_store_report(
+    query: str,
+    pages: tuple,
+    store: Any | None,
+    hermes_engine: Any | None,
+) -> str:
+    """
+    P6: Generate OSINT report from top findings and store in DuckDB.
+
+    Collects top 5 pages by matched_patterns count, generates report via Hermes
+    (if available), and stores with source_type='report'.
+
+    Fail-soft: returns empty string on any error. Pipeline continues regardless.
+
+    Args:
+        query: Research query
+        pages: Tuple of PipelinePageResult
+        store: Optional DuckDBShadowStore instance
+        hermes_engine: Optional Hermes3Engine instance (if None, report generation skipped)
+
+    Returns:
+        Generated report text, or empty string if skipped/failed
+    """
+    if hermes_engine is None:
+        return ""  # No Hermes, skip report generation
+
+    # Collect top N pages by matched_patterns (proxy for IOC density)
+    sorted_pages = sorted(
+        pages,
+        key=lambda p: (p.matched_patterns or 0, p.accepted_findings or 0),
+        reverse=True
+    )
+    top_pages = sorted_pages[:_REPORT_TOP_N]
+
+    if not top_pages:
+        return ""  # No findings to report on
+
+    # Build context from top pages
+    context_items: list[str] = []
+    for p in top_pages:
+        # Format page info as context item
+        ioc_count = p.matched_patterns or 0
+        accepted = p.accepted_findings or 0
+        url = getattr(p, 'url', '') or ''
+        title = getattr(p, 'discovery_reason', '') or getattr(p, 'quality_reason', '') or url
+
+        context_items.append(
+            f"URL: {url}\n"
+            f"Title/Reason: {title}\n"
+            f"IOC count: {ioc_count}, Accepted findings: {accepted}"
+        )
+
+    # Generate report via Hermes3Engine
+    try:
+        report_text = await hermes_engine.generate_report(query, context_items)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[REPORT] Generation failed: {e}")
+        return ""
+
+    if not report_text:
+        return ""  # Report generation returned empty
+
+    # Store report as CanonicalFinding with source_type='report'
+    if store is not None:
+        try:
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            report_id = _make_finding_id(
+                query=query,
+                url="synthetic://report",
+                label="osint_report",
+                pattern="synthetic",
+                value=report_text[:200]  # Use first 200 chars as value for ID
+            )
+
+            report_finding = CanonicalFinding(
+                finding_id=report_id,
+                query=query,
+                source_type=_REPORT_SOURCE_TYPE,
+                confidence=0.7,  # Moderate confidence for generated content
+                ts=time.time(),
+                provenance=("report_generation", hermes_engine.__class__.__name__),
+                payload_text=report_text,
+            )
+
+            # Store using existing async API
+            await store.async_ingest_findings_batch([report_finding])
+            import logging
+            logging.getLogger(__name__).info(f"[REPORT] Stored report {report_id[:8]} for query: {query[:50]}")
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[REPORT] Storage failed: {e}")
+            # Fail-soft: report was generated but not stored - still return it
+
+    return report_text
+
+
+# -----------------------------------------------------------------------------
 # Main pipeline
 # -----------------------------------------------------------------------------
 
@@ -1274,12 +1396,13 @@ async def async_run_live_public_pipeline(
     fetch_timeout_s: float = 35.0,
     fetch_max_bytes: int = 2_000_000,
     fetch_concurrency: int = 5,
+    hermes_engine: Any | None = None,
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
 
     Orchestration-only: wires existing 8AC/8AD/8X/8W/8S components.
-    No LLM. No AO. No new storage schema.
+    P6: Optional Hermes3Engine for OSINT report generation.
 
     Parameters
     ----------
@@ -1756,6 +1879,19 @@ async def async_run_live_public_pipeline(
             for p in all_page_results
         ),
     }
+
+    # P6: Generate OSINT report from top findings (if Hermes available)
+    # Fail-soft: report generation is optional, pipeline continues regardless
+    if hermes_engine is not None and all_page_results:
+        try:
+            await _generate_and_store_report(
+                query=query,
+                pages=tuple(all_page_results),
+                store=store,
+                hermes_engine=hermes_engine,
+            )
+        except Exception:
+            pass  # Fail-soft: report generation errors don't fail the pipeline
 
     return PipelineRunResult(
         query=query,

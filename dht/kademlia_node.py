@@ -77,9 +77,12 @@ async def crawl_dht_for_keyword(
     keyword: str,
     duration_s: int = 120,
     max_results: int = 100,
+    store_results: bool = True,
 ) -> list[dict]:
     """
     Pasivní DHT crawl — zachytí info_hashes cirkulující sítí.
+
+    FÁZE P5: Přidán limit 50 souběžných dotazů a DuckDB storage.
 
     Implementační požadavky:
       1. Bootstrap přes BOOTSTRAP_PEERS s socket.AF_INET force
@@ -93,14 +96,15 @@ async def crawl_dht_for_keyword(
       3. Filtruj výsledky: keyword.lower() in name.lower()
       4. Respektuj duration_s — ukonči crawl po uplynutí času
       5. Používá KademliaNode pro routing table management
+      6. MAX_CONCURRENT_QUERIES = 50 — bounded semaphore
 
     Vrací: [{"info_hash": str, "name": str, "files": list,
              "size_bytes": int, "peers": int, "source": "dht"}]
     """
+    MAX_CONCURRENT_QUERIES = 50
     results: list[dict] = []
     start_time = time.monotonic()
 
-    # KademliaNode pro routing table a storage
     governor = ResourceGovernor()
     node = KademliaNode(
         node_id=f"hledac-crawl-{uuid.uuid4().hex[:8]}",
@@ -108,11 +112,20 @@ async def crawl_dht_for_keyword(
         bootstrap_nodes=[f"{h}:{p}" for h, p in BOOTSTRAP_PEERS],
     )
 
+    duckdb_store = None
+    if store_results:
+        try:
+            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+            duckdb_store = DuckDBShadowStore()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: duckdb_store.initialize())
+        except Exception as e:
+            logger.debug(f"[DHT] DuckDB store init: {e}")
+            duckdb_store = None
+
     try:
-        # Bootstrap: ping each peer via socket.AF_INET (IPv4-only)
         for host, port in BOOTSTRAP_PEERS:
             try:
-                # Force IPv4 — DHT sítě jsou primárně IPv4
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.settimeout(2.0)
                 sock.connect((host, port))
@@ -121,43 +134,47 @@ async def crawl_dht_for_keyword(
             except OSError as e:
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} unreachable: {e}")
 
-        # Simulovaný crawl — reálný DHT vyžaduje BEP-10/BEP-9 implementaci
-        # KademliaNode.find_value() podporuje get_peers-like lookup
-        # Pro každý keyword token proveď find_value
         keyword_lower = keyword.lower()
         searched_tokens: set[str] = set()
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
 
-        while (time.monotonic() - start_time) < duration_s and len(results) < max_results:
-            # Hledej tokenizované query pro lepší pokrytí
-            tokens = keyword_lower.split()
-            for token in tokens:
-                if token in searched_tokens:
-                    continue
-                searched_tokens.add(token)
-
-                # Build DHT key pro token (libtorrent-style)
+        async def search_token(token: str) -> Optional[dict]:
+            async with semaphore:
                 dht_key = f"urn:btih:{hashlib.sha256(token.encode()).hexdigest()[:40]}"
-
                 try:
-                    # Použij existující find_value API
                     value = await node.find_value(dht_key)
                     if value and isinstance(value, dict):
                         name = value.get("name", "")
                         if keyword_lower in name.lower():
-                            results.append({
+                            return {
                                 "info_hash": dht_key,
                                 "name": name,
                                 "files": value.get("files", []),
                                 "size_bytes": value.get("size_bytes", 0),
                                 "peers": value.get("peers", 0),
                                 "source": "dht",
-                            })
-                except Exception as e:
-                    logger.debug(f"[DHT] find_value for {token}: {e}")
+                            }
+                except Exception:
+                    pass
+                return None
 
-            # Pokud nemáme žádné výsledky, zkus generický broadcast
+        while (time.monotonic() - start_time) < duration_s and len(results) < max_results:
+            tokens = keyword_lower.split()
+            new_tokens = [t for t in tokens if t not in searched_tokens]
+            if not new_tokens:
+                break
+
+            for token in new_tokens:
+                searched_tokens.add(token)
+
+            tasks = [search_token(t) for t in new_tokens]
+            found = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for item in found:
+                if isinstance(item, dict) and item:
+                    results.append(item)
+
             if not results:
-                # Hledej přímo keyword jako string v data_store
                 for key, (val, _ts) in list(node.data_store.items())[:50]:
                     if isinstance(val, dict) and "name" in val:
                         if keyword_lower in str(val.get("name", "")).lower():
@@ -172,8 +189,25 @@ async def crawl_dht_for_keyword(
                             if len(results) >= max_results:
                                 break
 
-            # Malá pauza mezi koly
             await asyncio.sleep(0.5)
+
+        if duckdb_store and results:
+            try:
+                loop = asyncio.get_running_loop()
+                for r in results:
+                    loop.run_in_executor(
+                        None,
+                        lambda r=r: duckdb_store._sync_insert_finding({
+                            "query": keyword,
+                            "source_type": "dht",
+                            "finding_id": r.get("info_hash", ""),
+                            "content": r.get("name", ""),
+                            "url": f"dht://{r.get('info_hash', '')}",
+                        }),
+                    )
+                loop.run_in_executor(None, duckdb_store.close)
+            except Exception as e:
+                logger.debug(f"[DHT] DuckDB store write: {e}")
 
     except Exception as e:
         logger.warning(f"[DHT] crawl error: {e}")

@@ -43,6 +43,7 @@ import aiohttp
 import dns.asyncresolver
 import dns.name
 import dns.rdatatype
+import dns.resolver
 
 from ..utils.async_helpers import _check_gathered
 
@@ -1105,6 +1106,212 @@ class DHTProbe:
         return results
 
 
+# =============================================================================
+# FÁZE P5: CNAME Chain Resolution
+# =============================================================================
+
+
+@dataclass
+class CNAMERecord:
+    """CNAME chain record."""
+    source: str
+    target: str
+    ttl: int
+
+
+async def resolve_cname_chain(domain: str, max_depth: int = 10) -> List[CNAMERecord]:
+    """
+    Resolve full CNAME chain for a domain.
+
+    Args:
+        domain: Starting domain
+        max_depth: Maximum resolution depth
+
+    Returns:
+        List of CNAMERecord objects forming the alias chain
+    """
+    chain: List[CNAMERecord] = []
+    current = domain
+    seen: Set[str] = set()
+
+    try:
+        resolver = dns.asyncresolver.Resolver()
+        resolver.nameservers = ["1.1.1.1", "8.8.8.8"]
+        resolver.timeout = 3.0
+        resolver.lifetime = 10.0
+
+        for _ in range(max_depth):
+            if current in seen:
+                break
+            seen.add(current)
+
+            try:
+                answers = await asyncio.wait_for(
+                    resolver.resolve(current, "CNAME"),
+                    timeout=5.0,
+                )
+                cname_value = str(answers[0]).rstrip(".")
+                chain.append(CNAMERecord(source=current, target=cname_value, ttl=answers.ttl))
+                current = cname_value
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, asyncio.TimeoutError):
+                break
+    except Exception as e:
+        logger.debug(f"resolve_cname_chain({domain}): {e}")
+
+    return chain
+
+
+# =============================================================================
+# FÁZE P5: ASN Lookup
+# =============================================================================
+
+
+@dataclass
+class ASNInfo:
+    """Autonomous System Number information."""
+    asn: int
+    prefix: str
+    name: str
+    country: Optional[str]
+    source: str
+
+
+async def lookup_asn(ip_or_prefix: str) -> List[ASNInfo]:
+    """
+    Look up ASN information for IP address or prefix.
+
+    Args:
+        ip_or_prefix: IP address (e.g., "8.8.8.8") or prefix (e.g., "8.8.8.0/24")
+
+    Returns:
+        List of ASNInfo objects
+    """
+    results: List[ASNInfo] = []
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://ipinfo.io/{ip_or_prefix}/json"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "org" in data:
+                        org = data["org"]
+                        parts = org.split()
+                        asn_num = int(parts[0].replace("AS", "")) if parts else 0
+                        prefix = " ".join(parts[1:]) if len(parts) > 1 else ""
+                        results.append(ASNInfo(
+                            asn=asn_num,
+                            prefix=prefix,
+                            name=data.get("name", data.get("org", "")),
+                            country=data.get("country"),
+                            source="ipinfo.io",
+                        ))
+    except Exception as e:
+        logger.debug(f"lookup_asn({ip_or_prefix}): {e}")
+
+    return results
+
+
+# =============================================================================
+# FÁZE P5: Certificate Transparency (crt.sh) Lookup
+# =============================================================================
+
+
+@dataclass
+class CTRawCertificate:
+    """Certificate Transparency log entry."""
+    common_name: str
+    name_value: str
+    issue_date: str
+    expiry_date: str
+    issuer_name: Optional[str]
+
+
+async def lookup_crtsh(domain: str, limit: int = 50) -> List[CTRawCertificate]:
+    """
+    Query crt.sh Certificate Transparency log for domain certificates.
+
+    Args:
+        domain: Domain to search (e.g., "apple.com")
+        limit: Maximum number of results
+
+    Returns:
+        List of CTRawCertificate objects
+    """
+    results: List[CTRawCertificate] = []
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://crt.sh/?q=%.{domain}&output=json"
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=30),
+                headers={"User-Agent": "Hledac-OSINT/1.0"},
+            ) as resp:
+                if resp.status == 200:
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        text = await resp.text()
+                        if "json" in (resp.headers.get("Content-Type", "") or ""):
+                            import json as _json
+                            data = _json.loads(text) if text.strip().startswith("[") else []
+                        else:
+                            data = []
+                    for entry in data[:limit]:
+                        results.append(CTRawCertificate(
+                            common_name=entry.get("common_name", ""),
+                            name_value=entry.get("name_value", ""),
+                            issue_date=entry.get("not_before", ""),
+                            expiry_date=entry.get("not_after", ""),
+                            issuer_name=entry.get("issuer_name"),
+                        ))
+    except Exception as e:
+        logger.debug(f"lookup_crtsh({domain}): {e}")
+
+    return results
+
+
+# =============================================================================
+# FÁZE P5: Passive DNS Lookup (dnslookupapi.com)
+# =============================================================================
+
+
+async def passive_dns_lookup(domain: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Query Passive DNS service for domain resolution history.
+
+    Args:
+        domain: Domain to look up
+        api_key: Optional API key for dnslookupapi.com
+
+    Returns:
+        Dict with resolution records
+    """
+    result: Dict[str, Any] = {"domain": domain, "resolutions": [], "subdomains": []}
+
+    if not api_key:
+        logger.debug("passive_dns_lookup: no API key provided")
+        return result
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.dnslookupapi.com/v1/dns/{domain}/history"
+            async with session.get(
+                url,
+                params={"api_key": api_key},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    result["resolutions"] = data.get("records", [])
+                    result["subdomains"] = data.get("subdomains", [])
+    except Exception as e:
+        logger.debug(f"passive_dns_lookup({domain}): {e}")
+
+    return result
+
+
 # Export
 __all__ = [
     "NetworkReconnaissance",
@@ -1118,4 +1325,11 @@ __all__ = [
     "DNSRecord",
     "RecordType",
     "DHTProbe",
+    "resolve_cname_chain",
+    "lookup_asn",
+    "lookup_crtsh",
+    "passive_dns_lookup",
+    "CNAMERecord",
+    "ASNInfo",
+    "CTRawCertificate",
 ]

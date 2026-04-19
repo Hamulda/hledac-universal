@@ -149,6 +149,14 @@ class DataLeakHunter:
             "url": "https://leak-lookup.com/api/search",
             "rate_limit": 1,
         },
+        "dehashed": {
+            "url": "https://api.dehashed.com/search",
+            "rate_limit": 2,
+        },
+        "intelligencex": {
+            "url": "https://public.intelligencex.com/api/",
+            "rate_limit": 10,
+        },
     }
     
     # Paste sites to monitor
@@ -366,7 +374,7 @@ class DataLeakHunter:
     ) -> List[LeakAlert]:
         """Check breach APIs for target"""
         alerts = []
-        
+
         # HaveIBeenPwned check (for emails)
         if target_type == "email" and self.api_config.haveibeenpwned_api_key:
             try:
@@ -374,7 +382,7 @@ class DataLeakHunter:
                 alerts.extend(hibp_alerts)
             except Exception as e:
                 logger.debug(f"HIBP check failed: {e}")
-        
+
         # LeakLookup check
         if self.api_config.leaklookup_api_key:
             try:
@@ -382,7 +390,23 @@ class DataLeakHunter:
                 alerts.extend(lookup_alerts)
             except Exception as e:
                 logger.debug(f"LeakLookup check failed: {e}")
-        
+
+        # Dehashed check
+        if self.api_config.dehashed_api_key:
+            try:
+                dehashed_alerts = await self._check_dehashed(value, target_type)
+                alerts.extend(dehashed_alerts)
+            except Exception as e:
+                logger.debug(f"Dehashed check failed: {e}")
+
+        # IntelligenceX check
+        if self.api_config.intelligencex_api_key:
+            try:
+                ix_alerts = await self._check_intelligencex(value, target_type)
+                alerts.extend(ix_alerts)
+            except Exception as e:
+                logger.debug(f"IntelligenceX check failed: {e}")
+
         return alerts
     
     async def _check_haveibeenpwned(self, email: str) -> List[LeakAlert]:
@@ -488,12 +512,133 @@ class DataLeakHunter:
                             alerts.append(alert)
                             
             await asyncio.sleep(config["rate_limit"])
-            
+
         except Exception as e:
             logger.debug(f"LeakLookup request failed: {e}")
-        
+
         return alerts
-    
+
+    async def _check_dehashed(self, value: str, target_type: str) -> List[LeakAlert]:
+        """Check Dehashed API for leaks."""
+        alerts = []
+
+        if not self.api_config.dehashed_api_key:
+            return alerts
+
+        config = self.BREACH_APIS["dehashed"]
+        headers = {
+            "Authorization": f"Bearer {self.api_config.dehashed_api_key}",
+            "Accept": "application/json",
+        }
+        params = {"query": value, "type": target_type}
+
+        try:
+            async with self._session.get(config["url"], headers=headers, params=params) as resp:
+                self._api_calls += 1
+
+                if resp.status == 200:
+                    data = await resp.json()
+                    for entry in data.get("matches", []):
+                        alert = LeakAlert(
+                            alert_id=str(uuid.uuid4()),
+                            timestamp=datetime.now(),
+                            target=value,
+                            target_type=target_type,
+                            source=LeakSource.BREACH_API,
+                            severity=AlertSeverity.HIGH,
+                            breach_name=entry.get("source", "Dehashed"),
+                            leaked_data={
+                                "email": entry.get("email"),
+                                "username": entry.get("username"),
+                                "password": entry.get("password"),
+                                "hash": entry.get("hash"),
+                                "database": entry.get("database"),
+                            },
+                            raw_sample=entry.get("password", "")[:50] if entry.get("password") else None,
+                        )
+                        alerts.append(alert)
+                elif resp.status == 429:
+                    logger.warning("Dehashed API rate limited")
+                    await asyncio.sleep(config["rate_limit"] * 5)
+                else:
+                    logger.debug(f"Dehashed API: {resp.status}")
+
+            await asyncio.sleep(config["rate_limit"])
+
+        except Exception as e:
+            logger.debug(f"Dehashed request failed: {e}")
+
+        return alerts
+
+    async def _check_intelligencex(self, value: str, target_type: str) -> List[LeakAlert]:
+        """Check IntelligenceX API for leaks."""
+        alerts = []
+
+        if not self.api_config.intelligencex_api_key:
+            return alerts
+
+        config = self.BREACH_APIS["intelligencex"]
+        headers = {
+            "Authorization": f"Bearer {self.api_config.intelligencex_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        type_map = {
+            "email": "email",
+            "domain": "domain",
+            "username": "username",
+            "ip": "ip",
+            "hash": "hash",
+        }
+        ix_type = type_map.get(target_type, "email")
+
+        payload = {
+            "searchtype": ix_type,
+            "searchquery": value,
+            "limit": 20,
+        }
+
+        try:
+            async with self._session.post(
+                config["url"],
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                self._api_calls += 1
+
+                if resp.status == 200:
+                    data = await resp.json()
+                    for result in data.get("results", []):
+                        alert = LeakAlert(
+                            alert_id=str(uuid.uuid4()),
+                            timestamp=datetime.now(),
+                            target=value,
+                            target_type=target_type,
+                            source=LeakSource.BREACH_API,
+                            severity=AlertSeverity.HIGH,
+                            breach_name=result.get("source", "IntelligenceX"),
+                            leaked_data={
+                                "url": result.get("url"),
+                                "category": result.get("category"),
+                                "date": result.get("date"),
+                            },
+                            url=result.get("url"),
+                        )
+                        alerts.append(alert)
+                elif resp.status == 429:
+                    logger.warning("IntelligenceX API rate limited")
+                    await asyncio.sleep(config["rate_limit"] * 6)
+                else:
+                    logger.debug(f"IntelligenceX API: {resp.status}")
+
+            await asyncio.sleep(config["rate_limit"])
+
+        except Exception as e:
+            logger.debug(f"IntelligenceX request failed: {e}")
+
+        return alerts
+
     async def _check_paste_sites(
         self,
         value: str,
@@ -644,6 +789,53 @@ def get_data_leak_hunter() -> DataLeakHunter:
     if _data_leak_hunter is None:
         _data_leak_hunter = DataLeakHunter()
     return _data_leak_hunter
+
+
+# =============================================================================
+# FÁZE P5: API Key Loading from KeyManager
+# =============================================================================
+
+
+async def load_api_keys_from_keymanager(
+    bucket_id: str = "osint_apis",
+) -> BreachAPIConfig:
+    """
+    Load breach API keys from KeyManager.
+
+    Reads API keys from LMDB keystore using KeyManager.get_bucket_key().
+    Falls back to environment variables if KeyManager unavailable.
+
+    Args:
+        bucket_id: KeyManager bucket for OSINT API keys
+
+    Returns:
+        BreachAPIConfig with loaded keys
+    """
+    config = BreachAPIConfig()
+
+    try:
+        from hledac.security.key_manager import KeyManager
+        km = KeyManager()
+
+        key, _ = await km.get_bucket_key(bucket_id)
+
+        import base64
+        key_str = base64.b64encode(key).decode()
+
+        config.haveibeenpwned_api_key = key_str[:40] if len(key_str) >= 40 else key_str
+        config.dehashed_api_key = key_str[40:80] if len(key_str) >= 80 else None
+        config.intelligencex_api_key = key_str[80:120] if len(key_str) >= 120 else None
+
+    except Exception as e:
+        logger.debug(f"KeyManager API key load: {e}")
+
+        import os
+        config.haveibeenpwned_api_key = os.environ.get("HIBP_API_KEY")
+        config.dehashed_api_key = os.environ.get("DEHASHED_API_KEY")
+        config.intelligencex_api_key = os.environ.get("INTELLIGENCEX_API_KEY")
+        config.leaklookup_api_key = os.environ.get("LEAKLOOKUP_API_KEY")
+
+    return config
 
 
 # =============================================================================

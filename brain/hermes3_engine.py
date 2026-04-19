@@ -1158,6 +1158,73 @@ What should be the next action?"""
     _SYNTH_MAX_HYPOTHESES = 10
     _SYNTH_MAX_OUTPUT_CHARS = 8192
 
+    # P6: Report generation bounds
+    _REPORT_MAX_CONTEXT_CHARS = 4096 * 4  # ~4096 tokens max for context
+    _REPORT_MAX_ITEM_CHARS = 500  # max per context item
+    _REPORT_MAX_ITEMS = 20  # max context items to consider
+    _REPORT_SYSTEM_PROMPT = "Jsi OSINT research agent. Analyzuj poskytnuté podklady a vytvoř strukturovaný report v češtině."
+
+    async def generate_report(self, query: str, context: list[str]) -> str:
+        """
+        P6: Generate OSINT research report from query and context.
+
+        Fail-soft: returns empty string if model not loaded.
+        Prompt is bounded to max ~4096 tokens to respect M1 8GB constraints.
+
+        Args:
+            query: Research query string
+            context: List of context strings (e.g., finding payloads, snippets)
+
+        Returns:
+            Generated report text, or empty string if model not available
+        """
+        # Fail-soft: model not loaded
+        if self._model is None:
+            logger.warning("[GENERATE_REPORT] Model not loaded, skipping report generation")
+            return ""
+
+        # Bound query
+        bounded_query = str(query)[:self._SYNTH_MAX_QUERY_CHARS]
+
+        # Truncate and combine context items (bounded to prevent OOM)
+        truncated_contexts: list[str] = []
+        total_len = 0
+        for item in context[:self._REPORT_MAX_ITEMS]:
+            truncated = str(item)[:self._REPORT_MAX_ITEM_CHARS]
+            if total_len + len(truncated) > self._REPORT_MAX_CONTEXT_CHARS:
+                # If adding this item would exceed limit, truncate it to fit
+                remaining = self._REPORT_MAX_CONTEXT_CHARS - total_len
+                if remaining > 100:  # Only add if worth it
+                    truncated_contexts.append(truncated[:remaining])
+                break
+            truncated_contexts.append(truncated)
+            total_len += len(truncated)
+
+        context_str = "\n---\n".join(truncated_contexts)
+
+        prompt = f"""Research query: {bounded_query}
+
+Podklady pro analýzu:
+{context_str}
+
+Vytvoř strukturovaný OSINT report v češtině s následujícími sekcemi:
+1. Shrnutí (Executive Summary) - max 3 věty
+2. Klíčová zjištění (Key Findings) - hlavní IOC a poznatky
+3. Doporučení (Recommendations) - praktické kroky
+
+Report piš v češtině, buď konkrétní a stručný."""
+
+        try:
+            return await self.generate(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=1024,
+                system_msg=self._REPORT_SYSTEM_PROMPT
+            )
+        except Exception as e:
+            logger.error(f"[GENERATE_REPORT] Failed: {e}")
+            return f"Report generation failed: {str(e)[:200]}"
+
     async def generate_sprint_plan(
         self,
         query: str,

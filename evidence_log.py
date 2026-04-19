@@ -55,7 +55,6 @@ import json
 import logging
 import os
 import secrets
-import sqlite3
 import threading
 import time
 import uuid
@@ -63,6 +62,8 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set
+
+import aiosqlite
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -333,7 +334,7 @@ class EvidenceLog:
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=500)
         self._flush_task: Optional[asyncio.Task] = None
         self._db_path: Optional[Path] = None
-        self._db: Optional[sqlite3.Connection] = None
+        self._db: Optional[aiosqlite.Connection] = None
         self._initialized = False
         self._closing = False  # Flag: aclose in progress, block queue access
 
@@ -355,14 +356,14 @@ class EvidenceLog:
         if self._initialized:
             return
 
-        # Run in event loop thread — sqlite3.connect is I/O-bound, not CPU-bound,
+        # Run in event loop thread — aiosqlite.connect is I/O-bound, not CPU-bound,
         # and _db must be created in the same thread where it's used (event loop).
-        self._init_db()
-        self._migrate_from_file()
+        await self._init_db()
+        await self._migrate_from_file()
         self._flush_task = asyncio.create_task(self._flush_worker())
         self._initialized = True
 
-    def _init_db(self) -> None:
+    async def _init_db(self) -> None:
         """Initialize SQLite database with WAL mode."""
         if self._db_path is None:
             from hledac.universal.paths import EVIDENCE_ROOT
@@ -370,10 +371,10 @@ class EvidenceLog:
             evidence_dir.mkdir(parents=True, exist_ok=True)
             self._db_path = evidence_dir / f"{self._run_id}.db"
 
-        self._db = sqlite3.connect(str(self._db_path))
-        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db = await aiosqlite.connect(str(self._db_path))
+        await self._db.execute("PRAGMA journal_mode=WAL")
 
-        self._db.execute("""
+        await self._db.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp REAL NOT NULL,
@@ -382,9 +383,9 @@ class EvidenceLog:
                 hash TEXT NOT NULL
             )
         """)
-        self._db.commit()
+        await self._db.commit()
 
-    def _migrate_from_file(self) -> None:
+    async def _migrate_from_file(self) -> None:
         """Migrate events from old JSONL file if exists."""
         if self._persist_path is None or not self._persist_path.exists():
             return
@@ -408,11 +409,11 @@ class EvidenceLog:
                     event_data = json.dumps(data)
                     content_hash = data.get('content_hash', '')
 
-                    self._db.execute(
+                    await self._db.execute(
                         "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
                         (timestamp, event_type, event_data, content_hash)
                     )
-            self._db.commit()
+            await self._db.commit()
 
             # Rename old file to mark as migrated
             old_file.rename(migrated_file)
@@ -444,8 +445,8 @@ class EvidenceLog:
                    (batch and (datetime.now() - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):
                     flush_start = time.perf_counter()
                     # Run directly — _db was created in the event loop thread,
-                    # and _flush_batch is a sync I/O call, not CPU-bound.
-                    self._flush_batch(batch)
+                    # and _flush_batch is an async I/O call.
+                    await self._flush_batch(batch)
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
                     batch = []
@@ -461,11 +462,11 @@ class EvidenceLog:
         if batch:
             flush_start = time.perf_counter()
             # Run directly — same thread as the worker, _db was created in event loop thread
-            self._flush_batch(batch)
+            await self._flush_batch(batch)
             flush_latency_ms = (time.perf_counter() - flush_start) * 1000
             trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
 
-    def _flush_batch(self, batch: List[Dict[str, Any]]) -> None:
+    async def _flush_batch(self, batch: List[Dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite."""
         if not batch or not self._db:
             return
@@ -479,11 +480,12 @@ class EvidenceLog:
 
             records.append((timestamp, event_type, data, content_hash))
 
-        self._db.executemany(
-            "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
-            records
-        )
-        self._db.commit()
+        async with self._db.begin() as conn:
+            await conn.executemany(
+                "INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)",
+                records
+            )
+            await conn.commit()
 
     def _init_encryption(self):
         """Initialize encryption cipher."""
@@ -1270,31 +1272,19 @@ class EvidenceLog:
             except asyncio.QueueEmpty:
                 break
 
-        # Flush drained items synchronously (SQLite is thread-bound, runs in event loop thread)
+        # Flush drained items (async SQLite)
         if drained:
             try:
-                self._flush_batch(drained)
+                await self._flush_batch(drained)
             except Exception as e:
                 logger.warning(f"Failed to flush remaining items: {e}")
 
-        # 3. Close SQLite connection via event loop (sqlite3.Connection is not thread-safe)
-        # Sprint F200E: use a Future to wait for actual close completion
+        # 3. Close SQLite connection via event loop (aiosqlite.Connection is async)
         if self._db is not None:
             try:
-                loop = asyncio.get_running_loop()
-                close_future = loop.create_future()
-
-                def _do_close():
-                    try:
-                        self._db.close()
-                    finally:
-                        close_future.set_result(None)
-
-                loop.call_soon_threadsafe(_do_close)
-                # Wait for close to complete before proceeding
-                await close_future
+                await self._db.close()
             except Exception as e:
-                logger.warning(f"Failed to schedule SQLite close: {e}")
+                logger.warning(f"Failed to close SQLite: {e}")
             finally:
                 self._db = None
 
