@@ -6,6 +6,7 @@ CAPTCHA solver using YOLO CoreML model and VNCoreMLModel.
 Designed for M1/Apple Silicon with ANE acceleration.
 """
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -285,3 +286,136 @@ class VisionCaptchaSolver:
             'max_size': cls.MAX_CACHE_SIZE,
             'ttl_seconds': cls.CACHE_TTL
         }
+
+    # ========================================================================
+    # P7: OCR and 2Captcha integration
+    # ========================================================================
+
+    async def solve_image_captcha(self, image_bytes: bytes) -> Optional[str]:
+        """
+        OCR via pytesseract (free, local). Returns None if unavailable.
+
+        Preprocessing for M1-optimized OCR accuracy:
+        - Grayscale conversion
+        - Thresholding to binary
+        """
+        try:
+            import pytesseract
+            from PIL import Image
+            import io
+        except ImportError:
+            logger.debug("pytesseract not available, trying 2captcha")
+            return None
+
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            # Preprocessing for better OCR accuracy on M1
+            img = img.convert("L")  # grayscale
+            img = img.point(lambda x: 0 if x < 128 else 255)  # threshold
+            result = pytesseract.image_to_string(img, config="--psm 8").strip()
+            if result:
+                logger.debug(f"pytesseract OCR succeeded: {result[:50]}...")
+            return result if result else None
+        except Exception as e:
+            logger.warning(f"pytesseract OCR failed: {e}")
+            return None
+
+    async def solve_via_2captcha(self, image_bytes: bytes) -> Optional[str]:
+        """
+        Cloud CAPTCHA solving via 2Captcha API. Only if API key configured.
+        Polls with backoff (10 attempts, 3s interval).
+        """
+        api_key = getattr(self, "_2captcha_api_key", None)
+        if not api_key:
+            logger.debug("2Captcha API key not configured")
+            return None
+
+        try:
+            import aiohttp
+            import base64
+        except ImportError:
+            logger.warning("aiohttp not available for 2captcha")
+            return None
+
+        b64 = base64.b64encode(image_bytes).decode()
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Submit CAPTCHA
+                async with session.post(
+                    "http://2captcha.com/in.php",
+                    data={"key": api_key, "method": "base64", "body": b64}
+                ) as r:
+                    result = await r.text()
+                if not result.startswith("OK|"):
+                    logger.warning(f"2Captcha submit failed: {result}")
+                    return None
+                captcha_id = result.split("|")[1]
+
+                # Poll for result with backoff
+                for _ in range(10):
+                    await asyncio.sleep(3)
+                    async with session.get(
+                        f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
+                    ) as r:
+                        res = await r.text()
+                    if res.startswith("OK|"):
+                        solution = res.split("|")[1]
+                        logger.debug(f"2Captcha solved: {solution[:50]}...")
+                        return solution
+                    if res == "CAPCHA_NOT_READY":
+                        continue
+                    # Any other error
+                    logger.warning(f"2Captcha poll error: {res}")
+                    break
+        except Exception as e:
+            logger.warning(f"2Captcha request failed: {e}")
+        return None
+
+    async def solve(self, image_bytes: bytes) -> Optional[str]:
+        """
+        Unified CAPTCHA solving: OCR first (free), 2Captcha fallback (paid).
+
+        Args:
+            image_bytes: Raw CAPTCHA image data
+
+        Returns:
+            Solved CAPTCHA text or None if unsolved
+        """
+        # Check cache first
+        cache_key = self._get_cache_key(image_bytes)
+        cached = self._get_cached_result(cache_key)
+        if cached is not None:
+            return cached
+
+        # Try local OCR first (free, no API key needed)
+        result = await self.solve_image_captcha(image_bytes)
+        if result:
+            self._set_cached_result(cache_key, result)
+            return result
+
+        # Fallback to 2Captcha cloud service
+        result = await self.solve_via_2captcha(image_bytes)
+        if result:
+            self._set_cached_result(cache_key, result)
+        return result
+
+
+# ========================================================================
+# P7: Legacy function-based API for compatibility
+# ========================================================================
+
+async def solve_captcha(image_bytes: bytes, api_key: Optional[str] = None) -> Optional[str]:
+    """
+    Standalone CAPTCHA solver function.
+
+    Args:
+        image_bytes: CAPTCHA image data
+        api_key: Optional 2Captcha API key
+
+    Returns:
+        Solved text or None
+    """
+    solver = VisionCaptchaSolver()
+    if api_key:
+        solver._2captcha_api_key = api_key
+    return await solver.solve(image_bytes)

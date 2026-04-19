@@ -4,19 +4,47 @@
 """
 Public-passive text/HTML fetcher using shared aiohttp session runtime.
 Always-on, bounded, fail-soft, typed via msgspec.Struct.
+
+P4: Tor + stealth layer integration:
+- .onion domains routed via Tor SOCKS5 proxy (9050)
+- Optional stealth mode via StealthManager
+- Circuit renewal every TOR_CIRCUIT_RENEWAL_REQUEST_COUNT requests
+- Random jitter before each request when using Tor/stealth
 """
 from __future__ import annotations
 
 import asyncio
+import logging
+import random
 import re
 import time
 import urllib.parse
-from typing import Final
+from typing import Final, Optional
 
 import msgspec
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.patterns.pattern_matcher import match_text
+from hledac.universal.resource_allocator import FETCH_SEMAPHORE
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# P4: Tor + stealth constants
+# ---------------------------------------------------------------------------
+TOR_SOCKS_PROXY: Final[str] = "socks5://127.0.0.1:9050"
+TOR_CIRCUIT_RENEWAL_REQUEST_COUNT: Final[int] = 10
+TOR_STEALTH_TIMEOUT_SCALE: Final[float] = 2.0  # Tor requests need longer timeouts
+JITTER_MIN_S: Final[float] = 0.1
+JITTER_MAX_S: Final[float] = 0.5
+
+# Module-level state for Tor session management
+_tor_session: Optional["aiohttp.ClientSession"] = None
+_tor_request_count: int = 0
+_tor_session_lock: "asyncio.Lock" = asyncio.Lock()
+
+# P7: Camoufox singleton lock — max 1 instance across entire fetcher
+_CAMOUFOX_LOCK: "asyncio.Lock" = asyncio.Lock()
 
 # ---------------------------------------------------------------------------
 # Public API — single entry point
@@ -302,6 +330,155 @@ def _try_decode(body: bytes) -> tuple[str, bool, int]:
 
 
 # ---------------------------------------------------------------------------
+# P4: Tor session helpers — SOCKS5 proxy via aiohttp_socks
+# ---------------------------------------------------------------------------
+
+
+def _is_onion_url(url: str) -> bool:
+    """Detect if URL targets a .onion darknet address."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        return parsed.hostname.lower().endswith(".onion") if parsed.hostname else False
+    except Exception:
+        return False
+
+
+async def _get_tor_session() -> "aiohttp.ClientSession":
+    """Get or create aiohttp session via Tor SOCKS5 proxy (lazy, singleton)."""
+    global _tor_session
+    if _tor_session is None or _tor_session.closed:
+        try:
+            from aiohttp_socks import ProxyConnector
+        except ImportError:
+            raise RuntimeError("aiohttp_socks required for Tor: pip install aiohttp_socks")
+        connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
+        _tor_session = aiohttp.ClientSession(connector=connector)
+    return _tor_session
+
+
+async def _renew_tor_circuit() -> bool:
+    """
+    Renew Tor circuit via NEWNYM signal through control port.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        import stem.control
+        with stem.control.Controller.from_port(port=9051) as ctrl:
+            ctrl.authenticate()
+            ctrl.signal(stem.control.Signal.NEWNYM)
+            logger.debug("Tor circuit renewed via NEWNYM signal")
+            return True
+    except Exception as e:
+        logger.warning(f"Tor circuit renewal failed: {e}")
+        return False
+
+
+async def _maybe_renew_tor_circuit() -> None:
+    """Renew Tor circuit if request count threshold reached."""
+    global _tor_request_count
+    _tor_request_count += 1
+    if _tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
+        _tor_request_count = 0
+        await _renew_tor_circuit()
+
+
+async def _jitter_delay() -> None:
+    """Apply random jitter before request (Tor/stealth anti-correlation)."""
+    await asyncio.sleep(random.uniform(JITTER_MIN_S, JITTER_MAX_S))
+
+
+async def _close_tor_session() -> None:
+    """Close the Tor session (for cleanup)."""
+    global _tor_session
+    if _tor_session is not None and not _tor_session.closed:
+        await _tor_session.close()
+        _tor_session = None
+
+
+# ---------------------------------------------------------------------------
+# P7: JS detection and Camoufox/nodriver rendering
+# ---------------------------------------------------------------------------
+
+# JS detection patterns — trigger Camoufox retry
+_NOSCRIPT_RE = re.compile(r"<noscript[^>]*>|enable javascript", re.IGNORECASE)
+
+
+def _needs_js_fetch(text: str) -> bool:
+    """Detect if response suggests JS-rendered content is needed."""
+    return bool(_NOSCRIPT_RE.search(text))
+
+
+async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
+    """
+    Fetch JS-heavy page via Camoufox (Firefox-based anti-detect).
+    Max 1 instance, protected by _CAMOUFOX_LOCK singleton.
+    M1-optimized: headless, WebGL spoofed for Apple M1.
+    """
+    # Memory guard: if LLM is loaded, skip JS rendering to preserve RAM
+    if FETCH_SEMAPHORE._value <= 3:
+        logger.warning(
+            f"LLM worker pool active ({FETCH_SEMAPHORE._value} slots), "
+            "skipping Camoufox JS render to preserve memory"
+        )
+        return ""
+
+    try:
+        from camoufox.async_api import AsyncCamoufox
+    except ImportError:
+        logger.debug("camoufox not installed, JS fetch unavailable")
+        return ""
+
+    async with _CAMOUFOX_LOCK:
+        try:
+            async with AsyncCamoufox(
+                headless=True,
+                os="macos",
+                webgl_config=("Apple", "Apple M1, or similar"),
+                fingerprint_seed=int(time.time()),
+            ) as browser:
+                page = await browser.new_page()
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+                    html = await page.content()
+                finally:
+                    await page.close()
+                return html
+        except Exception as e:
+            logger.warning(f"Camoufox fetch failed for {url}: {e}")
+            return ""
+
+
+async def _fetch_with_nodriver(url: str) -> str:
+    """
+    Fallback JS fetch via nodriver (direct CDP, no WebDriver).
+    Faster startup than Camoufox, suitable for CDP features.
+    """
+    try:
+        import nodriver as uc
+    except ImportError:
+        logger.debug("nodriver not installed, CDP fetch unavailable")
+        return ""
+
+    browser = None
+    try:
+        browser = await uc.start(
+            headless=True,
+            browser_args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        page = await browser.get(url)
+        await asyncio.sleep(2)  # jitter for bot detection
+        html = await page.get_content()
+        await page.close()  # CRITICAL: without close() → memory leak
+        return html
+    except Exception as e:
+        logger.warning(f"nodriver fetch failed: {e}")
+        return ""
+    finally:
+        if browser:
+            browser.stop()
+
+
+# ---------------------------------------------------------------------------
 # Main fetch function
 # ---------------------------------------------------------------------------
 
@@ -310,22 +487,31 @@ async def async_fetch_public_text(
     url: str,
     timeout_s: float = 35.0,
     max_bytes: int = MAX_BYTES_DEFAULT,
+    use_stealth: bool = False,
+    use_js: bool = False,
 ) -> FetchResult:
     """
     Fetch a public URL using the shared aiohttp session.
 
-    Passive-only: no auth, no cookies, no stealth.
+    P4 stealth mode: optional StealthManager/StealthSession for enhanced privacy.
+    P4 Tor mode: .onion URLs automatically routed via Tor SOCKS5 proxy.
+    P7 JS mode: Camoufox (primary) with nodriver fallback for JS-heavy pages.
     Chunked streaming with hard size cap.
     CancelledError propagates (not swallowed).
 
     Parameters
     ----------
     url : str
-        Target URL (http or https only).
+        Target URL (http or https only, .onion via Tor SOCKS5).
     timeout_s : float
-        Per-request timeout in seconds (default 35 s).
+        Per-request timeout in seconds (default 35 s, scaled x2 for Tor).
     max_bytes : int
         Maximum bytes to read from body (default 2 MB, hard cap 10 MB).
+    use_stealth : bool
+        If True, use StealthManager/StealthSession for enhanced stealth
+        (header rotation, fingerprint randomization, rate limiting).
+    use_js : bool
+        If True, force JS rendering via Camoufox/nodriver.
 
     Returns
     -------
@@ -372,100 +558,144 @@ async def async_fetch_public_text(
     if max_bytes > MAX_BYTES_HARD:
         max_bytes = MAX_BYTES_HARD
 
+    # --- P7: Explicit JS rendering mode ---
+    if use_js:
+        logger.info(f"JS rendering requested for {url}")
+        js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+        if not js_html:
+            logger.warning(f"Camoufox failed, trying nodriver: {url}")
+            js_html = await _fetch_with_nodriver(url)
+        if js_html:
+            js_text, _ = await process_html_payload(js_html, url)
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            return FetchResult(
+                url=url,
+                final_url=url,
+                status_code=200,
+                content_type="text/html",
+                text=js_text,
+                fetched_bytes=len(js_html),
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error=None,
+            )
+        # JS rendering completely failed
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        return FetchResult(
+            url=url,
+            final_url=url,
+            status_code=0,
+            content_type="",
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=elapsed_ms,
+            error="js_render_failed",
+            failure_stage="fetching",
+        )
+
+    # --- P4: Determine transport mode ---
+    is_onion = _is_onion_url(url)
+    use_tor = is_onion  # .onion URLs always go via Tor
+    timeout_s = timeout_s * TOR_STEALTH_TIMEOUT_SCALE if use_tor else timeout_s
+
+    # --- P4: Stealth session setup ---
+    stealth_response: Optional["StealthResponse"] = None
+    if use_stealth:
+        try:
+            from hledac.universal.stealth.stealth_manager import (
+                StealthManager,
+                StealthResponse,
+            )
+            stealth_mgr = StealthManager()
+            async with stealth_mgr.session() as stealth_session:
+                # Apply jitter before request (anti-correlation)
+                await _jitter_delay()
+
+                # Maybe renew Tor circuit if using .onion
+                if use_tor:
+                    await _maybe_renew_tor_circuit()
+
+                # Execute stealth request
+                stealth_resp: StealthResponse = await stealth_session.get(url, max_bytes=max_bytes)
+
+                # Convert StealthResponse to FetchResult format
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                text, decode_replaced, decode_replacement_count = _try_decode(
+                    stealth_resp.body_bytes
+                )
+                return FetchResult(
+                    url=url,
+                    final_url=stealth_resp.final_url,
+                    status_code=stealth_resp.status,
+                    content_type=stealth_resp.content_type or "",
+                    text=text,
+                    fetched_bytes=len(stealth_resp.body_bytes),
+                    declared_length=-1,
+                    elapsed_ms=elapsed_ms,
+                    error=None,
+                    decode_replaced=decode_replaced,
+                    decode_replacement_count=decode_replacement_count,
+                )
+        except Exception as e:
+            # Fall through to regular fetch if stealth fails
+            logger.warning(f"Stealth request failed, falling back to regular: {e}")
+
+    # --- P4: Tor session setup for .onion URLs ---
+    tor_session = None  # Always defined for use_tor check below
+    if use_tor:
+        try:
+            tor_session = await _get_tor_session()
+        except RuntimeError as e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            return FetchResult(
+                url=url,
+                final_url=url,
+                status_code=0,
+                content_type="",
+                text=None,
+                fetched_bytes=0,
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error=f"tor_unavailable;{type(e).__name__};{e}",
+                failure_stage="connection",
+            )
+
     # --- Retryable status tracking ---
     retry_after: float | None = None
     last_status_code: int = 0
     last_error: str | None = None
 
     for attempt in range(MAX_RETRIES + 1):
-        session = await async_get_aiohttp_session()
+        # P4: Apply jitter before each request (Tor/stealth anti-correlation)
+        if use_tor or use_stealth:
+            await _jitter_delay()
+
+        # P4: Maybe renew Tor circuit every N requests
+        if use_tor:
+            await _maybe_renew_tor_circuit()
+
+        session = tor_session if use_tor else await async_get_aiohttp_session()
         headers = {"User-Agent": DEFAULT_UA}
 
         try:
             async with asyncio.timeout(timeout_s):
-                async with session.get(url, headers=headers, allow_redirects=True) as resp:
-                    final_url = str(resp.url)
-                    last_status_code = resp.status
-                    content_type = resp.headers.get("Content-Type", "")
-                    raw_content_type = content_type.split(";")[0].strip().lower()
+                async with FETCH_SEMAPHORE:
+                    async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                        final_url = str(resp.url)
+                        last_status_code = resp.status
+                        content_type = resp.headers.get("Content-Type", "")
+                        raw_content_type = content_type.split(";")[0].strip().lower()
 
-                    # --- Retryable status → wait and retry once ---
-                    if _is_retryable_status(last_status_code):
-                        last_error = _build_retry_error(last_status_code, retry_after)
-                        if attempt < MAX_RETRIES:
-                            retry_after = _extract_retry_after(resp.headers)
-                            backoff = _compute_backoff_seconds(retry_after, attempt)
-                            await asyncio.sleep(backoff)
-                            continue
-                        # Exhausted retries — return with error prefix
-                        elapsed_ms = (time.monotonic() - t0) * 1000
-                        redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                        return FetchResult(
-                            url=url,
-                            final_url=final_url,
-                            status_code=last_status_code,
-                            content_type=content_type,
-                            text=None,
-                            fetched_bytes=0,
-                            declared_length=-1,
-                            elapsed_ms=elapsed_ms,
-                            error=last_error,
-                            redirected=redirected,
-                            redirect_target=redirect_target,
-                            failure_stage="http",
-                        )
-
-                    # --- Content-type gate with XML-ish body recovery (Feed ingress hardening F164A) ---
-                    xml_recovered = False
-                    rejected_ct = raw_content_type not in ACCEPTED_CONTENT_TYPES
-
-                    raw_declared = resp.headers.get("Content-Length")
-                    try:
-                        declared_length = int(raw_declared) if raw_declared else -1
-                    except (ValueError, TypeError):
-                        declared_length = -1
-
-                    # --- Chunked body read with size cap ---
-                    body_chunks: list[bytes] = []
-                    total_read = 0
-                    accumulated_ok = True
-                    first_chunk_peeked = False
-
-                    async for chunk in resp.content.iter_chunked(8192):
-                        chunk_len = len(chunk)
-
-                        # Peek: check first chunk for XML-ish body when CT is wrong
-                        if rejected_ct and not first_chunk_peeked:
-                            first_chunk_peeked = True
-                            if _looks_xmlish(chunk):
-                                # Feed ingress recovery: wrong CT but XML body — accept it
-                                xml_recovered = True
-                            elif total_read == 0:
-                                # First chunk is not XML-ish and we haven't accumulated anything —
-                                # non-XML body under wrong CT: reject without reading remainder
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                                return FetchResult(
-                                    url=url,
-                                    final_url=final_url,
-                                    status_code=last_status_code,
-                                    content_type=content_type,
-                                    text=None,
-                                    fetched_bytes=0,
-                                    declared_length=declared_length,
-                                    elapsed_ms=elapsed_ms,
-                                    error=f"content_type_rejected:{raw_content_type}",
-                                    redirected=redirected,
-                                    redirect_target=redirect_target,
-                                    failure_stage="http",
-                                )
-
-                        if total_read + chunk_len > max_bytes:
-                            remaining = max_bytes - total_read
-                            if remaining > 0:
-                                body_chunks.append(chunk[:remaining])
-                                total_read += remaining
-                            accumulated_ok = False
+                        # --- Retryable status → wait and retry once ---
+                        if _is_retryable_status(last_status_code):
+                            last_error = _build_retry_error(last_status_code, retry_after)
+                            if attempt < MAX_RETRIES:
+                                retry_after = _extract_retry_after(resp.headers)
+                                backoff = _compute_backoff_seconds(retry_after, attempt)
+                                await asyncio.sleep(backoff)
+                                continue
+                            # Exhausted retries — return with error prefix
                             elapsed_ms = (time.monotonic() - t0) * 1000
                             redirected, redirect_target = _derive_redirect_fields(url, final_url)
                             return FetchResult(
@@ -474,50 +704,157 @@ async def async_fetch_public_text(
                                 status_code=last_status_code,
                                 content_type=content_type,
                                 text=None,
-                                fetched_bytes=total_read,
-                                declared_length=declared_length,
+                                fetched_bytes=0,
+                                declared_length=-1,
                                 elapsed_ms=elapsed_ms,
-                                error="size_cap_exceeded",
+                                error=last_error,
                                 redirected=redirected,
                                 redirect_target=redirect_target,
-                                failure_stage="size",
+                                failure_stage="http",
                             )
-                        body_chunks.append(chunk)
-                        total_read += chunk_len
 
-                    if accumulated_ok and body_chunks:
+                        # --- Content-type gate with XML-ish body recovery (Feed ingress hardening F164A) ---
+                        xml_recovered = False
+                        rejected_ct = raw_content_type not in ACCEPTED_CONTENT_TYPES
+
+                        raw_declared = resp.headers.get("Content-Length")
                         try:
-                            body_bytes = b"".join(body_chunks)
-                            # F178E: detect decode quality — replacement count for truth
-                            text, decode_replaced, decode_replacement_count = _try_decode(body_bytes)
-                        except Exception:
+                            declared_length = int(raw_declared) if raw_declared else -1
+                        except (ValueError, TypeError):
+                            declared_length = -1
+
+                        # --- Chunked body read with size cap ---
+                        body_chunks: list[bytes] = []
+                        total_read = 0
+                        accumulated_ok = True
+                        first_chunk_peeked = False
+
+                        async for chunk in resp.content.iter_chunked(8192):
+                            chunk_len = len(chunk)
+
+                            # Peek: check first chunk for XML-ish body when CT is wrong
+                            if rejected_ct and not first_chunk_peeked:
+                                first_chunk_peeked = True
+                                if _looks_xmlish(chunk):
+                                    # Feed ingress recovery: wrong CT but XML body — accept it
+                                    xml_recovered = True
+                                elif total_read == 0:
+                                    # First chunk is not XML-ish and we haven't accumulated anything —
+                                    # non-XML body under wrong CT: reject without reading remainder
+                                    elapsed_ms = (time.monotonic() - t0) * 1000
+                                    redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                                    return FetchResult(
+                                        url=url,
+                                        final_url=final_url,
+                                        status_code=last_status_code,
+                                        content_type=content_type,
+                                        text=None,
+                                        fetched_bytes=0,
+                                        declared_length=declared_length,
+                                        elapsed_ms=elapsed_ms,
+                                        error=f"content_type_rejected:{raw_content_type}",
+                                        redirected=redirected,
+                                        redirect_target=redirect_target,
+                                        failure_stage="http",
+                                    )
+
+                            if total_read + chunk_len > max_bytes:
+                                remaining = max_bytes - total_read
+                                if remaining > 0:
+                                    body_chunks.append(chunk[:remaining])
+                                    total_read += remaining
+                                accumulated_ok = False
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                                return FetchResult(
+                                    url=url,
+                                    final_url=final_url,
+                                    status_code=last_status_code,
+                                    content_type=content_type,
+                                    text=None,
+                                    fetched_bytes=total_read,
+                                    declared_length=declared_length,
+                                    elapsed_ms=elapsed_ms,
+                                    error="size_cap_exceeded",
+                                    redirected=redirected,
+                                    redirect_target=redirect_target,
+                                    failure_stage="size",
+                                )
+                            body_chunks.append(chunk)
+                            total_read += chunk_len
+
+                        if accumulated_ok and body_chunks:
+                            try:
+                                body_bytes = b"".join(body_chunks)
+                                # F178E: detect decode quality — replacement count for truth
+                                text, decode_replaced, decode_replacement_count = _try_decode(body_bytes)
+                            except Exception:
+                                text = None
+                                decode_replaced = False
+                                decode_replacement_count = 0
+                        else:
                             text = None
                             decode_replaced = False
                             decode_replacement_count = 0
-                    else:
-                        text = None
-                        decode_replaced = False
-                        decode_replacement_count = 0
 
-                    elapsed_ms = (time.monotonic() - t0) * 1000
-                    redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                    return FetchResult(
-                        url=url,
-                        final_url=final_url,
-                        status_code=last_status_code,
-                        content_type=content_type,
-                        text=text,
-                        fetched_bytes=total_read,
-                        declared_length=declared_length,
-                        elapsed_ms=elapsed_ms,
-                        error=None,
-                        xml_recovered=xml_recovered,
-                        xml_source_hint=xml_recovered,  # F178E: xml_source_hint mirrors xml_recovered
-                        decode_replaced=decode_replaced,
-                        decode_replacement_count=decode_replacement_count,  # F178E
-                        redirected=redirected,
-                        redirect_target=redirect_target,
-                    )
+                        # P7: Auto-detect JS need and retry via Camoufox → nodriver
+                        if text and not use_js and _needs_js_fetch(text):
+                            logger.info(f"JS need detected, retrying with Camoufox: {url}")
+                            js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+                            if js_html:
+                                # Process JS-rendered HTML
+                                js_text, js_matches = await process_html_payload(js_html, url)
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                return FetchResult(
+                                    url=url,
+                                    final_url=url,
+                                    status_code=200,
+                                    content_type="text/html",
+                                    text=js_text,
+                                    fetched_bytes=len(js_html),
+                                    declared_length=-1,
+                                    elapsed_ms=elapsed_ms,
+                                    error=None,
+                                )
+                            # Camoufox failed → try nodriver fallback
+                            logger.warning(f"Camoufox failed, trying nodriver: {url}")
+                            js_html = await _fetch_with_nodriver(url)
+                            if js_html:
+                                js_text, js_matches = await process_html_payload(js_html, url)
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                return FetchResult(
+                                    url=url,
+                                    final_url=url,
+                                    status_code=200,
+                                    content_type="text/html",
+                                    text=js_text,
+                                    fetched_bytes=len(js_html),
+                                    declared_length=-1,
+                                    elapsed_ms=elapsed_ms,
+                                    error=None,
+                                )
+                            # Both JS renders failed → warn and return original
+                            logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
+
+                        elapsed_ms = (time.monotonic() - t0) * 1000
+                        redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                        return FetchResult(
+                            url=url,
+                            final_url=final_url,
+                            status_code=last_status_code,
+                            content_type=content_type,
+                            text=text,
+                            fetched_bytes=total_read,
+                            declared_length=declared_length,
+                            elapsed_ms=elapsed_ms,
+                            error=None,
+                            xml_recovered=xml_recovered,
+                            xml_source_hint=xml_recovered,  # F178E: xml_source_hint mirrors xml_recovered
+                            decode_replaced=decode_replaced,
+                            decode_replacement_count=decode_replacement_count,  # F178E
+                            redirected=redirected,
+                            redirect_target=redirect_target,
+                        )
 
         except asyncio.TimeoutError:
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -593,6 +930,18 @@ __all__ = [
     "_compute_backoff_seconds",
     "_try_decode",
     "_looks_xmlish",
+    # P4: Tor + stealth helpers
+    "_is_onion_url",
+    "_get_tor_session",
+    "_renew_tor_circuit",
+    "_jitter_delay",
+    "_close_tor_session",
+    "TOR_SOCKS_PROXY",
+    "TOR_CIRCUIT_RENEWAL_REQUEST_COUNT",
+    # P7: JS rendering helpers
+    "_needs_js_fetch",
+    "_fetch_with_camoufox",
+    "_fetch_with_nodriver",
 ]
 
 # ---------------------------------------------------------------------------

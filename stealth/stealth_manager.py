@@ -382,6 +382,8 @@ class StealthSession:
         self._closed = False
         # HTTP/3 autodetection cache: domain -> (timestamp, supported)
         self._http3_cache: Dict[str, Tuple[float, bool]] = {}
+        # P7: Request counter for Tor identity rotation (every 10 requests)
+        self._request_count = 0
 
     async def _supports_http3(self, url: str) -> bool:
         """Check if server supports HTTP/3 by looking for Alt-Svc header. Cache 24h."""
@@ -563,6 +565,15 @@ class StealthSession:
                 # HTTP/3 failed - fall through to aiohttp
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
+            # P7: Human-like jitter before each request (anti-correlation)
+            await asyncio.sleep(random.uniform(0.3, 1.8))
+
+            # P7: Tor identity rotation every 10 requests
+            self._request_count += 1
+            if self._request_count >= 10:
+                self._request_count = 0
+                await self._rotate_tor_identity()
+
             # Rate limiting (only on first attempt, backoff handles retries)
             if attempt == 0 and self.manager.rate_limiter:
                 try:
@@ -864,6 +875,28 @@ class StealthSession:
             logger.warning(f"GET preview failed: {e}")
             self.manager._failure_count += 1
             raise
+
+    # ========================================================================
+    # P7: Tor identity rotation via STEM controller
+    # ========================================================================
+
+    async def _rotate_tor_identity(self) -> None:
+        """
+        Request new Tor circuit via STEM controller.
+        Called every 10 requests when Tor is active.
+        """
+        try:
+            from stem import Signal
+            from stem.control import Controller
+            with Controller.from_port(port=9051) as controller:
+                controller.authenticate()
+                controller.signal(Signal.NEWNYM)
+                logger.debug("Tor identity rotated via NEWNYM signal")
+                await asyncio.sleep(1)  # Wait for new circuit
+        except ImportError:
+            logger.debug("stem library not available for Tor rotation")
+        except Exception as e:
+            logger.warning(f"Tor identity rotation failed: {e}")
 
     async def close(self):
         """Close session and cleanup."""

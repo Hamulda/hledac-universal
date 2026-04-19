@@ -23,10 +23,18 @@ class TorManager:
 
     MAX_CIRCUITS = 5
     CIRCUIT_REUSE_SECONDS = 60
+    DEFAULT_CONTROL_PORT = 9051
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        data_dir: Optional[Path] = None,
+        control_port: int = DEFAULT_CONTROL_PORT,
+        control_password: str = "",
+    ):
         self._data_dir = data_dir or Path.home() / ".hledac" / "tor_state"
         self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._control_port = control_port
+        self._control_password = control_password
         self._controller: Optional[Controller] = None
         self._circuits: Dict[str, Dict[str, Any]] = {}  # domain -> circuit info
         self._lock = asyncio.Lock()
@@ -43,10 +51,16 @@ class TorManager:
             loop = asyncio.get_running_loop()
             self._controller = await loop.run_in_executor(
                 None,
-                lambda: Controller.from_port(port=9051)  # default Tor control port
+                lambda: Controller.from_port(port=self._control_port)
             )
-            await loop.run_in_executor(None, self._controller.authenticate)
-            logger.info("[TOR] Controller connected")
+            if self._control_password:
+                await loop.run_in_executor(
+                    None,
+                    lambda: self._controller.authenticate(password=self._control_password)
+                )
+            else:
+                await loop.run_in_executor(None, self._controller.authenticate)
+            logger.info(f"[TOR] Controller connected on port {self._control_port}")
             return True
         except Exception as e:
             logger.warning(f"[TOR] Connection failed: {e}")
@@ -94,6 +108,32 @@ class TorManager:
             except Exception as e:
                 logger.warning(f"[TOR] Circuit creation failed for {domain}: {e}")
                 return None
+
+    # ========================================================================
+    # P7: Circuit rotation
+    # ========================================================================
+
+    async def rotate_circuit(self) -> bool:
+        """
+        Force new Tor circuit via STEM controller.
+        Returns True on success, False if Tor is unavailable or rotation fails.
+        """
+        if not self._available:
+            return False
+        if not await self.ensure_connected():
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self._controller.signal(Signal.NEWNYM)
+            )
+            await asyncio.sleep(1)  # Wait for new circuit to establish
+            logger.info("[TOR] Circuit rotated successfully")
+            return True
+        except Exception as e:
+            logger.error(f"[TOR] rotate_circuit failed: {e}")
+            return False
 
     async def close(self):
         """Close Tor controller."""
