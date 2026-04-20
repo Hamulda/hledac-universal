@@ -1315,6 +1315,65 @@ def create_quantum_pathfinder(
         return None
 
 
+# ---------------------------------------------------------------------------
+# FÁZE P14: Heuristic pathfinding wrapper
+# ---------------------------------------------------------------------------
+
+
+async def find_best_path(
+    graph: Any,
+    start: str,
+    end: str,
+) -> list[str]:
+    """
+    FÁZE P14: Find best path between two entities using quantum-inspired pathfinding.
+
+    Wraps QuantumInspiredPathFinder.find_paths() and returns the best (shortest) path.
+
+    Args:
+        graph: NetworkX Graph or adjacency dict {node: [neighbors]}
+        start: Start entity string
+        end: End entity string
+
+    Returns:
+        List of node IDs forming the path, or empty list if no path found.
+    """
+    if graph is None:
+        return []
+
+    try:
+        pathfinder = QuantumInspiredPathFinder()
+        # Initialize with the graph
+        if hasattr(graph, 'adjacency'):
+            # NetworkX graph - convert to adjacency dict
+            adj_dict = {str(n): [str(nb) for nb in graph.neighbors(n)] for n in graph.nodes()}
+            await pathfinder.initialize(adj_dict)
+        elif isinstance(graph, dict):
+            await pathfinder.initialize(graph)
+        else:
+            logger.warning("[QuantumPathfinder] Unsupported graph type")
+            return []
+
+        # Find paths
+        paths = await pathfinder.find_paths(
+            start_nodes=[start],
+            target_nodes=[end],
+            max_steps=50
+        )
+
+        # Return shortest path (first one after sorting by length)
+        if paths:
+            paths.sort(key=len)
+            return paths[0]
+        return []
+
+    except Exception as e:
+        logger.warning(f"[QuantumPathfinder] find_best_path failed: {e}")
+        return []
+    finally:
+        await pathfinder.cleanup()
+
+
 # Re-export for direct import
 __all__ = [
     "QuantumInspiredPathFinder",
@@ -1322,4 +1381,5 @@ __all__ = [
     "create_quantum_pathfinder",
     "QUANTUM_PATHFINDER_AVAILABLE",
     "DuckPGQGraph",
+    "find_best_path",
 ]

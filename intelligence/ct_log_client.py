@@ -140,6 +140,96 @@ class CTLogClient:
             "cert_count": len(raw),
         }
 
+    async def fetch_certificates(
+        self, domain: str, session: "aiohttp.ClientSession"
+    ) -> list[dict]:
+        """Vrátí seznam certifikátů pro doménu z crt.sh.
+
+        Každý dict: subject_common_name, issuer, valid_from, valid_to, alt_names.
+        Používá stejný rate-limit a cache jako pivot_domain().
+        """
+        import aiohttp
+        import xxhash
+
+        cache_key = f"certs_{xxhash.xxh64(domain.encode()).hexdigest()}.json"
+        cache_path = self._cache_dir / cache_key
+
+        if cache_path.exists():
+            age = time.time() - cache_path.stat().st_mtime
+            if age < self._CACHE_TTL:
+                import orjson
+                return orjson.loads(cache_path.read_bytes())
+
+        async with self._lock:
+            if cache_path.exists():
+                age = time.time() - cache_path.stat().st_mtime
+                if age < self._CACHE_TTL:
+                    import orjson
+                    return orjson.loads(cache_path.read_bytes())
+
+            elapsed = time.time() - self._last_request
+            if elapsed < self._RATE_LIMIT_S:
+                await asyncio.sleep(self._RATE_LIMIT_S - elapsed)
+
+            url = f"https://crt.sh/?q=%.{domain}&output=json"
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                    resp.raise_for_status()
+                    raw = await resp.json(content_type=None)
+            except Exception as e:
+                logger.warning(f"crt.sh fetch_certificates {domain}: {e}")
+                return []
+            finally:
+                self._last_request = time.time()
+
+        certs = self._parse_certs(raw)
+
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        import orjson
+        cache_path.write_bytes(orjson.dumps(certs))
+        return certs
+
+    def _parse_certs(self, raw: list) -> list[dict]:
+        """Parsovat crt.sh JSON na per-cert záznamy s datovým kontraktem P20."""
+        certs: list[dict] = []
+        for entry in raw:
+            try:
+                # Subject CN
+                cn = (entry.get("common_name") or "").strip()
+
+                # Issuer CN
+                issuer_dn = entry.get("issuer_name", "")
+                issuer_cn = ""
+                for part in issuer_dn.split(","):
+                    part = part.strip()
+                    if part.startswith("CN="):
+                        issuer_cn = part[3:].strip()
+                        break
+
+                # Validity
+                valid_from = (entry.get("not_before") or "").replace(" ", "T")
+                valid_to = (entry.get("not_after") or "").replace(" ", "T")
+
+                # SANs from name_value (newline-separated)
+                name_value = entry.get("name_value", "")
+                alt_names: list[str] = []
+                for n in name_value.splitlines():
+                    n = n.strip().lstrip("*.")
+                    if n and "." in n and len(n) < 253:
+                        alt_names.append(n.lower())
+
+                certs.append({
+                    "subject_common_name": cn,
+                    "issuer": issuer_cn,
+                    "valid_from": valid_from,
+                    "valid_to": valid_to,
+                    "alt_names": sorted(set(alt_names)),
+                })
+            except Exception:
+                continue
+
+        return certs
+
     async def ingest_to_graph(
         self, ct_result: dict, ioc_graph: "IOCGraph"
     ) -> int:

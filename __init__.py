@@ -53,11 +53,9 @@ from .knowledge.duckdb_store import (
 )
 
 # Resource allocator — FETCH_SEMAPHORE at root level
-from .resource_allocator import (
-    FETCH_SEMAPHORE,
-    AdaptiveSemaphore,
-    adjust_fetch_workers,
-)
+# P19: FETCH_SEMAPHORE moved to utils.concurrency to break circular import
+from .resource_allocator import AdaptiveSemaphore
+from .utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers
 
 
 def load_optional(name: str):

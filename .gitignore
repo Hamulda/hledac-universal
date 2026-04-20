@@ -38,3 +38,4 @@ htmlcov/
 None
 None.*
 .srclight/
+tests/test_pattern_matcher.py

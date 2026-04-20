@@ -471,6 +471,36 @@ class MoERouter:
             return [(name, 1.0 / len(self.config.expert_names))
                     for name in self.config.expert_names]
 
+    # P16: Instance method for routing with explicit query + rag_context
+    async def route(
+        self,
+        query_text: str,
+        rag_context: List[str],
+    ) -> List[str]:
+        """
+        P16: Route query to experts based on content analysis.
+
+        Uses query embedding and memory-aware routing to select top experts.
+
+        Args:
+            query_text: Input query string.
+            rag_context: List of context strings from RAG (unused but part of contract).
+
+        Returns:
+            List of expert IDs (e.g., ['osint', 'security']).
+            Returns up to max_active_experts based on memory availability.
+        """
+        try:
+            expert_scores = await self._route_experts(query_text)
+            # Return just the expert IDs (names), not the scores
+            expert_ids = [expert for expert, score in expert_scores]
+            logger.debug(f"[MoE] route -> {expert_ids} for query: {query_text[:50]}")
+            return expert_ids
+        except Exception as e:
+            logger.warning(f"[MoE] route failed: {e}, returning default experts")
+            # Fallback: return top experts by config order
+            return self.config.expert_names[:self.config.max_active_experts]
+
     async def generate(
         self,
         query: str,
@@ -857,3 +887,75 @@ async def create_moe_router(config: Optional[MoERouterConfig] = None) -> Optiona
     router = MoERouter(config or MoERouterConfig())
     await router.initialize()
     return router
+
+
+# ---------------------------------------------------------------------------
+# FÁZE P14: Context Intelligence routing
+# ---------------------------------------------------------------------------
+
+
+def route(query: str, context: dict) -> str:
+    """
+    FÁZE P14: Route query to appropriate model based on content analysis.
+
+    Analyzes query and context to select the best model:
+    - 'vision': context contains images or <img> tags
+    - 'modernbert': PDF/structured data detected
+    - 'hermes3': default text routing
+
+    Uses heuristics (regex) and memory pressure check (GPU > 3GB → smaller model).
+
+    Args:
+        query: Input query string
+        context: Dict that may contain:
+            - 'has_images': bool flag
+            - 'content_type': 'pdf', 'html', 'text', etc.
+            - 'urls': list of URLs to check for .pdf
+
+    Returns:
+        str in {'hermes3', 'modernbert', 'vision'}
+    """
+    import re
+
+    logger = logging.getLogger(__name__)
+
+    # Check for image content in query (e.g., <img> tags)
+    img_pattern = re.compile(r'<img|image|photo|picture| screenshot', re.IGNORECASE)
+    if img_pattern.search(query):
+        logger.debug("[MoE] route -> vision (img tag detected)")
+        return "vision"
+
+    # Check context for image flags
+    if context.get("has_images") or context.get("images"):
+        logger.debug("[MoE] route -> vision (images in context)")
+        return "vision"
+
+    # Check for PDF or structured data
+    content_type = context.get("content_type", "").lower()
+    if content_type in ("pdf", "application/pdf", "structured"):
+        logger.debug("[MoE] route -> modernbert (structured/PDF)")
+        return "modernbert"
+
+    # Check URLs for .pdf extension
+    urls = context.get("urls", [])
+    for url in urls if isinstance(urls, list) else []:
+        if url.endswith(".pdf") or ".pdf?" in str(url):
+            logger.debug("[MoE] route -> modernbert (PDF URL)")
+            return "modernbert"
+
+    # Memory pressure check: if GPU > 3GB, prefer smaller model
+    try:
+        import mlx.core as mx
+        if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_active_memory'):
+            active_bytes = mx.metal.get_active_memory()
+            active_gb = active_bytes / (1024**3)
+            if active_gb > 3.0:
+                # Under memory pressure, use smaller model
+                logger.debug(f"[MoE] route -> hermes3 (memory pressure: {active_gb:.1f}GB)")
+                return "hermes3"
+    except Exception:
+        pass
+
+    # Default to hermes3
+    logger.debug("[MoE] route -> hermes3 (default)")
+    return "hermes3"

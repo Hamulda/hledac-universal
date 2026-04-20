@@ -38,3 +38,7 @@ websockets>=12.0     # certstream_monitor() — již v ti_feed_adapter.py
 
 # P16: Network & P2P Intelligence
 pybgpstream>=3.0.0  # arm64 unavailable — graceful fallback when missing
+
+# FÁZE P18: Export & Vizualizace
+pyvis>=0.3.2        # Interactive graph visualization (networkx + pyvis HTML export)
+markdown2>=2.4.12   # Markdown to HTML conversion for Obsidian-compatible exports

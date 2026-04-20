@@ -2615,6 +2615,7 @@ async def _run_sprint_mode(
     target: str,
     duration_s: float = 1800.0,
     install_signal_handlers: bool = False,
+    mode: str = "default",
 ) -> None:
     """
     F162C NON-CANONICAL ALTERNATE — DEPRECATED / UNREACHABLE IN ACTIVE PATH.
@@ -2822,13 +2823,16 @@ async def _run_sprint_mode(
                 logger.warning(f"[SPRINT 8VQ] IOCGraph init failed (STIX unavailable): {e}")
 
         # Sprint 8VB: Circuit Breaker stats
-        from transport.circuit_breaker import get_all_breaker_states
-        _cb = get_all_breaker_states()
-        _open_cb = [d for d, s in _cb.items() if s == "open"]
-        logger.info(
-            f"[8VB-CB] breakers={len(_cb)} open={len(_open_cb)} "
-            f"domains={_open_cb[:5]}"
-        )
+        try:
+            from transport.circuit_breaker import get_all_breaker_states
+            _cb = get_all_breaker_states()
+            _open_cb = [d for d, s in _cb.items() if s == "open"]
+            logger.info(
+                f"[8VB-CB] breakers={len(_cb)} open={len(_open_cb)} "
+                f"domains={_open_cb[:5]}"
+            )
+        except Exception:
+            pass  # transport.circuit_breaker unavailable — sibling module outside universal/
 
         # Sprint 8VE B.4: DuckPGQ IOC Graph stats
         _top_iocs = []

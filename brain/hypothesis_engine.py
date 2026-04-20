@@ -2443,10 +2443,11 @@ class HypothesisEngine:
         return self.adversarial_verifier.generate_devils_advocate(hypothesis)
 
     async def generate_hypotheses_async(
-        self, context: Dict[str, Any], hermes_engine: Any = None
+        self, context: Dict[str, Any], hermes_engine: Any = None, prev_reward: float = 0.0
     ) -> List[str]:
         """
         P12: Generate hypotheses from RAG context using Hermes 3.
+        P17: Added prev_reward parameter for RL integration.
 
         Uses Hermes 3 LLM to generate possible investigation paths
         from accumulated RAG context and graph data.
@@ -2458,6 +2459,7 @@ class HypothesisEngine:
                 - graph_summary: str - optional graph summary
                 - existing_hypotheses: list[str] - already generated hypotheses to avoid
             hermes_engine: Optional Hermes3Engine instance for LLM generation
+            prev_reward: P17: Float reward from previous RL action (0-1 range)
 
         Returns:
             List of hypothesis strings (max 10, bounded)
@@ -2488,6 +2490,9 @@ class HypothesisEngine:
 
         context_str = "\n---\n".join(ctx_parts)
 
+        # P17: Include prev_reward in prompt for RL integration
+        reward_context = f"\nReward from previous action: {prev_reward:.2f}" if prev_reward > 0 else ""
+
         # Build prompt for OSINT hypothesis generation
         prompt = f"""Research query: {query}
 
@@ -2495,6 +2500,7 @@ RAG context:
 {context_str}
 
 {f'Graph summary: {graph_summary}' if graph_summary else ''}
+{reward_context}
 
 Navrhni možné cesty, jak získat více informací o "{query}".
 生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.

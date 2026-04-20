@@ -21,12 +21,85 @@ from typing import Any, Dict, List, Optional, Callable, Literal
 from enum import Enum, auto
 
 from hledac.universal import adjust_fetch_workers
+from hledac.universal.utils.exceptions import MemoryPressureError
 
 # Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
 # DO NOT add top-level `import mlx.core as mx` here.
 MLX_AVAILABLE = False
 
+# P19: Memory guard - configurable max_rss_gb and model sizes for M1 8GB
+# Hermes-3-Llama-3.2-3B-4bit ~2GB, ModernBERT ~500MB, GLiNER ~300MB
+_model_max_rss_gb: float = 5.5
+_MODEL_SIZES_GB = {
+    "hermes": 2.0,
+    "modernbert": 0.5,
+    "gliner": 0.3,
+}
+
 logger = logging.getLogger(__name__)
+
+
+def set_model_memory_limit(max_rss_gb: float) -> None:
+    """P19: Set max RSS GB threshold for model memory guard."""
+    global _model_max_rss_gb
+    _model_max_rss_gb = max_rss_gb
+
+
+def _get_current_rss_gb() -> float:
+    """P19: Get current RSS memory in GB. Used for memory guard checks."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / 1e9
+    except Exception:
+        return 0.0
+
+
+def _check_rss_before_load(model_key: str) -> float:
+    """
+    P19: Check RSS before model load.
+
+    Args:
+        model_key: Model identifier (hermes, modernbert, gliner)
+
+    Returns:
+        Current RSS in GB before check.
+
+    Raises:
+        MemoryPressureError: If RSS too high to safely load model.
+    """
+    current_rss = _get_current_rss_gb()
+    model_size = _MODEL_SIZES_GB.get(model_key.lower(), 0.5)
+    threshold = _model_max_rss_gb - model_size
+
+    if current_rss > threshold:
+        raise MemoryPressureError(
+            f"[MODEL MEMORY] RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB "
+            f"(max_rss_gb={_model_max_rss_gb}, model={model_key}, size~{model_size}GB). "
+            f"Skipping model load."
+        )
+    return current_rss
+
+
+def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
+    """
+    P19: Verify RSS dropped after model unload.
+
+    Args:
+        model_key: Model identifier
+        rss_before: RSS in GB before unload
+    """
+    rss_after = _get_current_rss_gb()
+    model_size = _MODEL_SIZES_GB.get(model_key.lower(), 0.5)
+    dropped = rss_before - rss_after
+
+    if dropped < model_size * 0.5:  # 50% tolerance
+        logger.warning(
+            f"[MODEL MEMORY] RSS did not drop expected amount after unload: "
+            f"dropped={dropped:.2f}GB, expected~{model_size:.2f}GB "
+            f"(RSS before={rss_before:.2f}GB, after={rss_after:.2f}GB, model={model_key})"
+        )
+    else:
+        logger.info(f"[MODEL MEMORY] Model unloaded (RSS dropped={dropped:.2f}GB, model={model_key})")
 
 
 def _get_mlx_safe():
@@ -575,6 +648,9 @@ class ModelManager:
             # F182B FIX: Must run BEFORE factory() — prevents OOM on heavy model load
             self._check_memory_admission()
 
+            # P19: RSS-based memory pressure check before load
+            rss_before_load = _check_rss_before_load(model_key)
+
             # Načteme nový model
             try:
                 logger.info(f"[MODEL LOAD] {model_name} start")
@@ -598,7 +674,7 @@ class ModelManager:
 
                 self._loaded_models[model_type] = model
                 self._current_model = model_type
-                logger.info(f"[MODEL LOAD] {model_name} done")
+                logger.info(f"[MODEL LOAD] {model_name} done (RSS before={rss_before_load:.2f}GB)")
                 # P3: snížit fetch concurrency při načteném LLM
                 await adjust_fetch_workers(3)
                 return model
@@ -633,6 +709,9 @@ class ModelManager:
         model = self._loaded_models.get(model_type)
         unload_error: Optional[Exception] = None
 
+        # P19: Capture RSS before unload for verification
+        rss_before_unload = _get_current_rss_gb()
+
         # F166E: Always remove from registry first — before unload attempt
         # This ensures no partial-init leak regardless of unload outcome
         if model_type in self._loaded_models:
@@ -659,6 +738,10 @@ class ModelManager:
         # F182B: Pass captured model reference — registry already cleared,
         # _cleanup_memory_async cannot look it up again
         await self._cleanup_memory_async(model_type, engine=model)
+
+        # P19: Verify RSS dropped after unload
+        _verify_rss_after_unload(model_name.lower(), rss_before_unload)
+
         # P3: obnovit fetch concurrency po uvolnění modelu
         await adjust_fetch_workers(25)
 
@@ -674,6 +757,9 @@ class ModelManager:
 
         model_type = self._current_model
         model_name = model_type.name.lower()
+
+        # P19: Capture RSS before unload for verification
+        rss_before_unload = _get_current_rss_gb()
 
         # F168E: Capture model reference BEFORE registry deletion
         # (for unload call — must happen after _current_model clear but before del)
@@ -704,6 +790,9 @@ class ModelManager:
         # Memory cleanup regardless of unload outcome
         # F182B: Pass captured model reference — registry already cleared
         await self._cleanup_memory_async(model_type, engine=model)
+
+        # P19: Verify RSS dropped after unload
+        _verify_rss_after_unload(model_name.lower(), rss_before_unload)
 
     async def _cleanup_memory_async(
         self,

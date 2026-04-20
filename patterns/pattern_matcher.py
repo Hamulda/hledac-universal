@@ -462,6 +462,16 @@ _RE_DOGE_ADDR = re.compile(
 # Identical regex to _RE_ETH_ADDR — labeled distinctly for contract vs EOA context
 _RE_ETH_CONTRACT = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 
+# === P20 — API KEY / SECRET PATTERNS ===
+# AWS Access Key ID: AKIA + 16 uppercase alphanumeric chars (20 total)
+_RE_AWS_KEY_ID = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
+# Google API Key: AIza + 35 URL-safe base64 chars (39 total)
+_RE_GOOGLE_API_KEY = re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")
+# Stripe live secret key: sk_live_ + 24 alphanum chars
+_RE_STRIPE_SK = re.compile(r"\bsk_live_[0-9a-zA-Z]{24}\b")
+# Slack bot/app token: xox[baprs]- prefix pattern
+_RE_SLACK_TOKEN = re.compile(r"\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,32}\b")
+
 
 
 class ExtractedEntity(NamedTuple):
@@ -493,6 +503,11 @@ def extract_high_precision_entities(text: str) -> list[ExtractedEntity]:
         (_RE_LTC_ADDR, "ltc_address"),
         (_RE_DOGE_ADDR, "doge_address"),
         (_RE_ETH_CONTRACT, "eth_contract"),
+        # P20 — API key / secret coverage
+        (_RE_AWS_KEY_ID, "aws_access_key_id"),
+        (_RE_GOOGLE_API_KEY, "google_api_key"),
+        (_RE_STRIPE_SK, "stripe_secret_key"),
+        (_RE_SLACK_TOKEN, "slack_token"),
     ]:
         for m in pattern.finditer(text):
             entities.append(ExtractedEntity(
@@ -705,6 +720,11 @@ def match_text(
         (_RE_LTC_ADDR, "ltc_address"),
         (_RE_DOGE_ADDR, "doge_address"),
         (_RE_ETH_CONTRACT, "eth_contract"),
+        # P20 — API key / secret coverage
+        (_RE_AWS_KEY_ID, "aws_access_key_id"),
+        (_RE_GOOGLE_API_KEY, "google_api_key"),
+        (_RE_STRIPE_SK, "stripe_secret_key"),
+        (_RE_SLACK_TOKEN, "slack_token"),
     ]:
         for m in _pattern.finditer(text_lower):
             hits.append(PatternHit(

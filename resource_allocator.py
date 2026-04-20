@@ -414,22 +414,12 @@ def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
 
 # ── P3: Dynamic Resource Management ─────────────────────────────────────────
 
-FETCH_SEMAPHORE = asyncio.Semaphore(25)
+# P19: FETCH_SEMAPHORE moved to utils.concurrency to break circular import
+from hledac.universal.utils.concurrency import (
+    FETCH_SEMAPHORE,
+    adjust_fetch_workers,
+)
 
-
-async def adjust_fetch_workers(new_limit: int) -> None:
-    """
-    Dynamicky uprav limit FETCH_SEMAPHORE.
-
-    Použití:
-    - Po načtení LLM: await adjust_fetch_workers(3)  # snížit concurrency
-    - Po uvolnění LLM: await adjust_fetch_workers(25)  # obnovit plnou concurrency
-
-    Args:
-        new_limit: Nový počet povolených paralelních fetchů
-    """
-    global FETCH_SEMAPHORE
-    old_limit = FETCH_SEMAPHORE._value
-    FETCH_SEMAPHORE = asyncio.Semaphore(max(1, new_limit))
-    logger.info(f"[FETCH_WORKERS] Adjusted from {old_limit} to {new_limit}")
+# Re-export for backward compatibility — adjust_fetch_workers already in utils.concurrency
+__all__ = ["FETCH_SEMAPHORE", "adjust_fetch_workers", "AdaptiveSemaphore"]
 

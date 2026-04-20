@@ -59,6 +59,11 @@ class SignalHandlingError(GhostBaseException):
     pass
 
 
+class MemoryPressureError(RuntimeError):
+    """Raised when system memory pressure exceeds safe thresholds for model loading."""
+    pass
+
+
 __all__ = [
     "GhostBaseException",
     "TransportException",
@@ -70,4 +75,5 @@ __all__ = [
     "TeardownError",
     "RuntimeInitError",
     "SignalHandlingError",
+    "MemoryPressureError",
 ]

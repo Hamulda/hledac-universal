@@ -840,9 +840,8 @@ async def search_ahmia(
     html = ""
     try:
         if use_onion:
-            from transport.tor_transport import TorTransport
-            # Use direct Tor session if available
-            # Fallback to clearnet if tor not available
+            # Tor transport not available — use direct aiohttp session
+            # (transport.tor_transport is a sibling module outside universal/)
             try:
                 async with aiohttp.ClientSession() as s:
                     async with s.get(

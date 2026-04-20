@@ -191,6 +191,9 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     ct_subdomain_injected: int = 0
     # F192E: CommonCrawl CDX — bounded CC-discovered archive URL count (additive)
     cc_archive_injected: int = 0
+    # P20: PastebinMonitor + GitHubSecretScanner telemetry (additive)
+    pastebin_findings_count: int = 0
+    github_secrets_count: int = 0
     # zero_hit_quality_reason_counts: breakdown of WHY zero-hit pages failed
     # keys are the specific quality_reason values from PipelinePageResult
     zero_hit_quality_reason_counts: dict = {}
@@ -1048,13 +1051,14 @@ async def _fetch_and_process_page(
             # Only for html/text content, not binary
             if vector_store is not None and extracted_text and len(extracted_text) > 50:
                 try:
-                    from hledac.universal.embedding_pipeline import generate_embeddings
+                    from hledac.universal.embedding_pipeline import generate_embeddings_async
+                    from hledac.universal.brain.model_manager import get_model_manager
 
                     # Use extracted_text (not enriched scan_text) for embedding
-                    loop = asyncio.get_running_loop()
-                    embeddings = await loop.run_in_executor(
-                        None, generate_embeddings, [extracted_text]
-                    )
+                    # P16: Wrap with embedding_lifecycle() for proper M1 memory management
+                    model_manager = get_model_manager()
+                    async with model_manager.embedding_lifecycle():
+                        embeddings = await generate_embeddings_async([extracted_text])
                     if embeddings is not None and len(embeddings) > 0:
                         # Use URL-based ID for vector lookup
                         finding_id_for_vec = _make_finding_id(
@@ -1064,12 +1068,15 @@ async def _fetch_and_process_page(
                             pattern="embedding",
                             value=extracted_text[:100]
                         )
+                        # P16: Ensure embeddings are float32 numpy array with correct shape
+                        import numpy as np
+                        vec = np.asarray(embeddings[0], dtype=np.float32)
                         vector_store.add_vectors(
                             [finding_id_for_vec],
-                            embeddings,
+                            vec.reshape(1, -1),
                             index_type="text"
                         )
-                        logger.debug(f"[P13] Stored embedding for {hit_url[:50]}")
+                        logger.debug(f"[P16] Stored embedding for {hit_url[:50]}")
                 except Exception:
                     # Fail-soft: vector storage errors don't fail the page
                     pass
@@ -1184,15 +1191,18 @@ async def _generate_and_store_report(
             from hledac.universal.embedding_pipeline import embed_query_async
             from hledac.universal.context_optimization.mmr import maximal_marginal_relevance
             from utils.ranking import rrf_fuse
+            from hledac.universal.brain.model_manager import get_model_manager
 
-            # Generate query embedding
-            query_vec = await embed_query_async(query)
+            # Generate query embedding with proper lifecycle management
+            model_manager = get_model_manager()
+            async with model_manager.embedding_lifecycle():
+                query_vec = await embed_query_async(query)
 
-            # Query vector store for similar documents
-            raw_similar = vector_store.query(query_vec, k=10, index_type="text")
-            if raw_similar:
-                logger.info(f"[P13] Vector search found {len(raw_similar)} similar docs")
-                vector_candidates = raw_similar
+                # Query vector store for similar documents
+                raw_similar = vector_store.query(query_vec, k=10, index_type="text")
+                if raw_similar:
+                    logger.info(f"[P13] Vector search found {len(raw_similar)} similar docs")
+                    vector_candidates = raw_similar
 
         except Exception as e:
             import logging
@@ -1264,9 +1274,63 @@ async def _generate_and_store_report(
                 f"IOC count: {ioc_count}, Accepted findings: {accepted}"
             )
 
-    # Generate report via Hermes3Engine
+    # FÁZE P14: Build routing context and determine best model
+    route_context: dict = {
+        "urls": [getattr(p, 'url', '') for p in top_pages if hasattr(p, 'url')],
+        "content_type": "html",  # Default content type
+    }
+
+    # Check for images in page data (vision routing)
+    has_images = any(
+        getattr(p, 'redirected', False) and 'image' in (getattr(p, 'redirect_target', '') or '').lower()
+        for p in top_pages
+    )
+    if has_images:
+        route_context["has_images"] = True
+
+    # P16: Route via MoERouter.route() to get expert IDs for generator selection
+    expert_ids: list[str] = []
     try:
-        report_text = await hermes_engine.generate_report(query, context_items)
+        from hledac.universal.brain.moe_router import create_moe_router, MoERouter
+        router = await create_moe_router()
+        if router is not None:
+            expert_ids = await router.route(query, context_items)
+            logger.info(f"[P16] MoE experts: {expert_ids} for query: {query[:50]}")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[P16] MoE routing failed: {e}")
+        expert_ids = []
+
+    # FÁZE P14: Route to appropriate model (legacy fallback)
+    from hledac.universal.brain.moe_router import route as moe_route
+    model_choice = moe_route(query, route_context)
+    logger.info(f"[P14] MoE route: {model_choice} for query: {query[:50]}")
+
+    # Generate report based on routed model
+    report_text = ""
+    try:
+        if model_choice == "vision":
+            # Vision encoder placeholder (P15) - return placeholder text
+            # In P15 this would call actual vision encoder
+            report_text = "[image description] " + "\n".join(context_items[:3])
+            logger.info("[P14] Using vision encoder placeholder")
+
+        elif model_choice == "modernbert":
+            # ModernBERT summarizer - use ModernBERT for summarization
+            # Try to use modernbert summarizer if available
+            try:
+                from hledac.universal.brain.modernbert_engine import ModernBertEngine
+                modernbert = ModernBertEngine()
+                report_text = await modernbert.summarize(context_items)
+                logger.info("[P14] Using ModernBERT summarizer")
+            except Exception as e:
+                # Fallback to Hermes if ModernBERT unavailable
+                logger.warning(f"[P14] ModernBERT failed, falling back to Hermes: {e}")
+                report_text = await hermes_engine.generate_report(query, context_items)
+        else:
+            # Default: Hermes3 for general text generation
+            report_text = await hermes_engine.generate_report(query, context_items)
+
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[REPORT] Generation failed: {e}")
@@ -1557,6 +1621,8 @@ async def async_run_live_public_pipeline(
     memory_manager: Any | None = None,
     session_id: str | None = None,
     vector_store: Any | None = None,
+    run_loop: bool = False,  # P16: If True, run ResearchLoop after pipeline
+    rl_steps: int = 0,  # P17: Number of RL steps (0 = use time limit)
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -1692,6 +1758,55 @@ async def async_run_live_public_pipeline(
             dominant_public_failure_mode=discovery_error if discovery_error else "no_discovery",
         )
 
+    # P16: Academic discovery integration — run after DuckDuckGo discovery
+    # Max 3 concurrent queries via shared semaphore
+    academic_hits_count = 0
+    if store is not None:
+        try:
+            from hledac.universal.intelligence.academic_discovery import search_academic_all
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            # P16: Use semaphore to limit concurrent academic queries to 3
+            academic_semaphore = asyncio.Semaphore(3)
+
+            async def limited_academic_search():
+                async with academic_semaphore:
+                    return await search_academic_all(query, max_results=10, rate_limit=50)
+
+            academic_results = await limited_academic_search()
+
+            # Convert academic papers to CanonicalFinding and store
+            all_papers = []
+            for source, papers in academic_results.items():
+                for paper in papers:
+                    all_papers.append(paper)
+
+            if all_papers:
+                academic_findings = []
+                for paper in all_papers[:20]:  # Limit to 20 academic findings
+                    paper_id = hashlib.sha256(
+                        f"{query}\x00{paper.get('link', '')}\x00academic".encode()
+                    ).hexdigest()[:16]
+                    provenance = ("academic", source, paper.get('title', ''))
+                    academic_finding = CanonicalFinding(
+                        finding_id=paper_id,
+                        query=query,
+                        source_type="academic_discovery",
+                        confidence=0.7,
+                        ts=time.time(),
+                        provenance=provenance,
+                        payload_text=f"{paper.get('title', '')}\n{paper.get('abstract', '')}".strip()[:500],
+                    )
+                    academic_findings.append(academic_finding)
+
+                if academic_findings:
+                    await store.async_ingest_findings_batch(academic_findings)
+                    academic_hits_count = len(academic_findings)
+                    logger.info(f"[P16] Stored {academic_hits_count} academic findings")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[P16] Academic discovery failed: {e}")
+
     # Sprint F188B: CT winner-slice injection — augment discovery with CT subdomains
     # One bounded adapter: _inject_ct_subdomain_hits. Fail-soft, shared session reuse.
     # NOT a new discovery world — same fetch batch processes both DDG and CT hits.
@@ -1705,6 +1820,96 @@ async def async_run_live_public_pipeline(
     original_hit_count = len(hits)
     hits = await _inject_commoncrawl_hits(hits, query)
     cc_injected = len(hits) - original_hit_count
+
+    # P20: PastebinMonitor + GitHubSecretScanner — run only when query contains
+    # a domain name or organization identifier (limits API calls to targeted searches)
+    pastebin_findings_count = 0
+    github_secrets_count = 0
+    if store is not None:
+        try:
+            import re as _re
+            _DOMAIN_ORG_RE = _re.compile(
+                r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
+            )
+            _match = _DOMAIN_ORG_RE.search(query)
+            if _match:
+                target = _match.group()
+                logger.info(f"[P20] PastebinMonitor targeting: {target}")
+
+                # PastebinMonitor — rate-limited async paste scraping
+                from hledac.universal.intelligence.pastebin_monitor import run as pastebin_run
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+                paste_findings = await pastebin_run(target)
+                if paste_findings:
+                    p20_findings = []
+                    for pf in paste_findings:
+                        pf_id = hashlib.sha256(
+                            f"{query}\x00{pf.uri}\x00pastebin".encode()
+                        ).hexdigest()[:16]
+                        masked = pf.masked_secrets()
+                        p20_findings.append(CanonicalFinding(
+                            finding_id=pf_id,
+                            query=query,
+                            source_type="pastebin_monitor",
+                            confidence=0.6,
+                            ts=time.time(),
+                            provenance=("pastebin", pf.source, target),
+                            payload_text=(
+                                f"uri={pf.uri}\n"
+                                f"emails={pf.emails}\n"
+                                f"ips={pf.ip_addresses}\n"
+                                f"masked_secrets={masked}\n"
+                                f"snippet={pf.context_snippet[:300]}"
+                            ),
+                        ))
+                    if p20_findings:
+                        await store.async_ingest_findings_batch(p20_findings)
+                        pastebin_findings_count = len(p20_findings)
+                        logger.info(f"[P20] Stored {pastebin_findings_count} pastebin findings")
+
+                # GitHubSecretScanner — public repo scanning for exposed secrets
+                # Strip TLD to get potential org name, scan up to 10 public repos
+                org_candidate = _match.group().rsplit(".", 1)[0]
+                from hledac.universal.intelligence.github_secret_scanner import (
+                    search_org_secrets,
+                    scan_repo,
+                )
+
+                # Try org-level scan first; fall back to direct repo scan
+                gh_findings: list[CanonicalFinding] = []
+                if org_candidate:
+                    try:
+                        gh_results = await search_org_secrets(org_candidate)
+                    except Exception:
+                        gh_results = []
+
+                    for gf in gh_results:
+                        gf_id = hashlib.sha256(
+                            f"{query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
+                        ).hexdigest()[:16]
+                        gh_findings.append(CanonicalFinding(
+                            finding_id=gf_id,
+                            query=query,
+                            source_type="github_secret_scanner",
+                            confidence=0.55,
+                            ts=time.time(),
+                            provenance=("github", gf.pattern, org_candidate),
+                            payload_text=(
+                                f"pattern={gf.pattern}\n"
+                                f"file={gf.file_path}\n"
+                                f"line={gf.line}\n"
+                                f"context={gf.context[:300]}"
+                            ),
+                        ))
+
+                if gh_findings:
+                    await store.async_ingest_findings_batch(gh_findings)
+                    github_secrets_count = len(gh_findings)
+                    logger.info(f"[P20] Stored {github_secrets_count} GitHub secret findings")
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(f"[P20] Pastebin/GitHub scan failed: {e}")
 
     # P12: Hypothesis generation and ToT evaluation
     # After network reconnaissance (CT/CC), generate hypotheses and evaluate
@@ -2126,9 +2331,10 @@ async def async_run_live_public_pipeline(
 
     # P6: Generate OSINT report from top findings (if Hermes available)
     # Fail-soft: report generation is optional, pipeline continues regardless
+    generated_report = ""
     if hermes_engine is not None and all_page_results:
         try:
-            await _generate_and_store_report(
+            generated_report = await _generate_and_store_report(
                 query=query,
                 pages=tuple(all_page_results),
                 store=store,
@@ -2136,15 +2342,164 @@ async def async_run_live_public_pipeline(
                 vector_store=vector_store,
             )
         except Exception:
-            pass  # Fail-soft: report generation errors don't fail the pipeline
+            generated_report = ""  # Fail-soft: report generation errors don't fail the pipeline
 
-    # FÁZE P9: Export graph after pipeline completes
+    # FÁZE P9: Export graph after pipeline completes (legacy path)
     if graph is not None and graph.node_count() > 0:
         try:
             export_path = os.path.expanduser("~/new_hledac_graph.html")
             graph.export_html(export_path)
         except Exception:
             pass  # Fail-soft: graph export errors don't fail pipeline
+
+    # P17: Run ResearchLoop if --loop flag was set
+    # Supports either rl_steps count (--rl-steps N) or time limit (default 5 min)
+    if run_loop and hermes_engine is not None:
+        try:
+            from hledac.universal.loops.research_loop import ResearchLoop, ResearchResult
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            # P17: Default RL loop time limit (5 minutes)
+            _RL_LOOP_TIME_LIMIT_S = 300.0
+
+            research_loop = ResearchLoop(
+                hypothesis_engine=hermes_engine,
+                graph=graph,
+                duckdb_store=store,
+                memory_manager=memory_manager,
+            )
+
+            # P17: Run either N steps or until time limit
+            rl_start_time = time.monotonic()
+            step_count = 0
+            prev_reward = 0.0
+
+            while True:
+                # Check step limit first
+                if rl_steps > 0 and step_count >= rl_steps:
+                    break
+
+                # Check time limit
+                elapsed = time.monotonic() - rl_start_time
+                if elapsed >= _RL_LOOP_TIME_LIMIT_S:
+                    logger.info(f"[P17] RL loop time limit reached ({elapsed:.1f}s)")
+                    break
+
+                # Run one RL iteration
+                loop_result: ResearchResult = await research_loop.run_once(query)
+
+                # P17: Store findings to DuckDB if available
+                if store is not None and loop_result.findings:
+                    try:
+                        for finding_data in loop_result.findings:
+                            finding_id = hashlib.sha256(
+                                f"{query}\x00{str(finding_data)}\x00rl".encode()
+                            ).hexdigest()[:16]
+                            rl_finding = CanonicalFinding(
+                                finding_id=finding_id,
+                                query=query,
+                                source_type="rl_research",
+                                confidence=0.7,
+                                ts=time.time(),
+                                provenance=("rl", loop_result.action),
+                                payload_text=str(finding_data)[:500],
+                            )
+                            await store.async_ingest_findings_batch([rl_finding])
+                    except Exception as e:
+                        logger.warning(f"[P17] Failed to store RL finding: {e}")
+
+                # P17: Store RL result to memory manager
+                if memory_manager is not None and session_id is not None:
+                    try:
+                        await memory_manager.put(
+                            session_id,
+                            f"rl_result:{step_count}",
+                            {
+                                "action": loop_result.action,
+                                "reward": loop_result.reward,
+                                "findings_count": len(loop_result.findings),
+                                "timestamp": time.time(),
+                            }
+                        )
+                    except Exception:
+                        pass  # Fail-soft
+
+                prev_reward = loop_result.reward
+                step_count += 1
+
+                logger.info(
+                    f"[P17] RL step {step_count}: action={loop_result.action}, "
+                    f"reward={loop_result.reward:.3f}, findings={len(loop_result.findings)}"
+                )
+
+            logger.info(f"[P17] ResearchLoop completed {step_count} RL steps")
+
+        except Exception as e:
+            logger.warning(f"[P17] ResearchLoop.run_once failed: {e}")
+
+    # FÁZE P18: Export to Obsidian Markdown and interactive HTML graph
+    # Only export on successful pipeline completion (run_error is None)
+    if run_error is None:
+        try:
+            from hledac.universal.export.export_manager import get_export_manager
+            from hledac.universal.memory.memory_manager import export_session
+
+            export_mgr = get_export_manager()
+
+            # Build sources list from pages
+            sources = [
+                p.url for p in all_page_results
+                if hasattr(p, 'url') and p.url
+            ][:20]
+
+            # Get findings from memory manager
+            session_findings = []
+            if memory_manager is not None and session_id is not None:
+                try:
+                    session_data = await export_session(session_id)
+                    session_findings = session_data.get("findings", [])
+                except Exception:
+                    session_findings = []
+
+            # Export metadata for YAML front matter
+            export_metadata = {
+                "query": query,
+                "sources": sources,
+                "tags": ["hledac", "osint", "public-pipeline"],
+                "session_id": session_id,
+                "stored_findings": str(total_stored),
+                "discovered": str(total_discovered),
+                "fetched": str(total_fetched),
+            }
+
+            # Export markdown report (Obsidian-compatible)
+            try:
+                md_path = export_mgr.export_markdown(
+                    report=generated_report,
+                    findings=session_findings,
+                    file_path=None,  # Uses timestamp
+                    metadata=export_metadata,
+                )
+                if md_path:
+                    logger.info(f"[P18] Exported markdown to {md_path}")
+            except Exception as e:
+                logger.warning(f"[P18] Markdown export failed: {e}")
+
+            # Export graph HTML (interactive pyvis)
+            if graph is not None and graph.node_count() > 0:
+                try:
+                    html_path = export_mgr.export_graph_html(
+                        graph_manager=graph,
+                        file_path=None,  # Uses timestamp
+                        title=f"Hledac Graph - {query[:50]}",
+                    )
+                    if html_path:
+                        logger.info(f"[P18] Exported graph HTML to {html_path}")
+                except Exception as e:
+                    logger.warning(f"[P18] Graph HTML export failed: {e}")
+
+        except Exception as e:
+            logger.warning(f"[P18] Export failed: {e}")
 
     return PipelineRunResult(
         query=query,
@@ -2191,6 +2546,9 @@ async def async_run_live_public_pipeline(
         # Sprint F188B: CT winner-slice telemetry
         ct_subdomain_injected=ct_injected,
         cc_archive_injected=cc_injected,
+        # P20: PastebinMonitor + GitHubSecretScanner telemetry
+        pastebin_findings_count=pastebin_findings_count,
+        github_secrets_count=github_secrets_count,
     )
 
 

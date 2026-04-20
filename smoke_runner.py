@@ -36,9 +36,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import cProfile
 import logging
+import os
+import pstats
 import sys
 import time
+from io import StringIO
+from pathlib import Path
 
 # Nastavit logging
 logging.basicConfig(
@@ -143,8 +148,17 @@ async def run_smoke_test() -> int:
         return 0
 
 
-async def main() -> int:
-    """Spustí 60s sprint a sleduje RAM."""
+async def main(mode: str = "public", query: str = "smoke test query", run_loop: bool = False, rl_steps: int = 0, profile: bool = False) -> int:
+    """
+    Spustí 60s sprint a sleduje RAM.
+
+    Args:
+        mode: Pipeline mode (default: "public")
+        query: Query string for the pipeline
+        run_loop: If True, run ResearchLoop after pipeline completion (P16)
+        rl_steps: P17: Number of RL steps to run (0 = disabled)
+        profile: P19: If True, run with cProfile CPU/I/O profiling
+    """
     try:
         import psutil
     except ImportError:
@@ -171,14 +185,42 @@ async def main() -> int:
             return 1
 
     start = time.monotonic()
-    log.info("Spouštím 60s sprint...")
+    log.info(f"Spouštím {mode} sprint s query: {query[:50]}...")
+
+    # P19: Profile output directory
+    profile_dir = Path.home() / "hledac_outputs"
+    profile_path = profile_dir / "last_profile.prof"
 
     try:
-        # Sprint s 60s durací
-        await asyncio.wait_for(
-            _run_sprint_mode("smoke test query", duration_s=60.0),
-            timeout=120.0,  # 2min timeout
-        )
+        if profile:
+            # P19: cProfile CPU/I/O profiling
+            log.info(f"[PROFILE] Enabling cProfile — output to {profile_path}")
+            profiler = cProfile.Profile()
+            profiler.enable()
+
+            await asyncio.wait_for(
+                _run_sprint_mode(query, duration_s=60.0, mode=mode),
+                timeout=120.0,  # 2min timeout
+            )
+
+            profiler.disable()
+
+            # Save profile to file
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            profiler.dump_stats(str(profile_path))
+            log.info(f"[PROFILE] Saved to {profile_path}")
+
+            # Print top functions by cumulative time
+            s = StringIO()
+            ps = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
+            ps.print_stats(15)
+            log.info(f"[PROFILE] Top 15 functions by cumulative time:\n{s.getvalue()}")
+        else:
+            # Sprint s 60s durací
+            await asyncio.wait_for(
+                _run_sprint_mode(query, duration_s=60.0, mode=mode),
+                timeout=120.0,  # 2min timeout
+            )
     except asyncio.TimeoutError:
         log.error("Sprint timeout — přesáhl 120s")
         return 1
@@ -245,6 +287,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Hledac Smoke Runner")
     parser.add_argument("--smoke", action="store_true",
                         help="Run lightweight smoke test without network")
+    parser.add_argument("--mode", default="public",
+                        help="Pipeline mode (default: public)")
+    parser.add_argument("--query", default="smoke test query",
+                        help="Query string for the pipeline")
+    parser.add_argument("--loop", action="store_true",
+                        help="P16: Run ResearchLoop after pipeline completion")
+    parser.add_argument("--rl-steps", type=int, default=0,
+                        help="P17: Number of RL steps to run (default: 0, uses time limit)")
+    parser.add_argument("--profile", action="store_true",
+                        help="P19: Enable cProfile CPU/I/O profiling")
     args = parser.parse_args()
 
     if args.smoke:
@@ -257,5 +309,11 @@ if __name__ == "__main__":
             sys.exit(1)
 
         # Pak sprint
-        exit_code = asyncio.run(main())
+        exit_code = asyncio.run(main(
+            mode=args.mode,
+            query=args.query,
+            run_loop=args.loop,
+            rl_steps=args.rl_steps,
+            profile=args.profile,
+        ))
         sys.exit(exit_code)

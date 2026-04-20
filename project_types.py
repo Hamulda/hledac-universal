@@ -247,6 +247,7 @@ class ResearchConfig:
 class MemoryConfig:
     """Memory management configuration (from InfrastructureOrchestrator)"""
     memory_limit_mb: float = 5500.0
+    max_rss_gb: float = 5.5  # P19: Memory guard ceiling for M1 8GB UMA
     thermal_threshold_c: float = 85.0
     enable_secure_enclave: bool = True
     enable_metal_acceleration: bool = True
