@@ -33,6 +33,8 @@ node_modules/
 .pytest_cache/
 .coverage
 htmlcov/
+*.mdb
+*.lmdb
 
 # Local config
 *.local

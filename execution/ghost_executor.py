@@ -37,7 +37,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..types import ExecutionRequest, ExecutionResult, RunCorrelation
+    from hledac.universal.project_types import ExecutionRequest, ExecutionResult, RunCorrelation
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +295,7 @@ class GhostBridge:
         NOTE: Tato funkce neověřuje, zda action má canonical tool mapping.
         Použij action_has_canonical_tool() pro diagnostiku před konverzí.
         """
-        from ..types import ExecutionRequest as _ExecReq
+        from hledac.universal.project_types import ExecutionRequest as _ExecReq
         return _ExecReq(
             action_type=action,
             parameters=params,
@@ -323,7 +323,7 @@ class GhostBridge:
         NOTE: execution_time je echo zpět z GhostResult, nemeasured
         canonical execution time (protože Ghost nevolá execute_with_limits).
         """
-        from ..types import ExecutionResult as _ExecRes
+        from hledac.universal.project_types import ExecutionResult as _ExecRes
         return _ExecRes(
             action_type=ghost_result.action,
             success=ghost_result.success,
@@ -394,7 +394,7 @@ class GhostBridge:
         if not canonical_tool:
             return None
 
-        from ..types import ExecutionRequest as _ExecReq
+        from hledac.universal.project_types import ExecutionRequest as _ExecReq
         return _ExecReq(
             action_type=canonical_tool,
             parameters=params,

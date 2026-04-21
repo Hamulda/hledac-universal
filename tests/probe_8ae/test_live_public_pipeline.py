@@ -156,7 +156,7 @@ def test_fetch_error_skips_only_that_page():
     _patch_discovery(discovery)
     fetch_count = 0
 
-    async def fake_fetch(url, timeout, max_bytes):
+    async def fake_fetch(url, timeout, max_bytes, **kwargs):
         nonlocal fetch_count
         fetch_count += 1
         if "fail" in url:
@@ -185,7 +185,7 @@ def test_fetch_text_none_skips_page():
 
     _patch_discovery(discovery)
 
-    async def fake_fetch(url, timeout, max_bytes):
+    async def fake_fetch(url, timeout, max_bytes, **kwargs):
         return _DummyFetchResult(None)
 
     _patch_fetcher_and_matcher(fake_fetch, lambda t: [])
@@ -379,8 +379,8 @@ def test_store_none_stored_findings_zero():
 
     from hledac.universal.patterns.pattern_matcher import PatternHit
     _patch_fetcher_and_matcher(
-        lambda u, t, b: _DummyFetchResult("content with 1BTC address"),
-        lambda txt: [PatternHit(
+        lambda u, t, b, **kw: _DummyFetchResult("content with 1BTC address"),
+        lambda txt, **kw: [PatternHit(
             pattern="1BTC", start=9, end=13, value="1BTC", label="crypto_address"
         )] if "1BTC" in txt else []
     )
@@ -405,8 +405,8 @@ def test_store_batch_path_with_fake_store():
 
     from hledac.universal.patterns.pattern_matcher import PatternHit
     _patch_fetcher_and_matcher(
-        lambda u, t, b: _DummyFetchResult("content with 1BTC address"),
-        lambda txt: [PatternHit(
+        lambda u, t, b, **kw: _DummyFetchResult("content with 1BTC address"),
+        lambda txt, **kw: [PatternHit(
             pattern="1BTC", start=9, end=13, value="1BTC", label="crypto_address"
         )]
     )
@@ -438,12 +438,12 @@ def test_storage_exception_is_failsoft():
     _patch_discovery(discovery)
 
     from hledac.universal.patterns.pattern_matcher import PatternHit
-    async def broken_fetch(u, t, b):
+    async def broken_fetch(u, t, b, **kw):
         return _DummyFetchResult("content with 1BTC")
 
     _patch_fetcher_and_matcher(
         broken_fetch,
-        lambda txt: [PatternHit(pattern="1BTC", start=9, end=13, value="1BTC", label="c")]
+        lambda txt, **kw: [PatternHit(pattern="1BTC", start=9, end=13, value="1BTC", label="c")]
     )
 
     class _BrokenStore:
@@ -503,7 +503,7 @@ def test_uma_critical_clamp_concurrency():
     max_concurrent = 0
     lock = asyncio.Lock()
 
-    async def counting_fetch(url, timeout, max_bytes):
+    async def counting_fetch(url, timeout, max_bytes, **kwargs):
         nonlocal concurrent, max_concurrent
         async with lock:
             concurrent += 1
@@ -542,7 +542,7 @@ def test_cancelled_error_raised():
 
     _patch_discovery(discovery)
 
-    async def cancelling_fetch(url, timeout, max_bytes):
+    async def cancelling_fetch(url, timeout, max_bytes, **kwargs):
         raise asyncio.CancelledError()
 
     _patch_fetcher_and_matcher(cancelling_fetch, lambda t: [])
@@ -728,3 +728,179 @@ def test_benchmark_finding_construction():
     elapsed = time.perf_counter() - t0
     assert elapsed < 1.0, f"Finding construction too slow: {elapsed*1000:.1f}ms for 100 findings"
     assert len(findings) == 100
+
+
+# -----------------------------------------------------------------------------
+# T39: Sprint F193B — Persisted live_public_pipeline finding
+# -----------------------------------------------------------------------------
+
+def test_persisted_public_findings_gte_1():
+    """T39a: canonical public branch produces >=1 persisted finding"""
+    import tempfile
+    import shutil
+    import os
+    from pathlib import Path
+    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+    from hledac.universal.patterns.pattern_matcher import PatternHit
+
+
+    # Canned discovery hit — will be found by pattern matcher
+    class _CannedDiscoveryHit:
+        def __init__(self, url, title="", snippet="", rank=0):
+            self.url = url
+            self.title = title
+            self.snippet = snippet
+            self.rank = rank
+
+    class _CannedDiscoveryResult:
+        def __init__(self, hits, error=None):
+            self.hits = hits
+            self.error = error
+
+    async def _canned_search(q, m):
+        return _CannedDiscoveryResult([
+            _CannedDiscoveryHit(
+                url="https://www.example.com/security/cve-2026-1234",
+                title="CVE-2026-1234 Security Advisory",
+                snippet="Critical RCE vulnerability in ExampleServer v1.x",
+                rank=0,
+            ),
+        ])
+
+
+    _patch_discovery(_canned_search)
+
+
+    # Canned fetcher — returns HTML with CVE pattern
+    class _CannedFetchResult:
+        def __init__(self, text, content_type="text/html"):
+            self.text = text
+            self.content_type = content_type
+            self.url = "https://www.example.com/security/cve-2026-1234"
+            self.final_url = self.url
+            self.status_code = 200
+            self.fetched_bytes = len(text) if text else 0
+            self.declared_length = len(text) if text else 0
+            self.elapsed_ms = 10.0
+            self.error = None
+
+    async def _canned_fetch(url, timeout, max_bytes, use_stealth=False, use_js=False, use_doh=False):
+        # Must exceed _PRE_FETCH_TEXT_MIN_CHARS=150 after HTML-to-text conversion
+        return _CannedFetchResult(
+            "<html><body><article><h1>CVE-2026-1234 Security Advisory</h1>"
+            "<p>Critical RCE vulnerability in ExampleServer v1.x allows remote "
+            "attackers to execute arbitrary code via crafted network requests.</p>"
+            "<p>Affected versions: 1.0 through 1.9.2. Users should update immediately.</p>"
+            "</article></html>"
+        )
+
+    _patch_fetcher_and_matcher(
+        _canned_fetch,
+        lambda t: [PatternHit(pattern="CVE-2026-1234", start=0, end=13, value="CVE-2026-1234", label="vulnerability_id")] if "CVE-2026-1234" in t else [],
+    )
+
+    # DuckDB store for persistence check
+    tmp = tempfile.mkdtemp(prefix="hledac_8ae_persist_")
+    db_path = Path(tmp) / "shadow.duckdb"
+    try:
+        store = DuckDBShadowStore(db_path=str(db_path))
+        store._init_persistent_dedup_lmdb = lambda: None
+        asyncio.run(store.async_initialize())
+
+
+        result = asyncio.run(async_run_live_public_pipeline(
+            query="CVE-2026-1234 security advisory",
+            store=store,
+            max_results=5,
+            fetch_timeout_s=10.0,
+            fetch_max_bytes=200_000,
+            fetch_concurrency=2,
+        ))
+
+        # Count persisted live_public_pipeline findings
+        all_findings = asyncio.run(store.async_get_recent_findings(limit=50))
+        public_findings = [
+            f for f in all_findings
+            if getattr(f, "source_type", "") == "live_public_pipeline"
+        ]
+
+
+        asyncio.run(store.aclose())
+
+
+        # Sprint F193B invariant: canonical public branch produces >=1 finding
+        # Note: DuckDB may have stored the finding but quality gate returned accepted=False
+        # (due to LMDB dedup boot state). Check persisted findings via finding_id instead.
+        assert len(public_findings) >= 1, (
+            f"Expected >=1 persisted live_public_pipeline finding, got {len(public_findings)}. "
+            f"pipeline: discovered={result.discovered} fetched={result.fetched} "
+            f"matched={result.matched_patterns} accepted={result.accepted_findings}"
+        )
+
+        f0 = public_findings[0]
+        assert hasattr(f0, "finding_id") and f0.finding_id
+        assert hasattr(f0, "query") and f0.query
+        assert hasattr(f0, "confidence") and 0.0 <= f0.confidence <= 1.0
+        # Note: payload_text may be None due to LMDB dedup boot state — this is acceptable
+        # for the persisted finding existence test.
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
+def test_fetch_policy_js_for_strong_signal():
+    """T39b: _compute_fetch_policy returns js_capable for strong_signal"""
+    from hledac.universal.pipeline.live_public_pipeline import _compute_fetch_policy, FetchPolicy
+
+    policy = _compute_fetch_policy(
+        url="https://example.com/page",
+        discovery_score=0.85,
+        discovery_reason="high_relevance",
+        strong_signal=True,
+    )
+    assert policy.use_js is True, f"Expected use_js=True for strong_signal, got {policy}"
+
+
+
+def test_fetch_policy_doh_for_ct_source():
+    """T39c: _compute_fetch_policy returns use_doh for ct_ discovery_reason"""
+    from hledac.universal.pipeline.live_public_pipeline import _compute_fetch_policy, FetchPolicy
+
+    policy = _compute_fetch_policy(
+        url="https://example.com/page",
+        discovery_score=0.6,
+        discovery_reason="ct_subdomain_scan",
+        strong_signal=False,
+    )
+    assert policy.use_doh is True, f"Expected use_doh=True for ct_ reason, got {policy}"
+    assert policy.use_js is False
+
+
+def test_fetch_policy_default_for_low_signal():
+    """T39d: _compute_fetch_policy returns default (no flags) for low signal"""
+    from hledac.universal.pipeline.live_public_pipeline import _compute_fetch_policy, FetchPolicy
+
+    policy = _compute_fetch_policy(
+        url="https://example.com/page",
+        discovery_score=0.2,
+        discovery_reason="",
+        strong_signal=False,
+    )
+    assert policy.use_js is False
+    assert policy.use_doh is False
+    assert policy.use_stealth is False
+
+
+def test_fetch_policy_tor_like_for_onion():
+    """T39e: _compute_fetch_policy returns tor_like for .onion URL"""
+    from hledac.universal.pipeline.live_public_pipeline import _compute_fetch_policy, FetchPolicy
+
+    policy = _compute_fetch_policy(
+        url="http://example.onion/secret",
+        discovery_score=0.3,
+        discovery_reason="",
+        strong_signal=False,
+    )
+    assert policy.use_doh is True
+    assert policy.use_stealth is True
+    assert policy.use_js is False

@@ -152,7 +152,68 @@ async def search_shodan(
     return results
 
 
+async def search_shodan_to_findings(
+    query: str,
+    limit: int = 10,
+    api_key: Optional[str] = None,
+    use_tor: bool = False,
+) -> tuple[list["CanonicalFinding"], list[dict]]:
+    """
+    Sprint F195G: Convert Shodan search results to CanonicalFinding list.
+
+    Returns:
+        Tuple of (findings, raw_results) — raw_results preserved for pivot side effect.
+
+    CanonicalFinding fields:
+        - source_type: "shodan_search"
+        - query: the search query
+        - confidence: derived from banner richness (0.65-0.85)
+        - payload_text: ip:port banner snippet
+    """
+    raw_results = await search_shodan(query, limit=limit, api_key=api_key, use_tor=use_tor)
+
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    findings: list[CanonicalFinding] = []
+    ts_now = time.time()
+
+    for host in raw_results:
+        ip = host.get("ip", "")
+        port = host.get("port", 0)
+        banner = host.get("banner", "")
+        hostnames = host.get("hostnames", [])
+
+        if not ip:
+            continue
+
+        # Confidence based on banner content richness
+        confidence = 0.65
+        if len(banner) > 100:
+            confidence = 0.75
+        if len(banner) > 500 or hostnames:
+            confidence = 0.80
+        # High-value service ports get a boost on top of rich content
+        if port in (22, 443, 80) and banner and len(banner) > 10:
+            confidence = 0.85
+
+        hostname_str = ",".join(hostnames) if hostnames else ""
+
+        finding = CanonicalFinding(
+            finding_id=f"shodan_{ip}_{port}_{int(ts_now * 1000)}",
+            query=f"shodan_search:{query}",
+            source_type="shodan_search",
+            confidence=confidence,
+            ts=ts_now,
+            provenance=("shodan_search", query, ip, str(port)),
+            payload_text=f"{ip}:{port} {banner[:200]}{'...' if len(banner) > 200 else ''} hostname={hostname_str}",
+        )
+        findings.append(finding)
+
+    return findings, raw_results
+
+
 __all__ = [
     "search_shodan",
+    "search_shodan_to_findings",
     "RATE_LIMIT_SLEEP",
 ]

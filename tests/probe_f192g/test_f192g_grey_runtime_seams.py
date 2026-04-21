@@ -42,8 +42,8 @@ import pytest
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-RUNTIME_DIR = Path(__file__).parent.parent.parent.parent / "runtime"
-UNIVERSAL_DIR = Path(__file__).parent.parent.parent.parent
+RUNTIME_DIR = Path(__file__).parent.parent.parent / "runtime"
+UNIVERSAL_DIR = Path(__file__).parent.parent.parent
 
 # Files under audit
 AUDIT_FILES = {
@@ -440,8 +440,95 @@ class TestF192G6_ProbeDirectoryExists:
 
 
 # =============================================================================
-# F192G-7: Runtime path non-entry verification
+# F192G-8: types.py rename audit — no live import of hledac.universal.types
 # =============================================================================
+
+class TestF192G8_TypesRenameAudit:
+    """Verify hledac.universal.types is fully migrated to project_types."""
+
+    def test_no_live_import_of_hledac_universal_types(self):
+        """
+        Audit: no live Python file in the codebase imports hledac.universal.types.
+
+        The rename from types.py → project_types.py was done in F192B.
+        Any remaining import of 'hledac.universal.types' is stale and must be fixed.
+
+        Excludes: test files (they may test the import path itself), __pycache__,
+        .venv, legacy.
+        """
+        import re
+
+        universal = Path(__file__).parent.parent.parent
+        stale_import = re.compile(
+            r"^\s*from\s+hledac\.universal\.types\s+import|"
+            r"^\s*import\s+hledac\.universal\.types\b",
+            re.MULTILINE,
+        )
+
+        failures = []
+        for py_file in universal.rglob("*.py"):
+            path_str = str(py_file)
+            # Exclude test files (they may intentionally test import paths),
+            # __pycache__, .venv, .bak, legacy
+            if any(ex in path_str for ex in (
+                "__pycache__", ".venv", ".bak", "legacy",
+                "tests/",  # test files may probe import paths
+            )):
+                continue
+            try:
+                content = py_file.read_text(errors="ignore")
+            except Exception:
+                continue
+            for lineno, line in enumerate(content.splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if stale_import.search(line) and "hledac.universal.types" in line:
+                    failures.append((py_file, lineno, stripped))
+
+        assert len(failures) == 0, (
+            f"Found {len(failures)} stale import(s) of hledac.universal.types:\n"
+            + "\n".join(f"  {f.relative_to(universal)}:{l}  {s}" for f, l, s in failures)
+        )
+
+
+# =============================================================================
+# F192G-9: Ghost seam verdicts — documented decisions
+# =============================================================================
+
+# -------------------------------------------------------------------
+# VERDICT LOG (encoded at end of each ghost file's module docstring)
+# -------------------------------------------------------------------
+# intelligence_dispatcher  → ACTIVATE LATER
+#   Reason: TICKET-006 infrastructure is sound; lazy-load + tier dispatch
+#           pattern is correct; only missing wiring to canonical entry point.
+#   Blocker: Needs SprintLifecycleManager integration to own dispatch timing,
+#            and UmaWatchdog callback wiring to MemoryWatchdog before activation.
+#   Status: Dormant but viable — preserve for F193B/F194B sprint.
+#
+# memory_watchdog         → ACTIVATE LATER
+#   Reason: TICKET-007 seam is clean and well-scoped; uses existing UmaWatchdog,
+#           not a new watchdog; policy interface for dispatcher is correct pattern.
+#   Blocker: Needs IntelligenceDispatcher to be activated first (dependency pair),
+#            and _suspended_tiers field to be wired in dispatcher.run_tier().
+#   Status: Paired with intelligence_dispatcher — activate both together.
+#
+# session_authority       → DEPRECATE / CANDIDATE FOR REMOVAL
+#   Reason: Completely unreferenced singleton. SessionPhase, SessionSnapshot,
+#           get_session_authority() have zero call-sites. No canonical entry point
+#           and no production wiring. State tracking is already done by
+#           SprintLifecycleManager and metrics_registry.
+#   Blocker: None — no production dependency.
+#   Status: Deprecated. Recommend removal in F193B cleanup sprint.
+#
+# telemetry              → DEPRECATE / CANDIDATE FOR REMOVAL
+#   Reason: Completely unreferenced. TelemetryLogger, SprintEvent, JsonFormatter
+#           have zero call-sites. metrics_registry.py ingests Dict[str,object],
+#           not SprintEvent. Role is already served by metrics_registry.py
+#           for RAM/counter metrics and structured logging elsewhere.
+#   Blocker: None — no production dependency.
+#   Status: Deprecated. Recommend removal in F193B cleanup sprint.
+# -------------------------------------------------------------------
 
 class TestF192G7_RuntimePathNonEntry:
     """None of the 4 ghost files are imported or invoked in any canonical entry point."""

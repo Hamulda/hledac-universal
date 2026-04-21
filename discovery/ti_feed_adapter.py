@@ -990,10 +990,21 @@ async def _handle_github_dork(task, scheduler):
 
 @register_task("shodan_enrich")
 async def _handle_shodan_enrich(task, scheduler):
-    from hledac.universal.discovery.ti_feed_adapter import enrich_ip_internetdb
-    r = await enrich_ip_internetdb(task.ioc_value)
-    if r:
+    from hledac.universal.intelligence.shodan_wrapper import search_shodan_to_findings
+
+    # Sprint F195G: Get canonical findings AND raw results for pivot side effect
+    findings, raw_results = await search_shodan_to_findings(
+        query=task.ioc_value,
+        limit=10,
+    )
+
+    # Side effect: pivot graph expansion (preserved from original behavior)
+    if raw_results:
         await scheduler._buffer_ioc_pivot("ipv4", task.ioc_value, 0.80)
+
+    # Sprint F195G: Persist findings as canonical to DuckDB
+    if findings and scheduler._duckdb_store is not None:
+        await scheduler._duckdb_store.async_ingest_findings_batch(findings)
 
 
 @register_task("rdap_lookup")
@@ -1512,8 +1523,50 @@ async def query_bgp_routing_history(resource: str, max_rows: int = 20) -> dict:
 async def _handle_bgp_routing_history(task, scheduler):
     """BGP routing history pro prefix nebo ASN číslo."""
     result = await query_bgp_routing_history(task.ioc_value)
-    if result.get("history"):
-        await scheduler._buffer_ioc_pivot("ipv4", task.ioc_value, 0.70)
+    if not result.get("history"):
+        return
+
+    # Side effect: pivot graph expansion (preserved from original behavior)
+    await scheduler._buffer_ioc_pivot("ipv4", task.ioc_value, 0.70)
+
+    # Sprint F195G: Try live BGP monitoring via pybgpstream for canonical findings
+    try:
+        from hledac.universal.network.bgp_monitor import monitor_bgp
+    except ImportError:
+        return  # arm64 fallback — pybgpstream not available
+
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    findings: list[CanonicalFinding] = []
+    ts_now = time.time()
+
+    def bgp_callback(timestamp: float, prefix: str, as_path: str, event_type: str):
+        # Called synchronously from monitor_bgp's executor thread — capture for async
+        pass
+
+    try:
+        events = await monitor_bgp(
+            prefixes=[task.ioc_value],
+            callback=bgp_callback,
+            duration_seconds=30,
+        )
+    except Exception:
+        return  # fail-soft on monitoring errors
+
+    for event in events:
+        finding = CanonicalFinding(
+            finding_id=f"bgp_{event['prefix']}_{event['timestamp']}_{int(ts_now * 1000)}",
+            query=f"bgp_monitor:{task.ioc_value}",
+            source_type="bgp_monitor",
+            confidence=0.75,
+            ts=event["timestamp"],
+            provenance=("bgp_monitor", task.ioc_value, event["prefix"], event["as_path"], event["event_type"]),
+            payload_text=f"prefix={event['prefix']} as_path={event['as_path']} event={event['event_type']}",
+        )
+        findings.append(finding)
+
+    if findings and scheduler._duckdb_store is not None:
+        await scheduler._duckdb_store.async_ingest_findings_batch(findings)
 
 
 # ── MALWAREBAZAAR ─────────────────────────────────────────────────────────────

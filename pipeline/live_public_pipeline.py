@@ -18,6 +18,9 @@ import os
 import re
 import sys
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 from typing import TYPE_CHECKING, Any
 
 import msgspec
@@ -100,6 +103,68 @@ _DISCOVERY_SKIP_THRESHOLD: float = 0.15
 # -----------------------------------------------------------------------------
 # DTOs
 # -----------------------------------------------------------------------------
+
+
+# Sprint F193B: Explicit fetch policy — policy-driven JS/DoH/stealth, not dormant defaults
+from dataclasses import dataclass, field
+
+
+
+@dataclass(frozen=True)
+class FetchPolicy:
+    """Bounded fetch policy for canonical public sprint."""
+    use_js: bool = False
+    use_doh: bool = False
+    use_stealth: bool = False
+
+    @classmethod
+    def default(cls) -> "FetchPolicy":
+        return cls()
+
+
+    @classmethod
+    def js_capable(cls) -> "FetchPolicy":
+        return cls(use_js=True)
+
+    @classmethod
+    def tor_like(cls) -> "FetchPolicy":
+        return cls(use_doh=True, use_stealth=True)
+
+
+
+
+def _compute_fetch_policy(
+    url: str,
+    discovery_score: float | None,
+    discovery_reason: str | None,
+    strong_signal: bool,
+) -> FetchPolicy:
+    """
+    Sprint F193B: Policy-driven fetch policy — JS/DoH/stealth driven by signal
+    strength and URL class, not just dormant defaults.
+
+    Policy rules:
+    - discovery_score >= 0.7 OR strong_signal → use_js (JS-heavy page likely)
+    - Onion/I2P/Freenet → tor_like policy (use_doh + use_stealth)
+    - discovery_reason contains 'ct_' → DoH (accuracy for CT-log sources)
+    - discovery_score >= 0.5 with moderate signal → use_doh only
+    - everything else → default (plain fetch)
+
+    Bounded: no network calls, no external state.
+    """
+    if ".onion" in url or ".i2p" in url or ".b32.i2p" in url or ".freenet" in url:
+        return FetchPolicy.tor_like()
+
+    if discovery_score is not None and discovery_score >= 0.7:
+        return FetchPolicy.js_capable()
+    if strong_signal:
+        return FetchPolicy.js_capable()
+    if discovery_reason and "ct_" in discovery_reason:
+        return FetchPolicy(use_doh=True)
+    if discovery_score is not None and discovery_score >= 0.5:
+        return FetchPolicy(use_doh=True)
+    return FetchPolicy.default()
+
 
 
 class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
@@ -673,6 +738,7 @@ async def _fetch_and_process_page(
     discovery_score: float | None = None,
     discovery_reason: str | None = None,
     vector_store: Any | None = None,
+    graph: Any | None = None,
 ) -> PipelinePageResult:
     """
     Fetch one URL, extract text, scan patterns, optionally store findings.
@@ -738,9 +804,17 @@ async def _fetch_and_process_page(
                 redirect_target=None,
             )
 
+        # Sprint F193B: Policy-driven fetch — JS/DoH/stealth driven by signal, not dormant defaults
+        policy = _compute_fetch_policy(hit_url, discovery_score, discovery_reason, strong_signal)
+
         try:
             result = await asyncio.wait_for(
-                _ASYNC_FETCH_PUBLIC_TEXT(hit_url, effective_timeout, fetch_max_bytes),
+                _ASYNC_FETCH_PUBLIC_TEXT(
+                    hit_url, effective_timeout, fetch_max_bytes,
+                    use_stealth=policy.use_stealth,
+                    use_js=policy.use_js,
+                    use_doh=policy.use_doh,
+                ),
                 timeout=effective_timeout + 5.0,
             )
         except asyncio.TimeoutError:
@@ -931,6 +1005,8 @@ async def _fetch_and_process_page(
             )
         except Exception:
             hits = []
+        if hits is None:
+            hits = []
 
         matched_count = len(hits)
 
@@ -1118,6 +1194,7 @@ async def _fetch_and_process_page(
 
 _ASYNC_FETCH_PUBLIC_TEXT: Any = None  # patched by tests
 _SYNC_MATCH_TEXT: Any = None  # patched by tests
+_PATCHED_BY_ENSURE: bool = False  # guard: once _ensure_patched() runs, don't re-overwrite
 
 
 def _patch_fetcher_and_matcher(
@@ -1129,8 +1206,17 @@ def _patch_fetcher_and_matcher(
 
 
 def _ensure_patched() -> None:
-    """Ensure runtime fetch/matcher are patched from 8AD/8X modules."""
-    global _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT
+    """Ensure runtime fetch/matcher are patched from 8AD/8X modules.
+
+    Idempotent: once called (by production code), never re-runs.
+    Tests patch _ASYNC_FETCH_PUBLIC_TEXT and _SYNC_MATCH_TEXT BEFORE calling
+    the pipeline; this guard preserves those patches by skipping the real import
+    once any code (tests or production) has triggered this function.
+    """
+    global _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT, _PATCHED_BY_ENSURE
+    if _PATCHED_BY_ENSURE:
+        return
+    _PATCHED_BY_ENSURE = True
     if _ASYNC_FETCH_PUBLIC_TEXT is None:
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
         _ASYNC_FETCH_PUBLIC_TEXT = async_fetch_public_text
@@ -1946,6 +2032,7 @@ async def async_run_live_public_pipeline(
                 discovery_score=hit_score,
                 discovery_reason=hit_reason,
                 vector_store=vector_store,
+                graph=graph,
             )
         )
         tasks.append(task)

@@ -1059,16 +1059,16 @@ class TestF9ExecutionPlaneContainment:
         RunCorrelation already exists in types.py for correlation.
         ExecutionContext is legacy (v1+v2), not new execution plane DTO.
         """
-        from hledac.universal import types
+        from hledac.universal import project_types
 
         # RunCorrelation exists for correlation
-        assert hasattr(types, "RunCorrelation")
+        assert hasattr(project_types, "RunCorrelation")
 
         # No NEW execution-plane DTOs (beyond RunCorrelation)
         # ExecutionContext is legacy from v1+v2 (not new DTO for this plane)
         # ToolExecContext and ExecutionControl would be new execution plane DTOs
-        assert not hasattr(types, "ToolExecContext")
-        assert not hasattr(types, "ExecutionControl")
+        assert not hasattr(project_types, "ToolExecContext")
+        assert not hasattr(project_types, "ExecutionControl")
 
     def test_ghost_executor_migration_blockers_documented(self):
         """

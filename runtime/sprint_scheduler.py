@@ -509,6 +509,10 @@ class SprintScheduler:
         # Sprint 8BK: Wall-clock start for duration budget guard
         self._wall_clock_start: float = 0.0
         self._ARROW_FLUSH_N: int = 1000
+        # P12: Bounded Hermes lifecycle — loaded at sprint start, released at teardown
+        # M1 8GB invariant: only one large model at a time (Hermes ~2GB)
+        self._hermes_engine: Any = None
+        self._memory_manager: Any = None
         self._ARROW_FLUSH_S: float = 60.0
         self._fetch_semaphore: asyncio.Semaphore = asyncio.Semaphore(20)
         self.sprint_id: str = ""
@@ -805,6 +809,17 @@ class SprintScheduler:
         if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
             self._result.pre_loop_blocker_reason = "dedup_preload"
 
+        # P12: Load Hermes engine with memory guard (bounded M1 8GB lifecycle)
+        # Hermes ~2GB: loaded once at sprint start, released at teardown
+        # M1 8GB: fail-soft on memory pressure — ToT is optional
+        self._hermes_engine = None
+        self._memory_manager = None
+        try:
+            await self._load_hermes_for_sprint()
+        except Exception as e:
+            log.debug(f"[P12] Hermes load failed, ToT will be skipped: {e}")
+            self._hermes_engine = None
+
         # Sprint 8SA: Source scoring — order sources by priority at start of ACTIVE
         _DEFAULT_SOURCE_TYPES = [
             "cisa_kev", "threatfox_ioc", "urlhaus_recent",
@@ -950,6 +965,14 @@ class SprintScheduler:
         # Sprint 8RA: Close persistent dedup at TEARDOWN
         await self._close_dedup()
 
+        # P12: Release Hermes engine at teardown (bounded M1 8GB lifecycle)
+        if self._hermes_engine is not None:
+            try:
+                await self._hermes_engine.unload()
+            except Exception as e:
+                log.debug(f"[P12] Hermes unload failed: {e}")
+            self._hermes_engine = None
+
         # Sprint 8UC B.4: Cancel all background speculative tasks
         for t in list(self._bg_tasks):
             t.cancel()
@@ -1084,21 +1107,34 @@ class SprintScheduler:
 
         # Sprint 8XE: Run public discovery pipeline in same cycle (canonical parity)
         # Both pipelines run concurrently via TaskGroup; failure of one does not fail the other
-        await self._run_public_discovery_in_cycle(query, duckdb_store)
+        # P12: Pass hermes_engine and memory_manager for post-storage ToT hypothesis layer
+        await self._run_public_discovery_in_cycle(
+            query=query,
+            duckdb_store=duckdb_store,
+            hermes_engine=self._hermes_engine,
+            memory_manager=self._memory_manager,
+        )
 
         return True
 
     async def _run_public_discovery_in_cycle(
-        self, query: str = "", duckdb_store: Any = None
+        self,
+        query: str = "",
+        duckdb_store: Any = None,
+        hermes_engine: Any = None,
+        memory_manager: Any = None,
     ) -> None:
         """
         Sprint 8XE: Run public discovery pipeline in the current cycle.
+        P12: Also runs post-storage ToT hypothesis layer when hermes_engine is available.
 
         Uses asyncio.TaskGroup for bounded concurrency with the feed pipeline.
         Fail-soft: errors are accumulated but never raise or abort the sprint.
 
         query: real sprint query context from __main__.py (not a weak source hint).
         duckdb_store: DuckDBShadowStore instance for storing findings.
+        hermes_engine: Hermes3Engine instance for P12 post-storage ToT (optional, M1 8GB safe).
+        memory_manager: MemoryManager instance for session history (optional).
         UMA check is handled inside the pipeline itself.
         """
         try:
@@ -1120,6 +1156,8 @@ class SprintScheduler:
                         max_results=5,
                         fetch_timeout_s=35.0,
                         fetch_concurrency=3,
+                        hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
+                        memory_manager=memory_manager,  # P11: session history for RAG context
                     )
                 )
 
@@ -1344,6 +1382,42 @@ class SprintScheduler:
             except Exception:
                 pass
             self._duckdb_read_con = None
+
+    async def _load_hermes_for_sprint(self) -> None:
+        """
+        P12: Load Hermes engine at sprint start with M1 8GB memory guard.
+
+        Bounded lifecycle: loaded once at BOOT/WARMUP, released at TEARDOWN.
+        Fail-soft: memory pressure on load skips ToT, does not abort sprint.
+
+        M1 8GB invariant: Hermes ~2GB is the only large model.
+        ModernBERT/GLiNER are NOT loaded during canonical sprint.
+        """
+        from hledac.universal.brain.hermes3_engine import Hermes3Engine
+        from hledac.universal.core.resource_governor import sample_uma_status
+
+        # Memory guard: check RSS before load
+        uma = sample_uma_status()
+        if uma.state in ("critical", "emergency"):
+            log.debug(f"[P12] Skipping Hermes load — UMA state: {uma.state}")
+            return
+
+        # Check RSS threshold (5.5GB max on M1 8GB)
+        if uma.system_used_gib >= 5.0:
+            log.debug(f"[P12] Skipping Hermes load — RSS {uma.system_used_gib:.2f}GiB too high")
+            return
+
+        # Load Hermes via Hermes3Engine (handles mlx_lm.load internally)
+        self._hermes_engine = Hermes3Engine()
+        await self._hermes_engine.load()
+
+        # Initialize memory manager (session history for RAG context)
+        try:
+            from hledac.universal.memory.memory_manager import MemoryManager
+            self._memory_manager = MemoryManager()
+        except Exception as e:
+            log.debug(f"[P12] MemoryManager init failed: {e}")
+            self._memory_manager = None
 
     def is_duplicate(self, source_type: str, url: str, title: str = "") -> bool:
         """Check if (source_type, url, title) was already seen in any sprint."""

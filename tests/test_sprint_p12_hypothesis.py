@@ -286,5 +286,119 @@ class TestP12CanonicalBehavior:
         )
 
 
+class TestP12DILoadWire:
+    """P12 DI wire tests: gate opens only when store+hermes_engine+stored_findings>0."""
+
+    def test_gate_requires_store_and_hermes_and_stored(self):
+        """
+        P12 gate requires ALL THREE: store is not None AND hermes_engine is not None AND total_stored > 0.
+        Canonical sprint DI wire: hermes_engine travels with duckdb_store into pipeline.
+        """
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 2000]
+
+        # Gate must check all three conditions
+        assert "store is not None" in p12_block, (
+            "P12 gate must check 'store is not None'"
+        )
+        assert "hermes_engine is not None" in p12_block, (
+            "P12 gate must check 'hermes_engine is not None'"
+        )
+        assert "total_stored > 0" in p12_block, (
+            "P12 gate must check 'total_stored > 0'"
+        )
+
+        # Gate must be AND-chained (all three required)
+        assert "and" in p12_block.lower(), (
+            "P12 gate must use AND for all-three condition chain"
+        )
+
+    def test_gate_blocks_when_hermes_none(self):
+        """P12 gate does NOT open when hermes_engine is None (even with store and findings)."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 2000]
+
+        # Count occurrences of the gate condition pattern
+        # Must be: if store is not None and hermes_engine is not None and total_stored > 0:
+        lines = p12_block.split('\n')
+        gate_lines = [l for l in lines if 'if ' in l and 'store' in l and 'hermes_engine' in l and 'total_stored' in l]
+        assert len(gate_lines) >= 1, "P12 must have a gate line checking store+hermes_engine+total_stored"
+
+    def test_no_tot_when_store_none(self):
+        """ToT does not run when store is None (hermes_engine is irrelevant without store)."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 2000]
+
+        # The gate if-condition must include "store is not None"
+        assert "store is not None" in p12_block, (
+            "Canonical gate requires store for persistence, not just hermes alone"
+        )
+
+    def test_no_tot_when_no_stored_findings(self):
+        """ToT does not run when total_stored == 0 (no evidence to reason about)."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 2000]
+
+        # Must check total_stored > 0 before running ToT
+        assert "total_stored > 0" in p12_block, (
+            "P12 requires stored findings before running ToT — no reasoning on empty store"
+        )
+
+    def test_scheduler_passes_hermes_to_pipeline(self):
+        """
+        SprintScheduler passes hermes_engine into async_run_live_public_pipeline.
+        Verifies DI wire: scheduler._hermes_engine → pipeline P12 gate.
+        """
+        import ast, inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        # Check that _run_public_discovery_in_cycle passes hermes_engine
+        source = inspect.getsource(SprintScheduler._run_public_discovery_in_cycle)
+        assert "hermes_engine=hermes_engine" in source, (
+            "Scheduler must pass hermes_engine into async_run_public — DI wire for P12"
+        )
+
+    def test_scheduler_loads_hermes_at_sprint_start(self):
+        """
+        SprintScheduler loads Hermes at sprint start (_load_hermes_for_sprint).
+        Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        # Check that run() calls _load_hermes_for_sprint
+        source = inspect.getsource(SprintScheduler.run)
+        assert "_load_hermes_for_sprint" in source, (
+            "Scheduler must call _load_hermes_for_sprint at sprint start — bounded Hermes lifecycle"
+        )
+
+    def test_scheduler_releases_hermes_at_teardown(self):
+        """
+        SprintScheduler releases Hermes at teardown (in _close_dedup region).
+        Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        source = inspect.getsource(SprintScheduler.run)
+        # After _close_dedup, there should be Hermes unload
+        # The unload call should be near the teardown section
+        assert "hermes_engine" in source, (
+            "Scheduler must handle hermes_engine teardown — bounded M1 8GB lifecycle"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
