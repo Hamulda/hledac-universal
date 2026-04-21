@@ -137,6 +137,8 @@ def _runtime_truth(
     total_pattern_hits: int,
     public_accepted_findings: int,
     feed_findings: int,
+    # Sprint F194A: CT findings are additive to feed/public in canonical truth
+    ct_findings: int = 0,
     # F176A: Hardware pressure surfaces for smoke classification
     swap_detected: bool = False,
     uma_state: str = "ok",
@@ -150,18 +152,24 @@ def _runtime_truth(
     )
 
     # Branch mix — dominant signal source
+    # Sprint F194A: CT findings tracked as distinct branch in branch_mix
     branch_mix = {
         "feed_findings": feed_findings,
         "public_findings": public_accepted_findings,
+        "ct_findings": ct_findings,
     }
 
-    # Primary signal source label
-    if feed_findings > 0 and public_accepted_findings == 0:
+    # Primary signal source label — Sprint F194A: CT findings can dominate
+    if ct_findings > 0 and feed_findings == 0 and public_accepted_findings == 0:
+        primary = "ct"
+    elif feed_findings > 0 and public_accepted_findings == 0 and ct_findings == 0:
         primary = "feed"
-    elif public_accepted_findings > 0 and feed_findings == 0:
+    elif public_accepted_findings > 0 and feed_findings == 0 and ct_findings == 0:
         primary = "public"
-    elif feed_findings > 0 and public_accepted_findings > 0:
+    elif feed_findings > 0 and public_accepted_findings > 0 and ct_findings == 0:
         primary = "mixed"
+    elif ct_findings > 0 and (feed_findings > 0 or public_accepted_findings > 0):
+        primary = "mixed_ct"
     else:
         primary = "none"
 
@@ -428,8 +436,13 @@ async def run_sprint(
         # UMA peak
         uma_peak_gib = sample_uma_status().system_used_gib
 
-        # Sprint F193A: CT log canonical discovery — runs once after main cycle loop
+        # Sprint F193A+F194A: CT log canonical discovery — runs once after main cycle loop.
+        # Sprint F194A: Persisted CT findings are additive to feed/public accepted_findings
+        # in canonical sprint truth. They flow into write_sprint_delta, runtime_truth,
+        # report_dict, canonical_run_summary, and export handoff.
         await scheduler._run_ct_log_discovery_in_cycle(query=query, store=store)
+        # Canonical truth accounting: include persisted CT findings in accepted_findings total
+        result.accepted_findings += result.ct_log_stored
 
         # Write sprint delta
         await write_sprint_delta(
@@ -601,6 +614,8 @@ async def run_sprint(
             total_pattern_hits=result.total_pattern_hits,
             public_accepted_findings=result.public_accepted_findings,
             feed_findings=feed_fnd,
+            # Sprint F194A: CT findings additive to canonical truth accounting
+            ct_findings=result.ct_log_stored,
             # F176A: Hardware pressure surfaces for smoke classification
             swap_detected=_swap_detected_pre,
             uma_state=_uma_state_pre,
@@ -855,6 +870,11 @@ async def run_sprint(
             "public_matched_patterns": result.public_matched_patterns,
             "public_stored_findings": result.public_stored_findings,
             "public_error": result.public_error,
+            # Sprint F193A+F194A: CT log canonical discovery — additive to sprint truth
+            "ct_log_discovered": result.ct_log_discovered,
+            "ct_log_stored": result.ct_log_stored,
+            "ct_log_accepted_findings": result.ct_log_accepted_findings,
+            "ct_log_error": result.ct_log_error,
             "cycles_completed": result.cycles_completed,
             "cycles_started": result.cycles_started,
             "unique_entry_hashes_seen": result.unique_entry_hashes_seen,
@@ -934,6 +954,10 @@ async def run_sprint(
                 "export_finish_layer_status": _export_finish_status,
                 # Sprint F163C: public_error must surface at canonical boundary
                 "public_error": result.public_error,
+                # Sprint F194A: CT log canonical findings — additive to sprint truth
+                "ct_log_discovered": result.ct_log_discovered,
+                "ct_log_stored": result.ct_log_stored,
+                "ct_log_accepted_findings": result.ct_log_accepted_findings,
                 # Sprint F160E: Canonical timing truth — separates active window from full run
                 "timing_truth": timing_truth,
             },
@@ -1021,6 +1045,10 @@ async def run_sprint(
                     "export_finish_layer_status": _export_finish_status,
                     # Sprint F163C: public_error must surface at canonical boundary
                     "public_error": result.public_error,
+                    # Sprint F194A: CT log canonical findings — additive to sprint truth
+                    "ct_log_discovered": result.ct_log_discovered,
+                    "ct_log_stored": result.ct_log_stored,
+                    "ct_log_accepted_findings": result.ct_log_accepted_findings,
                     # Sprint F160E: Canonical timing truth — separates active window from full run
                     "timing_truth": timing_truth,
                 },

@@ -289,6 +289,9 @@ class SprintSchedulerResult:
     # Sprint F193A: CT log canonical discovery pipeline results
     ct_log_discovered: int = 0
     ct_log_stored: int = 0
+    # Sprint F194A: CT log accepted findings — canonical truth accounting
+    # additive to feed/public accepted_findings in canonical sprint truth surfaces
+    ct_log_accepted_findings: int = 0
     ct_log_error: str = ""
     # Sprint F166B: Pre-loop starvation tracking
     # Set when ACTIVE phase is first observed (loop guard entry)
@@ -518,6 +521,8 @@ class SprintScheduler:
         self._recent_iocs: list[dict] = []
         # Sprint 8VI §D: IOCScorer reference (set during WARMUP)
         self._ioc_scorer: Any = None
+        # Sprint F195: DuckDB store for canonical finding persistence
+        self._duckdb_store: Any = None
         # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
         self._ioc_graph: Any = None
         # Sprint 8VI §C: All findings collected during sprint
@@ -772,6 +777,8 @@ class SprintScheduler:
 
         # Sprint 8BK: Record wall-clock start for duration budget guard
         self._wall_clock_start = _time.monotonic()
+        # Sprint F195: Store duckdb_store on self for task handler access
+        self._duckdb_store = duckdb_store
 
         # Initial tick to enter ACTIVE
         phase = adapter.tick(now_monotonic)
@@ -1186,6 +1193,9 @@ class SprintScheduler:
                 results = await store.async_ingest_findings_batch(findings)
                 stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
                 self._result.ct_log_stored = stored
+                # Sprint F194A: ct_log_accepted_findings tracks accepted CT findings
+                # for canonical truth accounting (additive to feed/public accepted_findings)
+                self._result.ct_log_accepted_findings = stored
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)

@@ -1,12 +1,19 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 *.so
 .Python
 *.egg-info/
 dist/
 build/
 .eggs/
+
+# Virtual Environment
+.venv/
+
+# node_modules
+node_modules/
 
 # macOS
 .DS_Store
@@ -19,8 +26,8 @@ build/
 *.swo
 
 # OMC session state (ephemeral)
-.omc/sessions/
-.omc/state/agent-replay-*.jsonl
+.omc/
+*.omc
 
 # Test artifacts
 .pytest_cache/
@@ -35,6 +42,7 @@ htmlcov/
 *.py.new
 *.py.new2
 *.py.bak
+*.bak
 None
 None.*
 .srclight/

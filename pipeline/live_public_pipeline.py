@@ -1911,58 +1911,6 @@ async def async_run_live_public_pipeline(
             import logging as _logging
             _logging.getLogger(__name__).warning(f"[P20] Pastebin/GitHub scan failed: {e}")
 
-    # P12: Hypothesis generation and ToT evaluation
-    # After network reconnaissance (CT/CC), generate hypotheses and evaluate
-    # complex ones via Tree-of-Thoughts before main fetch batch
-    tot_solution_count = 0
-    if memory_manager is not None and hermes_engine is not None:
-        try:
-            # Import hypothesis engine and ToT integration
-            from hledac.universal.brain.hypothesis_engine import HypothesisEngine
-            from hledac.universal.tot_integration import TotIntegrationLayer
-
-            hypo_engine = HypothesisEngine()
-            tot_layer = TotIntegrationLayer()
-
-            # Build context for hypothesis generation
-            hypo_context = {
-                "query": query,
-                "rag_context": rag_context,
-                "graph_summary": graph.export_summary() if graph and hasattr(graph, 'export_summary') else "",
-                "existing_hypotheses": []
-            }
-
-            # Generate hypotheses using Hermes 3
-            hypotheses = await hypo_engine.generate_hypotheses_async(
-                context=hypo_context,
-                hermes_engine=hermes_engine
-            )
-
-            # Evaluate each hypothesis via ToT if complex
-            for hypo in hypotheses[:5]:  # Max 5 ToT evaluations
-                tot_result = await tot_layer.solve_with_tot(hypo)
-                if tot_result:
-                    tot_solution_count += 1
-                    # Store ToT result as synthetic finding
-                    if store is not None:
-                        try:
-                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-                            tot_finding = CanonicalFinding(
-                                finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
-                                query=query,
-                                source_type="tot_synthesis",
-                                confidence=0.7,
-                                ts=time.time(),
-                                provenance=("tot", hypo[:100]),
-                                payload_text=tot_result[:1000],
-                            )
-                            await store.async_ingest_findings_batch([tot_finding])
-                        except Exception:
-                            pass  # Fail-soft
-
-        except Exception:
-            pass  # P12: fail-soft, hypothesis generation is optional
-
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
     tasks: list[asyncio.Task] = []
@@ -2550,6 +2498,68 @@ async def async_run_live_public_pipeline(
         pastebin_findings_count=pastebin_findings_count,
         github_secrets_count=github_secrets_count,
     )
+
+    # P12: Hypothesis generation and ToT evaluation — POST-STORAGE variant
+    # Runs AFTER findings are stored (real persisted evidence), not before fetch.
+    # Canonical sprint: gated on store+hermes_engine (not memory_manager alone).
+    # M1 8GB: bounded to 5 hypotheses, fail-soft, no ToT in hot path.
+    tot_solution_count = 0
+    if store is not None and hermes_engine is not None and total_stored > 0:
+        try:
+            from hledac.universal.brain.hypothesis_engine import HypothesisEngine
+            from hledac.universal.tot_integration import TotIntegrationLayer
+
+            hypo_engine = HypothesisEngine()
+            tot_layer = TotIntegrationLayer()
+
+            # Query real persisted findings as hypothesis input
+            recent_findings = await store.async_get_recent_findings(limit=20)
+            if not recent_findings:
+                logger.debug("[P12] No stored findings — hypothesis layer skipped")
+            else:
+                # Build context from real findings, not placeholder RAG/graph summary
+                hypo_context = {
+                    "query": query,
+                    "stored_findings_count": total_stored,
+                    "findings": [
+                        {
+                            "finding_id": f.finding_id if hasattr(f, "finding_id") else str(f.get("finding_id", "")),
+                            "source_type": f.source_type if hasattr(f, "source_type") else str(f.get("source_type", "")),
+                            "confidence": f.confidence if hasattr(f, "confidence") else float(f.get("confidence", 0.0)),
+                            "provenance": f.provenance if hasattr(f, "provenance") else f.get("provenance", ""),
+                        }
+                        for f in recent_findings[:20]
+                    ],
+                }
+
+                # Generate hypotheses from real stored findings
+                hypotheses = await hypo_engine.generate_hypotheses_async(
+                    context=hypo_context,
+                    hermes_engine=hermes_engine
+                )
+
+                # Evaluate each hypothesis via ToT if complex — bounded to 5
+                for hypo in hypotheses[:5]:
+                    tot_result = await tot_layer.solve_with_tot(hypo)
+                    if tot_result:
+                        tot_solution_count += 1
+                        try:
+                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                            tot_finding = CanonicalFinding(
+                                finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
+                                query=query,
+                                source_type="tot_synthesis",
+                                confidence=0.7,
+                                ts=time.time(),
+                                provenance=("tot", hypo[:100]),
+                                payload_text=tot_result[:1000],
+                            )
+                            await store.async_ingest_findings_batch([tot_finding])
+                        except Exception:
+                            pass  # Fail-soft
+
+        except Exception:
+            pass  # P12: fail-soft, hypothesis generation is optional
 
 
 # Placeholder for discovery (patched in tests)

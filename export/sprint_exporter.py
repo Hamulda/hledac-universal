@@ -270,6 +270,9 @@ async def export_sprint(
 
     operator_brief = _build_operator_brief(pvs, branch_value, sprint_trend, source_leaderboard, seeds_count, correlation, runtime_truth, feed_verdict, public_verdict, signal_path, hypothesis_pack, canonical_run_summary, sprint_verdict, synthesis_outcome_payload) if pvs else None
 
+    # Sprint F192H: research_depth_metric — derived from canonical surfaces only
+    research_depth = _compute_research_depth(eh, pvs, signal_path, hypothesis_pack, correlation)
+
     return {
         "report_json": str(report_path) if report_path else "",
         "seeds_json": str(seeds_path),
@@ -281,6 +284,8 @@ async def export_sprint(
         "branch_truth": branch_truth,
         "best_first_move": best_first_move,
         "why_this_run_matters": why_this_run_matters,
+        # Sprint F192H: research_depth_metric — canonical research depth score
+        "research_depth_metric": research_depth,
     }
 
 
@@ -1357,6 +1362,195 @@ def _get_synthesis_outcome_payload(eh: "ExportHandoff") -> dict[str, Any] | None
     if sop and isinstance(sop, dict):
         return sop
     return None
+
+
+# Sprint F192H: Research Depth Metric
+# Source type depth tiers — higher tier = harder to reach = deeper research
+_SOURCE_TIER: dict[str, int] = {
+    # Tier 0: indexed/surface (high availability, low depth)
+    "rss_atom_pipeline": 0,
+    "live_public_pipeline": 0,
+    "rss": 0,
+    "api": 0,
+    "planner_bridge": 0,
+    # Tier 1: structured TI (moderate depth)
+    "ct_log_pipeline": 1,
+    "circl_pdns": 1,
+    "academic_discovery": 1,
+    "pastebin_monitor": 1,
+    "github_secret_scanner": 1,
+    # Tier 2: deep/dark web (hard to reach, high depth)
+    "rl_research": 2,
+    "tot_synthesis": 2,
+    "report": 2,
+}
+
+
+def _compute_research_depth(
+    eh: "ExportHandoff",  # type: ignore[name-defined]
+    pvs: dict[str, Any] | None,
+    signal_path: dict[str, Any] | None,
+    hypothesis_pack: dict[str, Any] | None,
+    correlation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Sprint F192H: research_depth_metric — derived from canonical surfaces only.
+
+    Computes a 0-100 research depth score differentiating:
+      - Surface research (indexed web only, single source type)
+      - Shallow research (multiple indexed sources)
+      - Moderate research (some CT logs, archive, PDNS)
+      - Deep research (significant deep sources + corroboration)
+      - Comprehensive research (all dimensions strong)
+
+    Components (0-100 total):
+      - source_diversity (0-25): unique source types + Shannon entropy
+      - non_indexed_ratio (0-20): tier1+tier2 sources / total
+      - corroboration (0-25): is_corroborated + campaign_hints + noisy signal
+      - branch_diversity (0-15): feed vs public vs CT active branches
+      - pivot_depth (0-15): hypothesis_count + pivot recommendations
+
+    DERIVED ONLY — reads from ExportHandoff canonical surfaces:
+      - eh.scorecard["entries_per_source"] / ["hits_per_source"]
+      - eh.scorecard["branch_mix"] via runtime_truth
+      - signal_path["is_corroborated"], ["is_noisy"], ["next_pivot_recommendation"]
+      - correlation["campaign_hints"], ["high_risk_branch"]
+      - hypothesis_pack["hypothesis_count"]
+
+    NO new persistence. NO new store reads.
+    """
+    import math
+
+    scorecard = eh.scorecard if eh.scorecard else {}
+    runtime_truth = _get_runtime_truth(eh)
+
+    # ── 1. Source diversity (0-25) ─────────────────────────────────────
+    # Extract source hit counts from scorecard surfaces
+    entries_per_source: dict[str, int] = {}
+    hits_per_source: dict[str, int] = {}
+    if isinstance(scorecard.get("entries_per_source"), dict):
+        entries_per_source = scorecard["entries_per_source"]
+    if isinstance(scorecard.get("hits_per_source"), dict):
+        hits_per_source = scorecard["hits_per_source"]
+
+    # Union of both — deduplicated by source name
+    source_counts: dict[str, int] = {}
+    for d in (entries_per_source, hits_per_source):
+        for src, cnt in d.items():
+            if isinstance(cnt, (int, float)):
+                source_counts[str(src)] = source_counts.get(src, 0) + int(cnt)
+
+    unique_types = len(source_counts)
+    total_hits = sum(source_counts.values()) if source_counts else 0
+
+    # Shannon entropy of source distribution (0-1 normalized)
+    entropy_score = 0.0
+    if unique_types >= 2 and total_hits > 0:
+        probs = [cnt / total_hits for cnt in source_counts.values() if cnt > 0]
+        h = -sum(p * math.log2(p) for p in probs if p > 0)
+        max_entropy = math.log2(len(probs))
+        entropy_score = (h / max_entropy) if max_entropy > 0 else 0.0
+
+    # Diversity score: entropy contribution (15pts) + unique type bonus (10pts)
+    source_diversity_score = min(25.0, entropy_score * 15 + min(10.0, unique_types * 2.5))
+
+    # ── 2. Non-indexed ratio (0-20) ────────────────────────────────────
+    # Count hits from tier1 (structured) and tier2 (deep) sources
+    deep_hits = 0
+    for src, cnt in source_counts.items():
+        tier = _SOURCE_TIER.get(src, 0)
+        if tier > 0:
+            deep_hits += cnt
+
+    non_indexed_ratio = deep_hits / total_hits if total_hits > 0 else 0.0
+    non_indexed_ratio_score = non_indexed_ratio * 20.0
+
+    # ── 3. Corroboration (0-25) ────────────────────────────────────────
+    corroboration_score = 0.0
+    campaign_count = 0
+    is_corroborated = False
+    is_noisy = True  # default assumption
+
+    if signal_path:
+        if signal_path.get("is_corroborated") is True:
+            corroboration_score += 15
+            is_corroborated = True
+        if signal_path.get("is_noisy") is False:
+            corroboration_score += 5
+            is_noisy = False
+
+    if correlation and not correlation.get("_no_correlation_data"):
+        raw_hints = correlation.get("campaign_hints") or []
+        if isinstance(raw_hints, list):
+            campaign_count = len(raw_hints)
+        if campaign_count >= 3:
+            corroboration_score += 5
+        elif campaign_count >= 1:
+            corroboration_score += 3
+
+    corroboration_score = min(25.0, corroboration_score)
+
+    # ── 4. Branch diversity (0-15) ─────────────────────────────────────
+    branch_score = 0.0
+    active_branches = 0
+    if runtime_truth:
+        branch_mix = runtime_truth.get("branch_mix") or {}
+        if isinstance(branch_mix, dict):
+            active_branches = sum(1 for v in branch_mix.values() if isinstance(v, (int, float)) and v > 0)
+    branch_score = min(15.0, active_branches * 5.0)
+
+    # ── 5. Pivot depth (0-15) ───────────────────────────────────────────
+    pivot_score = 0.0
+    pivot_recommended = False
+    if hypothesis_pack:
+        hyp_count = hypothesis_pack.get("hypothesis_count") or 0
+        if isinstance(hyp_count, (int, float)) and hyp_count > 0:
+            pivot_score += 5
+    if signal_path:
+        pivot_rec = signal_path.get("next_pivot_recommendation") or ""
+        if pivot_rec and pivot_rec not in ("continue", "unknown", ""):
+            pivot_score += 10
+            pivot_recommended = True
+
+    pivot_score = min(15.0, pivot_score)
+
+    # ── Total ─────────────────────────────────────────────────────────
+    total = source_diversity_score + non_indexed_ratio_score + corroboration_score + branch_score + pivot_score
+    total = min(100.0, round(total, 1))
+
+    # ── Classification ────────────────────────────────────────────────
+    if total >= 81:
+        level = "comprehensive"
+    elif total >= 61:
+        level = "deep"
+    elif total >= 41:
+        level = "moderate"
+    elif total >= 21:
+        level = "shallow"
+    else:
+        level = "surface"
+
+    return {
+        "score": total,
+        "level": level,
+        "breakdown": {
+            "source_diversity": round(source_diversity_score, 1),
+            "non_indexed_ratio": round(non_indexed_ratio_score, 1),
+            "corroboration": round(corroboration_score, 1),
+            "branch_diversity": round(branch_score, 1),
+            "pivot_depth": round(pivot_score, 1),
+        },
+        "depth_signals": {
+            "unique_source_types": unique_types,
+            "deep_sources_found": deep_hits,
+            "total_source_hits": total_hits,
+            "corroborated": is_corroborated,
+            "noisy_signal": is_noisy,
+            "campaign_hints": campaign_count,
+            "active_branches": active_branches,
+            "pivot_recommended": pivot_recommended,
+        },
+    }
 
 
 def _derive_run_truth_note(

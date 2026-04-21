@@ -925,10 +925,39 @@ from hledac.universal.tool_registry import register_task
 @register_task("domain_to_pdns")
 async def _handle_domain_to_pdns(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import query_circl_pdns
-    for r in await query_circl_pdns(task.ioc_value):
+
+    # Sprint F195: Single query, reuse results for both pivot and persistence
+    results = await query_circl_pdns(task.ioc_value)
+    if not results:
+        return
+
+    # Preserve existing pivot behavior
+    for r in results:
         await scheduler._buffer_ioc_pivot(
             r.get("ioc_type", "domain"), r.get("ioc", ""), 0.75
         )
+
+    # Sprint F195: Also persist as canonical findings via duckdb_store
+    if scheduler._duckdb_store is not None:
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        findings = []
+        ts_now = time.time()
+        for r in results:
+            finding = CanonicalFinding(
+                finding_id=f"pdns_{r.get('ioc', '')}_{int(ts_now * 1000)}",
+                query=f"passive_dns:{task.ioc_value}",
+                source_type="circl_pdns",
+                confidence=0.75,
+                ts=ts_now,
+                provenance=("circl_pdns", task.ioc_value, r.get("ioc", "")),
+                payload_text=f"{r.get('rrtype', '')} {r.get('rrname', '')} first={r.get('time_first', '')} last={r.get('time_last', '')}",
+            )
+            findings.append(finding)
+
+        if findings:
+            # Batch persist for efficiency (M1-safe single call)
+            await scheduler._duckdb_store.async_ingest_findings_batch(findings)
 
 
 @register_task("domain_to_ct")
