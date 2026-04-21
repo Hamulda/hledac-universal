@@ -958,6 +958,9 @@ async def run_sprint(
                 "ct_log_discovered": result.ct_log_discovered,
                 "ct_log_stored": result.ct_log_stored,
                 "ct_log_accepted_findings": result.ct_log_accepted_findings,
+                # F193B: CommonCrawl + academic discovery additive truth
+                "cc_archive_injected": result.cc_archive_injected,
+                "academic_findings_count": result.academic_findings_count,
                 # Sprint F160E: Canonical timing truth — separates active window from full run
                 "timing_truth": timing_truth,
             },

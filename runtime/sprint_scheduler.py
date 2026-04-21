@@ -248,6 +248,9 @@ class SprintSchedulerConfig:
     export_enabled: bool = True
     export_dir: str = ""
     max_entries_per_cycle: int = 50             # per-source cap
+    # Sprint F193B: Hypothesis → finding feedback loop caps
+    max_hypothesis_depth: int = 3              # max iteration depth for hypothesis-driven pivots
+    max_hypothesis_queries: int = 10           # max total hypothesis-driven pivot queries
     # Tier budgets in seconds — only enforced approximately via cycle limits
     # Sources NOT listed here fall to OTHER tier
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
@@ -529,6 +532,10 @@ class SprintScheduler:
         self._duckdb_store: Any = None
         # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
         self._ioc_graph: Any = None
+        # Sprint F193B: Hypothesis → finding feedback loop tracking
+        # Bounded iteration depth and query count to prevent runaway recursion
+        self._hypothesis_depth: int = 0        # current depth of hypothesis-driven pivot chain
+        self._hypothesis_query_count: int = 0  # total hypothesis-driven queries enqueued
         # Sprint 8VI §C: All findings collected during sprint
         self._all_findings: list[dict] = []
         # Sprint 8VM: Shadow pre-decision consumer — read-only, no mutable state
@@ -549,6 +556,78 @@ class SprintScheduler:
         self._source_economics: dict[str, SourceEconomics] = {}
         # Sprint F193A: CT log canonical discovery client
         self._ct_log_client: Any = ct_log_client
+        # Sprint F192G: Intelligence dispatcher — optional bounded lifecycle sidecar
+        self._dispatcher: Any = None
+        # Sprint F192G: Memory watchdog — optional memory pressure seam
+        self._watchdog: Any = None
+
+    # ── Sprint F192G: Intelligence Dispatcher wiring ────────────────────────
+
+
+    def attach_dispatcher(
+        self,
+        session: Any = None,
+        with_watchdog: bool = True,
+        watchdog_interval: float = 0.5,
+    ) -> Any:
+        """
+        Attach IntelligenceDispatcher as a bounded lifecycle sidecar.
+
+        Dispatcher is fail-soft: missing modules return empty results, never crash.
+        Watchdog is optional and also fail-soft: errors in watchdog callbacks
+        are swallowed. Canonical sprint is never blocked by intelligence tier failures.
+
+
+        Args:
+            session: optional aiohttp.ClientSession for HTTP clients
+            with_watchdog: if True, attach MemoryWatchdog to dispatcher
+            watchdog_interval: polling interval for MemoryWatchdog (seconds)
+
+        Returns:
+            IntelligenceDispatcher instance attached to this scheduler
+        """
+        from hledac.universal.runtime.intelligence_dispatcher import IntelligenceDispatcher
+        from hledac.universal.runtime.memory_watchdog import attach_to_dispatcher
+
+        dispatcher = IntelligenceDispatcher(session=session)
+        self._dispatcher = dispatcher
+
+        if with_watchdog:
+            try:
+                self._watchdog = attach_to_dispatcher(
+                    dispatcher,
+                    watchdog_interval=watchdog_interval,
+                )
+            except Exception:
+                self._watchdog = None
+
+        return dispatcher
+
+    def suspend_intelligence(self, tier_name: str = "TIER2") -> None:
+        """
+        Suspend an intelligence tier (TIER2 by default).
+
+
+        TIER2 suspension is advisory: dispatcher skips TIER2 modules when
+        memory pressure is high. Canonical sprint continues unaffected.
+        """
+        if self._dispatcher is not None:
+            self._dispatcher._suspended_tiers.add(tier_name)
+
+
+    def resume_intelligence(self, tier_name: str = "TIER2") -> None:
+        """Resume a previously suspended intelligence tier."""
+        if self._dispatcher is not None:
+            self._dispatcher._suspended_tiers.discard(tier_name)
+
+
+    def is_intelligence_attached(self) -> bool:
+        """True if dispatcher has been attached."""
+        return self._dispatcher is not None
+
+    def get_dispatcher(self) -> Any:
+        """Return the attached dispatcher or None."""
+        return self._dispatcher
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -965,13 +1044,8 @@ class SprintScheduler:
         # Sprint 8RA: Close persistent dedup at TEARDOWN
         await self._close_dedup()
 
-        # P12: Release Hermes engine at teardown (bounded M1 8GB lifecycle)
-        if self._hermes_engine is not None:
-            try:
-                await self._hermes_engine.unload()
-            except Exception as e:
-                log.debug(f"[P12] Hermes unload failed: {e}")
-            self._hermes_engine = None
+        # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
+        await self._unload_hermes_at_teardown()
 
         # Sprint 8UC B.4: Cancel all background speculative tasks
         for t in list(self._bg_tasks):
@@ -979,6 +1053,16 @@ class SprintScheduler:
         if self._bg_tasks:
             await asyncio.gather(*self._bg_tasks, return_exceptions=True)
         self._bg_tasks.clear()
+
+
+        # Sprint F192G: Fail-soft teardown of intelligence sidecar
+        if self._watchdog is not None:
+            try:
+                self._watchdog.stop()
+            except Exception:
+                pass
+            self._watchdog = None
+        self._dispatcher = None
 
         # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
         _r = self._result
@@ -1158,6 +1242,7 @@ class SprintScheduler:
                         fetch_concurrency=3,
                         hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
                         memory_manager=memory_manager,  # P11: session history for RAG context
+                        enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
                     )
                 )
 
@@ -1385,31 +1470,27 @@ class SprintScheduler:
 
     async def _load_hermes_for_sprint(self) -> None:
         """
-        P12: Load Hermes engine at sprint start with M1 8GB memory guard.
+        P12: Load Hermes engine at sprint start via ModelManager (canonical lifecycle owner).
 
         Bounded lifecycle: loaded once at BOOT/WARMUP, released at TEARDOWN.
         Fail-soft: memory pressure on load skips ToT, does not abort sprint.
 
-        M1 8GB invariant: Hermes ~2GB is the only large model.
-        ModernBERT/GLiNER are NOT loaded during canonical sprint.
+        M1 8GB invariant: ModelManager enforces bounded admission and RSS guards
+        (hard fail-fast via _check_memory_admission + soft pressure via _check_memory_pressure).
         """
-        from hledac.universal.brain.hermes3_engine import Hermes3Engine
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal.brain.model_manager import get_model_manager
 
-        # Memory guard: check RSS before load
-        uma = sample_uma_status()
-        if uma.state in ("critical", "emergency"):
-            log.debug(f"[P12] Skipping Hermes load — UMA state: {uma.state}")
-            return
-
-        # Check RSS threshold (5.5GB max on M1 8GB)
-        if uma.system_used_gib >= 5.0:
-            log.debug(f"[P12] Skipping Hermes load — RSS {uma.system_used_gib:.2f}GiB too high")
-            return
-
-        # Load Hermes via Hermes3Engine (handles mlx_lm.load internally)
-        self._hermes_engine = Hermes3Engine()
-        await self._hermes_engine.load()
+        # Load Hermes via ModelManager — handles mlx_lm.load internally
+        # ModelManager enforces M1 8GB memory admission (hard fail-fast via _check_memory_admission)
+        try:
+            self._hermes_engine = await get_model_manager().load_model("hermes")
+        except RuntimeError as e:
+            # ModelManager raised — memory pressure, skip ToT gracefully
+            log.debug(f"[P12] Skipping Hermes load — ModelManager blocked: {e}")
+            self._hermes_engine = None
+        except Exception as e:
+            log.debug(f"[P12] Hermes load failed: {e}")
+            self._hermes_engine = None
 
         # Initialize memory manager (session history for RAG context)
         try:
@@ -1418,6 +1499,26 @@ class SprintScheduler:
         except Exception as e:
             log.debug(f"[P12] MemoryManager init failed: {e}")
             self._memory_manager = None
+
+    async def _unload_hermes_at_teardown(self) -> None:
+        """
+        P12: Unload Hermes engine at sprint teardown via ModelManager.
+
+        Bounded lifecycle: loaded at BOOT/WARMUP, released at TEARDOWN.
+        Uses ModelManager as canonical unload authority.
+        """
+        from hledac.universal.brain.model_manager import get_model_manager
+
+        if self._hermes_engine is None:
+            return
+
+        try:
+            await get_model_manager().release_model("hermes")
+            log.debug("[P12] Hermes unloaded via ModelManager")
+        except Exception as e:
+            log.debug(f"[P12] Hermes unload failed: {e}")
+        finally:
+            self._hermes_engine = None
 
     def is_duplicate(self, source_type: str, url: str, title: str = "") -> bool:
         """Check if (source_type, url, title) was already seen in any sprint."""
@@ -1714,6 +1815,46 @@ class SprintScheduler:
                 self._pivot_stats["total"] += 1
             except asyncio.QueueFull:
                 pass
+
+    def enqueue_hypothesis_pivot(
+        self,
+        ioc_value: str,
+        ioc_type: str = "hypothesis",
+        confidence: float = 0.7,
+        depth: int = 1,
+    ) -> bool:
+        """
+        Enqueue a pivot task driven by hypothesis/ToT output.
+
+        Sprint F193B: Bounded hypothesis → finding feedback loop.
+        Enforces:
+        - max_hypothesis_depth: iteration depth cap (default 3)
+        - max_hypothesis_queries: total query count cap (default 10)
+
+        Returns True if enqueued, False if dropped due to cap.
+        """
+        # Sprint F193B: Enforce depth cap
+        if depth > self._config.max_hypothesis_depth:
+            log.debug(f"[F193B] Hypothesis pivot dropped: depth {depth} > max {self._config.max_hypothesis_depth}")
+            return False
+
+        # Sprint F193B: Enforce query count cap
+        if self._hypothesis_query_count >= self._config.max_hypothesis_queries:
+            log.debug(f"[F193B] Hypothesis pivot dropped: query count {self._hypothesis_query_count} >= max {self._config.max_hypothesis_queries}")
+            return False
+
+        # Enqueue with "hypothesis" ioc_type which maps to multi_engine_search, rdap_lookup
+        self.enqueue_pivot(
+            ioc_value=ioc_value,
+            ioc_type=ioc_type,
+            confidence=confidence,
+            degree=float(depth),
+            task_type=None,  # Use ioc_type mapping for task types
+        )
+        self._hypothesis_query_count += 1
+        self._hypothesis_depth = max(self._hypothesis_depth, depth)
+        log.debug(f"[F193B] Hypothesis pivot enqueued: {ioc_value} (depth={depth}, total_queries={self._hypothesis_query_count})")
+        return True
 
     async def _drain_pivot_queue(self, max_tasks: int = 5) -> int:
         """

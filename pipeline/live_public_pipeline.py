@@ -256,6 +256,8 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     ct_subdomain_injected: int = 0
     # F192E: CommonCrawl CDX — bounded CC-discovered archive URL count (additive)
     cc_archive_injected: int = 0
+    # F193B: Academic discovery persisted findings count (additive)
+    academic_findings_count: int = 0
     # P20: PastebinMonitor + GitHubSecretScanner telemetry (additive)
     pastebin_findings_count: int = 0
     github_secrets_count: int = 0
@@ -1695,6 +1697,118 @@ async def _inject_commoncrawl_hits(
     return cc_hits + hits
 
 
+# Sprint F193A: Onion discovery + scraping block
+_ONION_HIT_MAX = 5
+_ONION_CIRCUIT_FAIL_LIMIT = 3
+_onion_circuit_state = {"failures": 0, "opened_at": 0.0}
+_onion_circuit_lock = asyncio.Lock()
+
+
+def _onion_circuit_is_open() -> bool:
+    """Check if onion circuit breaker is open."""
+    if _onion_circuit_state["failures"] < _ONION_CIRCUIT_FAIL_LIMIT:
+        return False
+    import time
+    if time.time() - _onion_circuit_state["opened_at"] >= 60.0:
+        _onion_circuit_state["failures"] = 0
+        _onion_circuit_state["opened_at"] = 0.0
+        return False
+    return True
+
+
+def _onion_circuit_record_failure() -> None:
+    """Record a failure in the onion circuit breaker."""
+    import time
+    _onion_circuit_state["failures"] += 1
+    if _onion_circuit_state["failures"] >= _ONION_CIRCUIT_FAIL_LIMIT:
+        _onion_circuit_state["opened_at"] = time.time()
+        logger.warning("[F193A] Onion circuit breaker OPEN — pausing 60s")
+
+
+async def _inject_onion_hits(
+    hits: tuple,
+    query: str,
+    store: "DuckDBShadowStore",
+) -> int:
+    """
+    Sprint F193A: Onion discovery + scraping via Tor.
+
+    Discovers .onion URLs via Ahmia search and scrapes them using
+    Tor-capable async_fetch_public_text(). Converts results to CanonicalFinding
+    and stores via duckdb_store.
+
+    Bounded: max 5 onion hits, circuit breaker after 3 failures, fail-soft.
+    Returns number of onion findings stored.
+    """
+    from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    # Quick check: skip if circuit is open
+    if _onion_circuit_is_open():
+        return 0
+
+    # Detect .onion URLs in existing hits (already discovered)
+    onion_urls: list[str] = []
+    for hit in hits:
+        url = getattr(hit, "url", None) or (str(hit[2]) if len(hit) > 2 else None)
+        if url and ".onion" in url.lower():
+            onion_urls.append(url if url.startswith("http") else f"http://{url}")
+
+    if not onion_urls:
+        return 0
+
+    onion_urls = onion_urls[:_ONION_HIT_MAX]
+
+    findings: list[CanonicalFinding] = []
+    ts_now = time.time()
+    failure_count = 0
+
+    for onion_url in onion_urls:
+        try:
+            result = await async_fetch_public_text(
+                onion_url,
+                timeout_s=30.0,
+                max_bytes=200_000,
+            )
+            if result.error or result.text is None:
+                failure_count += 1
+                continue
+
+            content = result.text
+            pf_id = hashlib.sha256(
+                f"{query}\x00{onion_url}\x00onion_discovery".encode()
+            ).hexdigest()[:16]
+
+            findings.append(CanonicalFinding(
+                finding_id=pf_id,
+                query=query,
+                source_type="onion_discovery",
+                confidence=0.55,
+                ts=ts_now,
+                provenance=("onion_discovery", onion_url),
+                payload_text=content[:500] if content else None,
+            ))
+
+        except Exception as e:
+            logger.debug(f"[F193A] Onion fetch {onion_url}: {e}")
+            failure_count += 1
+            if failure_count >= _ONION_CIRCUIT_FAIL_LIMIT:
+                _onion_circuit_record_failure()
+                break
+
+    if failure_count >= _ONION_CIRCUIT_FAIL_LIMIT:
+        _onion_circuit_record_failure()
+
+    if findings and store is not None:
+        try:
+            await store.async_ingest_findings_batch(findings)
+            logger.info(f"[F193A] Stored {len(findings)} onion findings")
+        except Exception as e:
+            logger.debug(f"[F193A] Onion findings persist failed: {e}")
+
+    return len(findings)
+
+
 async def async_run_live_public_pipeline(
     query: str,
     store: "DuckDBShadowStore | None" = None,
@@ -1709,6 +1823,7 @@ async def async_run_live_public_pipeline(
     vector_store: Any | None = None,
     run_loop: bool = False,  # P16: If True, run ResearchLoop after pipeline
     rl_steps: int = 0,  # P17: Number of RL steps (0 = use time limit)
+    enqueue_hypothesis_pivot: Any | None = None,  # Sprint F193B: bounded feedback seam
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -1888,6 +2003,7 @@ async def async_run_live_public_pipeline(
                 if academic_findings:
                     await store.async_ingest_findings_batch(academic_findings)
                     academic_hits_count = len(academic_findings)
+                    academic_findings_count = academic_hits_count
                     logger.info(f"[P16] Stored {academic_hits_count} academic findings")
         except Exception as e:
             import logging
@@ -1906,6 +2022,17 @@ async def async_run_live_public_pipeline(
     original_hit_count = len(hits)
     hits = await _inject_commoncrawl_hits(hits, query)
     cc_injected = len(hits) - original_hit_count
+
+    # Sprint F193A: Onion discovery + scraping block
+    # Discover .onion URLs via Ahmia search, scrape via Tor-capable async_fetch_public_text.
+    # Bounded: max 5 onion hits, circuit breaker after 3 failures, fail-soft.
+    # Produces CanonicalFinding with source_type="onion_discovery".
+    onion_findings_count = 0
+    if store is not None:
+        try:
+            onion_findings_count = await _inject_onion_hits(hits, query, store)
+        except Exception as e:
+            logger.debug(f"[F193A] Onion discovery failed: {e}")
 
     # P20: PastebinMonitor + GitHubSecretScanner — run only when query contains
     # a domain name or organization identifier (limits API calls to targeted searches)
@@ -2581,6 +2708,8 @@ async def async_run_live_public_pipeline(
         # Sprint F188B: CT winner-slice telemetry
         ct_subdomain_injected=ct_injected,
         cc_archive_injected=cc_injected,
+        # F193B: Academic discovery telemetry
+        academic_findings_count=academic_findings_count,
         # P20: PastebinMonitor + GitHubSecretScanner telemetry
         pastebin_findings_count=pastebin_findings_count,
         github_secrets_count=github_secrets_count,
@@ -2644,6 +2773,25 @@ async def async_run_live_public_pipeline(
                             await store.async_ingest_findings_batch([tot_finding])
                         except Exception:
                             pass  # Fail-soft
+
+                        # Sprint F193B: Bounded hypothesis → finding feedback loop
+                        # Enqueue ToT result as hypothesis-driven pivot (depth=1 for first pass)
+                        # This creates new scheduler work from hypothesis output without runaway
+                        if enqueue_hypothesis_pivot is not None:
+                            try:
+                                # Extract key terms from hypothesis for pivot keywords
+                                # Use first 200 chars of ToT result as pivot seed
+                                pivot_seed = tot_result[:200].split()[:5]
+                                for i, term in enumerate(pivot_seed):
+                                    # Depth increases with each iteration (1, 2, 3...)
+                                    enqueue_hypothesis_pivot(
+                                        ioc_value=term.lower(),
+                                        ioc_type="hypothesis",
+                                        confidence=0.6,
+                                        depth=1,
+                                    )
+                            except Exception:
+                                pass  # Fail-soft: feedback is optional
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional

@@ -914,6 +914,126 @@ async def query_rdap(target: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# WaybackArchiveAdapter — Sprint F193A: Wayback/Archive.org discovery adapter
+# ---------------------------------------------------------------------------
+
+
+class WaybackArchiveAdapter(SourceAdapter):
+    """
+    Wayback Machine archive discovery adapter.
+
+    Uses ArchiveDiscovery.search_url() to find archived versions of URLs.
+    Maps ArchiveResult to NormalizedEntry format.
+
+    Bounded: max 20 results, 10s timeout per source.
+    source_type = "wayback_archive", source_tier = TIER_OVERLAY_READY
+
+    Note: This adapter requires a target URL to search archives for.
+    Set self.target_url before calling fetch_recent(), or use the
+    fetch_archives_for_url() convenience method.
+    """
+
+    SOURCE_TYPE = "wayback_archive"
+    SOURCE_TIER = TIER_OVERLAY_READY
+    HARD_LIMIT = 20
+    TIMEOUT_PER_SOURCE = 10.0
+
+    def __init__(self) -> None:
+        self.target_url: str = ""
+
+    @property
+    def source_type(self) -> str:
+        return self.SOURCE_TYPE
+
+    @property
+    def source_tier(self) -> str:
+        return self.SOURCE_TIER
+
+    async def fetch_recent(self, limit: int) -> tuple[NormalizedEntry, ...]:
+        """
+        Fetch archive snapshots for self.target_url.
+
+        Returns empty tuple if no target_url is set or on error.
+        """
+        if not self.target_url:
+            return ()
+
+        return await self.fetch_archives_for_url(self.target_url, limit)
+
+    async def fetch_archives_for_url(
+        self, url: str, limit: int | None = None
+    ) -> tuple[NormalizedEntry, ...]:
+        """
+        Fetch archive snapshots for a specific URL.
+
+        This is the main entry point for archive discovery.
+        Use this method directly instead of fetch_recent() when
+        you have a specific URL to check.
+        """
+        if limit is None:
+            limit = self.HARD_LIMIT
+        limit = min(max(limit, 1), self.HARD_LIMIT)
+
+        from hledac.universal.intelligence.archive_discovery import (
+            ArchiveDiscovery,
+            ArchiveResult,
+        )
+
+        entries: list[NormalizedEntry] = []
+
+        try:
+            discovery = ArchiveDiscovery()
+            # search_url is a coroutine - await it properly
+            results_dict: dict[
+                str, list[ArchiveResult]
+            ] = await asyncio.wait_for(
+                discovery.search_url(
+                    url,
+                    sources=["wayback", "archive_today"],
+                    limit_per_source=limit,
+                ),
+                timeout=self.TIMEOUT_PER_SOURCE,
+            )
+
+            for source_name, archive_results in results_dict.items():
+                for ar in archive_results[:limit]:
+                    if ar.available:
+                        entry_hash = self._hash_fields(
+                            ar.url or "",
+                            str(ar.timestamp) if ar.timestamp else "",
+                        )
+
+                        published_ts: float | None = None
+                        if ar.timestamp:
+                            try:
+                                published_ts = ar.timestamp.timestamp()
+                            except Exception:
+                                pass
+
+                        entries.append(
+                            NormalizedEntry(
+                                entry_hash=entry_hash,
+                                source_url=ar.url or "",
+                                title=ar.title or f"Archive: {ar.url}",
+                                body_text=ar.content[:500] if ar.content else "",
+                                published_at=published_ts,
+                                source_type=self.SOURCE_TYPE,
+                                raw_identifiers=(),
+                                source_tier=self.SOURCE_TIER,
+                                rich_content_available=False,
+                            )
+                        )
+
+                        if len(entries) >= limit:
+                            return tuple(entries)
+
+        except (asyncio.TimeoutError, Exception):
+            pass
+
+        return tuple(entries)
+
+
+# ---------------------------------------------------------------------------
 # Adapter registration (module-level, fail-soft)
 # ---------------------------------------------------------------------------
 # Sprint 8VF §A.4: Task handler registration via @register_task decorator
@@ -1212,16 +1332,78 @@ async def search_ipfs(query: str, max_results: int = 10) -> list[dict]:
 
 @register_task("ipfs_fetch")
 async def _handle_ipfs_fetch(task, scheduler):
-    """Fetch IPFS content — CID nebo keyword search."""
+    """Fetch IPFS content — CID nebo keyword search.
+
+    Canonical persistence: IPFS content is persisted as CanonicalFinding
+    with source_type='ipfs'. Pivoting remains as optional side effect.
+
+    Provenance tuple: (cid, gateway, query) for CID fetches,
+                      (cid, 'ipfs_search', query) for keyword searches.
+    """
     ioc = task.ioc_value
     m = _CID_PATTERN.search(ioc)
+    ts_now = time.time()
+
+    # Canonical findings list (may be empty if duckdb_store unavailable)
+    findings = []
+
     if m:
-        result = await fetch_ipfs_cid(m.group(1))
-        if result.get("content"):
-            await scheduler._buffer_ioc_pivot("url", f"ipfs://{m.group(1)}", 0.65)
+        # CID fetch path — content-first, with canonical persistence
+        cid = m.group(1)
+        result = await fetch_ipfs_cid(cid)
+        content = result.get("content", "")
+
+        # Side effect: pivot expansion (existing behavior preserved)
+        if content:
+            await scheduler._buffer_ioc_pivot("url", f"ipfs://{cid}", 0.65)
+
+        # Canonical persistence
+        if scheduler._duckdb_store is not None and content:
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            finding = CanonicalFinding(
+                finding_id=f"ipfs_{cid}_{int(ts_now * 1000)}",
+                query=f"ipfs_fetch:{ioc}",
+                source_type="ipfs",
+                confidence=0.75,
+                ts=ts_now,
+                provenance=(cid, result.get("source", "unknown"), ioc),
+                payload_text=content[:2000] if content else None,  # bound text payload
+            )
+            findings.append(finding)
+
     else:
-        for r in await search_ipfs(ioc):
-            await scheduler._buffer_ioc_pivot("url", f"ipfs://{r['cid']}", 0.55)
+        # Keyword search path — multiple CIDs with canonical persistence
+        search_results = await search_ipfs(ioc)
+        for r in search_results:
+            cid = r.get("cid", "")
+            if not cid:
+                continue
+
+            # Side effect: pivot expansion (existing behavior preserved)
+            await scheduler._buffer_ioc_pivot("url", f"ipfs://{cid}", 0.55)
+
+            # Canonical persistence
+            if scheduler._duckdb_store is not None:
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+                finding = CanonicalFinding(
+                    finding_id=f"ipfs_search_{cid}_{int(ts_now * 1000)}",
+                    query=f"ipfs_search:{ioc}",
+                    source_type="ipfs",
+                    confidence=0.65,
+                    ts=ts_now,
+                    provenance=(cid, "ipfs_search", ioc),
+                    payload_text=r.get("title", "")[:500] if r.get("title") else None,
+                )
+                findings.append(finding)
+
+    # Batch persist canonical findings (M1-safe single call)
+    if findings and scheduler._duckdb_store is not None:
+        try:
+            await scheduler._duckdb_store.async_ingest_findings_batch(findings)
+        except Exception as e:
+            logger.debug(f"IPFS canonical persist failed: {e}")
 
 
 # ── GOPHER PROTOCOL ──────────────────────────────────────────────────────────

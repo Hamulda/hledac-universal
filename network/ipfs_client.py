@@ -154,8 +154,52 @@ async def search_ipfs(query: str) -> list[str]:
     return cids
 
 
+def ipfs_content_to_finding_dict(
+    cid: str,
+    content: bytes | str,
+    gateway: str,
+    query: str,
+    ts: float,
+    finding_id_prefix: str = "ipfs",
+) -> dict:
+    """
+    Thin transform: IPFS content bytes → CanonicalFinding-compatible dict.
+
+    Does NOT import CanonicalFinding (avoids duckdb_store circular dep).
+    Caller is responsible for constructing CanonicalFinding from returned dict.
+
+    Args:
+        cid:           IPFS Content Identifier
+        content:       Raw content as bytes or decoded str
+        gateway:       Gateway name that served the content
+        query:         Original query (IOC value or search term)
+        ts:            Unix timestamp for the finding
+        finding_id_prefix: Prefix for finding_id ('ipfs' or 'ipfs_search')
+
+    Returns:
+        Dict with keys matching CanonicalFinding fields:
+        finding_id, query, source_type, confidence, ts, provenance, payload_text
+    """
+    import hashlib
+
+    content_text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
+    content_hash = hashlib.sha256(content_text[:2000].encode()).hexdigest()[:16]
+    finding_id = f"{finding_id_prefix}_{cid}_{int(ts * 1000)}_{content_hash}"
+
+    return {
+        "finding_id": finding_id,
+        "query": f"{finding_id_prefix}:{query}",
+        "source_type": "ipfs",
+        "confidence": 0.75 if gateway != "ipfs_search" else 0.65,
+        "ts": ts,
+        "provenance": (cid, gateway, query),
+        "payload_text": content_text[:2000] if content_text else None,
+    }
+
+
 __all__ = [
     "fetch_ipfs",
     "search_ipfs",
+    "ipfs_content_to_finding_dict",
     "MAX_FILE_SIZE_BYTES",
 ]

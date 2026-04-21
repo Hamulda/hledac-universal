@@ -400,5 +400,217 @@ class TestP12DILoadWire:
         )
 
 
+class TestP12HermesLifecycleUnderModelManager:
+    """
+    Test Hermes lifecycle under ModelManager (canonical owner).
+
+    Invariant table:
+    | Test | Invariant |
+    |------|-----------|
+    | test_load_via_model_manager | Hermes loaded via ModelManager.load_model("hermes"), not direct Hermes3Engine |
+    | test_unload_via_model_manager | Hermes unloaded via ModelManager.release_model("hermes") |
+    | test_safe_skip_on_memory_pressure | Hermes load skipped when ModelManager raises MemoryPressureError |
+    | test_gate_open_with_store_and_hermes | P12 gate opens when store+hermes_engine+stored findings all present |
+    | test_teardown_calls_unload_method | Teardown path calls _unload_hermes_at_teardown |
+    """
+
+    def test_load_via_model_manager(self):
+        """
+        _load_hermes_for_sprint uses ModelManager.load_model("hermes").
+        Verifies canonical Hermes lifecycle owner is ModelManager.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        source = inspect.getsource(SprintScheduler._load_hermes_for_sprint)
+        assert "get_model_manager()" in source, (
+            "Scheduler must use get_model_manager() — canonical Hermes lifecycle owner"
+        )
+        assert 'load_model("hermes")' in source or "load_model('hermes')" in source, (
+            "Scheduler must use ModelManager.load_model('hermes') — not direct Hermes3Engine"
+        )
+        # Must NOT directly instantiate Hermes3Engine
+        assert "Hermes3Engine()" not in source, (
+            "Scheduler must NOT directly instantiate Hermes3Engine — use ModelManager"
+        )
+
+    def test_unload_via_model_manager(self):
+        """
+        _unload_hermes_at_teardown uses ModelManager.release_model("hermes").
+        Verifies canonical Hermes unload authority is ModelManager.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        source = inspect.getsource(SprintScheduler._unload_hermes_at_teardown)
+        assert "get_model_manager()" in source, (
+            "Teardown must use get_model_manager() — canonical Hermes lifecycle owner"
+        )
+        assert 'release_model("hermes")' in source or "release_model('hermes')" in source, (
+            "Teardown must use ModelManager.release_model('hermes')"
+        )
+
+    @pytest.mark.asyncio
+    async def test_safe_skip_on_memory_pressure(self):
+        """
+        When ModelManager raises RuntimeError (memory pressure), Hermes load is skipped.
+        Verifies fail-soft skip — sprint continues, ToT is skipped.
+        """
+        import sys
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
+        # Create minimal scheduler instance using proper config
+        config = SprintSchedulerConfig(
+            sprint_duration_s=30.0,
+            export_enabled=False,
+        )
+        scheduler = SprintScheduler(config)
+
+        # Create a mock model_manager module to avoid real imports
+        mock_mm_module = MagicMock()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.load_model = AsyncMock(
+            side_effect=RuntimeError("[MEMORY ADMISSION] CRITICAL state")
+        )
+        mock_mm_module.get_model_manager = MagicMock(return_value=mock_mm_instance)
+
+        # Temporarily replace the model_manager module
+        original_mm = sys.modules.get("hledac.universal.brain.model_manager")
+        sys.modules["hledac.universal.brain.model_manager"] = mock_mm_module
+
+        try:
+            await scheduler._load_hermes_for_sprint()
+
+            # hermes_engine must be None (skipped due to memory pressure)
+            assert scheduler._hermes_engine is None, (
+                "Hermes must be None when ModelManager blocks load — fail-soft skip"
+            )
+        finally:
+            if original_mm is not None:
+                sys.modules["hledac.universal.brain.model_manager"] = original_mm
+            elif "hledac.universal.brain.model_manager" in sys.modules:
+                del sys.modules["hledac.universal.brain.model_manager"]
+
+    @pytest.mark.asyncio
+    async def test_successful_load_sets_hermes_engine(self):
+        """
+        When ModelManager.load_model succeeds, hermes_engine is set.
+        Verifies DI wire to public pipeline.
+        """
+        import sys
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
+        config = SprintSchedulerConfig(
+            sprint_duration_s=30.0,
+            export_enabled=False,
+        )
+        scheduler = SprintScheduler(config)
+
+        mock_hermes = MagicMock()
+        mock_hermes.generate_report = AsyncMock(return_value="test report")
+
+        # Create a mock model_manager module to avoid real imports
+        mock_mm_module = MagicMock()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.load_model = AsyncMock(return_value=mock_hermes)
+        mock_mm_module.get_model_manager = MagicMock(return_value=mock_mm_instance)
+
+        # Temporarily replace the model_manager module
+        original_mm = sys.modules.get("hledac.universal.brain.model_manager")
+        sys.modules["hledac.universal.brain.model_manager"] = mock_mm_module
+
+        try:
+            await scheduler._load_hermes_for_sprint()
+
+            # hermes_engine must be the loaded engine
+            assert scheduler._hermes_engine is mock_hermes, (
+                "Hermes engine must be set when ModelManager.load_model succeeds"
+            )
+        finally:
+            if original_mm is not None:
+                sys.modules["hledac.universal.brain.model_manager"] = original_mm
+            elif "hledac.universal.brain.model_manager" in sys.modules:
+                del sys.modules["hledac.universal.brain.model_manager"]
+
+    @pytest.mark.asyncio
+    async def test_teardown_calls_unload_method(self):
+        """
+        Teardown path calls _unload_hermes_at_teardown.
+        Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        source = inspect.getsource(SprintScheduler.run)
+        assert "_unload_hermes_at_teardown" in source, (
+            "Teardown must call _unload_hermes_at_teardown — bounded Hermes lifecycle"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unload_releases_via_model_manager(self):
+        """
+        _unload_hermes_at_teardown calls ModelManager.release_model.
+        Verifies canonical unload authority.
+        """
+        import sys
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+
+        config = SprintSchedulerConfig(
+            sprint_duration_s=30.0,
+            export_enabled=False,
+        )
+        scheduler = SprintScheduler(config)
+        scheduler._hermes_engine = MagicMock()
+
+        # Create a mock model_manager module to avoid real imports
+        mock_mm_module = MagicMock()
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.release_model = AsyncMock()
+        mock_mm_module.get_model_manager = MagicMock(return_value=mock_mm_instance)
+
+        # Temporarily replace the model_manager module
+        original_mm = sys.modules.get("hledac.universal.brain.model_manager")
+        sys.modules["hledac.universal.brain.model_manager"] = mock_mm_module
+
+        try:
+            await scheduler._unload_hermes_at_teardown()
+
+            # release_model must be called with "hermes"
+            mock_mm_instance.release_model.assert_called_once_with("hermes")
+            assert scheduler._hermes_engine is None, (
+                "hermes_engine must be None after unload"
+            )
+        finally:
+            if original_mm is not None:
+                sys.modules["hledac.universal.brain.model_manager"] = original_mm
+            elif "hledac.universal.brain.model_manager" in sys.modules:
+                del sys.modules["hledac.universal.brain.model_manager"]
+
+    def test_gate_open_with_store_and_hermes(self):
+        """
+        P12 gate opens when store is not None AND hermes_engine is not None AND total_stored > 0.
+        Verifies canonical DI wire: store+hermes+stored findings = gate open.
+        """
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 2000]
+
+        # Gate must check all three conditions
+        assert "store is not None" in p12_block
+        assert "hermes_engine is not None" in p12_block
+        assert "total_stored > 0" in p12_block
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

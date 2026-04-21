@@ -615,6 +615,96 @@ class TestResearchDepthInExportReturn:
 
 
 # =============================================================================
+# F193B: Archive + Academic Discovery Accounting
+# =============================================================================
+
+
+class TestArchiveAcademicContributionSurface:
+    """F193B: CommonCrawl and academic findings surface in canonical export."""
+
+    def test_pvs_commoncrawl_field_present(self):
+        """product_value_summary includes commoncrawl_archive_augmented when CC is active."""
+        # Simulate: _build_product_value_summary receives canonical_run_summary with cc_archive_injected
+        from hledac.universal.export.sprint_exporter import _build_product_value_summary
+        from unittest.mock import MagicMock
+
+        mock_store = MagicMock()
+        mock_store.get_dedup_runtime_status = MagicMock(return_value=None)
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"accepted_findings": 5, "findings_per_minute": 1.0, "ioc_density": 0.3}
+        mock_eh.gnn_predictions = 0
+        mock_eh.synthesis_engine = "hermes3"
+
+        # canonical_run_summary with CC and academic active
+        mock_eh.canonical_run_summary = {
+            "cc_archive_injected": 12,
+            "academic_findings_count": 7,
+        }
+
+        pvs = _build_product_value_summary(mock_store, mock_eh, "test_sprint")
+        assert "commoncrawl_archive_augmented" in pvs
+        assert pvs["commoncrawl_archive_augmented"] == 12
+
+    def test_pvs_academic_field_present(self):
+        """product_value_summary includes academic_discovery_contribution when academic is active."""
+        from hledac.universal.export.sprint_exporter import _build_product_value_summary
+        from unittest.mock import MagicMock
+
+        mock_store = MagicMock()
+        mock_store.get_dedup_runtime_status = MagicMock(return_value=None)
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"accepted_findings": 5, "findings_per_minute": 1.0, "ioc_density": 0.3}
+        mock_eh.gnn_predictions = 0
+        mock_eh.synthesis_engine = "hermes3"
+        mock_eh.canonical_run_summary = {
+            "cc_archive_injected": 12,
+            "academic_findings_count": 7,
+        }
+
+        pvs = _build_product_value_summary(mock_store, mock_eh, "test_sprint")
+        assert "academic_discovery_contribution" in pvs
+        assert pvs["academic_discovery_contribution"] == 7
+
+    def test_pvs_zero_when_missing_canonical_run_summary(self):
+        """Both fields default to 0 when canonical_run_summary is absent."""
+        from hledac.universal.export.sprint_exporter import _build_product_value_summary
+        from unittest.mock import MagicMock
+
+        mock_store = MagicMock()
+        mock_store.get_dedup_runtime_status = MagicMock(return_value=None)
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"accepted_findings": 5, "findings_per_minute": 1.0, "ioc_density": 0.3}
+        mock_eh.gnn_predictions = 0
+        mock_eh.synthesis_engine = "hermes3"
+        mock_eh.canonical_run_summary = None
+
+        pvs = _build_product_value_summary(mock_store, mock_eh, "test_sprint")
+        assert pvs.get("commoncrawl_archive_augmented", 0) == 0
+        assert pvs.get("academic_discovery_contribution", 0) == 0
+
+    def test_academic_discovery_in_source_tier_tier1(self):
+        """academic_discovery is classified as tier-1 (structured TI)."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+
+        assert _SOURCE_TIER.get("academic_discovery") == 1
+
+    def test_source_tier_tier1_contributes_to_non_indexed_ratio(self):
+        """Tier-1 academic_discovery hits contribute to non_indexed_ratio component."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({"academic_discovery": 50, "rss_atom_pipeline": 50}),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 50 tier-1 hits / 100 total = 0.5 ratio → 10.0 score
+        assert result["breakdown"]["non_indexed_ratio"] == 10.0
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 

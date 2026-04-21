@@ -848,6 +848,123 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
+    # --------------------------------------------------------------------------
+    # Sprint F193A: Graph enrichment annotation layer
+    # --------------------------------------------------------------------------
+    # STORE IS NOT GRAPH TRUTH OWNER — duckdb_store is the CANONICAL FINDINGS store.
+    # graph/quantum_pathfinder.DuckPGQGraph is the DONOR/BACKEND for graph reads.
+    # This method annotates findings with graph context from the donor backend.
+    # NO new graph write path. NO graph truth ownership transferred.
+
+    def annotate_findings_with_graph_context(
+        self,
+        findings: list[dict],
+        max_hops: int = 2,
+        max_annotations: int = 50,
+    ) -> list[dict]:
+        """
+        Sprint F193A §1: Read-only enrichment pass — attaches graph context to findings.
+
+        PURPOSE
+        -------
+        Minimal annotation layer that reads persisted findings, queries connected IOCs
+        from the graph donor backend, and attaches lightweight annotations for
+        export/report use. Does NOT make DuckDBShadowStore a graph authority.
+
+        READ-ONLY SEAM — STORE IS NOT GRAPH TRUTH OWNER
+        -------------------------------------------------
+        This method is a thin pass-through to graph donor backend seams:
+          - get_connected_iocs() for IOC linkage
+          - get_top_seed_nodes() for degree context
+        It never writes to the graph. The graph (DuckPGQGraph) remains the analytics
+        donor backend, not the truth owner.
+
+        BEHAVIOR
+        --------
+        - Iterates through findings and extracts IOC values
+        - For each unique IOC, queries get_connected_iocs() from donor graph
+        - Attaches annotations as lightweight dict (no heavy objects)
+        - Fail-open: returns original findings unchanged on any error
+        - Bounded: max_annotations limits work to prevent unbounded work
+
+        Args:
+            findings: List of finding dicts (must have 'id' field).
+            max_hops: Max traversal depth for find_connected (default 2).
+            max_annotations: Max number of findings to annotate (default 50).
+
+        Returns:
+            list[dict]: Findings with optional 'graph_annotation' key attached.
+            Unannotated fields are returned unchanged on failure.
+        """
+        if not findings or self._ioc_graph is None:
+            return findings
+
+        try:
+            # Extract unique IOC values from findings
+            ioc_seen: set[str] = set()
+            ioc_to_finding_ids: dict[str, list[str]] = {}
+
+            for f in findings[:max_annotations]:
+                finding_id = f.get("id", "")
+                # Try common IOC field names
+                ioc_value = (
+                    f.get("value")
+                    or f.get("ioc_value")
+                    or f.get("indicator")
+                    or f.get("entity")
+                    or ""
+                )
+                if ioc_value and isinstance(ioc_value, str) and len(ioc_value) >= 3:
+                    if ioc_value not in ioc_seen:
+                        ioc_seen.add(ioc_value)
+                        ioc_to_finding_ids[ioc_value] = []
+                    ioc_to_finding_ids[ioc_value].append(finding_id)
+
+            if not ioc_seen:
+                return findings
+
+            # Query graph for each unique IOC — use donor seam (fail-open)
+            connected_cache: dict[str, list[dict]] = {}
+            for ioc_value in ioc_seen:
+                connected = self.get_connected_iocs(ioc_value, max_hops=max_hops)
+                connected_cache[ioc_value] = connected if connected else []
+
+            # Build annotation map
+            annotation_map: dict[str, dict] = {}
+            for ioc_value, connected in connected_cache.items():
+                if connected:
+                    annotation_map[ioc_value] = {
+                        "connected_count": len(connected),
+                        "connected_types": list(
+                            {c.get("ioc_type", "unknown") for c in connected if c.get("ioc_type")}
+                        ),
+                        "max_hops": max_hops,
+                        "connected_sample": connected[:5],  # lightweight sample
+                    }
+
+            # Attach annotations to findings
+            enriched = []
+            for f in findings[:max_annotations]:
+                enriched_f = dict(f)  # shallow copy
+                ioc_value = (
+                    f.get("value")
+                    or f.get("ioc_value")
+                    or f.get("indicator")
+                    or f.get("entity")
+                    or ""
+                )
+                if ioc_value in annotation_map:
+                    enriched_f["graph_annotation"] = annotation_map[ioc_value]
+                enriched.append(enriched_f)
+
+            # Append remaining findings (beyond max_annotations) unchanged
+            enriched.extend(findings[max_annotations:])
+            return enriched
+
+        except Exception:
+            # Fail-open: return original findings unchanged
+            return findings
+
     def get_analytics_graph_for_synthesis(self) -> Any:
         """
         Sprint 8VY: Read-only seam replacing store._ioc_graph fallback in _windup_synthesis().
@@ -3805,7 +3922,7 @@ class DuckDBShadowStore:
                 "duckdb_success": duckdb_success,
                 "error": None,
             })
-
+        return results
 
     def _extract_url_from_provenance(self, provenance: tuple[str, ...]) -> str:
         """
@@ -3974,7 +4091,11 @@ class DuckDBShadowStore:
         # Phase 2: legacy storage path (WAL-first)
         result = await self.async_record_canonical_finding(finding)
         # Increment _accepted_count if LMDB write succeeded
-        if result.lmdb_success:
+        if isinstance(result, dict):
+            lmdb_ok = result.get("lmdb_success", False)
+        else:
+            lmdb_ok = bool(result.lmdb_success)
+        if lmdb_ok:
             self._accepted_count += 1
         return result
 

@@ -749,6 +749,104 @@ class TestBenchmarks:
         assert avg_us < 1.0  # Should be microseconds, not milliseconds
 
 
+class TestBatchCanonicalPersistence:
+    """Sprint 8W: Batch canonical persistence invariants.
+
+    Verifies:
+      A. _canonical_findings_batch_to_activation_results always returns list[dict], never None
+      B. async_record_canonical_findings_batch accepted path returns valid ActivationResult list
+      C. 1:1 invariant: len(results) == len(findings) even on DuckDB partial failure (fail-soft)
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_helper_never_returns_none(self, store: DuckDBShadowStore) -> None:
+        """Invariant A: sync helper always returns list[dict], never implicit None."""
+        findings = [
+            CanonicalFinding(
+                finding_id=f"bnone{i}",
+                query=f"batch item {i}",
+                source_type="test",
+                confidence=0.5,
+                ts=float(i),
+                provenance=("t",),
+                payload_text=None,
+            )
+            for i in range(3)
+        ]
+        # Call the sync helper directly via run_in_executor (simulates the async seam)
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            store._executor,
+            store._canonical_findings_batch_to_activation_results,
+            findings,
+        )
+        assert results is not None, "_canonical_findings_batch_to_activation_results returned None"
+        assert isinstance(results, list), f"Expected list, got {type(results)}"
+        assert len(results) == 3, f"Expected 3 results, got {len(results)}"
+        assert all(isinstance(r, dict) for r in results), "All results must be dicts"
+        assert all("finding_id" in r for r in results), "All results must have finding_id"
+
+    @pytest.mark.asyncio
+    async def test_accepted_batch_returns_valid_activation_results(self, store: DuckDBShadowStore) -> None:
+        """Invariant B: accepted batch path returns correct ActivationResult list."""
+        findings = [
+            CanonicalFinding(
+                finding_id=f"bacc{i}",
+                query=f"accepted item {i}",
+                source_type="test",
+                confidence=0.8,
+                ts=float(i),
+                provenance=("probe", "https://example.com"),
+                payload_text="192.168.1.1",
+            )
+            for i in range(4)
+        ]
+        results = await store.async_record_canonical_findings_batch(findings)
+        # 1:1 invariant
+        assert len(results) == len(findings), f"Result count mismatch: {len(results)} vs {len(findings)}"
+        # Every result is a proper ActivationResult (duck-typed dict with required keys)
+        for r in results:
+            assert isinstance(r, dict), f"Result is not a dict: {type(r)}"
+            assert "lmdb_success" in r, "Result missing lmdb_success"
+            assert "duckdb_success" in r, "Result missing duckdb_success"
+            assert "finding_id" in r, "Result missing finding_id"
+            assert "accepted" in r, "Result missing accepted"
+        # At least one should have succeeded (LMDB write path is active)
+        assert any(r.get("lmdb_success") for r in results), "No LMDB successes in batch"
+
+    @pytest.mark.asyncio
+    async def test_accepted_count_incremented_after_batch(self, store: DuckDBShadowStore) -> None:
+        """Accepted count grows exactly by number of accepted findings in batch."""
+        before = store._accepted_count
+        findings = [
+            CanonicalFinding(
+                finding_id=f"bacct{i}",
+                query=f"count item {i}",
+                source_type="test",
+                confidence=0.8,
+                ts=float(i),
+                provenance=("t",),
+                payload_text="10.0.0.1",
+            )
+            for i in range(5)
+        ]
+        await store.async_record_canonical_findings_batch(findings)
+        after = store._accepted_count
+        assert after >= before + 5, f"Expected >=5 increment, got {after - before}"
+
+    @pytest.mark.asyncio
+    async def test_1n1_batch_results_length_on_empty_input(self, store: DuckDBShadowStore) -> None:
+        """Edge case: empty list returns empty list, not None."""
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            store._executor,
+            store._canonical_findings_batch_to_activation_results,
+            [],
+        )
+        assert results == [], f"Empty batch must return [], got {results!r}"
+        assert results is not None
+
+
 class TestNoImportRegression:
     """Invariant 26: no heavy import regression."""
 

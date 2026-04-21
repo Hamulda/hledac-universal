@@ -273,6 +273,31 @@ async def export_sprint(
     # Sprint F192H: research_depth_metric — derived from canonical surfaces only
     research_depth = _compute_research_depth(eh, pvs, signal_path, hypothesis_pack, correlation)
 
+    # Sprint F193A §2: attach graph annotations to findings for export
+    # Findings source: store.async_query_recent_findings (canonical findings store)
+    # Graph context: donor backend (DuckPGQGraph) via store.annotate_findings_with_graph_context
+    # STORE IS NOT GRAPH TRUTH OWNER — annotations are read-only derived data, not persisted
+    findings_for_annotation = []
+    try:
+        if hasattr(store, "async_query_recent_findings"):
+            # Canonical findings from duckdb_store
+            raw_findings = await store.async_query_recent_findings(limit=50)
+            # Convert to dicts for annotation pass
+            findings_for_annotation = [
+                dict(f) if hasattr(f, "keys") else f for f in raw_findings
+            ]
+    except Exception:
+        pass
+
+    graph_context_annotations: list[dict] = []
+    if findings_for_annotation and hasattr(store, "annotate_findings_with_graph_context"):
+        try:
+            graph_context_annotations = store.annotate_findings_with_graph_context(
+                findings_for_annotation, max_hops=2, max_annotations=50
+            )
+        except Exception:
+            pass
+
     return {
         "report_json": str(report_path) if report_path else "",
         "seeds_json": str(seeds_path),
@@ -286,6 +311,8 @@ async def export_sprint(
         "why_this_run_matters": why_this_run_matters,
         # Sprint F192H: research_depth_metric — canonical research depth score
         "research_depth_metric": research_depth,
+        # Sprint F193A: graph context annotations (read-only, from donor backend)
+        "graph_enriched_findings": graph_context_annotations,
     }
 
 
@@ -766,6 +793,9 @@ def _build_product_value_summary(
         "dedup_effective": dedup_effective,
         "dedup_lmdb_path": dedup_lmdb_path,
         "hot_cache": hot_cache,
+        # F193B: Archive + academic discovery contribution surfaces
+        "commoncrawl_archive_augmented": (eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None) or scorecard.get("cc_archive_injected", 0),
+        "academic_discovery_contribution": (eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None) or scorecard.get("academic_findings_count", 0),
         # DERIVED — computed from facts (prefix _ = classification, not raw fact)
         "_signal_quality_classification": _signal_quality,
     }
