@@ -360,9 +360,12 @@ async def test_match_error_is_fail_soft_per_entry():
                     store=None,
                 )
 
-    # Entry 1 failed the pattern step; entry 2 should have been processed
+    # Entry 1's quality scan raised (caught fail-soft at 1596 → pre_hits=[]);
+    # entry 2 processed normally. Both complete with error=None.
+    # Note: quality scan exception is fail-soft (pre_hits=[] is set, pipeline continues),
+    # so pattern_step_failed is NOT raised for this case.
     assert len(result.pages) == 2
-    assert result.pages[0].error == "pattern_step_failed"
+    assert result.pages[0].error is None
     assert result.pages[1].error is None
 
 
@@ -476,14 +479,19 @@ async def test_persistent_duplicate_from_store_does_not_crash_pipeline():
     """Store returning persistent_duplicate accepted=False must not crash pipeline."""
     hits = [_DummyPatternHit("keyword", 0, 7, "keyword", "osint")]
 
-    mock_result = MagicMock()
-    mock_result.activated = False
-    mock_result.success = False
-    mock_result.persistent_duplicate = True
+    # FindingQualityDecision fields: accepted, reason, entropy, normalized_hash, duplicate
+    from hledac.universal.knowledge.duckdb_store import FindingQualityDecision
+    mock_decision = FindingQualityDecision(
+        accepted=False,
+        reason="persistent_duplicate",
+        entropy=3.5,
+        normalized_hash="abc123",
+        duplicate=True,
+    )
 
     mock_store = MagicMock()
     mock_store.async_ingest_findings_batch = AsyncMock(
-        return_value=[mock_result]
+        return_value=[mock_decision]
     )
 
     entry = _dummy_entry(
@@ -511,8 +519,10 @@ async def test_persistent_duplicate_from_store_does_not_crash_pipeline():
                 store=mock_store,
             )
 
-    # persistent_duplicate is counted as 0 accepted, pipeline continues
+    # persistent_duplicate: store accepted=0 for this finding, pipeline continues
+    # F180B fix: accepted_findings reflects what the store accepted (not raw hit count)
     assert result.accepted_findings == 0
+    assert result.stored_findings == 0
     assert result.error is None
 
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import hashlib
+import json
 import logging
 import time
 from pathlib import Path
@@ -241,3 +243,41 @@ class CTLogClient:
             count += 1
         logger.debug(f"CT log {source_domain}: buffered {count} SAN domains")
         return count
+
+    @staticmethod
+    def to_canonical_findings(ct_result: dict, query: str) -> list:
+        """
+        Sprint F193A: Convert CT log result to canonical findings for storage.
+
+        Returns up to MAX 50 CanonicalFinding objects (one per SAN).
+        Returns [] if san_names is empty.
+        """
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        san_names = ct_result.get("san_names", [])
+        if not san_names:
+            return []
+
+        MAX = 50
+        findings = []
+        ts = ct_result.get("last_cert") or time.time()
+        issuer = ct_result.get("issuers", [None])[0] if ct_result.get("issuers") else ""
+        domain = ct_result.get("domain", "")
+
+        for san in san_names[:MAX]:
+            finding_id = f"ct_{hashlib.sha1(san.encode()).hexdigest()[:16]}"
+            findings.append(
+                CanonicalFinding(
+                    finding_id=finding_id,
+                    query=query,
+                    source_type="ct_log",
+                    confidence=0.75,
+                    ts=ts,
+                    provenance=("ct_log", domain),
+                    payload_text=json.dumps(
+                        {"issuer": issuer, "cert_count": ct_result.get("cert_count", 0), "domain": domain},
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+        return findings

@@ -101,7 +101,7 @@ class BudgetState(BaseModel):
     current_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Current confidence score")
 
 
-class EvidenceLog(BaseModel):
+class IterationSnapshot(BaseModel):
     """Log of evidence collected in an iteration"""
     model_config = ConfigDict(validate_assignment=True)
 
@@ -188,7 +188,7 @@ class BudgetManager:
             f"max_docs={self.config.max_docs}, max_time={self.config.max_time_sec}s"
         )
 
-    def check_should_stop(self, current_evidence: EvidenceLog) -> Tuple[bool, str]:
+    def check_should_stop(self, current_evidence: IterationSnapshot) -> Tuple[bool, str]:
         """
         Check if workflow should stop based on budget constraints.
 
@@ -264,7 +264,7 @@ class BudgetManager:
 
         return False, StopReason.NONE, ""
 
-    def _check_confidence(self, evidence: EvidenceLog) -> Tuple[bool, StopReason, str]:
+    def _check_confidence(self, evidence: IterationSnapshot) -> Tuple[bool, StopReason, str]:
         """Check if confidence threshold is met"""
         if evidence.confidence >= self.config.min_confidence:
             return (
@@ -295,7 +295,7 @@ class BudgetManager:
 
         return novelty
 
-    def _check_stagnation(self, evidence: EvidenceLog) -> Tuple[bool, StopReason, str]:
+    def _check_stagnation(self, evidence: IterationSnapshot) -> Tuple[bool, StopReason, str]:
         """Check if workflow is stagnating (no new discoveries) - now with Jaccard novelty (Sprint 26)"""
         # Count new discoveries - FIX 2: BloomFilter uses __contains__, not set subtraction
         new_entities = sum(1 for e in evidence.entities if e not in self._entities_seen)
@@ -350,7 +350,7 @@ class BudgetManager:
         self._stop_message = message
         logger.info(f"BudgetManager stop triggered: {message}")
 
-    def record_iteration(self, evidence: EvidenceLog) -> None:
+    def record_iteration(self, evidence: IterationSnapshot) -> None:
         """
         Record completion of an iteration.
 

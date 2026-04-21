@@ -361,6 +361,17 @@ async def run_sprint(
     # Sprint F153: Canonical source inventory — real URLs from typed seed surface
     live_feed_urls = _get_live_feed_urls()
 
+    # Sprint F193A: Instantiate CT log client for canonical pipeline
+    _ct_log_client = None
+    try:
+        import os
+        from pathlib import Path
+        _ct_cache = Path(os.path.expanduser("~/.hledac/ct_cache"))
+        _ct_cache.mkdir(parents=True, exist_ok=True)
+        _ct_log_client = CTLogClient(cache_dir=_ct_cache)
+    except Exception:
+        pass
+
     try:
         # Run sprint via scheduler directly (enables compute_sprint_intelligence access)
         # now_monotonic=None: scheduler uses live time internally via adapter.tick()
@@ -370,6 +381,7 @@ async def run_sprint(
             now_monotonic=None,
             query=query,
             duckdb_store=store,
+            ct_log_client=_ct_log_client,
         )
 
         # Sprint F150H: Pull scheduler intelligence (fail-soft, additive)
@@ -415,6 +427,9 @@ async def run_sprint(
 
         # UMA peak
         uma_peak_gib = sample_uma_status().system_used_gib
+
+        # Sprint F193A: CT log canonical discovery — runs once after main cycle loop
+        await scheduler._run_ct_log_discovery_in_cycle(query=query, store=store)
 
         # Write sprint delta
         await write_sprint_delta(

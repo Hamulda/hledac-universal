@@ -1705,7 +1705,7 @@ async def _entry_to_pattern_findings(
             [], patterns_configured, matched_patterns, assembled_text_len,
             scan_text, enrichment_phase, article_fallback_used, article_fallback_attempted,
             quality_signal, fallback_decision, assembly_tier,
-            pre_fallback_hits_count, findings_lost_to_dedup_early,
+            pre_fallback_hits_count, pre_fallback_hits_count, findings_lost_to_dedup_early,
             article_decode_replacement_count,
         )
 
@@ -1729,7 +1729,7 @@ async def _entry_to_pattern_findings(
         findings, patterns_configured, matched_patterns, assembled_text_len,
         scan_text, enrichment_phase, article_fallback_used, article_fallback_attempted,
         quality_signal, fallback_decision, assembly_tier,
-        pre_fallback_hits_count, matched_patterns, findings_lost_to_dedup,
+        pre_fallback_hits_count, post_fallback_hits_count, findings_lost_to_dedup,
         article_decode_replacement_count,
     )
 
@@ -2226,9 +2226,10 @@ async def async_run_live_feed_pipeline(
                 # accepted_findings and stored_findings already hold the last valid values
                 # from this entry's processing (or 0 if exception happened before any count)
         else:
-            # No store: count-only mode
+            # No store: count-only mode — accepted is pre-storage gate hit count,
+            # stored must be 0 (nothing reached storage)
             accepted_findings = len(findings)
-            stored_findings = len(findings)
+            stored_findings = 0
 
         total_accepted += accepted_findings
         total_stored += stored_findings

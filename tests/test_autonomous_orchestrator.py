@@ -9638,7 +9638,7 @@ class TestBudgetEnforcement:
     def test_budget_hard_stop_exhausted_budget_stops_within_one_iteration(self):
         """Verify exhausted budget causes immediate stop within 1 iteration."""
         from hledac.universal.cache.budget_manager import (
-            BudgetConfig, BudgetManager, EvidenceLog, StopReason
+            BudgetConfig, BudgetManager, IterationSnapshot, StopReason
         )
 
         # Create budget with max_iterations=1
@@ -9646,7 +9646,7 @@ class TestBudgetEnforcement:
         budget = BudgetManager(config=config)
 
         # First iteration - should not stop yet
-        evidence = EvidenceLog(
+        evidence = IterationSnapshot(
             iteration=0,
             entities=["entity1"],
             sources=["source1"],
@@ -9665,7 +9665,7 @@ class TestBudgetEnforcement:
         budget.record_docs(1)
 
         # Second check - should stop because iteration=1 >= max=1
-        evidence2 = EvidenceLog(
+        evidence2 = IterationSnapshot(
             iteration=1,
             entities=["entity2"],
             sources=["source2"],
@@ -9686,7 +9686,7 @@ class TestBudgetEnforcement:
     def test_budget_exhaustion_logs_decision_ledger_event(self):
         """Verify budget stop creates a decision ledger style event."""
         from hledac.universal.cache.budget_manager import (
-            BudgetConfig, BudgetManager, EvidenceLog, StopReason
+            BudgetConfig, BudgetManager, IterationSnapshot, StopReason
         )
 
         # Create budget with very low limits
@@ -9694,12 +9694,12 @@ class TestBudgetEnforcement:
         budget = BudgetManager(config=config)
 
         # Exhaust the budget
-        evidence = EvidenceLog(iteration=0, entities=["e1"], sources=["s1"], claims=["c1"], confidence=0.5)
+        evidence = IterationSnapshot(iteration=0, entities=["e1"], sources=["s1"], claims=["c1"], confidence=0.5)
         budget.record_iteration(evidence)
         budget.record_docs(1)
 
         # Trigger stop
-        budget.check_should_stop(EvidenceLog(iteration=1, entities=[], sources=[], claims=[], confidence=0.5))
+        budget.check_should_stop(IterationSnapshot(iteration=1, entities=[], sources=[], claims=[], confidence=0.5))
 
         # Get summary - this is the "decision ledger event" equivalent
         summary = budget.get_summary()

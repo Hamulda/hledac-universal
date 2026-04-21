@@ -286,6 +286,10 @@ class SprintSchedulerResult:
     public_accepted_findings: int = 0
     public_stored_findings: int = 0
     public_error: str = ""
+    # Sprint F193A: CT log canonical discovery pipeline results
+    ct_log_discovered: int = 0
+    ct_log_stored: int = 0
+    ct_log_error: str = ""
     # Sprint F166B: Pre-loop starvation tracking
     # Set when ACTIVE phase is first observed (loop guard entry)
     entered_active_at_monotonic: float | None = None
@@ -454,7 +458,7 @@ class SprintScheduler:
     Shadow pre-decision: read-only parity/composition, DIAGNOSTIC ONLY.
     """
 
-    def __init__(self, config: SprintSchedulerConfig) -> None:
+    def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None) -> None:
         self._config = config
         # In-sprint dedup: entry_hash → True
         self._seen_hashes: dict[str, bool] = {}
@@ -534,6 +538,8 @@ class SprintScheduler:
         # Sprint F160C: Per-sprint source economics — bounded local economics layer
         # In-memory only, reset per sprint, no cross-sprint state
         self._source_economics: dict[str, SourceEconomics] = {}
+        # Sprint F193A: CT log canonical discovery client
+        self._ct_log_client: Any = ct_log_client
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -730,6 +736,7 @@ class SprintScheduler:
         now_monotonic: Optional[float] = None,
         query: str = "",
         duckdb_store: Any = None,
+        ct_log_client: Any = None,
     ) -> SprintSchedulerResult:
         """
         Run the sprint to completion.
@@ -747,6 +754,10 @@ class SprintScheduler:
         # Start lifecycle via adapter (runtime: start(), utils: begin_sprint())
         adapter.start()
         self._reset_result()
+
+        # Sprint F193A: CT log client can be injected at run() call time
+        if ct_log_client is not None:
+            self._ct_log_client = ct_log_client
 
         # Sprint 8VD: Set sprint_id from lifecycle if available
         try:
@@ -1137,6 +1148,50 @@ class SprintScheduler:
         except Exception as exc:
             log.debug(f"[8XE] Public pipeline error: {exc}")
             self._result.public_error = f"{type(exc).__name__}:{exc}"
+
+    async def _run_ct_log_discovery_in_cycle(
+        self,
+        query: str,
+        store: Any,
+    ) -> None:
+        """
+        Sprint F193A: Run CT log canonical discovery in the current cycle.
+
+        Extracts domain from query, pivots via CTLogClient, converts results
+        to CanonicalFinding and ingests into DuckDB store.
+
+        Fail-soft: errors are accumulated but never raise or abort the sprint.
+        """
+        if self._ct_log_client is None or store is None:
+            return
+
+        import re
+
+        matches = re.findall(
+            r'[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+',
+            query,
+        )
+        domain = matches[0].lstrip("www.") if matches else query.strip()
+        if not domain:
+            return
+
+        session = None
+        try:
+            import aiohttp
+            session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+            ct_result = await self._ct_log_client.pivot_domain(domain, session)
+            findings = self._ct_log_client.to_canonical_findings(ct_result, query)
+            self._result.ct_log_discovered = len(findings)
+            if findings:
+                results = await store.async_ingest_findings_batch(findings)
+                stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+                self._result.ct_log_stored = stored
+        except Exception as exc:
+            self._result.ct_log_error = str(exc)[:200]
+            logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
+        finally:
+            if session is not None:
+                await session.close()
 
     def _build_work_items(
         self, sources: Sequence[str]

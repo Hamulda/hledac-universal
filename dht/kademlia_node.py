@@ -113,15 +113,9 @@ async def crawl_dht_for_keyword(
     )
 
     duckdb_store = None
-    if store_results:
-        try:
-            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-            duckdb_store = DuckDBShadowStore()
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: duckdb_store.initialize())
-        except Exception as e:
-            logger.debug(f"[DHT] DuckDB store init: {e}")
-            duckdb_store = None
+    # Sprint F192B: DHT crawl is EXPERIMENTAL/SIMULATED — write-side persistence
+    # bypass removed. Findings from DHT are returned but NOT stored to DuckDBShadowStore.
+    # They may be incorporated via the canonical sprint path if needed.
 
     try:
         for host, port in BOOTSTRAP_PEERS:
@@ -191,23 +185,8 @@ async def crawl_dht_for_keyword(
 
             await asyncio.sleep(0.5)
 
-        if duckdb_store and results:
-            try:
-                loop = asyncio.get_running_loop()
-                for r in results:
-                    loop.run_in_executor(
-                        None,
-                        lambda r=r: duckdb_store._sync_insert_finding({
-                            "query": keyword,
-                            "source_type": "dht",
-                            "finding_id": r.get("info_hash", ""),
-                            "content": r.get("name", ""),
-                            "url": f"dht://{r.get('info_hash', '')}",
-                        }),
-                    )
-                loop.run_in_executor(None, duckdb_store.close)
-            except Exception as e:
-                logger.debug(f"[DHT] DuckDB store write: {e}")
+        # Sprint F192B: DHT findings are returned but NOT persisted to DuckDBShadowStore.
+        # DHT crawl is EXPERIMENTAL/SIMULATED — persistence via canonical sprint path only.
 
     except Exception as e:
         logger.warning(f"[DHT] crawl error: {e}")
@@ -968,29 +947,14 @@ class KademliaNode:
         return (None, pos + 1)
 
     async def _store_dht_results(self, keyword: str, results: list):
-        """Store DHT crawl results to knowledge store and graph."""
-        try:
-            # Try to import knowledge store
-            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-            store = DuckDBShadowStore()
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: store.initialize())
+        """Sprint F192B: DHT crawl is EXPERIMENTAL — no longer persists findings.
 
-            for r in results:
-                try:
-                    loop.run_in_executor(None, lambda r=r: store._sync_insert_finding({
-                        "query": keyword,
-                        "source_type": "dht",
-                        "finding_id": r.get("info_hash", ""),
-                        "content": r.get("name", ""),
-                        "url": f"dht://{r.get('info_hash', '')}",
-                    }))
-                except Exception as e:
-                    logger.debug(f"DHT finding insert failed: {e}")
-
-            await loop.run_in_executor(None, store.close)
-        except Exception as e:
-            logger.debug(f"DHT store initialization failed: {e}")
+        Findings from DHT crawl are returned to caller but NOT written to
+        DuckDBShadowStore. Canonical sprint path handles persistence if needed.
+        Kept as no-op to avoid breaking callers that reference this method.
+        """
+        # DHT crawl is EXPERIMENTAL/SIMULATED — write-side bypass removed.
+        pass
 
     def _refresh_routing_from_results(self):
         """Refresh routing table - called periodically during crawl."""
