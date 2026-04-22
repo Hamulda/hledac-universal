@@ -6,10 +6,20 @@ from typing import Dict, Optional, Tuple, List
 import secrets
 import os
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
+try:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.backends import default_backend
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    Cipher = None
+    algorithms = None
+    modes = None
+    HKDF = None
+    hashes = None
+    default_backend = None
+    CRYPTO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +52,8 @@ def _try_mlock(buf: bytearray) -> bool:
 
 class KeyManager:
     def __init__(self, db_path: Optional[str] = None, master_key_id: str = "master"):
+        if not CRYPTO_AVAILABLE:
+            raise ImportError("cryptography package is required for KeyManager")
         from hledac.universal.paths import KEYS_ROOT
         if db_path is None:
             self.db_path = KEYS_ROOT / "keys.lmdb"
@@ -132,6 +144,8 @@ class KeyManager:
         Odvodí klíč pro bucket z master klíče dané verze.
         Vrací (klíč, skutečná verze). Výsledek je cachován.
         """
+        if not CRYPTO_AVAILABLE:
+            raise ImportError("cryptography package is required for KeyManager.get_bucket_key")
         master, salt, resolved_version = await self.get_master_key(version)
         cache_key = f"{bucket_id}:{resolved_version}"
         if cache_key in self._bucket_key_cache:

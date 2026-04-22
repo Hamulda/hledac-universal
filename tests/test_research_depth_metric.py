@@ -1,7 +1,9 @@
 """
-Sprint F192H: Research Depth Metric — stability contract tests.
+Sprint F192H: Research Depth Metric — HERMETIC LANE stability contract tests.
+==============================================================================
 
-Tests the _compute_research_depth() function that computes a 0-100 research
+Hermetic release lane: zero network, pure derivation from canonical surfaces.
+Tests _compute_research_depth() function that computes a 0-100 research depth
 depth score from canonical ExportHandoff surfaces.
 
 Contract invariants (Sprint F192H §2):
@@ -37,6 +39,7 @@ from hledac.universal.export.sprint_exporter import (
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestResearchDepthOutputShape:
     """Output dict keys and types must be stable across all input combinations."""
 
@@ -89,6 +92,7 @@ class TestResearchDepthOutputShape:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestResearchDepthScoreBounds:
     """Score must never exceed 100.0 or go below 0.0."""
 
@@ -133,6 +137,7 @@ class TestResearchDepthScoreBounds:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestResearchDepthLevelThresholds:
     """Level assignment must follow threshold boundaries exactly."""
 
@@ -223,6 +228,7 @@ class TestResearchDepthLevelThresholds:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestSourceDiversityComponent:
     """Source diversity score responds correctly to source type diversity."""
 
@@ -276,6 +282,7 @@ class TestSourceDiversityComponent:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestNonIndexedRatioComponent:
     """Non-indexed ratio rewards use of deep/structured sources."""
 
@@ -326,6 +333,7 @@ class TestNonIndexedRatioComponent:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestCorroborationComponent:
     """Corroboration score rewards cross-source signal validation."""
 
@@ -391,6 +399,7 @@ class TestCorroborationComponent:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestBranchDiversityComponent:
     """Branch diversity rewards parallel use of feed + public + CT branches."""
 
@@ -447,6 +456,7 @@ class TestBranchDiversityComponent:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestPivotDepthComponent:
     """Pivot depth rewards hypothesis generation and pivot recommendations."""
 
@@ -512,6 +522,7 @@ class TestPivotDepthComponent:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestDepthSignalsReflectInputs:
     """depth_signals dict must accurately reflect the computed inputs."""
 
@@ -562,6 +573,7 @@ class TestDepthSignalsReflectInputs:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestResearchDepthInExportReturn:
     """export_sprint() must include research_depth_metric in its return dict."""
 
@@ -619,6 +631,7 @@ class TestResearchDepthInExportReturn:
 # =============================================================================
 
 
+@pytest.mark.hermetic
 class TestArchiveAcademicContributionSurface:
     """F193B: CommonCrawl and academic findings surface in canonical export."""
 
@@ -702,6 +715,149 @@ class TestArchiveAcademicContributionSurface:
         )
         # 50 tier-1 hits / 100 total = 0.5 ratio → 10.0 score
         assert result["breakdown"]["non_indexed_ratio"] == 10.0
+
+
+# =============================================================================
+# Sprint F192H: Live source taxonomy normalization
+# =============================================================================
+
+
+@pytest.mark.hermetic
+class TestSourceTaxonomyNormalization:
+    """
+    Sprint F192H: Verify all active canonical source types are in _SOURCE_TIER.
+    Mismatches found:
+      - ct_log (ct_log_client.py:273) vs ct_log_pipeline in tier map
+      - onion_discovery (live_public_pipeline.py:1785) — missing from tier map
+      - ipfs (ti_feed_adapter.py:1367) — missing from tier map
+      - shodan_search (shodan_wrapper.py:204) — missing from tier map
+      - bgp_monitor (ti_feed_adapter.py:1742) — missing from tier map
+    """
+
+    def test_ct_log_is_tier1(self):
+        """ct_log (ct_log_client.py:273) is tier 1 — structured TI."""
+        assert _SOURCE_TIER.get("ct_log") == 1
+
+    def test_ct_log_pipeline_also_tier1(self):
+        """ct_log_pipeline alias is also tier 1 — backward compat."""
+        assert _SOURCE_TIER.get("ct_log_pipeline") == 1
+
+    def test_onion_discovery_is_tier2(self):
+        """onion_discovery (live_public_pipeline.py:1785) is tier 2 — deep/dark web."""
+        assert _SOURCE_TIER.get("onion_discovery") == 2
+
+    def test_ipfs_is_tier1(self):
+        """ipfs (ti_feed_adapter.py:1367) is tier 1 — structured TI."""
+        assert _SOURCE_TIER.get("ipfs") == 1
+
+    def test_shodan_search_is_tier1(self):
+        """shodan_search (shodan_wrapper.py:204) is tier 1 — structured TI."""
+        assert _SOURCE_TIER.get("shodan_search") == 1
+
+    def test_bgp_monitor_is_tier1(self):
+        """bgp_monitor (ti_feed_adapter.py:1742) is tier 1 — structured TI."""
+        assert _SOURCE_TIER.get("bgp_monitor") == 1
+
+    def test_live_public_pipeline_is_tier0(self):
+        """live_public_pipeline (live_public_pipeline.py) is tier 0 — indexed/surface."""
+        assert _SOURCE_TIER.get("live_public_pipeline") == 0
+
+    def test_academic_discovery_is_tier1(self):
+        """academic_discovery (live_public_pipeline.py:1995) is tier 1."""
+        assert _SOURCE_TIER.get("academic_discovery") == 1
+
+    def test_pastebin_monitor_is_tier1(self):
+        """pastebin_monitor (live_public_pipeline.py:2067) is tier 1."""
+        assert _SOURCE_TIER.get("pastebin_monitor") == 1
+
+    def test_github_secret_scanner_is_tier1(self):
+        """github_secret_scanner (live_public_pipeline.py:2107) is tier 1."""
+        assert _SOURCE_TIER.get("github_secret_scanner") == 1
+
+
+@pytest.mark.hermetic
+class TestSourceTaxonomyContribution:
+    """Verify each new source type contributes correctly to research depth components."""
+
+    def test_ct_log_contributes_to_non_indexed_ratio(self):
+        """ct_log hits contribute to non_indexed_ratio component (tier 1)."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({"ct_log": 50, "rss_atom_pipeline": 50}),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 50 tier-1 hits / 100 total = 0.5 ratio → 10.0 score
+        assert result["breakdown"]["non_indexed_ratio"] == 10.0
+        assert result["depth_signals"]["deep_sources_found"] == 50
+
+    def test_onion_discovery_contributes_as_deep(self):
+        """onion_discovery hits count as tier 2 (deep) for non_indexed_ratio."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({"onion_discovery": 30, "live_public_pipeline": 70}),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 30 tier-2 hits / 100 total = 0.3 ratio → 6.0 score
+        assert result["breakdown"]["non_indexed_ratio"] == 6.0
+        assert result["depth_signals"]["deep_sources_found"] == 30
+
+    def test_ipfs_contributes_to_non_indexed_ratio(self):
+        """ipfs hits contribute to non_indexed_ratio component (tier 1)."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({"ipfs": 25, "rss_atom_pipeline": 75}),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 25 tier-1 hits / 100 total = 0.25 ratio → 5.0 score
+        assert result["breakdown"]["non_indexed_ratio"] == 5.0
+
+    def test_shodan_search_contributes_to_non_indexed_ratio(self):
+        """shodan_search hits contribute to non_indexed_ratio component (tier 1)."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({"shodan_search": 40, "live_public_pipeline": 60}),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 40 tier-1 hits / 100 total = 0.4 ratio → 8.0 score
+        assert result["breakdown"]["non_indexed_ratio"] == 8.0
+
+    def test_bgp_monitor_contributes_to_non_indexed_ratio(self):
+        """bgp_monitor hits contribute to non_indexed_ratio component (tier 1)."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({"bgp_monitor": 20, "rss_atom_pipeline": 80}),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 20 tier-1 hits / 100 total = 0.2 ratio → 4.0 score
+        assert result["breakdown"]["non_indexed_ratio"] == 4.0
+
+    def test_all_new_sources_diverse_contributes_high_diversity(self):
+        """5 diverse sources including new types → high source_diversity score."""
+        result = _compute_research_depth(
+            eh=_mock_handoff({
+                "rss_atom_pipeline": 20,
+                "live_public_pipeline": 20,
+                "ct_log": 20,
+                "onion_discovery": 20,
+                "ipfs": 20,
+            }),
+            pvs=None,
+            signal_path=None,
+            hypothesis_pack=None,
+            correlation={"_no_correlation_data": True},
+        )
+        # 5 source types, high entropy → source_diversity should be >= 10
+        assert result["breakdown"]["source_diversity"] >= 10.0
 
 
 # =============================================================================

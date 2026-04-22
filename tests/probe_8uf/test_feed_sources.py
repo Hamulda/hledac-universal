@@ -1,6 +1,6 @@
 """Test feed source expansion (Sprint 8UF B.3)."""
 import pytest
-from discovery.rss_atom_adapter import get_default_feed_seeds
+from hledac.universal.discovery.rss_atom_adapter import get_default_feed_seeds
 
 
 class TestFeedSources:

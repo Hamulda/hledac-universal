@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from ddgs import DDGS
+try:
+    from ddgs import DDGS
+    DDGS_AVAILABLE = True
+except ImportError:
+    DDGS = None
+    DDGS_AVAILABLE = False
 
 # Default set intentionally excludes google by default due fragility/captcha risk.
 DEFAULT_TEXT_BACKENDS = ("brave", "bing", "duckduckgo", "mojeek", "wikipedia")
@@ -30,6 +35,8 @@ def _normalize_news_item(item: dict, backend: str, rank: int) -> dict:
     }
 
 def search_text_sync(query: str, backends: tuple[str, ...] = DEFAULT_TEXT_BACKENDS, max_results_per_backend: int = 4, timeout: int = 6) -> list[dict]:
+    if not DDGS_AVAILABLE:
+        return [{"title": "", "url": "", "snippet": "ddgs_not_installed", "backend": b, "rank": 9999, "provider": "ddgs_error", "source": f"ddgs:{b}"} for b in backends]
     all_rows: list[dict] = []
     ddgs = DDGS(timeout=timeout)
     for backend in backends:
@@ -50,6 +57,8 @@ def search_text_sync(query: str, backends: tuple[str, ...] = DEFAULT_TEXT_BACKEN
     return all_rows
 
 def search_news_sync(query: str, backends: tuple[str, ...] = DEFAULT_NEWS_BACKENDS, max_results_per_backend: int = 3, timeout: int = 6) -> list[dict]:
+    if not DDGS_AVAILABLE:
+        return [{"title": "", "url": "", "snippet": "ddgs_not_installed", "backend": b, "rank": 9999, "provider": "ddgs_error", "source": f"ddgs-news:{b}"} for b in backends]
     all_rows: list[dict] = []
     ddgs = DDGS(timeout=timeout)
     for backend in backends:

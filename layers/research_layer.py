@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..types import (
+from hledac.universal.project_types import (
     ActionType,
     DeepResearchConfig,
     ExplorationNode,

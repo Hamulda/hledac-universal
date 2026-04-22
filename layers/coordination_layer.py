@@ -27,7 +27,7 @@ from queue import PriorityQueue
 from typing import Any, Callable, Dict, List, Optional, Set
 from collections import deque
 
-from ..types import (
+from hledac.universal.project_types import (
     CoordinationConfig,
     DecisionContext,
     DecisionRequest,

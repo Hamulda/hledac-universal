@@ -1961,7 +1961,7 @@ async def async_run_live_public_pipeline(
 
     # P16: Academic discovery integration — run after DuckDuckGo discovery
     # Max 3 concurrent queries via shared semaphore
-    academic_hits_count = 0
+    academic_findings_count = 0
     if store is not None:
         try:
             from hledac.universal.intelligence.academic_discovery import search_academic_all
@@ -2663,62 +2663,11 @@ async def async_run_live_public_pipeline(
         except Exception as e:
             logger.warning(f"[P18] Export failed: {e}")
 
-    return PipelineRunResult(
-        query=query,
-        discovered=total_discovered,
-        fetched=total_fetched,
-        matched_patterns=total_matched,
-        accepted_findings=total_accepted,
-        stored_findings=total_stored,
-        patterns_configured=patterns_cfg,
-        pages=tuple(all_page_results),
-        error=run_error,
-        strong_pages=strong_pages,
-        weak_pages_skipped=weak_pages_skipped,
-        low_value_fetches=low_value_fetches,
-        discovery_strong_content_weak=discovery_strong_content_weak,
-        discovery_and_content_strong=discovery_and_content_strong,
-        discovery_squandered=discovery_squandered,
-        noise_fetch_ratio=noise_fetch_ratio,
-        corroboration_vs_burn=corroboration_vs_burn,
-        public_next_action=public_next_action,
-        public_confidence_note=public_confidence_note,
-        public_branch_verdict=public_branch_verdict,
-        usable_findings_ratio=usable_findings_ratio,
-        discovery_to_findings_efficiency=discovery_to_findings_efficiency,
-        quality_mix=quality_mix,
-        public_proof_grade=_derived_proof_grade,
-        public_value_density=public_value_density,
-        top_waste_pattern=top_waste_pattern,
-        discovery_false_positive_count=discovery_false_positive_count,
-        waste_category_counts=waste_category_counts,
-        structural_health_ratio=structural_health_ratio,
-        factual_value_density=factual_value_density,
-        run_waste_pattern_code=run_waste_pattern_code,
-        waste_reason_breakdown=waste_reason_breakdown,
-        backend_degraded=_backend_degraded,
-        public_discovery_blocker=public_discovery_blocker,
-        public_fetch_accessibility_blocker=public_fetch_accessibility_blocker,
-        public_discovery_fallback_state=public_discovery_fallback_state,
-        dominant_public_failure_mode=dominant_public_failure_mode,
-        zero_hit_accessible_fetch_count=zero_hit_accessible_fetch_count,
-        zero_hit_quality_reason_counts=zero_hit_quality_reason_counts,
-        zero_hit_title_samples=zero_hit_title_samples,
-        public_zero_hit_summary=public_zero_hit_summary,
-        # Sprint F188B: CT winner-slice telemetry
-        ct_subdomain_injected=ct_injected,
-        cc_archive_injected=cc_injected,
-        # F193B: Academic discovery telemetry
-        academic_findings_count=academic_findings_count,
-        # P20: PastebinMonitor + GitHubSecretScanner telemetry
-        pastebin_findings_count=pastebin_findings_count,
-        github_secrets_count=github_secrets_count,
-    )
-
     # P12: Hypothesis generation and ToT evaluation — POST-STORAGE variant
     # Runs AFTER findings are stored (real persisted evidence), not before fetch.
     # Canonical sprint: gated on store+hermes_engine (not memory_manager alone).
     # M1 8GB: bounded to 5 hypotheses, fail-soft, no ToT in hot path.
+    # NOTE: This block executes BEFORE the return so it is always reachable.
     tot_solution_count = 0
     if store is not None and hermes_engine is not None and total_stored > 0:
         try:
@@ -2795,6 +2744,58 @@ async def async_run_live_public_pipeline(
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional
+
+    return PipelineRunResult(
+        query=query,
+        discovered=total_discovered,
+        fetched=total_fetched,
+        matched_patterns=total_matched,
+        accepted_findings=total_accepted,
+        stored_findings=total_stored,
+        patterns_configured=patterns_cfg,
+        pages=tuple(all_page_results),
+        error=run_error,
+        strong_pages=strong_pages,
+        weak_pages_skipped=weak_pages_skipped,
+        low_value_fetches=low_value_fetches,
+        discovery_strong_content_weak=discovery_strong_content_weak,
+        discovery_and_content_strong=discovery_and_content_strong,
+        discovery_squandered=discovery_squandered,
+        noise_fetch_ratio=noise_fetch_ratio,
+        corroboration_vs_burn=corroboration_vs_burn,
+        public_next_action=public_next_action,
+        public_confidence_note=public_confidence_note,
+        public_branch_verdict=public_branch_verdict,
+        usable_findings_ratio=usable_findings_ratio,
+        discovery_to_findings_efficiency=discovery_to_findings_efficiency,
+        quality_mix=quality_mix,
+        public_proof_grade=_derived_proof_grade,
+        public_value_density=public_value_density,
+        top_waste_pattern=top_waste_pattern,
+        discovery_false_positive_count=discovery_false_positive_count,
+        waste_category_counts=waste_category_counts,
+        structural_health_ratio=structural_health_ratio,
+        factual_value_density=factual_value_density,
+        run_waste_pattern_code=run_waste_pattern_code,
+        waste_reason_breakdown=waste_reason_breakdown,
+        backend_degraded=_backend_degraded,
+        public_discovery_blocker=public_discovery_blocker,
+        public_fetch_accessibility_blocker=public_fetch_accessibility_blocker,
+        public_discovery_fallback_state=public_discovery_fallback_state,
+        dominant_public_failure_mode=dominant_public_failure_mode,
+        zero_hit_accessible_fetch_count=zero_hit_accessible_fetch_count,
+        zero_hit_quality_reason_counts=zero_hit_quality_reason_counts,
+        zero_hit_title_samples=zero_hit_title_samples,
+        public_zero_hit_summary=public_zero_hit_summary,
+        # Sprint F188B: CT winner-slice telemetry
+        ct_subdomain_injected=ct_injected,
+        cc_archive_injected=cc_injected,
+        # F193B: Academic discovery telemetry
+        academic_findings_count=academic_findings_count,
+        # P20: PastebinMonitor + GitHubSecretScanner telemetry
+        pastebin_findings_count=pastebin_findings_count,
+        github_secrets_count=github_secrets_count,
+    )
 
 
 # Placeholder for discovery (patched in tests)

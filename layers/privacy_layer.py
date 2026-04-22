@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from ..types import (
+from hledac.universal.project_types import (
     PrivacyLevel, AnonymizationLevel, PrivacyEventCategory,
     Severity, ProtocolType, SecurityLevel
 )

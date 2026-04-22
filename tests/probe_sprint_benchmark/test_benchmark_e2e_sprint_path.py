@@ -1,6 +1,10 @@
 """
-Probe F192E.1: E2E Benchmark for Canonical Sprint Path
-======================================================
+Probe F192E.1: E2E Benchmark for Canonical Sprint Path — HERMETIC LANE
+======================================================================
+
+Hermetic release lane: zero network, canonical path, deterministic assertions.
+All doubles (feed, public discovery, CT log) are in-process and non-blocking.
+No external services required — CI-safe, deterministic.
 
 Measures canonical sprint path with focus on:
 1. Time to first persisted finding (first_finding_latency_s)
@@ -424,6 +428,7 @@ async def _run_sprint_bench(
 # E2E Benchmark Tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_benchmark_first_finding_latency():
     """
@@ -466,6 +471,7 @@ async def test_benchmark_first_finding_latency():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_benchmark_memory_budget():
     """
@@ -516,6 +522,7 @@ async def test_benchmark_memory_budget():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_benchmark_branch_mix():
     """
@@ -604,6 +611,7 @@ async def test_benchmark_branch_mix():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_benchmark_total_findings_bounded():
     """

@@ -22,7 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ..types import CommunicationConfig, MessagePriority
+from hledac.universal.project_types import CommunicationConfig, MessagePriority
 
 logger = logging.getLogger(__name__)
 

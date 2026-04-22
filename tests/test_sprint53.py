@@ -8,7 +8,11 @@ import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 import io
-from PIL import Image
+try:
+    from PIL import Image
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 import numpy as np
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
@@ -31,6 +35,7 @@ except Exception:
 # MPS ELA
 # =============================================================================
 
+@unittest.skipIf(not _PIL_AVAILABLE, "PIL not available")
 class TestMPSELA(unittest.IsolatedAsyncioTestCase):
     """Testy pro MPS akcelerovanou ELA."""
 
@@ -90,6 +95,7 @@ class TestMPSELA(unittest.IsolatedAsyncioTestCase):
 # MPS Stego
 # =============================================================================
 
+@unittest.skipIf(not _PIL_AVAILABLE, "PIL not available")
 class TestMPSStego(unittest.IsolatedAsyncioTestCase):
     """Testy pro MPS steganografii."""
 

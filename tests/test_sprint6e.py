@@ -9,7 +9,16 @@ import time
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 
-from hledac.universal.autonomous_orchestrator import ThreadSafeBoundedQueue
+# ThreadSafeBoundedQueue may be in the legacy module - use lazy import to avoid cascade errors
+def _get_ts_queue():
+    try:
+        from hledac.universal.autonomous_orchestrator import ThreadSafeBoundedQueue
+        return ThreadSafeBoundedQueue
+    except (ImportError, AttributeError):
+        pass
+    return None
+
+ThreadSafeBoundedQueue = _get_ts_queue()
 
 
 class TestThreadSafeBoundedQueue:

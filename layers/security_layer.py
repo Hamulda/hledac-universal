@@ -18,7 +18,7 @@ import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..types import (
+from hledac.universal.project_types import (
     DestructionResult,
     ObfuscationLevel,
     ObfuscationResult,

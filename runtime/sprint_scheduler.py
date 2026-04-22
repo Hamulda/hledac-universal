@@ -564,6 +564,55 @@ class SprintScheduler:
     # ── Sprint F192G: Intelligence Dispatcher wiring ────────────────────────
 
 
+    # ---------------------------------------------------------------------------
+    # Sprint 8AP: Memory watchdog callbacks for scheduler lifecycle hooks
+    # ---------------------------------------------------------------------------
+    # Watches memory pressure and calls scheduler windup/abort hooks:
+    #   CRITICAL → request_early_windup()  (graceful wind-down)
+    #   EMERGENCY → request_immediate_abort()  (abort + persist partial state)
+    #
+    # Delegates tier suspension to the dispatcher (existing behaviour).
+    # ---------------------------------------------------------------------------
+
+    class _SprintSchedulerWatchdogCallbacks:
+        """
+        MemoryWatchdogCallbacks that bridge pressure events to scheduler lifecycle.
+
+        - on_tier_suspended / on_tier_resumed: delegate to dispatcher (TIER2 policy)
+        - on_pressure_critical_windup: call scheduler.request_early_windup()
+        - on_emergency_gc: call scheduler.request_immediate_abort()
+        """
+
+        __slots__ = ("_scheduler", "_dispatcher_callbacks")
+
+        def __init__(self, scheduler: "SprintScheduler", dispatcher_callbacks: Any) -> None:
+            self._scheduler = scheduler
+            self._dispatcher_callbacks = dispatcher_callbacks
+
+        def on_tier_suspended(self, tier_name: str, level: Any) -> None:
+            try:
+                self._dispatcher_callbacks.on_tier_suspended(tier_name, level)
+            except Exception:
+                pass
+
+        def on_tier_resumed(self, tier_name: str) -> None:
+            try:
+                self._dispatcher_callbacks.on_tier_resumed(tier_name)
+            except Exception:
+                pass
+
+        def on_emergency_gc(self, snapshot: dict) -> None:
+            try:
+                self._scheduler.request_immediate_abort()
+            except Exception:
+                pass
+
+        def on_pressure_critical_windup(self, snapshot: dict) -> None:
+            try:
+                self._scheduler.request_early_windup()
+            except Exception:
+                pass
+
     def attach_dispatcher(
         self,
         session: Any = None,
@@ -577,6 +626,9 @@ class SprintScheduler:
         Watchdog is optional and also fail-soft: errors in watchdog callbacks
         are swallowed. Canonical sprint is never blocked by intelligence tier failures.
 
+        When with_watchdog=True, the watchdog is wired to scheduler lifecycle hooks:
+        CRITICAL pressure → early wind-down (preserve partial state)
+        EMERGENCY pressure → immediate abort (persist what we have)
 
         Args:
             session: optional aiohttp.ClientSession for HTTP clients
@@ -587,15 +639,24 @@ class SprintScheduler:
             IntelligenceDispatcher instance attached to this scheduler
         """
         from hledac.universal.runtime.intelligence_dispatcher import IntelligenceDispatcher
-        from hledac.universal.runtime.memory_watchdog import attach_to_dispatcher
+        from hledac.universal.runtime.memory_watchdog import (
+            attach_to_dispatcher,
+            MemoryWatchdogCallbacks,
+        )
 
         dispatcher = IntelligenceDispatcher(session=session)
         self._dispatcher = dispatcher
 
         if with_watchdog:
             try:
+                # Build dispatcher callbacks first (used by our scheduler-level wrapper)
+                from hledac.universal.runtime.memory_watchdog import _DispatcherWatchdogCallbacks
+
+                dispatcher_cbs = _DispatcherWatchdogCallbacks(dispatcher)
+                scheduler_cbs = self._SprintSchedulerWatchdogCallbacks(self, dispatcher_cbs)
                 self._watchdog = attach_to_dispatcher(
                     dispatcher,
+                    callbacks=scheduler_cbs,
                     watchdog_interval=watchdog_interval,
                 )
             except Exception:

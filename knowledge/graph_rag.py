@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 GraphRAGOrchestrator - Multi-Hop Reasoning for KuzuDB
 =======================================================
@@ -35,7 +37,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 from enum import Enum
 
 try:
@@ -45,7 +47,11 @@ except ImportError:
     NUMPY_AVAILABLE = False
     np = None
 
-from hledac.universal.legacy.persistent_layer import KnowledgeNode
+# TYPE_CHECKING block prevents import-time coupling for canonical sprint consumers.
+# At runtime, graph_rag receives KnowledgeNode instances from knowledge_layer
+# (which owns the backend) — it never constructs them directly.
+if TYPE_CHECKING:
+    from hledac.universal.legacy.persistent_layer import KnowledgeNode
 
 logger = logging.getLogger(__name__)
 

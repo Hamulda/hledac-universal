@@ -93,6 +93,9 @@ class MemoryWatchdogCallbacks:
     def on_emergency_gc(self, snapshot: dict) -> None:
         """Called on EMERGENCY level — dispatcher can trigger GC if safe."""
 
+    def on_pressure_critical_windup(self, snapshot: dict) -> None:
+        """Called when CRITICAL pressure is reached — scheduler should request early windup."""
+
 
 # =============================================================================
 # MemoryWatchdog — integration seam
@@ -204,6 +207,11 @@ class MemoryWatchdog:
         # Emergency: special handling
         if new_level == PressureLevel.EMERGENCY:
             self._handle_emergency(snapshot)
+
+        # CRITICAL windup: scheduler should begin graceful wind-down
+        # ( Fires once on CRITICAL transition, not on EMERGENCY — windup already happened )
+        if new_level == PressureLevel.CRITICAL and old_level != PressureLevel.CRITICAL:
+            self._callbacks.on_pressure_critical_windup(snapshot)
 
         # Tier2 suspension policy
         if new_level.tier2_suspended():

@@ -22,7 +22,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..types import (
+from hledac.universal.project_types import (
     ActionResult,
     ActionType,
     GhostConfig,

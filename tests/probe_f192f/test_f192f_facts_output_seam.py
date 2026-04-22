@@ -634,5 +634,124 @@ class TestSprintF192F_DuckDBStoreFactsAuthority(unittest.TestCase):
         # Must not raise — fail-open for read-only diagnostic
 
 
+# ==============================================================================
+# TestSprintF192F_SourceTaxonomyNormalization
+# ==============================================================================
+
+class TestSprintF192F_SourceTaxonomyNormalization(unittest.TestCase):
+    """
+    Sprint F192H: Source taxonomy normalization in research depth metric.
+
+    Canonical source types emitted by live pipelines and their expected tiers:
+      - ct_log (ct_log_client.py:273)          → tier 1
+      - onion_discovery (live_public_pipeline.py:1785) → tier 2
+      - academic_discovery (live_public_pipeline.py:1995) → tier 1
+      - pastebin_monitor (live_public_pipeline.py:2067) → tier 1
+      - github_secret_scanner (live_public_pipeline.py:2107) → tier 1
+      - ipfs (ti_feed_adapter.py:1367)         → tier 1
+      - shodan_search (shodan_wrapper.py:204)  → tier 1
+      - bgp_monitor (ti_feed_adapter.py:1742)  → tier 1
+      - live_public_pipeline (live_public_pipeline.py) → tier 0
+    """
+
+    def test_ct_log_in_source_tier(self):
+        """ct_log (ct_log_client.py:273) must be in _SOURCE_TIER at tier 1."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+        self.assertEqual(_SOURCE_TIER.get("ct_log"), 1,
+            "ct_log must be tier 1 in _SOURCE_TIER")
+
+    def test_onion_discovery_in_source_tier_tier2(self):
+        """onion_discovery (live_public_pipeline.py:1785) must be in _SOURCE_TIER at tier 2."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+        self.assertEqual(_SOURCE_TIER.get("onion_discovery"), 2,
+            "onion_discovery must be tier 2 in _SOURCE_TIER")
+
+    def test_ipfs_in_source_tier(self):
+        """ipfs (ti_feed_adapter.py:1367) must be in _SOURCE_TIER at tier 1."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+        self.assertEqual(_SOURCE_TIER.get("ipfs"), 1,
+            "ipfs must be tier 1 in _SOURCE_TIER")
+
+    def test_shodan_search_in_source_tier(self):
+        """shodan_search (shodan_wrapper.py:204) must be in _SOURCE_TIER at tier 1."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+        self.assertEqual(_SOURCE_TIER.get("shodan_search"), 1,
+            "shodan_search must be tier 1 in _SOURCE_TIER")
+
+    def test_bgp_monitor_in_source_tier(self):
+        """bgp_monitor (ti_feed_adapter.py:1742) must be in _SOURCE_TIER at tier 1."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+        self.assertEqual(_SOURCE_TIER.get("bgp_monitor"), 1,
+            "bgp_monitor must be tier 1 in _SOURCE_TIER")
+
+    def test_live_public_pipeline_tier0(self):
+        """live_public_pipeline must be tier 0 (indexed/surface)."""
+        from hledac.universal.export.sprint_exporter import _SOURCE_TIER
+        self.assertEqual(_SOURCE_TIER.get("live_public_pipeline"), 0,
+            "live_public_pipeline must be tier 0")
+
+    def test_ct_log_contributes_to_research_depth(self):
+        """ct_log hits contribute to non_indexed_ratio in research depth computation."""
+        from hledac.universal.export.sprint_exporter import _compute_research_depth
+
+        mock_store = MagicMock()
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"entries_per_source": {"ct_log": 50, "rss_atom_pipeline": 50}, "hits_per_source": {}}
+        mock_eh.runtime_truth = None
+
+        result = _compute_research_depth(mock_eh, None, None, None, {"_no_correlation_data": True})
+        # 50 tier-1 / 100 total = 0.5 → 10.0
+        self.assertEqual(result["breakdown"]["non_indexed_ratio"], 10.0)
+        self.assertEqual(result["depth_signals"]["deep_sources_found"], 50)
+
+    def test_onion_discovery_contributes_to_research_depth_tier2(self):
+        """onion_discovery (tier 2) hits contribute as deep sources."""
+        from hledac.universal.export.sprint_exporter import _compute_research_depth
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"entries_per_source": {"onion_discovery": 30, "live_public_pipeline": 70}, "hits_per_source": {}}
+        mock_eh.runtime_truth = None
+
+        result = _compute_research_depth(mock_eh, None, None, None, {"_no_correlation_data": True})
+        # 30 tier-2 / 100 total = 0.3 → 6.0
+        self.assertEqual(result["breakdown"]["non_indexed_ratio"], 6.0)
+
+    def test_ipfs_contributes_to_research_depth(self):
+        """ipfs (tier 1) hits contribute to non_indexed_ratio."""
+        from hledac.universal.export.sprint_exporter import _compute_research_depth
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"entries_per_source": {"ipfs": 25, "rss_atom_pipeline": 75}, "hits_per_source": {}}
+        mock_eh.runtime_truth = None
+
+        result = _compute_research_depth(mock_eh, None, None, None, {"_no_correlation_data": True})
+        # 25 tier-1 / 100 total = 0.25 → 5.0
+        self.assertEqual(result["breakdown"]["non_indexed_ratio"], 5.0)
+
+    def test_shodan_search_contributes_to_research_depth(self):
+        """shodan_search (tier 1) hits contribute to non_indexed_ratio."""
+        from hledac.universal.export.sprint_exporter import _compute_research_depth
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"entries_per_source": {"shodan_search": 40, "live_public_pipeline": 60}, "hits_per_source": {}}
+        mock_eh.runtime_truth = None
+
+        result = _compute_research_depth(mock_eh, None, None, None, {"_no_correlation_data": True})
+        # 40 tier-1 / 100 total = 0.4 → 8.0
+        self.assertEqual(result["breakdown"]["non_indexed_ratio"], 8.0)
+
+    def test_bgp_monitor_contributes_to_research_depth(self):
+        """bgp_monitor (tier 1) hits contribute to non_indexed_ratio."""
+        from hledac.universal.export.sprint_exporter import _compute_research_depth
+
+        mock_eh = MagicMock()
+        mock_eh.scorecard = {"entries_per_source": {"bgp_monitor": 20, "rss_atom_pipeline": 80}, "hits_per_source": {}}
+        mock_eh.runtime_truth = None
+
+        result = _compute_research_depth(mock_eh, None, None, None, {"_no_correlation_data": True})
+        # 20 tier-1 / 100 total = 0.2 → 4.0
+        self.assertEqual(result["breakdown"]["non_indexed_ratio"], 4.0)
+
+
 if __name__ == "__main__":
     unittest.main()

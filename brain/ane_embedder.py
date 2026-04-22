@@ -120,7 +120,7 @@ class ANEEmbedder:
 
 
 # Backward compat — importuje z kanonického mista
-from brain.ner_engine import extract_iocs_from_text, _IOC_PATTERNS
+from hledac.universal.brain.ner_engine import extract_iocs_from_text, _IOC_PATTERNS
 
 
 # ============================================================================

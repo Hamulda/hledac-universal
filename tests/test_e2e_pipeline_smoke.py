@@ -22,6 +22,7 @@ from hledac.universal.pipeline.live_feed_pipeline import (
 )
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_pipeline_produces_findings_for_known_feed():
     """

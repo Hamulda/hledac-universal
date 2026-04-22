@@ -23,7 +23,7 @@ import pytest
 
 # Import the sidecar directly (not via hledac package path)
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
-from knowledge.duckdb_store import DuckDBShadowStore
+from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 
 # ---------------------------------------------------------------------------

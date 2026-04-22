@@ -1396,6 +1396,14 @@ def _get_synthesis_outcome_payload(eh: "ExportHandoff") -> dict[str, Any] | None
 
 # Sprint F192H: Research Depth Metric
 # Source type depth tiers — higher tier = harder to reach = deeper research
+#
+# Taxonomy normalization (Sprint F192H):
+#   - ct_log (ct_log_client.py:273) and ct_log_pipeline share tier 1
+#   - onion_discovery (live_public_pipeline.py:1785) → tier 2 (dark/deep web)
+#   - ipfs (ti_feed_adapter.py:1367) → tier 1 (structured TI)
+#   - shodan_search (shodan_wrapper.py:204) → tier 1 (structured TI)
+#   - bgp_monitor (ti_feed_adapter.py:1742) → tier 1 (structured TI)
+#   - academic_discovery, pastebin_monitor, github_secret_scanner already present
 _SOURCE_TIER: dict[str, int] = {
     # Tier 0: indexed/surface (high availability, low depth)
     "rss_atom_pipeline": 0,
@@ -1404,12 +1412,17 @@ _SOURCE_TIER: dict[str, int] = {
     "api": 0,
     "planner_bridge": 0,
     # Tier 1: structured TI (moderate depth)
+    "ct_log": 1,
     "ct_log_pipeline": 1,
     "circl_pdns": 1,
     "academic_discovery": 1,
     "pastebin_monitor": 1,
     "github_secret_scanner": 1,
+    "ipfs": 1,
+    "shodan_search": 1,
+    "bgp_monitor": 1,
     # Tier 2: deep/dark web (hard to reach, high depth)
+    "onion_discovery": 2,
     "rl_research": 2,
     "tot_synthesis": 2,
     "report": 2,

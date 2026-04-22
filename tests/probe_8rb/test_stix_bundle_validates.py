@@ -1,12 +1,25 @@
 """Sprint 8RB — STIX bundle validates: export_stix_bundle() → stix2.Bundle → stix2.parse() passes."""
+import pytest
 import asyncio
 import tempfile
 import time
 from pathlib import Path
-import kuzu
-import stix2
+
+try:
+    import kuzu
+    _KUZU_AVAILABLE = True
+except ImportError:
+    _KUZU_AVAILABLE = False
+
+try:
+    import stix2
+    _STIX2_AVAILABLE = True
+except ImportError:
+    _STIX2_AVAILABLE = False
+    stix2 = None
 
 
+@pytest.mark.skipif(not _STIX2_AVAILABLE or not _KUZU_AVAILABLE, reason="stix2 and/or kuzu not available")
 def test_stix_bundle_validates():
     """Multiple IOCs → export_stix_bundle() → stix2.Bundle() → stix2.parse() does not crash."""
     from hledac.universal.knowledge.ioc_graph import IOCGraph

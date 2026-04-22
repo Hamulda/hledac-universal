@@ -22,8 +22,19 @@ from .ram_vault import (
 )
 
 # Encryption and Key Management (Sprint 61)
-from .encryption import encrypt_aes_gcm, decrypt_aes_gcm
-from .key_manager import KeyManager
+try:
+    from .encryption import encrypt_aes_gcm, decrypt_aes_gcm
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    encrypt_aes_gcm = None
+    decrypt_aes_gcm = None
+    CRYPTO_AVAILABLE = False
+try:
+    from .key_manager import KeyManager
+    KEY_MANAGER_AVAILABLE = True
+except ImportError:
+    KeyManager = None
+    KEY_MANAGER_AVAILABLE = False
 
 # Steganography Detector (from deep_research/steganography_watermark_detector.py)
 try:

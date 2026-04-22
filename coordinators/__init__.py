@@ -120,7 +120,7 @@ from .agent_coordination_engine import (
 )
 
 # Privacy enhanced research
-from ..types import PrivacyLevel
+from hledac.universal.project_types import PrivacyLevel
 from .privacy_enhanced_research import (
     PrivacyEnhancedResearch,
     PrivacyConfig,

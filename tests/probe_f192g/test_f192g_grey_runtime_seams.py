@@ -705,6 +705,248 @@ class TestF192G13_MemoryWatchdogTierPolicy:
 
 
 # =============================================================================
+# F192G-15: MemoryWatchdog — CRITICAL windup fires request_early_windup
+# =============================================================================
+
+class TestF192G15_CriticalWindupHook:
+    """CRITICAL pressure fires on_pressure_critical_windup on scheduler callbacks."""
+
+    def test_critical_transition_calls_early_windup(self):
+        """CRITICAL transition calls scheduler.request_early_windup()."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.memory_watchdog import MemoryWatchdog, PressureLevel
+
+        scheduler = MagicMock()
+        callbacks = MagicMock()
+
+        # Simulate what _SprintSchedulerWatchdogCallbacks does
+        def on_pressure_critical_windup(snapshot):
+            scheduler.request_early_windup()
+
+        callbacks.on_pressure_critical_windup = on_pressure_critical_windup
+
+        watchdog = MemoryWatchdog(callbacks=callbacks)
+        watchdog._current_level = PressureLevel.WARN  # start at WARN
+
+        # Simulate CRITICAL transition
+        watchdog._on_pressure_change("critical", {"uma_used_mb": 6650})
+
+        scheduler.request_early_windup.assert_called_once()
+
+    def test_warn_transition_does_not_call_early_windup(self):
+        """WARN transition does not call request_early_windup."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.memory_watchdog import MemoryWatchdog, PressureLevel
+
+        scheduler = MagicMock()
+        callbacks = MagicMock()
+
+        def on_pressure_critical_windup(snapshot):
+            scheduler.request_early_windup()
+
+        callbacks.on_pressure_critical_windup = on_pressure_critical_windup
+
+        watchdog = MemoryWatchdog(callbacks=callbacks)
+        watchdog._current_level = PressureLevel.NORMAL
+
+        # Simulate WARN transition (no windup expected)
+        watchdog._on_pressure_change("warn", {"uma_used_mb": 6200})
+
+        scheduler.request_early_windup.assert_not_called()
+
+
+# =============================================================================
+# F192G-16: MemoryWatchdog — EMERGENCY fires request_immediate_abort
+# =============================================================================
+
+class TestF192G16_EmergencyAbortHook:
+    """EMERGENCY pressure fires on_emergency_gc on scheduler callbacks."""
+
+    def test_emergency_transition_calls_immediate_abort(self):
+        """EMERGENCY transition calls scheduler.request_immediate_abort()."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.memory_watchdog import MemoryWatchdog, PressureLevel
+
+        scheduler = MagicMock()
+        callbacks = MagicMock()
+
+        def on_emergency_gc(snapshot):
+            scheduler.request_immediate_abort()
+
+        callbacks.on_emergency_gc = on_emergency_gc
+
+        watchdog = MemoryWatchdog(callbacks=callbacks)
+        watchdog._current_level = PressureLevel.CRITICAL
+
+        # Simulate EMERGENCY transition
+        watchdog._on_pressure_change("emergency", {"uma_used_mb": 7200})
+
+        scheduler.request_immediate_abort.assert_called_once()
+
+
+# =============================================================================
+# F192G-17: Scheduler — early windup preserves partial state
+# =============================================================================
+
+class TestF192G17_EarlyWindupPreservesState:
+    """request_early_windup() sets stop flag but does NOT mark aborted."""
+
+    def test_early_windup_sets_stop_flag_not_aborted(self):
+        """request_early_windup() sets _stop_requested but preserves partial state."""
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+            SprintSchedulerResult,
+        )
+
+        config = SprintSchedulerConfig()
+        scheduler = SprintScheduler(config)
+
+        # Initialize result object
+        scheduler._result = SprintSchedulerResult()
+        scheduler._lifecycle = None  # No lifecycle — fallback path
+
+        initial_aborted = scheduler._result.aborted
+        initial_abort_reason = scheduler._result.abort_reason
+
+        scheduler.request_early_windup()
+
+        assert scheduler._stop_requested is True
+        assert scheduler._result.aborted == initial_aborted
+        assert scheduler._result.abort_reason == initial_abort_reason
+
+
+# =============================================================================
+# F192G-18: Scheduler — immediate abort marks result as aborted
+# =============================================================================
+
+class TestF192G18_ImmediateAbortMarksResult:
+    """request_immediate_abort() marks result as aborted with reason."""
+
+    def test_immediate_abort_sets_aborted_and_reason(self):
+        """request_immediate_abort() sets _result.aborted=True and abort_reason."""
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+            SprintSchedulerResult,
+        )
+
+        config = SprintSchedulerConfig()
+        scheduler = SprintScheduler(config)
+        scheduler._result = SprintSchedulerResult()
+        scheduler._lifecycle = None
+
+        scheduler.request_immediate_abort()
+
+        assert scheduler._stop_requested is True
+        assert scheduler._result.aborted is True
+        assert scheduler._result.abort_reason == "uma_emergency"
+
+
+# =============================================================================
+# F192G-19: Scheduler watchdog callbacks — composite delegates tier policy
+# =============================================================================
+
+class TestF192G19_CompositeCallbacksDelegateTierPolicy:
+    """_SprintSchedulerWatchdogCallbacks delegates tier ops to dispatcher callbacks."""
+
+    def test_suspend_tier2_delegates_to_dispatcher(self):
+        """on_tier_suspended for TIER2 delegates to _dispatcher_callbacks."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+        from hledac.universal.runtime.memory_watchdog import PressureLevel
+
+        config = SprintSchedulerConfig()
+        scheduler = SprintScheduler(config)
+        scheduler.attach_dispatcher(session=None, with_watchdog=False)
+
+        dispatcher_cbs = MagicMock()
+        scheduler_cbs = scheduler._SprintSchedulerWatchdogCallbacks(
+            scheduler, dispatcher_cbs
+        )
+
+        scheduler_cbs.on_tier_suspended("TIER2", PressureLevel.CRITICAL)
+
+        dispatcher_cbs.on_tier_suspended.assert_called_once_with(
+            "TIER2", PressureLevel.CRITICAL
+        )
+
+    def test_resume_tier2_delegates_to_dispatcher(self):
+        """on_tier_resumed delegates to _dispatcher_callbacks."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+
+        config = SprintSchedulerConfig()
+        scheduler = SprintScheduler(config)
+        scheduler.attach_dispatcher(session=None, with_watchdog=False)
+
+        dispatcher_cbs = MagicMock()
+        scheduler_cbs = scheduler._SprintSchedulerWatchdogCallbacks(
+            scheduler, dispatcher_cbs
+        )
+
+        scheduler_cbs.on_tier_resumed("TIER2")
+
+        dispatcher_cbs.on_tier_resumed.assert_called_once_with("TIER2")
+
+    def test_critical_windup_calls_scheduler_request_early_windup(self):
+        """on_pressure_critical_windup calls scheduler.request_early_windup."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+        )
+
+        config = SprintSchedulerConfig()
+        scheduler = SprintScheduler(config)
+        scheduler.attach_dispatcher(session=None, with_watchdog=False)
+
+        dispatcher_cbs = MagicMock()
+        scheduler_cbs = scheduler._SprintSchedulerWatchdogCallbacks(
+            scheduler, dispatcher_cbs
+        )
+
+        # Verify that calling on_pressure_critical_windup sets _stop_requested
+        # (the actual effect of request_early_windup on the scheduler)
+        assert scheduler._stop_requested is False
+        scheduler_cbs.on_pressure_critical_windup({"uma_used_mb": 6650})
+        assert scheduler._stop_requested is True
+
+    def test_emergency_gc_calls_scheduler_request_immediate_abort(self):
+        """on_emergency_gc calls scheduler.request_immediate_abort."""
+        from unittest.mock import MagicMock
+        from hledac.universal.runtime.sprint_scheduler import (
+            SprintScheduler,
+            SprintSchedulerConfig,
+            SprintSchedulerResult,
+        )
+
+        config = SprintSchedulerConfig()
+        scheduler = SprintScheduler(config)
+        scheduler.attach_dispatcher(session=None, with_watchdog=False)
+        scheduler._result = SprintSchedulerResult()
+
+        dispatcher_cbs = MagicMock()
+        scheduler_cbs = scheduler._SprintSchedulerWatchdogCallbacks(
+            scheduler, dispatcher_cbs
+        )
+
+        # Verify that calling on_emergency_gc sets stop_requested and marks aborted
+        assert scheduler._stop_requested is False
+        assert scheduler._result.aborted is False
+        scheduler_cbs.on_emergency_gc({"uma_used_mb": 7200})
+        assert scheduler._stop_requested is True
+        assert scheduler._result.aborted is True
+        assert scheduler._result.abort_reason == "uma_emergency"
+
+
+# =============================================================================
 # F192G-14: Fail-soft teardown — scheduler cleans up sidecar on exit
 # =============================================================================
 

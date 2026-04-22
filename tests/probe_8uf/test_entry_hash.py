@@ -3,7 +3,7 @@ import pytest
 import sys
 sys.path.insert(0, '.')
 
-from discovery.rss_atom_adapter import _entry_hash
+from hledac.universal.discovery.rss_atom_adapter import _entry_hash
 
 
 class TestEntryHash:

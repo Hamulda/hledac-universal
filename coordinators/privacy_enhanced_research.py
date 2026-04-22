@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 
-from ..types import PrivacyLevel
+from hledac.universal.project_types import PrivacyLevel
 
 logger = logging.getLogger(__name__)
 

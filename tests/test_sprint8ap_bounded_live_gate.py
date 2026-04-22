@@ -755,8 +755,8 @@ class TestSprint8APRegressionSubset(unittest.TestCase):
     """Regression subset: run a targeted subset of 8AJ/8AL/8AN tests."""
 
     def test_8aj_fields_from_orch_source(self):
-        """8AJ telemetry fields must exist in autonomous_orchestrator.py source."""
-        src_path = Path(__file__).parent.parent / "autonomous_orchestrator.py"
+        """8AJ telemetry fields must exist in legacy/autonomous_orchestrator.py source."""
+        src_path = Path(__file__).parent.parent / "legacy" / "autonomous_orchestrator.py"
         src = src_path.read_text()
         for field in [
             "_runtime_artifacts_outside_ramdisk_count",

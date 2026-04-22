@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..types import (
+from hledac.universal.project_types import (
     BrowserType,
     CaptchaSolution,
     CaptchaType,

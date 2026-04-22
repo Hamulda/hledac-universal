@@ -43,7 +43,7 @@ def _get_mlx():
             _MLX_CORE = None
     return _MLX_CORE
 
-from ..types import (
+from hledac.universal.project_types import (
     MemoryConfig,
     MemoryPressureError,
     OrchestratorState,

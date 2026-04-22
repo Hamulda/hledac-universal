@@ -18,13 +18,6 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from hledac.universal.legacy.persistent_layer import (
-    EdgeType,
-    KnowledgeEdge,
-    KnowledgeNode,
-    NodeType,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +104,16 @@ class KnowledgeGraphBuilder:
         """Generate a consistent ID from content."""
         return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
 
+    def _get_legacy_types(self):
+        """Lazy import of legacy types to avoid import-time coupling."""
+        from hledac.universal.legacy.persistent_layer import (
+            EdgeType,
+            KnowledgeEdge,
+            KnowledgeNode,
+            NodeType,
+        )
+        return EdgeType, KnowledgeEdge, KnowledgeNode, NodeType
+
     def process_and_store(
         self,
         content: str,
@@ -129,6 +132,7 @@ class KnowledgeGraphBuilder:
             List of created node IDs
         """
         node_ids = []
+        EdgeType, KnowledgeEdge, KnowledgeNode, NodeType = self._get_legacy_types()
 
         facts = self.extract_facts(content)
 
