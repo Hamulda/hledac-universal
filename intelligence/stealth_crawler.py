@@ -2708,6 +2708,9 @@ class StreamingMonitor:
     async def cleanup(self) -> None:
         """Cleanup all resources"""
         await self.stop_monitoring()
+        if self._session:
+            await self._session.close()
+            self._session = None
         self._sources.clear()
         self._alert_rules.clear()
         self._alerts.clear()

@@ -251,6 +251,13 @@ class SprintSchedulerConfig:
     # Sprint F193B: Hypothesis → finding feedback loop caps
     max_hypothesis_depth: int = 3              # max iteration depth for hypothesis-driven pivots
     max_hypothesis_queries: int = 10           # max total hypothesis-driven pivot queries
+    # Aggressive mode: fans out feed/public/CT branches concurrently per cycle
+    aggressive_mode: bool = False              # if True, run branches in parallel
+    aggressive_branch_timeout_s: float = 45.0  # per-branch timeout in aggressive mode
+    # Sprint F195B: Per-branch timeout budget in seconds (aggressive mode uses 8.0)
+    branch_timeout_budget_s: float = 0.0       # 0 = use aggressive_branch_timeout_s
+    # Partial export interval — every N findings in aggressive mode (recovery artifact)
+    partial_export_findings_interval: int = 10
     # Tier budgets in seconds — only enforced approximately via cycle limits
     # Sources NOT listed here fall to OTHER tier
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
@@ -325,6 +332,12 @@ class SprintSchedulerResult:
     dominant_feed_blocker: str = ""              # one of feed blocker type names above
     dominant_branch_blocker: str = ""            # "public" or "feed" — whichever first had non-empty blocker
     branch_degradation_summary: str = ""         # e.g. "public_degraded_feed_zero"
+    # Sprint F195B: Branch timeout tracking for aggressive mode
+    # Incremented each time a branch (public/CT) is cancelled due to timeout
+    branch_timeout_count: int = 0
+    # Branch-level degradation flags — set when corresponding branch times out
+    public_branch_timed_out: bool = False
+    ct_branch_timed_out: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +534,8 @@ class SprintScheduler:
         self.sprint_id: str = ""
         # Sprint 8VD §F: Scorecard tracking
         self._finding_count: int = 0
+        # Partial export tracking — reset per sprint
+        self._last_partial_finding_count: int = 0
         self._synthesis_engine: str = "unknown"
         # Sprint 8VI §B: RL adaptive pivot — task_type → reward history
         self._pivot_rewards: dict[str, list[float]] = {}
@@ -949,15 +964,16 @@ class SprintScheduler:
         if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
             self._result.pre_loop_blocker_reason = "dedup_preload"
 
-        # P12: Load Hermes engine with memory guard (bounded M1 8GB lifecycle)
+        # P12: Hermes prewarm — explicit policy by mode (bounded M1 8GB lifecycle)
+        # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
+        # Stable mode: current safe behavior via ModelManager memory guards
         # Hermes ~2GB: loaded once at sprint start, released at teardown
-        # M1 8GB: fail-soft on memory pressure — ToT is optional
         self._hermes_engine = None
         self._memory_manager = None
         try:
-            await self._load_hermes_for_sprint()
+            await self._prewarm_hermes_for_sprint()
         except Exception as e:
-            log.debug(f"[P12] Hermes load failed, ToT will be skipped: {e}")
+            log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
             self._hermes_engine = None
 
         # Sprint 8SA: Source scoring — order sources by priority at start of ACTIVE
@@ -989,6 +1005,8 @@ class SprintScheduler:
                 if adapter._abort_requested:
                     self._result.aborted = True
                     self._result.abort_reason = adapter._abort_reason or "lifecycle_abort"
+                    # Sprint F195B: write partial on abort so latest state survives
+                    await self._maybe_export_partial(lifecycle)
                     break
 
                 # Periodic tick
@@ -1002,6 +1020,8 @@ class SprintScheduler:
                     await self._flush_dedup()
                     # Sprint 8VQ: Evaluate advisory gate at WINDUP entry (diagnostic only)
                     self.evaluate_advisory_gate()
+                    # Sprint F195B: write partial on early windup so latest state survives
+                    await self._maybe_export_partial(lifecycle)
                     break  # exit work loop → teardown
 
                 # ── Sprint 8SA: Source scoring re-ordering ───────────────────
@@ -1046,6 +1066,9 @@ class SprintScheduler:
                 )
                 self._result.cycles_completed += 1
 
+                # Sprint F195B: Partial export every N findings in aggressive mode
+                await self._maybe_export_partial(lifecycle)
+
                 # Sprint 8TB: Drain pivot queue after each ACTIVE cycle
                 if current_phase_str == "ACTIVE":
                     pivot_n = await self._drain_pivot_queue()
@@ -1072,6 +1095,8 @@ class SprintScheduler:
                 # cycle if lifecycle already entered windup.
                 if adapter.should_enter_windup(now_monotonic):
                     log.debug("[8BK] Windup requested after sleep — exiting.")
+                    # Sprint F195B: write partial on windup so latest state survives
+                    await self._maybe_export_partial(lifecycle)
                     break
 
                 # Sprint 8UC B.4: Speculative prefetch every 15s
@@ -1182,10 +1207,9 @@ class SprintScheduler:
     ) -> bool:
         """
         Run one bounded fetch cycle across all sources, tier-ordered.
+        In aggressive mode, feed/public/CT branches run concurrently with per-branch timeouts.
         Returns False when lifecycle says stop; True otherwise.
         """
-        async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
-
         # Build tiered work list
         work_items = self._build_work_items(sources)
 
@@ -1205,10 +1229,32 @@ class SprintScheduler:
         if not work_items:
             return True  # nothing to do this cycle
 
+        if self._config.aggressive_mode:
+            return await self._run_one_cycle_aggressive(
+                lifecycle, work_items, query, duckdb_store
+            )
+        else:
+            return await self._run_one_cycle_stable(
+                lifecycle, work_items, query, duckdb_store
+            )
+
+    async def _run_one_cycle_stable(
+        self,
+        lifecycle,
+        work_items: list,
+        query: str,
+        duckdb_store: Any,
+    ) -> bool:
+        """
+        Stable mode: feed sources run first, then public discovery runs after.
+        CT discovery runs once after the main cycle loop (in __main__.py).
+        """
+        async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
+
         # Run sources under TaskGroup (bounded concurrency)
         semaphore = asyncio.Semaphore(self._config.max_parallel_sources)
 
-        async def fetch_one(work: SourceWork) -> tuple[str, FeedPipelineRunResult]:
+        async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
             async with semaphore:
                 try:
                     result = await asyncio.wait_for(
@@ -1251,14 +1297,147 @@ class SprintScheduler:
             self._process_result(feed_url, result)
 
         # Sprint 8XE: Run public discovery pipeline in same cycle (canonical parity)
-        # Both pipelines run concurrently via TaskGroup; failure of one does not fail the other
-        # P12: Pass hermes_engine and memory_manager for post-storage ToT hypothesis layer
         await self._run_public_discovery_in_cycle(
             query=query,
             duckdb_store=duckdb_store,
             hermes_engine=self._hermes_engine,
             memory_manager=self._memory_manager,
         )
+
+        return True
+
+    async def _run_one_cycle_aggressive(
+        self,
+        lifecycle,
+        work_items: list,
+        query: str,
+        duckdb_store: Any,
+    ) -> bool:
+        """
+        Aggressive mode: feed, public discovery, and CT branches fire concurrently.
+        Each branch has its own timeout budget; slow branches are cancelled without
+        affecting other branches.
+
+        Branch timeouts:
+        - Feed: per-source 30s (existing), overall bounded by aggressive_branch_timeout_s
+        - Public: aggressive_branch_timeout_s
+        - CT: aggressive_branch_timeout_s
+        """
+        import asyncio as _asyncio
+
+        # Sprint F195B: Use explicit branch budget if set, otherwise fall back to aggressive_branch_timeout_s
+        branch_budget_s = self._config.branch_timeout_budget_s
+        timeout_s = branch_budget_s if branch_budget_s > 0 else self._config.aggressive_branch_timeout_s
+
+        async def _run_feed_branch() -> None:
+            """Feed branch: fetches all sources concurrently."""
+            async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
+            semaphore = _asyncio.Semaphore(self._config.max_parallel_sources)
+
+            async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
+                async with semaphore:
+                    try:
+                        result = await _asyncio.wait_for(
+                            async_run_live_feed(
+                                feed_url=work.feed_url,
+                                max_entries=work.max_entries,
+                            ),
+                            timeout=30.0,
+                        )
+                        return work.feed_url, result
+                    except _asyncio.TimeoutError:
+                        return work.feed_url, FeedPipelineRunResult(
+                            feed_url=work.feed_url,
+                            fetched_entries=0,
+                            accepted_findings=0,
+                            stored_findings=0,
+                            patterns_configured=0,
+                            matched_patterns=0,
+                            pages=(),
+                            error="timeout",
+                        )
+                    except Exception as exc:
+                        return work.feed_url, FeedPipelineRunResult(
+                            feed_url=work.feed_url,
+                            fetched_entries=0,
+                            accepted_findings=0,
+                            stored_findings=0,
+                            patterns_configured=0,
+                            matched_patterns=0,
+                            pages=(),
+                            error=f"exception:{type(exc).__name__}:{exc}",
+                        )
+
+            tasks = [fetch_one(w) for w in work_items]
+            results: list[tuple[str, FeedPipelineRunResult]] = await _asyncio.gather(*tasks)
+            for feed_url, result in results:
+                self._process_result(feed_url, result)
+
+        async def _run_public_branch() -> None:
+            """Public discovery branch with timeout."""
+            try:
+                await _asyncio.wait_for(
+                    self._run_public_discovery_in_cycle(
+                        query=query,
+                        duckdb_store=duckdb_store,
+                        hermes_engine=self._hermes_engine,
+                        memory_manager=self._memory_manager,
+                    ),
+                    timeout=timeout_s,
+                )
+            except _asyncio.TimeoutError:
+                log.debug("[aggressive] Public branch timed out after %ss", timeout_s)
+                self._result.public_error = "aggressive_timeout"
+            except Exception as exc:
+                log.debug("[aggressive] Public branch error: %s", exc)
+                self._result.public_error = f"{type(exc).__name__}:{exc}"
+
+        async def _run_ct_branch() -> None:
+            """CT log discovery branch with timeout."""
+            if self._ct_log_client is None or duckdb_store is None:
+                return
+            try:
+                await _asyncio.wait_for(
+                    self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store),
+                    timeout=timeout_s,
+                )
+            except _asyncio.TimeoutError:
+                log.debug("[aggressive] CT branch timed out after %ss", timeout_s)
+                self._result.ct_log_error = "aggressive_timeout"
+            except Exception as exc:
+                log.debug("[aggressive] CT branch error: %s", exc)
+                self._result.ct_log_error = f"{type(exc).__name__}:{exc}"
+
+        # Launch all branches concurrently
+        feed_branch = _asyncio.create_task(_run_feed_branch())
+        public_branch = _asyncio.create_task(_run_public_branch())
+        ct_branch = _asyncio.create_task(_run_ct_branch())
+
+        # Wait for all branches with overall timeout
+        # Use shield so cancellation of one branch doesn't affect others
+        done, pending = await _asyncio.wait(
+            [feed_branch, public_branch, ct_branch],
+            timeout=timeout_s,
+            return_when=_asyncio.ALL_COMPLETED,
+        )
+
+        # Cancel any pending (slow) branches and log degradation
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except _asyncio.CancelledError:
+                pass  # Expected
+
+        # Sprint F195B: Track which branches timed out for diagnostics
+        if public_branch in pending:
+            log.debug("[aggressive] Public branch did not complete within %ss", timeout_s)
+            self._result.public_branch_timed_out = True
+            self._result.branch_timeout_count += 1
+        if ct_branch in pending:
+            log.debug("[aggressive] CT branch did not complete within %ss", timeout_s)
+            self._result.ct_branch_timed_out = True
+            self._result.branch_timeout_count += 1
 
         return True
 
@@ -1529,6 +1708,38 @@ class SprintScheduler:
                 pass
             self._duckdb_read_con = None
 
+    async def _prewarm_hermes_for_sprint(self) -> None:
+        """
+        P12: Mode-aware Hermes prewarm policy.
+
+        Aggressive mode: prewarm blocks until Hermes is loaded, unless RSS > 4GB
+        (hard headroom rule — skip fail-soft, ToT is skipped for that run).
+
+        Stable mode: current safe behavior via ModelManager memory guards
+        (soft pressure clear + hard admission gate — no RSS 4GB pre-check).
+
+        Bounded lifecycle: loaded once at BOOT/WARMUP, released at TEARDOWN.
+        Fail-soft: memory pressure on load skips ToT, does not abort sprint.
+        """
+        # P12 prewarm: RSS headroom check for aggressive mode
+        # Hard headroom rule: if RSS > 4GB before prewarm, skip Hermes fail-soft
+        RSS_PREWARM_HEADROOM_GB = 4.0
+        if self._config.aggressive_mode:
+            from hledac.universal.brain.model_manager import _get_current_rss_gb
+            rss_before = _get_current_rss_gb()
+            if rss_before > RSS_PREWARM_HEADROOM_GB:
+                log.debug(
+                    f"[P12] Skipping Hermes prewarm — RSS {rss_before:.2f}GB "
+                    f"> {RSS_PREWARM_HEADROOM_GB}GB headroom threshold"
+                )
+                self._hermes_engine = None
+                self._memory_manager = None
+                return
+
+        # Shared load path via ModelManager (canonical lifecycle owner)
+        # ModelManager enforces M1 8GB memory admission
+        await self._load_hermes_for_sprint()
+
     async def _load_hermes_for_sprint(self) -> None:
         """
         P12: Load Hermes engine at sprint start via ModelManager (canonical lifecycle owner).
@@ -1657,6 +1868,58 @@ class SprintScheduler:
                 lifecycle.mark_teardown_started()
         except Exception:
             pass  # teardown is best-effort
+
+    # ── Partial Export (aggressive mode) ──────────────────────────────────
+
+    async def _maybe_export_partial(self, lifecycle) -> None:
+        """
+        Write a partial JSON artifact if the findings interval has been reached.
+
+        Called every cycle in aggressive mode.  Also callable on early windup
+        or abort to ensure the latest partial survives.
+        """
+        if not self._config.aggressive_mode:
+            return
+        interval = self._config.partial_export_findings_interval
+        if interval <= 0:
+            return
+        delta = self._finding_count - self._last_partial_finding_count
+        if delta < interval:
+            return
+
+        # Build minimal handoff dict from current scheduler state
+        try:
+            from hledac.universal.export.sprint_exporter import export_partial_sprint
+
+            runtime_truth = {
+                "is_meaningful": self._finding_count > 0,
+                "accepted_findings": self._finding_count,
+                "cycles_completed": self._result.cycles_completed,
+                "aggressive_mode": True,
+            }
+            scorecard = {
+                "cycles_started": self._result.cycles_started,
+                "cycles_completed": self._result.cycles_completed,
+                "total_pattern_hits": self._result.total_pattern_hits,
+            }
+            handoff_dict = {
+                "sprint_id": self.sprint_id or "unknown",
+                "runtime_truth": runtime_truth,
+                "scorecard": scorecard,
+            }
+
+            await export_partial_sprint(
+                store=self._duckdb_store,
+                handoff=handoff_dict,
+                sprint_id=self.sprint_id or "unknown",
+                finding_count=self._finding_count,
+            )
+            self._last_partial_finding_count = self._finding_count
+            log.debug(
+                f"[PARTIAL-EXPORT] triggered at finding_count={self._finding_count}"
+            )
+        except Exception as ex:
+            log.warning(f"[PARTIAL-EXPORT] _maybe_export_partial failed (non-fatal): {ex}")
 
     # ── Export ────────────────────────────────────────────────────────────
 

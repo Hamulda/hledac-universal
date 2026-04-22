@@ -189,8 +189,8 @@ class TestP12BoundedBehavior:
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        # P12 block spans ~60 lines with nested try — use 5000 chars to capture full scope
-        p12_block = source[p12_start:p12_start + 5000]
+        # P12 block is large (~90 lines) — use 7000 chars to capture full scope including outer except
+        p12_block = source[p12_start:p12_start + 7000]
 
         # P12 wrapped in try/except with pass
         assert "except Exception:" in p12_block, (
@@ -372,16 +372,16 @@ class TestP12DILoadWire:
 
     def test_scheduler_loads_hermes_at_sprint_start(self):
         """
-        SprintScheduler loads Hermes at sprint start (_load_hermes_for_sprint).
+        SprintScheduler prewarms Hermes at sprint start (_prewarm_hermes_for_sprint).
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
         """
         import inspect
         from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
-        # Check that run() calls _load_hermes_for_sprint
+        # Check that run() calls _prewarm_hermes_for_sprint (mode-aware prewarm)
         source = inspect.getsource(SprintScheduler.run)
-        assert "_load_hermes_for_sprint" in source, (
-            "Scheduler must call _load_hermes_for_sprint at sprint start — bounded Hermes lifecycle"
+        assert "_prewarm_hermes_for_sprint" in source, (
+            "Scheduler must call _prewarm_hermes_for_sprint at sprint start — bounded Hermes lifecycle"
         )
 
     def test_scheduler_releases_hermes_at_teardown(self):
@@ -610,6 +610,176 @@ class TestP12HermesLifecycleUnderModelManager:
         assert "store is not None" in p12_block
         assert "hermes_engine is not None" in p12_block
         assert "total_stored > 0" in p12_block
+
+
+class TestP12ParallelHypothesisBurst:
+    """Sprint P12: Parallel hypothesis burst — bounded concurrent ToT evaluation."""
+
+    def test_parallel_hypothesis_burst_keeps_max_five_cap(self):
+        """Up to 5 hypotheses are evaluated concurrently — cap of 5 is preserved."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 5000]
+
+        # Must still cap at 5: hypotheses[:5]
+        assert "hypotheses[:5]" in p12_block or "hypotheses_to_eval" in p12_block, (
+            "P12 must still cap hypotheses at 5 in the concurrent burst path"
+        )
+        # Concurrent tasks created from capped list
+        assert "asyncio.as_completed" in p12_block or "tasks" in p12_block, (
+            "P12 must use asyncio.as_completed for concurrent ToT evaluation"
+        )
+
+    def test_tot_burst_uses_per_hypothesis_timeout(self):
+        """Each ToT task has its own 15s timeout budget — no single task blocks the burst."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 5000]
+
+        # Per-hypothesis timeout of 15s
+        assert "timeout_s: float = 15.0" in p12_block or "15.0" in p12_block, (
+            "P12 burst must use 15s per-hypothesis timeout — no runaway ToT tasks"
+        )
+        # Timeout applied via asyncio.wait_for inside the task
+        assert "asyncio.wait_for" in p12_block, (
+            "P12 must apply asyncio.wait_for with timeout inside each ToT task"
+        )
+
+    def test_first_three_completed_results_enqueue_pivots_immediately(self):
+        """as_completed iterates in arrival order — first completed ToT results feed enqueue immediately."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 5000]
+
+        # as_completed ensures first finished results trigger pivot enqueue
+        assert "asyncio.as_completed(tasks)" in p12_block, (
+            "P12 must use asyncio.as_completed to process results in arrival order"
+        )
+        # Pivot enqueue inside the as_completed loop
+        assert "enqueue_hypothesis_pivot" in p12_block, (
+            "P12 must enqueue pivots as results arrive — first 3 trigger scheduler work"
+        )
+
+    def test_failed_tot_tasks_do_not_block_other_hypotheses(self):
+        """Fail-soft: one failed ToT task does not fail the others — asyncio.as_completed handles results independently."""
+        from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+        source = inspect.getsource(async_run_live_public_pipeline)
+
+        p12_start = source.find("# P12: Hypothesis generation")
+        p12_block = source[p12_start:p12_start + 5000]
+
+        # except asyncio.TimeoutError with return "" — fail-soft per task
+        assert "asyncio.TimeoutError" in p12_block and 'return ""' in p12_block, (
+            "P12 must catch TimeoutError per-task and return empty string — fail-soft"
+        )
+        # except Exception with return "" — broad fail-soft
+        assert "except Exception as e:" in p12_block and 'return ""' in p12_block, (
+            "P12 must catch all exceptions per-task and return empty string — fail-soft"
+        )
+
+
+class TestP12HermesPrewarmPolicy:
+    """
+    Test Hermes prewarm policy for aggressive vs stable mode.
+
+    Invariant table:
+    | Test | Invariant |
+    |------|-----------|
+    | test_aggressive_mode_blocks_until_hermes_prewarm | Aggressive mode calls _prewarm_hermes_for_sprint which blocks until loaded |
+    | test_skip_hermes_prewarm_when_rss_above_4gb | When RSS > 4GB before prewarm, Hermes is skipped (aggressive mode) |
+    | test_teardown_still_releases_hermes_after_prewarm | After prewarm+load, teardown still calls _unload_hermes_at_teardown |
+    """
+
+    @pytest.mark.asyncio
+    async def test_aggressive_mode_blocks_until_hermes_prewarm(self):
+        """
+        Aggressive mode: _prewarm_hermes_for_sprint blocks until Hermes is loaded.
+        The prewarm call is synchronous from run() — no async fan-out until prewarm completes.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        # _prewarm_hermes_for_sprint is an async method that blocks until load completes
+        source = inspect.getsource(SprintScheduler._prewarm_hermes_for_sprint)
+        assert "async def _prewarm_hermes_for_sprint" in source, (
+            "_prewarm_hermes_for_sprint must be async — blocks caller until load completes"
+        )
+
+        # run() awaits _prewarm_hermes_for_sprint before entering the main cycle loop
+        run_source = inspect.getsource(SprintScheduler.run)
+        # The prewarm call is awaited in run() before the while loop
+        assert "await self._prewarm_hermes_for_sprint()" in run_source, (
+            "Aggressive mode: prewarm must be awaited before main fan-out loop"
+        )
+
+    @pytest.mark.asyncio
+    async def test_skip_hermes_prewarm_when_rss_above_4gb(self):
+        """
+        Aggressive mode: when RSS > 4GB before prewarm, Hermes is skipped fail-soft.
+        Hard headroom rule: RSS > 4GB means insufficient headroom for safe prewarm.
+        """
+        import sys
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+        from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+        from hledac.universal.brain import model_manager
+
+        # Aggressive mode config
+        config = SprintSchedulerConfig(
+            sprint_duration_s=30.0,
+            export_enabled=False,
+            aggressive_mode=True,  # Aggressive mode
+        )
+        scheduler = SprintScheduler(config)
+
+        # Mock load_model to track if it gets called
+        mock_mm_instance = MagicMock()
+        mock_mm_instance.load_model = AsyncMock()
+        original_mm = sys.modules.get("hledac.universal.brain.model_manager")
+
+        # Create a proper callable mock that returns 4.5 when called
+        rss_mock = MagicMock(return_value=4.5)
+
+        # Patch get_model_manager to return our mock, and _get_current_rss_gb to return 4.5
+        # Both on the actual module (not sys.modules replacement) so the runtime import works
+        with patch.object(model_manager, "get_model_manager", MagicMock(return_value=mock_mm_instance)), \
+             patch.object(model_manager, "_get_current_rss_gb", rss_mock):
+            await scheduler._prewarm_hermes_for_sprint()
+
+        # Hermes must be None (skipped due to RSS > 4GB)
+        assert scheduler._hermes_engine is None, (
+            "Hermes must be None when RSS > 4GB before prewarm — skip fail-soft"
+        )
+        # load_model must NOT have been called (skipped before even trying)
+        mock_mm_instance.load_model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_teardown_still_releases_hermes_after_prewarm(self):
+        """
+        After successful prewarm+load, teardown still calls _unload_hermes_at_teardown.
+        Verifies bounded lifecycle: load at BOOT, release at TEARDOWN.
+        """
+        import inspect
+        from hledac.universal.runtime.sprint_scheduler import SprintScheduler
+
+        # run() must call _unload_hermes_at_teardown at teardown
+        source = inspect.getsource(SprintScheduler.run)
+        assert "_unload_hermes_at_teardown" in source, (
+            "Teardown must call _unload_hermes_at_teardown — bounded Hermes lifecycle"
+        )
+
+        # _unload_hermes_at_teardown must call ModelManager.release_model
+        unload_source = inspect.getsource(SprintScheduler._unload_hermes_at_teardown)
+        assert 'release_model("hermes")' in unload_source or "release_model('hermes')" in unload_source, (
+            "_unload_hermes_at_teardown must call ModelManager.release_model('hermes')"
+        )
 
 
 if __name__ == "__main__":

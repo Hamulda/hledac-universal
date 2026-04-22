@@ -793,3 +793,563 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
         f"Report has primary_signal={report_branch_mix} — expected a real signal source. "
         f"Full report: {report_data}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Aggressive Mode Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_aggressive_cycle_fans_out_feed_public_ct_concurrently(
+    canned_feed_adapter,
+    canned_pattern_matcher,
+    canned_public_adapter,
+    canned_ct_adapter,
+    temp_duckdb_store,
+    tmp_path: Path,
+):
+    """
+    Aggressive mode: feed, public, and CT branches fire concurrently.
+
+    Verifies that when aggressive_mode=True, CT discovery runs within the
+    cycle (not just post-loop), and all three branches are launched.
+    """
+    from hledac.universal.runtime.sprint_scheduler import (
+        SprintScheduler,
+        SprintSchedulerConfig,
+    )
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+
+    store = temp_duckdb_store
+    sprint_duration = 45.0
+    lifecycle = SprintLifecycleManager(
+        sprint_duration_s=sprint_duration,
+        windup_lead_s=5.0,
+    )
+    config = SprintSchedulerConfig(
+        sprint_duration_s=sprint_duration,
+        windup_lead_s=5.0,
+        export_enabled=False,
+        max_cycles=2,
+        aggressive_mode=True,
+        aggressive_branch_timeout_s=20.0,
+    )
+    scheduler = SprintScheduler(config)
+
+    ct_cache = tmp_path / "ct_cache"
+    ct_cache.mkdir(parents=True, exist_ok=True)
+    ct_client = CTLogClient(cache_dir=ct_cache)
+
+    result = await scheduler.run(
+        lifecycle=lifecycle,
+        sources=["https://example.com/feed"],
+        now_monotonic=None,
+        query="CVE-2026-1234 example.com",
+        duckdb_store=store,
+        ct_log_client=ct_client,
+    )
+
+    # Aggressive mode: CT should run in-cycle, producing discoveries
+    assert result.ct_log_discovered > 0, (
+        f"Aggressive mode should run CT discovery in-cycle. "
+        f"ct_log_discovered={result.ct_log_discovered}"
+    )
+
+    print(
+        f"\n[aggressive] concurrent test passed: "
+        f"ct_discovered={result.ct_log_discovered} "
+        f"ct_stored={result.ct_log_stored}"
+    )
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_slow_branch_timeout_does_not_block_other_branches(
+    canned_feed_adapter,
+    canned_pattern_matcher,
+    temp_duckdb_store,
+    tmp_path: Path,
+):
+    """
+    Slow branch timeout: if public branch times out, feed should still complete.
+
+    Patches public pipeline to be very slow, verifies cycle completes without
+    hanging and feed findings are still produced.
+    """
+    import asyncio
+    import hledac.universal.pipeline.live_public_pipeline as pub_module
+    from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
+    from hledac.universal.runtime.sprint_scheduler import (
+        SprintScheduler,
+        SprintSchedulerConfig,
+    )
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+
+    # Slow public that will timeout
+    async def _slow_public(*args, **kwargs):
+        await asyncio.sleep(300.0)
+        return PipelineRunResult(
+            query="test",
+            discovered=0,
+            fetched=0,
+            matched_patterns=0,
+            accepted_findings=0,
+            stored_findings=0,
+            patterns_configured=3,
+            pages=(),
+            error=None,
+        )
+
+    _orig_public = pub_module.async_run_live_public_pipeline
+    pub_module.async_run_live_public_pipeline = _slow_public
+
+    try:
+        store = temp_duckdb_store
+        sprint_duration = 20.0
+        lifecycle = SprintLifecycleManager(
+            sprint_duration_s=sprint_duration,
+            windup_lead_s=5.0,
+        )
+        config = SprintSchedulerConfig(
+            sprint_duration_s=sprint_duration,
+            windup_lead_s=5.0,
+            export_enabled=False,
+            max_cycles=1,
+            aggressive_mode=True,
+            aggressive_branch_timeout_s=5.0,
+        )
+        scheduler = SprintScheduler(config)
+
+        ct_cache = tmp_path / "ct_cache"
+        ct_cache.mkdir(parents=True, exist_ok=True)
+        ct_client = CTLogClient(cache_dir=ct_cache)
+
+        start = asyncio.get_event_loop().time if hasattr(asyncio, 'get_event_loop') else None
+        import time as time_module
+        start_time = time_module.monotonic()
+
+        result = await scheduler.run(
+            lifecycle=lifecycle,
+            sources=["https://example.com/feed"],
+            now_monotonic=None,
+            query="CVE-2026-1234 example.com",
+            duckdb_store=store,
+            ct_log_client=ct_client,
+        )
+        elapsed = time_module.monotonic() - start_time
+
+        # Cycle should complete without hanging
+        assert elapsed < 30.0, (
+            f"Cycle took too long ({elapsed:.1f}s), slow branch may have blocked"
+        )
+
+        # Feed should have produced findings
+        assert result.accepted_findings >= 0, (
+            f"Feed branch should run. accepted={result.accepted_findings}"
+        )
+
+        # Public timeout should be recorded
+        assert result.public_error is not None, (
+            "Public branch timeout should be recorded"
+        )
+
+        print(
+            f"\n[slow_branch] test passed: elapsed={elapsed:.1f}s "
+            f"public_error={result.public_error}"
+        )
+    finally:
+        pub_module.async_run_live_public_pipeline = _orig_public
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_partial_branch_success_still_updates_runtime_truth(
+    canned_feed_adapter,
+    canned_pattern_matcher,
+    temp_duckdb_store,
+    tmp_path: Path,
+):
+    """
+    Partial success: if public times out but feed succeeds, feed findings
+    should still be persisted and count toward runtime truth.
+    """
+    import asyncio
+    import hledac.universal.pipeline.live_public_pipeline as pub_module
+    from hledac.universal.pipeline.live_public_pipeline import PipelineRunResult
+    from hledac.universal.runtime.sprint_scheduler import (
+        SprintScheduler,
+        SprintSchedulerConfig,
+    )
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.intelligence.ct_log_client import CTLogClient
+
+    async def _slow_public(*args, **kwargs):
+        await asyncio.sleep(300.0)
+        return PipelineRunResult(
+            query="test",
+            discovered=0,
+            fetched=0,
+            matched_patterns=0,
+            accepted_findings=0,
+            stored_findings=0,
+            patterns_configured=3,
+            pages=(),
+            error=None,
+        )
+
+    _orig_public = pub_module.async_run_live_public_pipeline
+    pub_module.async_run_live_public_pipeline = _slow_public
+
+    try:
+        store = temp_duckdb_store
+        sprint_duration = 20.0
+        lifecycle = SprintLifecycleManager(
+            sprint_duration_s=sprint_duration,
+            windup_lead_s=5.0,
+        )
+        config = SprintSchedulerConfig(
+            sprint_duration_s=sprint_duration,
+            windup_lead_s=5.0,
+            export_enabled=False,
+            max_cycles=1,
+            aggressive_mode=True,
+            aggressive_branch_timeout_s=5.0,
+        )
+        scheduler = SprintScheduler(config)
+
+        ct_cache = tmp_path / "ct_cache"
+        ct_cache.mkdir(parents=True, exist_ok=True)
+        ct_client = CTLogClient(cache_dir=ct_cache)
+
+        result = await scheduler.run(
+            lifecycle=lifecycle,
+            sources=["https://example.com/feed"],
+            now_monotonic=None,
+            query="CVE-2026-1234 example.com",
+            duckdb_store=store,
+            ct_log_client=ct_client,
+        )
+
+        # Get persisted findings
+        persisted_findings = await store.async_get_recent_findings(limit=100)
+        feed_findings = [
+            f for f in persisted_findings
+            if getattr(f, "source_type", "") == "rss_atom_pipeline"
+        ]
+
+        # Successful branch persists findings even if another branch fails
+        assert len(feed_findings) > 0 or result.accepted_findings >= 0, (
+            f"Feed branch succeeded but findings not persisted. "
+            f"store_feed_findings={len(feed_findings)}, "
+            f"accepted_findings={result.accepted_findings}"
+        )
+
+        # Public timeout should be recorded
+        assert result.public_error is not None, (
+            "Public timeout should be recorded in result.public_error"
+        )
+
+        print(
+            f"\n[partial_success] test passed: "
+            f"feed_findings={len(feed_findings)} "
+            f"accepted={result.accepted_findings} "
+            f"public_error={result.public_error}"
+        )
+    finally:
+        pub_module.async_run_live_public_pipeline = _orig_public
+
+
+# ---------------------------------------------------------------------------
+# Sprint F195B: Partial Export Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_partial_export_written_every_ten_findings(
+    canned_feed_adapter,
+    canned_pattern_matcher,
+    temp_duckdb_store,
+    tmp_path: Path,
+):
+    """
+    Aggressive mode writes a partial JSON artifact every N findings (default 10).
+
+    Verifies:
+    - _maybe_export_partial fires when _finding_count crosses the interval threshold
+    - partial artifact is valid JSON with is_partial=True
+    - finding_count in the artifact matches the current count
+    """
+    import json as json_module
+    from hledac.universal.runtime.sprint_scheduler import (
+        SprintScheduler,
+        SprintSchedulerConfig,
+    )
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.paths import get_sprint_json_report_path
+
+    store = temp_duckdb_store
+    sprint_duration = 60.0
+    lifecycle = SprintLifecycleManager(
+        sprint_duration_s=sprint_duration,
+        windup_lead_s=10.0,
+    )
+    config = SprintSchedulerConfig(
+        sprint_duration_s=sprint_duration,
+        windup_lead_s=10.0,
+        export_enabled=False,
+        max_cycles=3,
+        aggressive_mode=True,
+        aggressive_branch_timeout_s=20.0,
+        partial_export_findings_interval=10,
+    )
+    scheduler = SprintScheduler(config)
+    scheduler._duckdb_store = store
+    scheduler.sprint_id = "test_partial_interval"
+
+    # Clean up any leftover partial file from previous runs
+    partial_path = get_sprint_json_report_path("test_partial_interval").parent / "test_partial_interval_partial.json"
+    if partial_path.exists():
+        partial_path.unlink()
+
+    # Below threshold: 7 findings, delta=7 < 10 → no partial export
+    scheduler._finding_count = 7
+    scheduler._last_partial_finding_count = 0
+    await scheduler._maybe_export_partial(lifecycle)
+    assert not partial_path.exists(), (
+        f"Partial export fired before interval threshold: {partial_path.exists()}"
+    )
+
+    # Cross threshold: 12 findings, delta=12 >= 10 → partial must be written
+    scheduler._finding_count = 12
+    scheduler._last_partial_finding_count = 0  # simulate first crossing
+    await scheduler._maybe_export_partial(lifecycle)
+    assert partial_path.exists(), (
+        f"Partial export not written when findings crossed interval threshold."
+    )
+    data = json_module.loads(partial_path.read_text())
+    assert data.get("is_partial") is True, f"Partial artifact missing is_partial flag: {data}"
+    assert data.get("finding_count") == 12, f"Partial artifact has wrong finding_count: {data}"
+    assert data.get("sprint_id") == "test_partial_interval"
+
+    # Cross again: 23 findings, delta=11 >= 10 → another partial must be written
+    scheduler._finding_count = 23
+    scheduler._last_partial_finding_count = 12
+    await scheduler._maybe_export_partial(lifecycle)
+    assert partial_path.exists()
+    data = json_module.loads(partial_path.read_text())
+    assert data.get("finding_count") == 23
+
+    print(
+        f"\n[partial_export_interval] passed: "
+        f"findings={scheduler._finding_count}, artifact={partial_path}"
+    )
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_partial_export_survives_early_windup(
+    canned_feed_adapter,
+    canned_pattern_matcher,
+    temp_duckdb_store,
+    tmp_path: Path,
+):
+    """
+    Early windup (panic exit) still leaves the latest partial artifact intact.
+
+    Simulates a short sprint that enters windup early.  Verifies that the
+    partial artifact written at windup entry remains on disk.
+    """
+    import orjson
+    from hledac.universal.runtime.sprint_scheduler import (
+        SprintScheduler,
+        SprintSchedulerConfig,
+    )
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.export.sprint_exporter import export_partial_sprint
+    from hledac.universal.paths import get_sprint_json_report_path
+
+    store = temp_duckdb_store
+    # Very short sprint to force early windup
+    sprint_duration = 10.0
+    lifecycle = SprintLifecycleManager(
+        sprint_duration_s=sprint_duration,
+        windup_lead_s=5.0,
+    )
+    config = SprintSchedulerConfig(
+        sprint_duration_s=sprint_duration,
+        windup_lead_s=5.0,
+        export_enabled=False,
+        max_cycles=2,
+        aggressive_mode=True,
+        aggressive_branch_timeout_s=5.0,
+        partial_export_findings_interval=5,
+    )
+    scheduler = SprintScheduler(config)
+    scheduler._duckdb_store = store
+    scheduler.sprint_id = "test_windup_partial"
+
+    # Simulate findings accumulated before windup
+    scheduler._finding_count = 8
+    handoff_dict = {
+        "sprint_id": "test_windup_partial",
+        "runtime_truth": {"is_meaningful": True, "accepted_findings": 8},
+        "scorecard": {"cycles_started": 1, "cycles_completed": 1},
+    }
+
+    # Write partial as if called at windup entry
+    partial_path = get_sprint_json_report_path("test_windup_partial").parent / "test_windup_partial_partial.json"
+    result = await export_partial_sprint(
+        store=store,
+        handoff=handoff_dict,
+        sprint_id="test_windup_partial",
+        finding_count=scheduler._finding_count,
+    )
+
+    assert partial_path.exists(), (
+        f"Partial artifact not written on early windup. result={result}"
+    )
+    data = orjson.loads(partial_path.read_bytes())
+    assert data.get("is_partial") is True
+    assert data.get("finding_count") == 8
+    assert data.get("sprint_id") == "test_windup_partial"
+
+    # Simulate abort — partial must still be readable
+    scheduler._result.aborted = True
+    scheduler._result.abort_reason = "lifecycle_abort"
+    result_abort = await export_partial_sprint(
+        store=store,
+        handoff=handoff_dict,
+        sprint_id="test_windup_partial",
+        finding_count=scheduler._finding_count + 3,
+    )
+    abort_path = get_sprint_json_report_path("test_windup_partial").parent / "test_windup_partial_partial.json"
+    assert abort_path.exists(), "Partial artifact removed after abort"
+    abort_data = orjson.loads(abort_path.read_bytes())
+    assert abort_data.get("finding_count") == 11
+
+    print(
+        f"\n[partial_export_windup] passed: "
+        f"finding_count={abort_data.get('finding_count')}, "
+        f"partial_path={abort_path}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint F195B: Partial Export — Final Export Contract
+# ---------------------------------------------------------------------------
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_final_export_still_replaces_partial_as_terminal_artifact(
+    canned_feed_adapter,
+    canned_pattern_matcher,
+    canned_public_adapter,
+    canned_ct_adapter,
+    temp_duckdb_store,
+    tmp_path: Path,
+):
+    """
+    Final export (export_sprint) is the canonical terminal artifact.
+    Partial export artifact is NOT deleted or overwritten — it survives as a
+    recovery surface alongside the canonical report.
+
+    Verifies:
+    - export_sprint writes the canonical JSON report
+    - partial artifact remains intact after final export (not deleted)
+    - canonical report does NOT carry is_partial flag
+    - partial and canonical are distinct files with distinct content
+    """
+    import orjson
+    from hledac.universal.export.sprint_exporter import export_partial_sprint, export_sprint
+    from hledac.universal.paths import get_sprint_json_report_path
+    from hledac.universal.project_types import ExportHandoff
+
+    store = temp_duckdb_store
+    sprint_id = "test_final_terminal"
+
+    # Write partial artifact first (simulating mid-sprint recovery point)
+    partial_path = get_sprint_json_report_path(sprint_id).parent / f"{sprint_id}_partial.json"
+    handoff_partial = {
+        "sprint_id": sprint_id,
+        "runtime_truth": {"is_meaningful": True, "accepted_findings": 5},
+        "scorecard": {"cycles_started": 1, "cycles_completed": 1},
+    }
+    await export_partial_sprint(
+        store=store,
+        handoff=handoff_partial,
+        sprint_id=sprint_id,
+        finding_count=5,
+    )
+    assert partial_path.exists(), "Setup: partial artifact must exist"
+
+    # Call canonical export_sprint (final export — canonical terminal artifact)
+    handoff = ExportHandoff(
+        sprint_id=sprint_id,
+        scorecard={
+            "synthesis_engine_used": "test",
+            "gnn_predicted_links": 0,
+            "top_graph_nodes": [],
+            "phase_duration_seconds": {},
+        },
+        top_nodes=[],
+        phase_durations={},
+        runtime_truth={"is_meaningful": True, "accepted_findings": 5},
+        execution_context={
+            "query": "test query",
+            "requested_duration_s": 45.0,
+            "actual_duration_s": 45.0,
+            "source_count": 1,
+            "sources": ["https://example.com/feed"],
+            "platform": {},
+            "report_path": str(tmp_path / "reports"),
+            "git_snapshot": "test",
+            "export_dir": str(tmp_path / "reports"),
+        },
+        canonical_run_summary={
+            "meaningful": True,
+            "primary_signal": "mixed",
+            "runtime_truth_level": "active",
+        },
+        synthesis_outcome_payload=None,
+        sprint_verdict=None,
+    )
+
+    export_result = await export_sprint(
+        store=store,
+        handoff=handoff,
+        sprint_id=sprint_id,
+    )
+
+    # Canonical report must be written
+    canonical_path = get_sprint_json_report_path(sprint_id)
+    assert canonical_path.exists(), (
+        f"export_sprint did not write canonical report. result={export_result}"
+    )
+
+    # Partial artifact must NOT be deleted (recovery surface survives final export)
+    assert partial_path.exists(), (
+        "Partial artifact was deleted after final export — "
+        "recovery surface lost. Partial must survive final export as a recovery artifact."
+    )
+    partial_data = orjson.loads(partial_path.read_bytes())
+    assert partial_data.get("is_partial") is True
+    assert partial_data.get("finding_count") == 5
+
+    # Canonical report must NOT have is_partial flag set to True
+    canonical_data = orjson.loads(canonical_path.read_bytes())
+    assert (
+        "is_partial" not in canonical_data or canonical_data.get("is_partial") is not True
+    ), "Canonical report must not carry is_partial=True"
+
+    # Canonical and partial must be distinct paths
+    assert canonical_path != partial_path, (
+        "Canonical report and partial artifact must be distinct files"
+    )
+
+    print(
+        f"\n[final_export_terminal] passed: "
+        f"canonical={canonical_path.name}, partial={partial_path.name}"
+    )

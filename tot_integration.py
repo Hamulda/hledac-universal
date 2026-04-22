@@ -745,7 +745,7 @@ class TotIntegrationLayer:
                 error=str(e)
             )
 
-    async def solve_with_tot(self, prompt: str) -> str:
+    async def solve_with_tot(self, prompt: str, timeout: float = 0.0) -> str:
         """
         P12: Evaluate if prompt is complex and run ToT if needed.
 
@@ -755,6 +755,8 @@ class TotIntegrationLayer:
 
         Args:
             prompt: The hypothesis/prompt to evaluate
+            timeout: Optional per-hypothesis timeout in seconds. If > 0, overrides
+                     the config's tot_max_time for this specific call.
 
         Returns:
             ToT solution string, or empty string if ToT not needed/not available
@@ -768,8 +770,15 @@ class TotIntegrationLayer:
         if not should_use:
             return ""
 
-        # Run ToT if complex
-        result = await self.solve_problem(prompt)
+        # Run ToT if complex — apply per-hypothesis timeout if provided
+        if timeout > 0:
+            try:
+                result = await asyncio.wait_for(self.solve_problem(prompt), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"solve_with_tot timed out after {timeout}s")
+                return ""
+        else:
+            result = await self.solve_problem(prompt)
 
         if result.solution:
             return result.solution

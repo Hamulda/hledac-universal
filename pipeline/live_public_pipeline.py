@@ -2704,43 +2704,58 @@ async def async_run_live_public_pipeline(
                 )
 
                 # Evaluate each hypothesis via ToT if complex — bounded to 5
-                for hypo in hypotheses[:5]:
-                    tot_result = await tot_layer.solve_with_tot(hypo)
-                    if tot_result:
-                        tot_solution_count += 1
+                # Concurrent evaluation: fire up to 5 tasks, 15s timeout each,
+                # first 3 completed results immediately feed pivot enqueue (scheduler caps handle the rest)
+                hypotheses_to_eval = hypotheses[:5]
+                if hypotheses_to_eval:
+                    async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
+                        """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""
                         try:
-                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-                            tot_finding = CanonicalFinding(
-                                finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
-                                query=query,
-                                source_type="tot_synthesis",
-                                confidence=0.7,
-                                ts=time.time(),
-                                provenance=("tot", hypo[:100]),
-                                payload_text=tot_result[:1000],
-                            )
-                            await store.async_ingest_findings_batch([tot_finding])
-                        except Exception:
-                            pass  # Fail-soft
+                            return await asyncio.wait_for(tot_layer.solve_with_tot(hypo), timeout=timeout_s)
+                        except asyncio.TimeoutError:
+                            logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
+                            return ""
+                        except Exception as e:
+                            logger.debug(f"[P12] ToT failed for hypothesis: {hypo[:50]}... — {e}")
+                            return ""
 
-                        # Sprint F193B: Bounded hypothesis → finding feedback loop
-                        # Enqueue ToT result as hypothesis-driven pivot (depth=1 for first pass)
-                        # This creates new scheduler work from hypothesis output without runaway
-                        if enqueue_hypothesis_pivot is not None:
+                    # Fire all 5 ToT tasks concurrently
+                    tasks = [run_tot_with_timeout(hypo) for hypo in hypotheses_to_eval]
+
+                    # Process results as they complete — first 3 successful results
+                    # trigger immediate pivot enqueue (scheduler caps naturally limit to 3)
+                    for coro in asyncio.as_completed(tasks):
+                        tot_result = await coro
+                        if tot_result:
+                            tot_solution_count += 1
                             try:
-                                # Extract key terms from hypothesis for pivot keywords
-                                # Use first 200 chars of ToT result as pivot seed
-                                pivot_seed = tot_result[:200].split()[:5]
-                                for i, term in enumerate(pivot_seed):
-                                    # Depth increases with each iteration (1, 2, 3...)
-                                    enqueue_hypothesis_pivot(
-                                        ioc_value=term.lower(),
-                                        ioc_type="hypothesis",
-                                        confidence=0.6,
-                                        depth=1,
-                                    )
+                                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                                tot_finding = CanonicalFinding(
+                                    finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
+                                    query=query,
+                                    source_type="tot_synthesis",
+                                    confidence=0.7,
+                                    ts=time.time(),
+                                    provenance=("tot", hypo[:100]),
+                                    payload_text=tot_result[:1000],
+                                )
+                                await store.async_ingest_findings_batch([tot_finding])
                             except Exception:
-                                pass  # Fail-soft: feedback is optional
+                                pass  # Fail-soft
+
+                            # Sprint F193B: Bounded hypothesis → finding feedback loop
+                            if enqueue_hypothesis_pivot is not None:
+                                try:
+                                    pivot_seed = tot_result[:200].split()[:5]
+                                    for i, term in enumerate(pivot_seed):
+                                        enqueue_hypothesis_pivot(
+                                            ioc_value=term.lower(),
+                                            ioc_type="hypothesis",
+                                            confidence=0.6,
+                                            depth=1,
+                                        )
+                                except Exception:
+                                    pass  # Fail-soft
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional

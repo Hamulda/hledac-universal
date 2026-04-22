@@ -142,6 +142,10 @@ def _runtime_truth(
     # F176A: Hardware pressure surfaces for smoke classification
     swap_detected: bool = False,
     uma_state: str = "ok",
+    # Sprint F195B: Branch timeout telemetry
+    branch_timeout_count: int = 0,
+    public_branch_timed_out: bool = False,
+    ct_branch_timed_out: bool = False,
 ) -> dict:
     """Build canonical runtime-truth record from scheduler result data."""
     is_meaningful, evidence_note = _is_meaningful_run(
@@ -190,6 +194,10 @@ def _runtime_truth(
         # F176A: Hardware pressure surfaces for smoke classification
         "pre_sprint_swap_detected": swap_detected,
         "pre_sprint_uma_state": uma_state,
+        # Sprint F195B: Branch timeout telemetry
+        "branch_timeout_count": branch_timeout_count,
+        "public_branch_timed_out": public_branch_timed_out,
+        "ct_branch_timed_out": ct_branch_timed_out,
     }
 
 def _get_live_feed_urls() -> list[str]:
@@ -313,6 +321,7 @@ async def run_sprint(
     query: str,
     duration_s: float = 1800.0,
     export_dir: str = str(Path.home() / ".hledac" / "reports"),
+    aggressive_mode: bool = False,
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -357,6 +366,9 @@ async def run_sprint(
         sprint_duration_s=duration_s,
         export_enabled=True,
         export_dir=export_dir,
+        aggressive_mode=aggressive_mode,
+        # Sprint F195B: 8s branch budget in aggressive mode
+        branch_timeout_budget_s=8.0 if aggressive_mode else 0.0,
     )
 
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
@@ -437,12 +449,13 @@ async def run_sprint(
         uma_peak_gib = sample_uma_status().system_used_gib
 
         # Sprint F193A+F194A: CT log canonical discovery — runs once after main cycle loop.
+        # In aggressive mode, CT runs in-cycle via _run_one_cycle_aggressive, so skip post-loop.
         # Sprint F194A: Persisted CT findings are additive to feed/public accepted_findings
         # in canonical sprint truth. They flow into write_sprint_delta, runtime_truth,
         # report_dict, canonical_run_summary, and export handoff.
-        await scheduler._run_ct_log_discovery_in_cycle(query=query, store=store)
-        # Canonical truth accounting: include persisted CT findings in accepted_findings total
-        result.accepted_findings += result.ct_log_stored
+        if not scheduler._config.aggressive_mode:
+            await scheduler._run_ct_log_discovery_in_cycle(query=query, store=store)
+            result.accepted_findings += result.ct_log_stored
 
         # Write sprint delta
         await write_sprint_delta(
@@ -619,6 +632,10 @@ async def run_sprint(
             # F176A: Hardware pressure surfaces for smoke classification
             swap_detected=_swap_detected_pre,
             uma_state=_uma_state_pre,
+            # Sprint F195B: Branch timeout telemetry
+            branch_timeout_count=result.branch_timeout_count,
+            public_branch_timed_out=result.public_branch_timed_out,
+            ct_branch_timed_out=result.ct_branch_timed_out,
         )
         is_meaningful = runtime_truth["is_meaningful"]
         evidence_note = runtime_truth["evidence_note"]
@@ -1172,6 +1189,11 @@ def main() -> None:
         default=10,
         help="Number of results for --pivot (default: 10)",
     )
+    parser.add_argument(
+        "--aggressive",
+        action="store_true",
+        help="Sprint F195B: Enable aggressive mode with 8s branch budgets",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1182,7 +1204,7 @@ def main() -> None:
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
-        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir))
+        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive))
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:

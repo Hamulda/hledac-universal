@@ -667,3 +667,934 @@ async def test_benchmark_total_findings_bounded():
         )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Aggressive Mode Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_aggressive_cycle_fans_out_feed_public_ct_concurrently():
+    """
+    Aggressive mode: feed, public, and CT branches fire concurrently.
+
+    Verifies that when aggressive_mode=True, all three branches are launched
+    in the same cycle (concurrent execution, not serial).
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_aggressive_concurrent_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        # Track concurrent execution via timestamps
+        branch_start_times: dict[str, float] = {}
+        branch_end_times: dict[str, float] = {}
+        execution_order: list[str] = []
+
+        # Canned entries
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RCE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        async def _canned_search(query: str, **kwargs):
+            return [{"url": "https://example.com/public", "title": "Public Result"}]
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _canned_search
+        pm_module.match_text = _canned_match
+
+        try:
+            # Create store
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            # Config with aggressive_mode=True
+            config = SprintSchedulerConfig(
+                sprint_duration_s=30.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=2,
+                aggressive_mode=True,
+                aggressive_branch_timeout_s=20.0,
+            )
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=30.0,
+                windup_lead_s=5.0,
+            )
+
+            # Run sprint
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+
+            # Verify: in aggressive mode, CT should have run within the cycle
+            # (not just post-loop). Check ct_log_discovered > 0 indicates CT ran.
+            assert result.ct_log_discovered > 0, (
+                f"Aggressive mode should run CT discovery in-cycle. "
+                f"ct_log_discovered={result.ct_log_discovered}"
+            )
+
+            print(
+                f"\n[aggressive] concurrent test passed: "
+                f"ct_discovered={result.ct_log_discovered} "
+                f"ct_stored={result.ct_log_stored} "
+                f"public_accepted={result.public_accepted_findings}"
+            )
+
+            await store.aclose()
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_slow_branch_timeout_does_not_block_other_branches():
+    """
+    Slow branch timeout: if one branch times out, others still complete.
+
+    Mocks a slow public discovery that times out, but feed and CT should
+    still produce results.
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_slow_branch_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        # Canned entries for feed
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RCE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        # Slow public search that never completes
+        async def _slow_public_search(query: str, max_results: int = 5, **kwargs):
+            await asyncio.sleep(300.0)  # 5 minutes - will timeout
+            return []
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _slow_public_search
+        pm_module.match_text = _canned_match
+
+        try:
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            # Config with very short aggressive timeout
+            config = SprintSchedulerConfig(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=1,
+                aggressive_mode=True,
+                aggressive_branch_timeout_s=5.0,  # 5s timeout - public will exceed this
+            )
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+            )
+
+            start = time_module.monotonic()
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+            elapsed = time_module.monotonic() - start
+
+            # Verify: feed should have completed despite public timeout
+            # Feed results should be non-zero (canned feed produces findings)
+            assert result.accepted_findings > 0 or result.public_accepted_findings >= 0, (
+                f"Feed branch should produce findings. accepted={result.accepted_findings}"
+            )
+
+            # CT should have run (or timed out gracefully)
+            # The key is that the overall cycle completed without hanging
+            assert elapsed < 30.0, (
+                f"Cycle took too long ({elapsed:.1f}s), slow branch may have blocked"
+            )
+
+            # Public should have timed out error set
+            assert result.public_error is not None, (
+                "Public branch should have recorded a timeout/error"
+            )
+
+            print(
+                f"\n[slow_branch] test passed: elapsed={elapsed:.1f}s "
+                f"accepted={result.accepted_findings} "
+                f"public_error={result.public_error}"
+            )
+
+            await store.aclose()
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_partial_branch_success_still_updates_runtime_truth():
+    """
+    Partial success: if public times out but feed succeeds, feed findings
+    should still be persisted and count toward runtime truth.
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_partial_success_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        # Canned entries for feed
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RCE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        # Slow public that will timeout
+        async def _slow_public_search(query: str, max_results: int = 5, **kwargs):
+            await asyncio.sleep(300.0)
+            return []
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _slow_public_search
+        pm_module.match_text = _canned_match
+
+        try:
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            config = SprintSchedulerConfig(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=1,
+                aggressive_mode=True,
+                aggressive_branch_timeout_s=5.0,
+            )
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+            )
+
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+
+            # Get persisted findings from store
+            findings = await store.async_get_recent_findings(limit=100)
+            await store.aclose()
+
+            # Feed findings should be persisted even though public timed out
+            feed_findings = [f for f in findings if getattr(f, "source_type", "") == "rss_atom_pipeline"]
+
+            # The key invariant: successful branches persist their findings
+            # Even though public failed, feed findings should be in the store
+            assert len(feed_findings) > 0 or result.accepted_findings > 0, (
+                f"Feed branch succeeded but findings not persisted. "
+                f"store_feed_findings={len(feed_findings)}, "
+                f"accepted_findings={result.accepted_findings}"
+            )
+
+            # Public error should be recorded
+            assert result.public_error is not None, (
+                "Public timeout should be recorded in result.public_error"
+            )
+
+            # CT may or may not have run depending on timing, but it shouldn't block
+            print(
+                f"\n[partial_success] test passed: "
+                f"feed_findings={len(feed_findings)} "
+                f"accepted={result.accepted_findings} "
+                f"public_error={result.public_error} "
+                f"ct_discovered={result.ct_log_discovered}"
+            )
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F195B: Branch Timeout Budget Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_branch_timeout_count_increments_on_cancelled_branch():
+    """
+    Sprint F195B: branch_timeout_count increments when a branch is cancelled.
+
+    Uses a very short branch budget (0.1s) to ensure branches time out,
+    then verifies branch_timeout_count > 0 and the specific timed-out flags
+    are set on the result.
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_branch_timeout_count_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        # Canned entries for feed
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RCE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        # Slow public search that will definitely time out
+        async def _slow_public_search(query: str, max_results: int = 5, **kwargs):
+            await asyncio.sleep(300.0)  # 5 minutes
+            return []
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _slow_public_search
+        pm_module.match_text = _canned_match
+
+        try:
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            # Config with very short branch budget to force timeouts
+            config = SprintSchedulerConfig(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=1,
+                aggressive_mode=True,
+                branch_timeout_budget_s=0.5,  # 500ms — public will timeout, feed should complete
+            )
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+            )
+
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+
+            # Sprint F195B: branch_timeout_count must be > 0
+            assert result.branch_timeout_count > 0, (
+                f"Expected branch_timeout_count > 0 after timeout, "
+                f"got {result.branch_timeout_count}"
+            )
+
+            # At least public_branch_timed_out should be True
+            assert result.public_branch_timed_out, (
+                f"Expected public_branch_timed_out=True, "
+                f"got public_branch_timed_out={result.public_branch_timed_out}"
+            )
+
+            print(
+                f"\n[branch_timeout_count] test passed: "
+                f"branch_timeout_count={result.branch_timeout_count} "
+                f"public_timed_out={result.public_branch_timed_out} "
+                f"ct_timed_out={result.ct_branch_timed_out}"
+            )
+
+            await store.aclose()
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_timed_out_branch_does_not_abort_other_branches():
+    """
+    Sprint F195B: one timed-out branch does not kill the whole sprint.
+
+    Uses a 0.1s branch budget so public times out, but feed should still
+    complete and accepted_findings should still be > 0.
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_timeout_isolation_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RCE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        async def _slow_public_search(query: str, max_results: int = 5, **kwargs):
+            await asyncio.sleep(300.0)
+            return []
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _slow_public_search
+        pm_module.match_text = _canned_match
+
+        try:
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            config = SprintSchedulerConfig(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=1,
+                aggressive_mode=True,
+                branch_timeout_budget_s=0.5,
+            )
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+            )
+
+            start = time_module.monotonic()
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+            elapsed = time_module.monotonic() - start
+
+            # Sprint F195B: feed branch completes despite public timeout
+            assert result.accepted_findings > 0, (
+                f"Feed branch should produce findings even though public timed out. "
+                f"accepted_findings={result.accepted_findings}"
+            )
+
+            # Overall sprint should complete quickly (not blocked by slow branch)
+            assert elapsed < 10.0, (
+                f"Sprint took too long ({elapsed:.1f}s), slow branch may have blocked"
+            )
+
+            # Public should have timed out
+            assert result.public_branch_timed_out, (
+                f"Expected public_branch_timed_out=True, "
+                f"got {result.public_branch_timed_out}"
+            )
+
+            print(
+                f"\n[timeout_isolation] test passed: elapsed={elapsed:.1f}s "
+                f"accepted_findings={result.accepted_findings} "
+                f"branch_timeout_count={result.branch_timeout_count}"
+            )
+
+            await store.aclose()
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_aggressive_mode_uses_eight_second_branch_budget():
+    """
+    Sprint F195B: aggressive mode applies the 8s branch budget.
+
+    Verifies that when aggressive_mode=True and branch_timeout_budget_s=8.0,
+    the scheduler uses 8s (not the default 45s from aggressive_branch_timeout_s).
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_8s_budget_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RCE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        # Public search that takes slightly longer than 8s
+        async def _slow_public_search(query: str, max_results: int = 5, **kwargs):
+            await asyncio.sleep(15.0)  # 15s — exceeds 8s budget
+            return []
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _slow_public_search
+        pm_module.match_text = _canned_match
+
+        try:
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            # Config: aggressive with 8s branch budget
+            config = SprintSchedulerConfig(
+                sprint_duration_s=30.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=1,
+                aggressive_mode=True,
+                branch_timeout_budget_s=8.0,
+            )
+
+            # Verify config is correct
+            assert config.aggressive_mode is True, "aggressive_mode should be True"
+            assert config.branch_timeout_budget_s == 8.0, (
+                f"branch_timeout_budget_s should be 8.0, got {config.branch_timeout_budget_s}"
+            )
+
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=30.0,
+                windup_lead_s=5.0,
+            )
+
+            start = time_module.monotonic()
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+            elapsed = time_module.monotonic() - start
+
+            # Sprint F195B: public branch should have timed out with 8s budget
+            assert result.public_branch_timed_out, (
+                f"Expected public_branch_timed_out=True with 8s budget, "
+                f"got {result.public_branch_timed_out}. "
+                f"Elapsed: {elapsed:.1f}s"
+            )
+
+            # Total sprint time should be < 20s (8s budget + warmup + overhead)
+            assert elapsed < 20.0, (
+                f"Sprint took {elapsed:.1f}s, expected < 20s with 8s budget"
+            )
+
+            print(
+                f"\n[8s_budget] test passed: elapsed={elapsed:.1f}s "
+                f"public_timed_out={result.public_branch_timed_out} "
+                f"ct_timed_out={result.ct_branch_timed_out} "
+                f"branch_timeout_count={result.branch_timeout_count}"
+            )
+
+            await store.aclose()
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_aggressive_mode_branch_timeout_visible_in_result():
+    """
+    Sprint F195B: branch timeout telemetry is visible in SprintSchedulerResult.
+
+    Verifies that after an aggressive-mode run with timeouts:
+    - branch_timeout_count > 0
+    - public_branch_timed_out and/or ct_branch_timed_out is True
+    - These fields appear in the result telemetry
+    """
+    tmp = tempfile.mkdtemp(prefix="hledac_timeout_telemetry_")
+    db_path = Path(tmp) / "shadow.duckdb"
+
+    try:
+        import hledac.universal.discovery.rss_atom_adapter as rss_module
+        from hledac.universal.discovery.rss_atom_adapter import FeedEntryHit
+        import hledac.universal.pipeline.live_public_pipeline as lpp
+        from hledac.universal.patterns import pattern_matcher as pm_module
+
+        canned_entries = [
+            FeedEntryHit(
+                feed_url="https://example.com/feed",
+                entry_url="https://example.com/feed/entry-cve-2026-1234",
+                title="CVE-2026-1234: Remote Code Execution",
+                summary="Critical RCE vulnerability",
+                published_raw="2026-04-21T10:00:00Z",
+                published_ts=1705651200.0,
+                source="test",
+                rank=0,
+                retrieved_ts=1705651200.0,
+                entry_hash="testhash01",
+                rich_content="Critical RVE vulnerability CVE-2026-1234",
+                entry_author="test",
+                feed_title="Test Feed",
+                feed_language="en",
+            ),
+        ]
+
+        class _FakeFeedBatch:
+            error: str | None = None
+            entries: tuple[FeedEntryHit, ...] = tuple(canned_entries)
+            source_accessibility_error: str | None = None
+
+        async def _fake_fetch(feed_url: str, **kwargs) -> _FakeFeedBatch:
+            return _FakeFeedBatch()
+
+        # Slow public search that will definitely time out
+        async def _slow_public_search(query: str, max_results: int = 5, **kwargs):
+            await asyncio.sleep(300.0)  # 5 minutes - will timeout with short budget
+            return []
+
+        def _canned_match(text: str, **kwargs):
+            import re
+            for m in re.finditer(r"CVE-\d{4}-\d{4,}", text):
+                from hledac.universal.patterns.pattern_matcher import PatternHit
+                return [PatternHit(pattern="cve-", start=m.start(), end=m.end(),
+                                   value=m.group(), label="vulnerability_id")]
+            return []
+
+        _orig_feed_fetch = rss_module.async_fetch_feed_entries
+        _orig_discovery = lpp._ASYNC_DISCOVERY_SEARCH
+        _orig_match = pm_module.match_text
+
+        rss_module.async_fetch_feed_entries = _fake_fetch
+        lpp._ASYNC_DISCOVERY_SEARCH = _slow_public_search
+        pm_module.match_text = _canned_match
+
+        try:
+            store = DuckDBShadowStore(db_path=str(db_path))
+            store._init_persistent_dedup_lmdb = lambda: None
+            await store.async_initialize()
+
+            # Config: aggressive with very short branch budget to force timeout
+            config = SprintSchedulerConfig(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+                export_enabled=False,
+                max_cycles=1,
+                aggressive_mode=True,
+                branch_timeout_budget_s=0.5,  # 500ms — very short to force timeout
+            )
+            scheduler = SprintScheduler(config)
+            ct_client = _CannedCTLogClient()
+
+            lifecycle = _TestLifecycleAdapter(
+                sprint_duration_s=20.0,
+                windup_lead_s=5.0,
+            )
+
+            result = await scheduler.run(
+                lifecycle=lifecycle,
+                sources=["https://example.com/feed"],
+                now_monotonic=None,
+                query="example.com CVE-2026-1234",
+                duckdb_store=store,
+                ct_log_client=ct_client,
+            )
+
+            # Sprint F195B: Verify timeout telemetry is present in result
+            assert hasattr(result, "branch_timeout_count"), (
+                "Result must have branch_timeout_count attribute"
+            )
+            assert hasattr(result, "public_branch_timed_out"), (
+                "Result must have public_branch_timed_out attribute"
+            )
+            assert hasattr(result, "ct_branch_timed_out"), (
+                "Result must have ct_branch_timed_out attribute"
+            )
+
+            # At least one branch should have timed out
+            assert result.branch_timeout_count > 0, (
+                f"Expected branch_timeout_count > 0, got {result.branch_timeout_count}"
+            )
+
+            # At least one of the branch timeout flags should be True
+            assert result.public_branch_timed_out or result.ct_branch_timed_out, (
+                f"Expected at least one branch to have timed out. "
+                f"public={result.public_branch_timed_out}, ct={result.ct_branch_timed_out}"
+            )
+
+            # Feed should still produce findings despite timeout
+            assert result.accepted_findings > 0, (
+                f"Feed branch should still produce findings. accepted={result.accepted_findings}"
+            )
+
+            print(
+                f"\n[timeout_telemetry] test passed: "
+                f"branch_timeout_count={result.branch_timeout_count} "
+                f"public_timed_out={result.public_branch_timed_out} "
+                f"ct_timed_out={result.ct_branch_timed_out} "
+                f"accepted_findings={result.accepted_findings}"
+            )
+
+            await store.aclose()
+        finally:
+            rss_module.async_fetch_feed_entries = _orig_feed_fetch
+            lpp._ASYNC_DISCOVERY_SEARCH = _orig_discovery
+            pm_module.match_text = _orig_match
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+

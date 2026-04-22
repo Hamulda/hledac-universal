@@ -1,0 +1,54 @@
+{
+  "mcpServers": {
+    "CodeGraphContext": {
+      "command": "/Users/vojtechhamada/.pyenv/versions/3.12.12/bin/cgc",
+      "args": [
+        "mcp",
+        "start"
+      ],
+      "env": {
+        "DEFAULT_DATABASE": "falkordb",
+        "FALKORDB_PATH": "/Users/vojtechhamada/.codegraphcontext/falkordb.db",
+        "FALKORDB_SOCKET_PATH": "/Users/vojtechhamada/.codegraphcontext/falkordb.sock",
+        "INDEX_VARIABLES": "false",
+        "ALLOW_DB_DELETION": "false",
+        "DEBUG_LOGS": "false",
+        "DEBUG_LOG_PATH": "/Users/vojtechhamada/mcp_debug.log",
+        "ENABLE_APP_LOGS": "CRITICAL",
+        "LOG_FILE_PATH": "/Users/vojtechhamada/.codegraphcontext/logs/cgc.log",
+        "MAX_FILE_SIZE_MB": "2",
+        "IGNORE_TEST_FILES": "true",
+        "IGNORE_HIDDEN_FILES": "true",
+        "ENABLE_AUTO_WATCH": "false",
+        "COMPLEXITY_THRESHOLD": "15",
+        "MAX_DEPTH": "20",
+        "PARALLEL_WORKERS": "8",
+        "CACHE_ENABLED": "true",
+        "IGNORE_DIRS": ".venv,site-packages,__pycache__,.git,node_modules,benchmark_results,.omc,.pi,cache,logs,runs,temp,embedding_cache,MagicMock,:memory:,data,benchmarks,_arch,autonomy,.phase1_probe_8bd,tests"
+      },
+      "tools": {
+        "alwaysAllow": [
+          "add_code_to_graph",
+          "add_package_to_graph",
+          "check_job_status",
+          "list_jobs",
+          "find_code",
+          "analyze_code_relationships",
+          "watch_directory",
+          "find_dead_code",
+          "execute_cypher_query",
+          "calculate_cyclomatic_complexity",
+          "find_most_complex_functions",
+          "list_indexed_repositories",
+          "delete_repository",
+          "list_watched_paths",
+          "unwatch_directory",
+          "visualize_graph_query"
+        ],
+        "disabled": false
+      },
+      "disabled": false,
+      "alwaysAllow": []
+    }
+  }
+}

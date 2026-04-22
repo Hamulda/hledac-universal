@@ -76,6 +76,71 @@ def _pvs_n(scorecard: dict, key: str, default: float | int) -> float | int:
     return _pvs_num(scorecard.get(key, default), default)
 
 
+async def export_partial_sprint(
+    store: Any,
+    handoff: "ExportHandoff | dict",  # type: ignore[name-defined]
+    sprint_id: str | None = None,
+    finding_count: int = 0,
+) -> dict:
+    """
+    PARTIAL EXPORT — recovery-grade JSON artifact written during aggressive-mode runs.
+
+    Triggered every N findings (default 10) in aggressive mode, and on early
+    windup / immediate abort so the latest partial artifact remains available.
+
+    Writes to the same directory as the final report:
+      {sprint_id}_partial.json
+
+    Derived from the SAME canonical truth surfaces used by export_sprint():
+    runtime_truth, scorecard, branch_mix.  Final export (export_sprint) is the
+    canonical terminal artifact — it does NOT read or delete the partial file;
+    the partial is purely a recovery surface.
+
+    Never raises. Fail-soft: write errors are logged but do not crash the sprint.
+    """
+    from hledac.universal.paths import get_sprint_json_report_path
+    from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
+
+    _sprint_id = sprint_id or "unknown"
+    try:
+        eh = ensure_export_handoff(handoff, default_sprint_id=_sprint_id)
+        _sprint_id = eh.sprint_id if eh.sprint_id != "unknown" else _sprint_id
+    except Exception:
+        eh = handoff if isinstance(handoff, dict) else None
+
+    report_path = get_sprint_json_report_path(_sprint_id)
+    partial_path = report_path.parent / f"{_sprint_id}_partial.json"
+
+    runtime_truth: dict = {}
+    if eh and hasattr(eh, "runtime_truth"):
+        runtime_truth = eh.runtime_truth or {}
+    elif isinstance(handoff, dict):
+        runtime_truth = handoff.get("runtime_truth", {})
+
+    scorecard: dict = {}
+    if eh and hasattr(eh, "scorecard"):
+        scorecard = eh.scorecard or {}
+    elif isinstance(handoff, dict):
+        scorecard = handoff.get("scorecard", {})
+
+    partial_artifact = {
+        "sprint_id": _sprint_id,
+        "is_partial": True,
+        "finding_count": finding_count,
+        "runtime_truth": runtime_truth,
+        "scorecard": scorecard,
+        "partial_export": True,
+    }
+
+    try:
+        partial_path.write_text(json.dumps(partial_artifact, indent=2, default=str))
+        logger.info(f"[PARTIAL-EXPORT] {partial_path} — findings={finding_count}")
+    except Exception as ex:
+        logger.warning(f"[PARTIAL-EXPORT] write failed (non-fatal): {ex}")
+
+    return {"partial_json": str(partial_path), "finding_count": finding_count}
+
+
 async def export_sprint(
     store: Any,
     handoff: "ExportHandoff",  # type: ignore[name-defined]
