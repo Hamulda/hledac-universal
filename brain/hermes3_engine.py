@@ -2229,6 +2229,10 @@ Do not include any other text. Output valid JSON only."""
                 logger.debug(f"[STRUCTURED] JSON parse attempt {attempt + 1} failed: {e}")
 
             if attempt < 2:
+                # Safe: generate_structured_safe is explicitly sync.
+                # The only async caller (generate_structured at line 607) dispatches
+                # this method via run_in_executor, so time.sleep here blocks only
+                # the inference executor thread, not the event loop.
                 time.sleep(backoffs[attempt])
 
         # Final fallback: return model with default fields

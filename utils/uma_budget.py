@@ -251,6 +251,9 @@ def get_uma_snapshot() -> dict:
         "uma_used_mb": uma_total_mb if uma_total_mb is not None else 0,
         "uma_usage_pct": pressure_pct,
         "uma_pressure_level": pressure_level,
+        "is_warn": is_uma_warn(),
+        "is_critical": is_uma_critical(),
+        "is_emergency": is_uma_emergency(),
         "platform": platform.system(),
     }
 

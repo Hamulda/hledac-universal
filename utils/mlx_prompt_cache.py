@@ -33,7 +33,7 @@ class MLXPromptCache:
                 active = mx.metal.get_active_memory()
                 free = 4 * 1024**3 - active
                 self._max_size_bytes = int(free * 0.5)
-            except:
+            except Exception:
                 self._max_size_bytes = int(1.5 * 1024**3)
         else:
             self._max_size_bytes = int(max_size_gb * 1024**3)

@@ -7,7 +7,18 @@ logger = logging.getLogger(__name__)
 
 
 class RamDiskVault:
+    # Valid name pattern: alphanumeric with spaces, underscores, hyphens only
+    _VALID_NAME_RE = re.compile(r'^[A-Za-z0-9 _-]+$')
+
     def __init__(self, size_mb: int = 256, name: str = "GhostVault"):
+        # Validate inputs before storing
+        if not isinstance(size_mb, int) or size_mb <= 0 or size_mb > 4096:
+            raise ValueError("size_mb must be a positive integer <= 4096")
+        if not self._VALID_NAME_RE.match(name):
+            raise ValueError(
+                "name must contain only alphanumeric characters, spaces, "
+                "underscores, and hyphens"
+            )
         self.size_mb = size_mb
         self.name = name
         self.device_path: Optional[str] = None
@@ -135,7 +146,7 @@ class RamDiskVault:
         self.mount()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
         self.unmount()
 
     def __del__(self):

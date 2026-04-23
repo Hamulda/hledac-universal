@@ -120,7 +120,7 @@ async def run_benchmark():
     finally:
         try:
             await orchestrator.cleanup()
-        except:
+        except Exception:
             pass
 
 if __name__ == "__main__":

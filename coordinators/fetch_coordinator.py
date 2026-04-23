@@ -389,14 +389,13 @@ class FetchCoordinator(UniversalCoordinator):
         self._urls_fetched_count: int = 0
         self._stop_reason: Optional[str] = None
 
-        # Per-domain circuit breaker (Fix 2)
+        # Per-domain circuit breaker (Sprint F195C)
         self._domain_failures: Dict[str, int] = {}
+        self._domain_failure_timestamps: Dict[str, float] = {}  # for eviction (P2-1)
         self._domain_blocked_until: Dict[str, float] = {}
         self._failure_threshold = 3
         self._cooldown_seconds = 60
-
-        # Exponential backoff retry (Fix 2)
-        self._base_retry_delay = 1.0
+        self._base_retry_delay = 1.0  # Sprint F195C: circuit breaker retry config
         self._max_retries = 3
         self._max_backoff_delay = 30.0
 
@@ -414,6 +413,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 45: Pool for concurrent requests
         self._lightpanda_pool = LightpandaPool(size=2)
         self._lightpanda_pool_started = False
+        self._lightpanda_lock = asyncio.Lock()  # P1-1: thread-safe pool init
         self._geo_proxies = self._load_geo_proxies()
         self._current_geo_context = None  # set by caller
 
@@ -449,6 +449,33 @@ class FetchCoordinator(UniversalCoordinator):
             'total_successes': 0,
             'total_failures': 0,
         }
+
+    async def _record_domain_failure(self, domain: str) -> None:
+        """Record a failure for a domain; block it after _failure_threshold failures."""
+        # P2-1: Evict stale entries if dict grows too large
+        if len(self._domain_failures) > 1000:
+            cutoff = time.time() - (24 * 3600)  # 24 hours
+            stale_domains = [d for d, ts in self._domain_failure_timestamps.items() if ts < cutoff and d not in self._domain_blocked_until]
+            for d in stale_domains[:len(stale_domains) // 2]:
+                self._domain_failures.pop(d, None)
+                self._domain_failure_timestamps.pop(d, None)
+
+        failures = self._domain_failures.get(domain, 0) + 1
+        self._domain_failures[domain] = failures
+        self._domain_failure_timestamps[domain] = time.time()
+
+        if failures >= self._failure_threshold:
+            backoff = min(60.0 * (2 ** (failures - self._failure_threshold)), 3600.0)
+            self._domain_blocked_until[domain] = time.time() + backoff
+            logger.warning(
+                f"[CIRCUIT] Domain {domain} blocked after {failures} failures "
+                f"for {backoff:.0f}s (until {self._domain_blocked_until[domain]:.0f})"
+            )
+
+    def get_blocked_domains(self) -> Dict[str, float]:
+        """Returns {domain: unblock_timestamp} for currently blocked domains."""
+        now = time.time()
+        return {d: t for d, t in self._domain_blocked_until.items() if t > now}
 
     def init_session_manager(self, lmdb_path: Optional[str] = None):
         """Initialize session manager with LMDB persistence (idempotent)."""
@@ -491,6 +518,15 @@ class FetchCoordinator(UniversalCoordinator):
         except Exception:
             return []
 
+    def _resolve_host_ips(self, host: str) -> List[str]:
+        """Resolve hostname to IPs synchronously using blocking socket.getaddrinfo."""
+        try:
+            results = socket.getaddrinfo(host, 0, proto=socket.IPPROTO_TCP)
+            ips = sorted(set(str(r[4][0]) for r in results))
+            return ips
+        except Exception:
+            return []
+
     def _is_ip_public(self, ip_str: str) -> bool:
         """Check if IP is public (not private/reserved)."""
         try:
@@ -525,8 +561,9 @@ class FetchCoordinator(UniversalCoordinator):
             except ValueError:
                 pass  # It's a domain, not an IP
 
-            # Resolve and validate (async DNS via loop.getaddrinfo)
-            ips = await self._resolve_host_ips_async(hostname)
+            # Resolve DNS natively (async, no thread pool)
+            raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
+            ips = sorted(set(str(r[4][0]) for r in raw_results))
             if not ips:
                 return False, {"resolved_ips": [], "blocked_reason": "dns_resolution_failed"}
 
@@ -636,10 +673,12 @@ class FetchCoordinator(UniversalCoordinator):
     async def _fetch_with_lightpanda(self, url: str, proxy: str = None) -> Dict[str, Any]:
         """Fetch URL with Lightpanda using pool (JS rendering)."""
         try:
-            # Start pool on first use (lazy initialization)
+            # P1-1: Start pool on first use (lazy initialization) - thread-safe with double-check
             if not self._lightpanda_pool_started:
-                await self._lightpanda_pool.start()
-                self._lightpanda_pool_started = True
+                async with self._lightpanda_lock:
+                    if not self._lightpanda_pool_started:
+                        await self._lightpanda_pool.start()
+                        self._lightpanda_pool_started = True
 
             # Get instance from pool
             lp = await self._lightpanda_pool.get_instance()

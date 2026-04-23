@@ -145,7 +145,7 @@ class PromptBandit:
                     gpu_load = min(1.0, mx.metal.get_active_memory() / (4 * 1024**3))
                 else:
                     gpu_load = 0.0
-            except:
+            except Exception:
                 pass
         except Exception:
             pass

@@ -14,6 +14,9 @@ aiohttp-socks>=0.8.0
 lancedb>=0.2.5
 psutil>=5.9.0
 
+# Sprint F195: Fast JSON serialization (required - used throughout codebase)
+orjson>=3.9.0
+
 # torch and torchvision are optional — install via:
 #   pip install -r requirements-optional.txt
 # or for Apple Silicon MPS:

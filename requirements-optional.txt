@@ -42,3 +42,6 @@ pybgpstream>=3.0.0  # arm64 unavailable — graceful fallback when missing
 # FÁZE P18: Export & Vizualizace
 pyvis>=0.3.2        # Interactive graph visualization (networkx + pyvis HTML export)
 markdown2>=2.4.12   # Markdown to HTML conversion for Obsidian-compatible exports
+
+# Security: Strong encryption for vault files (replaces XOR fallback in vault_manager.py)
+pyzipper>=1.4.0     # AES/ZIP encryption for sensitive file storage

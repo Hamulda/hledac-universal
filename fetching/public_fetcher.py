@@ -762,47 +762,14 @@ async def async_fetch_public_text(
         except Exception as e:
             logger.debug(f"DoH resolution failed for {url}: {e}")
 
-    # --- P4: Stealth session setup ---
-    stealth_response: Optional["StealthResponse"] = None
+    # --- P4: Canonical stealth session setup ---
+    stealth_session = None
     if use_stealth:
         try:
-            from hledac.universal.stealth.stealth_manager import (
-                StealthManager,
-                StealthResponse,
-            )
-            stealth_mgr = StealthManager()
-            async with stealth_mgr.session() as stealth_session:
-                # Apply jitter before request (anti-correlation)
-                await _jitter_delay()
-
-                # Maybe renew Tor circuit if using .onion
-                if use_tor:
-                    await _maybe_renew_tor_circuit()
-
-                # Execute stealth request
-                stealth_resp: StealthResponse = await stealth_session.get(url, max_bytes=max_bytes)
-
-                # Convert StealthResponse to FetchResult format
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                text, decode_replaced, decode_replacement_count = _try_decode(
-                    stealth_resp.body_bytes
-                )
-                return FetchResult(
-                    url=url,
-                    final_url=stealth_resp.final_url,
-                    status_code=stealth_resp.status,
-                    content_type=stealth_resp.content_type or "",
-                    text=text,
-                    fetched_bytes=len(stealth_resp.body_bytes),
-                    declared_length=-1,
-                    elapsed_ms=elapsed_ms,
-                    error=None,
-                    decode_replaced=decode_replaced,
-                    decode_replacement_count=decode_replacement_count,
-                )
+            from hledac.universal.stealth.stealth_session import StealthSession
+            stealth_session = StealthSession()
         except Exception as e:
-            # Fall through to regular fetch if stealth fails
-            logger.warning(f"Stealth request failed, falling back to regular: {e}")
+            logger.warning(f"Stealth session unavailable, proceeding without: {e}")
 
     # --- P4: Tor session setup for .onion URLs ---
     tor_session = None  # Always defined for use_tor check below
@@ -851,8 +818,11 @@ async def async_fetch_public_text(
 
     for attempt in range(MAX_RETRIES + 1):
         # P4: Apply jitter before each request (Tor/stealth/I2P anti-correlation)
-        if use_tor or use_i2p or use_stealth:
+        if use_tor or use_i2p:
             await _jitter_delay()
+        elif stealth_session is not None:
+            # Canonical stealth: timing variance via StealthSession
+            await stealth_session.apply_jitter()
 
         # P4: Maybe renew Tor circuit every N requests
         if use_tor:
@@ -861,12 +831,16 @@ async def async_fetch_public_text(
         session = tor_session if use_tor else (i2p_session if use_i2p else await async_get_aiohttp_session())
         # F191B: Use separate semaphore pools — Tor/I2P cannot starve clearnet
         _semaphore = get_tor_semaphore() if (use_tor or use_i2p) else get_clearnet_semaphore()
-        headers = {"User-Agent": DEFAULT_UA}
+        # Canonical stealth: use StealthSession UA rotation
+        if stealth_session is not None:
+            headers = {"User-Agent": stealth_session.rotate_ua()}
+        else:
+            headers = {"User-Agent": DEFAULT_UA}
 
-        # P16: If DoH resolved an IP, use it directly (bypass DNS)
+        # P16: DoH resolution provides IP for logging/fallback but does NOT
+        # override the Host header. The Host header must always be derived
+        # from the URL's hostname to prevent host header injection.
         request_kwargs: dict = {"headers": headers, "allow_redirects": True}
-        if _resolved_ip:
-            request_kwargs["host"] = _resolved_ip
 
         # F191B: Lightweight backpressure when RAM > 5.5 GB — don't resize semaphore, just slow down
         if not use_tor and not use_i2p and not use_stealth:
@@ -874,8 +848,8 @@ async def async_fetch_public_text(
                 rss_gb = psutil.Process().memory_info().rss / 1e9
                 if rss_gb > 5.5:
                     await asyncio.sleep(0.05)
-            except Exception:
-                pass  # fail-safe: don't block fetch on memory check error
+            except Exception as e:
+                logger.debug(f"Memory check failed (non-fatal): {e}")
 
         try:
             async with asyncio.timeout(timeout_s):

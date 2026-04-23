@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import logging
 import re
 import time
 import urllib.parse
@@ -56,6 +57,13 @@ except ImportError:
 
 if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# Module logger
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +250,8 @@ def _normalize_url(raw: str | None) -> str:
         if normalized.endswith("?"):
             normalized = normalized[:-1]
         return normalized
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] URL normalization failed for '{raw}': {e}")
         return raw.strip()
 
 
@@ -279,14 +288,14 @@ def _parse_published_ts(raw: str | None) -> float | None:
         normalized = _ISO_Z_RE.sub("+00:00", raw)
         dt = datetime.datetime.fromisoformat(normalized)
         return dt.timestamp()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] ISO timestamp parse failed for '{raw}': {e}")
     # Try RSS pubDate via email.utils
     try:
         dt = parsedate_to_datetime(raw)
         return dt.timestamp()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] RSS pubDate parse failed for '{raw}': {e}")
     return None
 
 
@@ -377,7 +386,8 @@ def _is_spam_domain(url: str) -> bool:
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
         return any(p in netloc for p in _SPAM_DOMAIN_PATTERNS)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] Spam domain check failed for '{url}': {e}")
         return False
 
 
@@ -505,8 +515,8 @@ def _compute_quality(entry: FeedEntryHit) -> float:
                 score += 0.08  # structured URL = article
             elif path.count("/") == 1 and len(path) > 1:
                 score += 0.04
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[RSS/Atom] URL quality parse failed for '{eu}': {e}")
 
     return max(min(score, 1.0), 0.0)
 
@@ -974,8 +984,8 @@ def _parse_feed_xml(
                 return _parse_atom(root, feed_url, retrieved_ts)
             else:
                 return []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] defusedxml parse failed for {feed_url}: {e}")
 
     # ---- Step 2: sanitized defusedxml retry ----
     sanitized = _safe_sanitize_xml(xml_text)
@@ -994,8 +1004,8 @@ def _parse_feed_xml(
                 return _parse_atom(root, feed_url, retrieved_ts)
             else:
                 return []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] sanitized defusedxml parse failed for {feed_url}: {e}")
 
     # ---- Step 3: sanitized stdlib ET fallback ----
     try:
@@ -1013,8 +1023,8 @@ def _parse_feed_xml(
                 return _parse_atom(root, feed_url, retrieved_ts)
             else:
                 return []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] stdlib ET fallback parse failed for {feed_url}: {e}")
 
     # ---- Step 4: fail-soft ----
     _report_parse_mode(_parse_mode_out, _ParseMode.FINAL_FAIL)
@@ -1541,6 +1551,7 @@ def discover_feed_urls_from_html(
     try:
         parser.feed(html_text)
     except Exception as e:
+        logger.debug(f"[RSS/Atom] HTML feed discovery parse failed for {page_url}: {e}")
         parse_error = str(e)
 
     base_href = parser.base_href
@@ -1811,7 +1822,8 @@ def normalize_seed_identity(seed: FeedSeed) -> str:
     try:
         parsed = urllib.parse.urlparse(seed.feed_url)
         return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] Seed identity normalize failed for '{seed.feed_url}': {e}")
         return seed.feed_url.lower().strip()
 
 

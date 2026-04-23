@@ -1018,11 +1018,11 @@ class InferenceEngine:
             return []
 
         # Queue: (current_id, path, depth)
-        queue = [(start_id, [start_id], 0)]
+        queue = deque([(start_id, [start_id], 0)])
         visited = {start_id}
 
         while queue:
-            current_id, path, depth = queue.pop(0)
+            current_id, path, depth = queue.popleft()
 
             if depth >= max_depth:
                 continue
@@ -1296,9 +1296,9 @@ class InferenceEngine:
             visited[i] = True
 
             # Greedy expansion
-            queue = [i]
+            queue = deque([i])
             while queue:
-                current = queue.pop(0)
+                current = queue.popleft()
 
                 for j in range(n):
                     if not visited[j] and similarity_matrix[current, j] >= threshold:

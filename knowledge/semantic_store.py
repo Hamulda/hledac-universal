@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
@@ -67,8 +68,8 @@ class SemanticStore:
         self._db: Optional[Any] = None  # lancedb.LanceDBConnection
         self._table: Optional[Any] = None  # lancedb.Table
         self._model: Optional[Any] = None  # TextEmbedding
-        self._pending_texts: list[str] = []
-        self._pending_meta: list[dict] = []
+        self._pending_texts: deque = deque()
+        self._pending_meta: deque = deque()
         self._embed_dim: int = _EMBED_DIM
         self._initialized: bool = False
 
@@ -138,8 +139,8 @@ class SemanticStore:
         # Enforce bounded pending buffer (M1 8GB safety)
         if len(self._pending_texts) >= _MAX_PENDING:
             logger.debug("SemanticStore: pending buffer full, dropping oldest")
-            self._pending_texts.pop(0)
-            self._pending_meta.pop(0)
+            self._pending_texts.popleft()
+            self._pending_meta.popleft()
         self._pending_texts.append(text[:_MAX_TEXT_LEN])
         self._pending_meta.append(
             {

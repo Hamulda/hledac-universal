@@ -7554,7 +7554,7 @@ class TestSecurityPipeline:
         for i in range(3):
             try:
                 breaker.record_failure()
-            except:
+            except Exception:
                 pass
 
         # Check breaker is open
@@ -21623,7 +21623,8 @@ class TestSprint5CCapabilityRadar(unittest.TestCase):
     def test_circuit_breaker_attributes_exist(self):
         """Circuit breaker for transports is defined."""
         import os
-        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'autonomous_orchestrator.py')
+        # Circuit breaker attributes are in the legacy module, not the facade
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'legacy', 'autonomous_orchestrator.py')
         with open(path, 'r') as f:
             source = f.read()
 

@@ -15,16 +15,22 @@ import asyncio
 import hashlib
 import json
 import logging
-import pickle
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import lz4.frame
 import numpy as np
+
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
+    import json as _json
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,88 @@ except ImportError:
 CRITICAL = "critical"
 IMPORTANT = "important"
 ABSTRACT = "abstract"
+
+
+def _ndarray_to_list(obj: Any) -> Any:
+    """Convert numpy arrays to lists for JSON serialization."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, bytes):
+        # Skip bytes (full_compressed is LZ4 compressed bytes - keep as base64)
+        import base64
+        return base64.b64encode(obj).decode('ascii')
+    if is_dataclass(obj):
+        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
+    if isinstance(obj, dict):
+        return {k: _ndarray_to_list(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_ndarray_to_list(item) for item in obj]
+    return obj
+
+
+def _list_to_ndarray(obj: Any) -> Any:
+    """Convert lists back to numpy arrays after JSON deserialization."""
+    if isinstance(obj, str) and len(obj) > 100:
+        # Likely base64 encoded bytes
+        import base64
+        return base64.b64decode(obj)
+    if isinstance(obj, dict):
+        return {k: _list_to_ndarray(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_list_to_ndarray(item) for item in obj]
+    return obj
+
+
+def _serialize_compressed(data: Dict[str, CompressedContext]) -> bytes:
+    """Serialize compressed context data to bytes using orjson."""
+    serializable = {}
+    for k, v in data.items():
+        entry_dict = {
+            'context_id': v.context_id,
+            'original_size': v.original_size,
+            'compressed_size': v.compressed_size,
+            'compression_ratio': v.compression_ratio,
+            'critical_content': v.critical_content,
+            'important_summary': v.important_summary,
+            'abstract_summary': v.abstract_summary,
+            'full_compressed': v.full_compressed,  # bytes
+            'metadata': v.metadata,
+            'timestamp': v.timestamp,
+            'embeddings': {kk: vv.tolist() for kk, vv in v.embeddings.items()} if v.embeddings else None,
+            'sentence_scores': v.sentence_scores,
+            'cluster_info': v.cluster_info,
+        }
+        serializable[k] = entry_dict
+    if ORJSON_AVAILABLE:
+        return orjson.dumps(serializable)
+    return _json.dumps(serializable).encode()
+
+
+def _deserialize_compressed(data: bytes) -> Dict[str, CompressedContext]:
+    """Deserialize compressed context data from bytes using orjson."""
+    if ORJSON_AVAILABLE:
+        raw = orjson.loads(data)
+    else:
+        raw = _json.loads(data.decode())
+
+    result = {}
+    for k, v in raw.items():
+        result[k] = CompressedContext(
+            context_id=v['context_id'],
+            original_size=v['original_size'],
+            compressed_size=v['compressed_size'],
+            compression_ratio=v['compression_ratio'],
+            critical_content=v['critical_content'],
+            important_summary=v['important_summary'],
+            abstract_summary=v['abstract_summary'],
+            full_compressed=v['full_compressed'],  # bytes
+            metadata=v['metadata'],
+            timestamp=v['timestamp'],
+            embeddings={kk: np.array(vv) for kk, vv in v['embeddings'].items()} if v['embeddings'] else None,
+            sentence_scores=v['sentence_scores'],
+            cluster_info=v['cluster_info'],
+        )
+    return result
 
 
 class CompressionLevel(Enum):
@@ -211,23 +299,23 @@ class ContextCompressor:
     def _load_compressed_storage(self):
         """Load existing compressed contexts from disk."""
         try:
-            storage_file = self.storage_path / "compressed_contexts.pkl"
+            storage_file = self.storage_path / "compressed_contexts.json"
             if storage_file.exists():
                 with open(storage_file, 'rb') as f:
-                    self.compressed_storage = pickle.load(f)
+                    self.compressed_storage = _deserialize_compressed(f.read())
                 logger.info(f"Loaded {len(self.compressed_storage)} compressed contexts")
         except FileNotFoundError:
             self.compressed_storage = {}
         except Exception as e:
             logger.warning(f"Could not load compressed storage: {e}")
             self.compressed_storage = {}
-    
+
     def _save_compressed_storage(self):
         """Save compressed contexts to disk."""
         try:
-            storage_file = self.storage_path / "compressed_contexts.pkl"
+            storage_file = self.storage_path / "compressed_contexts.json"
             with open(storage_file, 'wb') as f:
-                pickle.dump(self.compressed_storage, f)
+                f.write(_serialize_compressed(self.compressed_storage))
         except Exception as e:
             logger.warning(f"Could not save compressed storage: {e}")
     

@@ -513,8 +513,10 @@ class MetadataCache:
         async with self._lock:
             if self._conn is not None:
                 return  # Already initialized
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._conn.execute("""
+            self._conn = await asyncio.to_thread(
+                lambda: sqlite3.connect(self.db_path, check_same_thread=False)
+            )
+            await asyncio.to_thread(lambda: self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS metadata_cache (
                     file_hash TEXT PRIMARY KEY,
                     mod_time REAL,
@@ -522,11 +524,11 @@ class MetadataCache:
                     metadata TEXT,
                     extracted_at REAL
                 )
-            """)
-            self._conn.execute("""
+            """))
+            await asyncio.to_thread(lambda: self._conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_extracted_at ON metadata_cache(extracted_at)
-            """)
-            self._conn.commit()
+            """))
+            await asyncio.to_thread(lambda: self._conn.commit())
 
     async def get(self, file_hash: str, mod_time: float, file_size: int) -> Optional[Dict[str, Any]]:
         """Get cached metadata if valid.
@@ -543,11 +545,13 @@ class MetadataCache:
             if not self._conn:
                 return None
 
-            cursor = self._conn.execute(
-                "SELECT metadata FROM metadata_cache WHERE file_hash = ? AND mod_time = ? AND file_size = ?",
-                (file_hash, mod_time, file_size)
+            cursor = await asyncio.to_thread(
+                lambda: self._conn.execute(
+                    "SELECT metadata FROM metadata_cache WHERE file_hash = ? AND mod_time = ? AND file_size = ?",
+                    (file_hash, mod_time, file_size)
+                )
             )
-            row = cursor.fetchone()
+            row = await asyncio.to_thread(lambda: cursor.fetchone())
             if row:
                 return json.loads(row[0])
             return None
@@ -566,35 +570,39 @@ class MetadataCache:
                 return
 
             # Check size and cleanup if needed
-            cursor = self._conn.execute("SELECT COUNT(*) FROM metadata_cache")
-            count = cursor.fetchone()[0]
+            cursor = await asyncio.to_thread(lambda: self._conn.execute("SELECT COUNT(*) FROM metadata_cache"))
+            count = (await asyncio.to_thread(lambda: cursor.fetchone()))[0]
             if count >= self.MAX_ENTRIES:
                 # Remove oldest entries
-                self._conn.execute(
-                    "DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)",
-                    (self.MAX_ENTRIES // 10,)
+                await asyncio.to_thread(
+                    lambda: self._conn.execute(
+                        "DELETE FROM metadata_cache WHERE file_hash IN (SELECT file_hash FROM metadata_cache ORDER BY extracted_at ASC LIMIT ?)",
+                        (self.MAX_ENTRIES // 10,)
+                    )
                 )
 
-            self._conn.execute(
-                """INSERT OR REPLACE INTO metadata_cache
+            await asyncio.to_thread(
+                lambda: self._conn.execute(
+                    """INSERT OR REPLACE INTO metadata_cache
                    (file_hash, mod_time, file_size, metadata, extracted_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now().timestamp())
+                    (file_hash, mod_time, file_size, json.dumps(metadata), datetime.now().timestamp())
+                )
             )
-            self._conn.commit()
+            await asyncio.to_thread(lambda: self._conn.commit())
 
     async def clear(self) -> None:
         """Clear all cached entries."""
         async with self._lock:
             if self._conn:
-                self._conn.execute("DELETE FROM metadata_cache")
-                self._conn.commit()
+                await asyncio.to_thread(lambda: self._conn.execute("DELETE FROM metadata_cache"))
+                await asyncio.to_thread(lambda: self._conn.commit())
 
     async def close(self) -> None:
         """Close database connection."""
         async with self._lock:
             if self._conn:
-                self._conn.close()
+                await asyncio.to_thread(lambda: self._conn.close())
                 self._conn = None
 
 
@@ -1103,7 +1111,7 @@ class UniversalMetadataExtractor:
                         gps_info = exif.get(34853) or exif.get("GPSInfo")
                         if gps_info:
                             gps_data = {}
-                            for key in gps_info.keys():
+                            for key in gps_info:
                                 decode = GPSTAGS.get(key, key)
                                 gps_data[decode] = gps_info[key]
 
@@ -1246,7 +1254,9 @@ class UniversalMetadataExtractor:
             file_size = os.path.getsize(file_path)
             if file_size > 5 * 1024 * 1024:
                 # For large files, only extract basic metadata
-                with fitz.open(file_path, stream=open(file_path, "rb").read()[:5 * 1024 * 1024]) as doc:
+                with open(file_path, "rb") as f:
+                    data = f.read()[:5 * 1024 * 1024]
+                with fitz.open(file_path, stream=data) as doc:
                     metadata = PDFMetadata(
                         num_pages=len(doc),
                     )

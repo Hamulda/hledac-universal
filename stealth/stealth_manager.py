@@ -330,8 +330,8 @@ class StealthManager:
                 try:
                     if hasattr(session, 'aclose'):
                         await session.aclose()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close session during cleanup: {e}")
             self._sessions.clear()
         logger.info("✓ StealthManager closed")
 
@@ -884,12 +884,29 @@ class StealthSession:
         """
         Request new Tor circuit via STEM controller.
         Called every 10 requests when Tor is active.
+
+        Security: Relies on localhost-only Tor control port + cookie authentication.
+        Tor MUST be configured with either:
+        - CookieAuthSocket (default on macOS) - requires filesystem access to cookie file
+        - HashedControlPassword - requires stem authenticate(password=...) call
+        NEVER expose the Tor control port to non-localhost without password auth.
         """
         try:
             from stem import Signal
             from stem.control import Controller
-            with Controller.from_port(port=9051) as controller:
-                controller.authenticate()
+            from stem.protocol import ProtocolError
+            # Explicitly connect to localhost to avoid accidental exposure
+            with Controller.from_port(address="127.0.0.1", port=9051) as controller:
+                try:
+                    controller.authenticate()
+                except ProtocolError as e:
+                    if "authentication failed" in str(e).lower():
+                        logger.warning(
+                            "Tor authentication failed. Ensure torrc config uses "
+                            "CookieAuthSocket or HashedControlPassword and the control "
+                            "port is accessible."
+                        )
+                    raise
                 controller.signal(Signal.NEWNYM)
                 logger.debug("Tor identity rotated via NEWNYM signal")
                 await asyncio.sleep(1)  # Wait for new circuit
@@ -983,8 +1000,8 @@ class StealthManagerExtensions:
                 oldest_profile, oldest_session = self._sessions.popitem(last=False)
                 try:
                     await oldest_session.aclose()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close oldest session for profile {oldest_profile}: {e}")
 
             if CURL_CFFI_AVAILABLE and AsyncSession:
                 new_session = AsyncSession(

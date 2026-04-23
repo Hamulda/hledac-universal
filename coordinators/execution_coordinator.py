@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import time
 import asyncio
+from collections import deque
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import logging
@@ -137,7 +138,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         self._ray_executions = 0
         
         # Hermes3: Action history
-        self._action_history: List[Dict[str, Any]] = []
+        self._action_history: deque = deque()
         self._max_history = 100
 
     # ========================================================================
@@ -714,7 +715,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             
             # Trim history if needed
             while len(self._action_history) > self._max_history:
-                self._action_history.pop(0)
+                self._action_history.popleft()
             
             return {
                 'success': True,

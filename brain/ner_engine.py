@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -992,7 +993,7 @@ def extract_entities_from_texts(
                         "type": ioc["type"],
                         "count": 0,
                         "confidence": ioc.get("confidence", 0.5),
-                        "snippets": [],
+                        "snippets": deque(),
                     }
                 entity_map[key]["count"] += 1
                 snippet = _extract_snippet(text, ioc["value"])
@@ -1000,7 +1001,7 @@ def extract_entities_from_texts(
                     entity_map[key]["snippets"].append(snippet)
                     # Keep max 3 snippets per entity
                     if len(entity_map[key]["snippets"]) > 3:
-                        entity_map[key]["snippets"].pop(0)
+                        entity_map[key]["snippets"].popleft()
         except Exception:
             pass
 
@@ -1094,7 +1095,7 @@ def extract_entities_from_findings(
                         "type": ioc["type"],
                         "count": 0,
                         "confidence": ioc.get("confidence", 0.5),
-                        "snippets": [],
+                        "snippets": deque(),
                         "sources": [],
                         "urls": [],
                     }
@@ -1103,7 +1104,7 @@ def extract_entities_from_findings(
                 if snippet and snippet not in entity_map[key]["snippets"]:
                     entity_map[key]["snippets"].append(snippet)
                     if len(entity_map[key]["snippets"]) > 3:
-                        entity_map[key]["snippets"].pop(0)
+                        entity_map[key]["snippets"].popleft()
                 if source and source not in entity_map[key]["sources"]:
                     entity_map[key]["sources"].append(source)
                 if url and url not in entity_map[key]["urls"]:

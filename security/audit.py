@@ -10,9 +10,12 @@ Pro:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import hmac
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -57,16 +60,30 @@ class AuditEvent:
     details: Dict[str, Any]
     level: AuditLevel
     hash: str = field(default="")
-    
+    _hmac_key: Optional[bytes] = field(default=None, repr=False)
+
     def __post_init__(self):
         """Vypočítat hash pro integrity"""
         if not self.hash:
             self.hash = self._calculate_hash()
-    
+
     def _calculate_hash(self) -> str:
-        """Vypočítat hash události"""
-        data = f"{self.timestamp}{self.event_type.value}{self.action}{self.resource}"
-        return hashlib.sha256(data.encode()).hexdigest()[:16]
+        """Vypočítat HMAC hash pro integritu všech polí"""
+        # Include all fields for complete integrity protection
+        data = "|".join([
+            self.timestamp.isoformat(),
+            self.event_type.value,
+            self.action,
+            self.resource,
+            self.user_id or "",
+            self.session_id or "",
+            json.dumps(self.details, sort_keys=True),
+            self.level.value,
+        ])
+        if self._hmac_key:
+            return hmac.new(self._hmac_key, data.encode(), hashlib.sha256).hexdigest()
+        # Fallback: key not available, use SHA256 (should not happen when properly configured)
+        return hashlib.sha256(data.encode()).hexdigest()[:32]
     
     def to_dict(self) -> Dict[str, Any]:
         """Export jako slovník"""
@@ -91,7 +108,8 @@ class AuditConfig:
     log_to_console: bool = True
     log_to_file: bool = True
     retention_days: int = 90
-    encrypt_logs: bool = False
+    encrypt_logs: bool = True
+    hmac_key: Optional[bytes] = None
 
 
 class AuditLogger:
@@ -116,15 +134,19 @@ class AuditLogger:
     
     def __init__(self, config: AuditConfig = None):
         self.config = config or AuditConfig()
-        self._db = None
+        self._db: Optional[sqlite3.Connection] = None
         self._initialized = False
+        # Generate HMAC key if not provided
+        if self.config.hmac_key is None:
+            self.config.hmac_key = os.urandom(32)
+        self._hmac_key: bytes = self.config.hmac_key
         
     async def initialize(self) -> None:
         """Inicializovat databázi"""
         Path(self.config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        self._db = sqlite3.connect(self.config.db_path)
-        self._db.execute("""
+
+        self._db = await asyncio.to_thread(lambda: sqlite3.connect(self.config.db_path))
+        await asyncio.to_thread(lambda: self._db.execute("""
             CREATE TABLE IF NOT EXISTS audit_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -137,16 +159,16 @@ class AuditLogger:
                 level TEXT NOT NULL,
                 hash TEXT NOT NULL
             )
-        """)
-        
+        """))
+
         # Indexy pro rychlé vyhledávání
-        self._db.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp)")
-        self._db.execute("CREATE INDEX IF NOT EXISTS idx_event_type ON audit_events(event_type)")
-        self._db.execute("CREATE INDEX IF NOT EXISTS idx_resource ON audit_events(resource)")
-        
-        self._db.commit()
+        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp)"))
+        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_event_type ON audit_events(event_type)"))
+        await asyncio.to_thread(lambda: self._db.execute("CREATE INDEX IF NOT EXISTS idx_resource ON audit_events(resource)"))
+
+        await asyncio.to_thread(lambda: self._db.commit())
         self._initialized = True
-        
+
         logger.info(f"AuditLogger initialized: {self.config.db_path}")
     
     async def log(
@@ -190,12 +212,13 @@ class AuditLogger:
             session_id=session_id,
             details=details or {},
             level=level,
+            _hmac_key=self._hmac_key,
         )
         
         try:
             # Uložit do databáze
-            self._db.execute("""
-                INSERT INTO audit_events 
+            await asyncio.to_thread(lambda: self._db.execute("""
+                INSERT INTO audit_events
                 (timestamp, event_type, action, resource, user_id, session_id, details, level, hash)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -208,8 +231,8 @@ class AuditLogger:
                 json.dumps(event.details),
                 event.level.value,
                 event.hash,
-            ))
-            self._db.commit()
+            )))
+            await asyncio.to_thread(lambda: self._db.commit())
             
             # Logovat do konzole pokud povoleno
             if self.config.log_to_console:
@@ -266,10 +289,10 @@ class AuditLogger:
         
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
-        
-        cursor = self._db.execute(query, params)
+
+        cursor = await asyncio.to_thread(lambda: self._db.execute(query, params))
         events = []
-        
+
         for row in cursor:
             events.append(AuditEvent(
                 timestamp=datetime.fromisoformat(row[1]),
@@ -281,6 +304,7 @@ class AuditLogger:
                 details=json.loads(row[7]) if row[7] else {},
                 level=AuditLevel(row[8]),
                 hash=row[9],
+                _hmac_key=self._hmac_key,
             ))
         
         return events
@@ -315,10 +339,10 @@ class AuditLogger:
             params.append(end_time.isoformat())
         
         query += " GROUP BY event_type"
-        
-        cursor = self._db.execute(query, params)
+
+        cursor = await asyncio.to_thread(lambda: self._db.execute(query, params))
         stats = {row[0]: row[1] for row in cursor}
-        
+
         return {
             "period": {
                 "start": start_time.isoformat() if start_time else "all",
@@ -331,5 +355,5 @@ class AuditLogger:
     async def close(self) -> None:
         """Zavřít databázi"""
         if self._db:
-            self._db.close()
+            await asyncio.to_thread(lambda: self._db.close())
             self._db = None

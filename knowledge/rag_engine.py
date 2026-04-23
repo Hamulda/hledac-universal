@@ -1306,10 +1306,16 @@ class RAGEngine:
         self._hnsw_index.save_index(save_path)
 
         # Also save document map
-        import pickle
-        doc_map_path = Path(save_path) / "document_map.pkl"
-        with open(doc_map_path, 'wb') as f:
-            pickle.dump(self._document_map, f)
+        try:
+            import orjson
+            doc_map_path = Path(save_path) / "document_map.json"
+            with open(doc_map_path, 'wb') as f:
+                f.write(orjson.dumps(self._document_map))
+        except ImportError:
+            import json
+            doc_map_path = Path(save_path) / "document_map.json"
+            with open(doc_map_path, 'w') as f:
+                json.dump(self._document_map, f)
 
         logger.info(f"HNSW index and document map saved to {save_path}")
 
@@ -1339,11 +1345,16 @@ class RAGEngine:
         self._hnsw_index.load_index(load_path)
 
         # Load document map
-        import pickle
-        doc_map_path = Path(load_path) / "document_map.pkl"
+        doc_map_path = Path(load_path) / "document_map.json"
         if doc_map_path.exists():
-            with open(doc_map_path, 'rb') as f:
-                self._document_map = pickle.load(f)
+            try:
+                import orjson
+                with open(doc_map_path, 'rb') as f:
+                    self._document_map = orjson.loads(f.read())
+            except ImportError:
+                import json
+                with open(doc_map_path, 'r') as f:
+                    self._document_map = json.load(f)
 
         logger.info(f"HNSW index loaded from {load_path}")
 

@@ -481,11 +481,11 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         
         elif benchmark_type.lower().startswith('memory'):
             # Memory-bound benchmark
-            data = []
+            data = deque()
             while time.time() - start_time < duration:
                 data.append([i for i in range(1000)])
                 if len(data) > 100:
-                    data.pop(0)
+                    data.popleft()
                 operations += 1
         
         else:

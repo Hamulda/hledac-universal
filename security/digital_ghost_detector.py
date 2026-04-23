@@ -144,7 +144,7 @@ class DigitalGhostDetector:
             # Try to decode as text
             try:
                 text_content = raw_content.decode('utf-8', errors='ignore')
-            except:
+            except Exception:
                 text_content = ""
             
             # Detect ghost signals

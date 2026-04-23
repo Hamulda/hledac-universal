@@ -382,7 +382,7 @@ class AdvancedCaptchaSolver:
                 data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
                 confidences = [int(c) for c in data['conf'] if int(c) > 0]
                 avg_confidence = sum(confidences) / len(confidences) / 100.0 if confidences else 0.5
-            except:
+            except Exception:
                 avg_confidence = 0.5
 
             return text, avg_confidence
@@ -405,7 +405,7 @@ class AdvancedCaptchaSolver:
                         processing_time_ms=0.0,
                         method='math_logic'
                     )
-                except:
+                except Exception:
                     continue
 
         # Try sequence patterns
@@ -424,7 +424,7 @@ class AdvancedCaptchaSolver:
                             processing_time_ms=0.0,
                             method='sequence_logic'
                         )
-                except:
+                except Exception:
                     continue
 
         return CaptchaResult(

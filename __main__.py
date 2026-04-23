@@ -3051,12 +3051,15 @@ def main() -> None:
     # Sprint 8PC: CLI parsing for --sprint flag
     sprint_target: Optional[str] = None
     sprint_duration: float = 1800.0
+    sprint_ui_mode: bool = False
     if "--sprint" in sys.argv:
         idx = sys.argv.index("--sprint")
         if idx + 1 < len(sys.argv):
             sprint_target = sys.argv[idx + 1]
         if idx + 2 < len(sys.argv) and sys.argv[idx + 2].replace(".", "", 1).isdigit():
             sprint_duration = float(sys.argv[idx + 2])
+    if "--ui" in sys.argv:
+        sprint_ui_mode = True
 
     # Sprint 8AI: Step 1 — Synchronous pre-boot
     # Run LMDB boot guard (8AG) BEFORE any runtime acquisition
@@ -3083,6 +3086,7 @@ def main() -> None:
             asyncio.run(_core_run_sprint(
                 query=sprint_target,
                 duration_s=sprint_duration,
+                ui_mode=sprint_ui_mode,
             ))
         else:
             # Sprint 8AM C.1: Async runtime with owned resources via _run_public_passive_once

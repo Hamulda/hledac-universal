@@ -63,10 +63,10 @@ import datetime as _dt
 import hashlib
 import os
 import time as _time
-from collections import Counter
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import xxhash
+import psutil
 import msgspec
 from typing import Any, Dict, List, Optional, TypedDict
 
@@ -532,7 +532,7 @@ class DuckDBShadowStore:
         self._dedup_lmdb_boot_error: Optional[str] = None
         # Bounded hot cache — hard limit to prevent unbounded memory growth
         self._dedup_hot_cache: Dict[str, str] = {}  # fp → finding_id, bounded
-        self._dedup_hot_cache_order: list[str] = []  # FIFO order for eviction
+        self._dedup_hot_cache_order: deque = deque()  # FIFO order for eviction
 
         # Sprint 8QA: Background task tracking for graph ingest
         self._bg_tasks: set[asyncio.Task] = set()
@@ -557,6 +557,10 @@ class DuckDBShadowStore:
 
         # Sprint 8SB: Semantic store (FastEmbed + LanceDB)
         self._semantic_store: Optional[Any] = None
+
+        # Sprint F195: Semantic dedup cache (embedding-based near-duplicate detection)
+        # Lazy init — created on first async_initialize() call
+        self._semantic_dedup_cache: Optional[Any] = None
 
     # ---------------------------------------------------------------------------
     # Sprint 8QA: IOC Graph integration
@@ -1880,6 +1884,10 @@ class DuckDBShadowStore:
         # Sprint 8AG §6.17: Initialize persistent dedup LMDB after WAL LMDB
         # Uses PERSISTENT LMDB root (LMDB_ROOT), not sprint LMDB
         self._init_persistent_dedup_lmdb()
+
+        # Sprint F195: Initialize semantic dedup cache (embedding-based near-duplicate detection)
+        # Memory-aware: skips init if RSS > 6GB threshold
+        self._init_semantic_dedup_cache()
 
         # Sprint 8L: Bounded startup replay — only when limit is set and positive
         if replay_pending_limit:
@@ -4050,6 +4058,28 @@ class DuckDBShadowStore:
         # This avoids double-counting between quality gate and storage layer.
         self._store_persistent_dedup(fingerprint, finding.finding_id)
         self._add_to_hot_cache(fingerprint, finding.finding_id)
+
+        # Sprint F195: Semantic dedup — embedding-based near-duplicate detection
+        # Skip if no semantic dedup cache (memory pressure or init failed)
+        # Fail-soft: returns duplicate=False on any error
+        if self._semantic_dedup_cache is not None:
+            try:
+                dedup_cache = self._semantic_dedup_cache
+                text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+                if text_for_embed and len(text_for_embed) >= 16:
+                    is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
+                    if is_dup:
+                        self._quality_duplicate_count += 1
+                        return FindingQualityDecision(
+                            accepted=False,
+                            reason="semantic_duplicate",
+                            entropy=entropy,
+                            normalized_hash=fingerprint,
+                            duplicate=True,
+                        )
+            except Exception:
+                pass
+
         return FindingQualityDecision(
             accepted=True,
             reason=None,
@@ -5412,6 +5442,34 @@ class DuckDBShadowStore:
             self._dedup_lmdb_boot_error = str(e)
             self._dedup_lmdb_last_error = str(e)
 
+    def _init_semantic_dedup_cache(self) -> None:
+        """
+        Initialize semantic dedup cache (Sprint F195).
+
+        Memory-aware: skips init if RSS > 6GB threshold.
+        Fail-soft: any exception stored in _semantic_dedup_boot_error, dedup proceeds.
+        """
+        try:
+            rss = psutil.Process().memory_info().rss
+            if rss > 6.0 * 1024**3:
+                self._semantic_dedup_cache = None
+                self._semantic_dedup_boot_error = "memory pressure — skipped"
+                return
+        except Exception:
+            pass
+
+        try:
+            from hledac.universal.paths import LMDB_ROOT
+
+            lmdb_path = str((LMDB_ROOT / "semantic_dedup.lmdb"))
+            from hledac.universal.semantic_deduplicator import SemanticDedupCache
+
+            self._semantic_dedup_cache = SemanticDedupCache(lmdb_path=lmdb_path)
+            self._semantic_dedup_boot_error = None
+        except Exception as e:
+            self._semantic_dedup_cache = None
+            self._semantic_dedup_boot_error = str(e)
+
     def _lookup_persistent_dedup(self, fp: str) -> Optional[str]:
         """
         Lookup a fingerprint in the persistent dedup LMDB.
@@ -5469,7 +5527,7 @@ class DuckDBShadowStore:
             self._dedup_hot_cache_order.append(fp)
             return
         if len(self._dedup_hot_cache) >= _DEDUP_HOT_CACHE_MAX:
-            oldest = self._dedup_hot_cache_order.pop(0)
+            oldest = self._dedup_hot_cache_order.popleft()
             self._dedup_hot_cache.pop(oldest, None)
         self._dedup_hot_cache[fp] = finding_id
         self._dedup_hot_cache_order.append(fp)

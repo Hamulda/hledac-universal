@@ -1382,10 +1382,10 @@ class PersistentKnowledgeLayer:
         """
         related = {'nodes': {}, 'edges': []}
         visited = set()
-        queue = [(node_id, 0)]
+        queue = deque([(node_id, 0)])
 
         while queue:
-            current_id, depth = queue.pop(0)
+            current_id, depth = queue.popleft()
 
             if current_id in visited or depth > max_depth:
                 continue
@@ -3475,7 +3475,7 @@ class ArchiveValidator:
             finally:
                 try:
                     os.unlink(tmp_path)
-                except:
+                except Exception:
                     pass
 
         except Exception as e:

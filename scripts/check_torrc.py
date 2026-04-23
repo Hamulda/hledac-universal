@@ -49,7 +49,8 @@ def check_isolate_socks_auth(torrc_path: str) -> bool:
       - inline comments (after directive)
     """
     try:
-        content = open(torrc_path, "r", encoding="utf-8", errors="replace").read()
+        with open(torrc_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
     except OSError:
         return False
 

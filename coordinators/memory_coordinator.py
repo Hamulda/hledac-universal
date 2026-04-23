@@ -22,16 +22,24 @@ import asyncio
 import gc
 import logging
 import ctypes
+import sys
 import threading
 import time
 import weakref
 from collections import OrderedDict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass, asdict
 from enum import Enum, IntEnum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import psutil
 import numpy as np
+
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
+    import json as _json
 
 # Sprint 26: Optional hnswlib for ANN search (replaces FAISS)
 try:
@@ -57,6 +65,35 @@ def _get_sparse():
             _scipy_sparse_module = None
             globals()['SCIPY_AVAILABLE'] = False
     return _scipy_sparse_module
+
+
+def _ndarray_to_list(obj: Any) -> Any:
+    """Convert numpy arrays to lists for JSON serialization."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if is_dataclass(obj):
+        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
+    if isinstance(obj, dict):
+        return {k: _ndarray_to_list(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_ndarray_to_list(item) for item in obj]
+    return obj
+
+
+def _serialize_to_json(data: Any) -> bytes:
+    """Serialize data to JSON bytes using orjson if available."""
+    converted = _ndarray_to_list(data)
+    if ORJSON_AVAILABLE:
+        return orjson.dumps(converted)
+    return _json.dumps(converted).encode()
+
+
+def _deserialize_from_json(data: bytes) -> Any:
+    """Deserialize data from JSON bytes using orjson if available."""
+    if ORJSON_AVAILABLE:
+        return orjson.loads(data)
+    return _json.loads(data.decode())
+
 
 logger = logging.getLogger(__name__)
 
@@ -503,7 +540,7 @@ class NeuromorphicMemoryManager:
 
         self.stats['replays'] += n_samples
 
-    def start_sleep_replay(self, duration_seconds: float = 5.0) -> None:
+    async def start_sleep_replay(self, duration_seconds: float = 5.0) -> None:
         """
         Start sleep-like memory replay for consolidation.
 
@@ -517,13 +554,14 @@ class NeuromorphicMemoryManager:
 
         while self.sleep_active and (time.time() - start_time) < duration_seconds:
             self._memory_replay(n_replays=5)
-            time.sleep(0.1)  # Brief pause between replays
+            # Safe: asyncio.sleep in async def — does NOT block the event loop.
+            await asyncio.sleep(0.1)
 
         self.sleep_active = False
         logger.info("Memory replay completed")
 
-    def stop_sleep_replay(self) -> None:
-        """Stop sleep replay."""
+    async def stop_sleep_replay(self) -> None:
+        """Stop sleep replay (async to allow event loop to interrupt the loop)."""
         self.sleep_active = False
 
     def apply_decay(self, decay_rate: float = 0.001) -> None:
@@ -2155,7 +2193,7 @@ class ContextOptimizationManager:
             try:
                 import lz4.frame
                 return lz4.frame.decompress(compressed.full_compressed).decode('utf-8')
-            except:
+            except Exception:
                 return compressed.important_summary
     
     def _evict_from_hot(self, required_tokens: int):
@@ -2236,11 +2274,10 @@ class ContextOptimizationManager:
     
     def _persist_to_disk(self, item: ContextItem):
         """Persist item to disk storage."""
-        import pickle
-        file_path = self.storage_path / f"{item.item_id}.pkl"
+        file_path = self.storage_path / f"{item.item_id}.json"
         try:
             with open(file_path, 'wb') as f:
-                pickle.dump(item, f)
+                f.write(_serialize_to_json(item))
         except Exception as e:
             logger.error(f"Failed to persist {item.item_id}: {e}")
     
@@ -2418,21 +2455,21 @@ class MultiLevelContextCache:
     def _load_l2_cache(self):
         """Load L2 cache from disk."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.pkl"
+            cache_file = self.l2_storage_path / "l2_cache.json"
             if cache_file.exists():
                 with open(cache_file, 'rb') as f:
-                    self.l2_cache = pickle.load(f)
+                    self.l2_cache = _deserialize_from_json(f.read())
                 logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache")
         except Exception as e:
             logger.warning(f"Could not load L2 cache: {e}")
             self.l2_cache = {}
-    
+
     def _save_l2_cache(self):
         """Save L2 cache to disk."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.pkl"
+            cache_file = self.l2_storage_path / "l2_cache.json"
             with open(cache_file, 'wb') as f:
-                pickle.dump(self.l2_cache, f)
+                f.write(_serialize_to_json(self.l2_cache))
         except Exception as e:
             logger.warning(f"Could not save L2 cache: {e}")
     
@@ -2605,8 +2642,7 @@ class MultiLevelContextCache:
         # Create cache entry
         input_text = str(input_data)
         embedding = self._get_embedding(input_text)
-        
-        import pickle
+
         cache_entry = CacheEntry(
             cache_id=cache_id,
             content=content,
@@ -2614,7 +2650,7 @@ class MultiLevelContextCache:
             access_count=1,
             last_accessed=time.time(),
             created_at=time.time(),
-            size_bytes=len(pickle.dumps(content)),
+            size_bytes=sys.getsizeof(content),
             cache_type=cache_type,
             metadata={}
         )

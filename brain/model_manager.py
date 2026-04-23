@@ -537,7 +537,7 @@ class ModelManager:
                 # Assume cache shape (layers, seq_len, ...)
                 return cache.shape[1] if len(cache.shape) > 1 else 0
             return 0
-        except:
+        except Exception:
             return 0
 
     async def load_model(self, model_name: ModelName) -> Any:

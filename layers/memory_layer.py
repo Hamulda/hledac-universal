@@ -27,6 +27,7 @@ import asyncio
 import gc
 import logging
 import subprocess
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional
 
 # Sprint 5N: Lazy MLX import - MLX is optional for M1 compatibility
@@ -72,7 +73,7 @@ class _MemoryStateManager:
     def __init__(self, config: MemoryConfig):
         self.config = config
         self._current_state = SystemState.HEALTHY
-        self._metrics_history: List[SystemMetrics] = []
+        self._metrics_history: deque = deque()
         self._max_history = 100
         self._health_check_task: Optional[asyncio.Task] = None
         self._running = False
@@ -105,7 +106,7 @@ class _MemoryStateManager:
                 metrics = await self._perform_health_check()
                 self._metrics_history.append(metrics)
                 if len(self._metrics_history) > self._max_history:
-                    self._metrics_history.pop(0)
+                    self._metrics_history.popleft()
 
                 new_state = self._determine_state(metrics)
                 if new_state != self._current_state:
@@ -1230,7 +1231,7 @@ class SharedMemoryManager:
             try:
                 queue.close()
                 queue.join_thread()
-            except:
+            except Exception:
                 pass
         
         # Clear references
@@ -1404,19 +1405,19 @@ That makes calamity of so long life.
         for block_id, noise_mmap in self.noise_blocks.items():
             try:
                 noise_mmap.close()
-            except:
+            except Exception:
                 pass
         
         # Clean up temporary files
         try:
             import glob
             temp_files = glob.glob("/tmp/hledac_entropy_*.bin")
-        except:
+        except Exception:
             temp_files = []
         for temp_file in temp_files:
             try:
                 os.unlink(temp_file)
-            except:
+            except Exception:
                 pass
         
         self.noise_blocks.clear()

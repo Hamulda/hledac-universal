@@ -18,14 +18,21 @@ import hashlib
 import json
 import logging
 import math
-import pickle
+import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
+    import json as _json
 
 if TYPE_CHECKING:
     import faiss
@@ -62,6 +69,72 @@ class ResearchPhase(Enum):
     ANALYSIS = "analysis"
     SYNTHESIS = "synthesis"
     VALIDATION = "validation"
+
+
+def _ndarray_to_list(obj: Any) -> Any:
+    """Convert numpy arrays to lists for JSON serialization."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if is_dataclass(obj):
+        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
+    if isinstance(obj, dict):
+        return {k: _ndarray_to_list(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_ndarray_to_list(item) for item in obj]
+    return obj
+
+
+def _deserialize_context_item(data: Dict[str, Any]) -> ContextItem:
+    """Deserialize a ContextItem from dict."""
+    return ContextItem(
+        item_id=data['item_id'],
+        content=data['content'],
+        metadata=data['metadata'],
+        tokens=data['tokens'],
+        priority=Priority(data['priority']) if isinstance(data['priority'], str) else data['priority'],
+        access_count=data['access_count'],
+        last_accessed=data['last_accessed'],
+        embedding=np.array(data['embedding']) if data.get('embedding') is not None else None,
+        content_type=data.get('content_type', 'general'),
+        confidence=data.get('confidence', 0.5),
+        phase_relevance=data.get('phase_relevance'),
+    )
+
+
+def _serialize_cnew(data: Dict[str, ContextItem]) -> bytes:
+    """Serialize cnew storage to bytes using orjson."""
+    serializable = {}
+    for k, v in data.items():
+        entry_dict = {
+            'item_id': v.item_id,
+            'content': v.content,
+            'metadata': v.metadata,
+            'tokens': v.tokens,
+            'priority': v.priority.value if isinstance(v.priority, Enum) else v.priority,
+            'access_count': v.access_count,
+            'last_accessed': v.last_accessed,
+            'embedding': v.embedding.tolist() if v.embedding is not None else None,
+            'content_type': v.content_type,
+            'confidence': v.confidence,
+            'phase_relevance': v.phase_relevance,
+        }
+        serializable[k] = entry_dict
+    if ORJSON_AVAILABLE:
+        return orjson.dumps(serializable)
+    return _json.dumps(serializable).encode()
+
+
+def _deserialize_cnew(data: bytes) -> Dict[str, ContextItem]:
+    """Deserialize cnew storage from bytes using orjson."""
+    if ORJSON_AVAILABLE:
+        raw = orjson.loads(data)
+    else:
+        raw = _json.loads(data.decode())
+
+    result = {}
+    for k, v in raw.items():
+        result[k] = _deserialize_context_item(v)
+    return result
 
 
 @dataclass
@@ -202,7 +275,7 @@ class DynamicContextManager:
         # Storage configuration
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        self.cnew_storage_file = self.storage_path / "cnew_storage.pkl"
+        self.cnew_storage_file = self.storage_path / "cnew_storage.json"
         
         # Load existing cnew storage if available
         self._load_cnew_storage()
@@ -276,19 +349,19 @@ class DynamicContextManager:
         try:
             if self.cnew_storage_file.exists():
                 with open(self.cnew_storage_file, 'rb') as f:
-                    self.cnew_storage = pickle.load(f)
+                    self.cnew_storage = _deserialize_cnew(f.read())
                 logger.info(f"Loaded {len(self.cnew_storage)} items from cnew storage")
         except FileNotFoundError:
             self.cnew_storage = {}
         except Exception as e:
             logger.warning(f"Could not load cnew storage: {e}")
             self.cnew_storage = {}
-    
+
     def _save_cnew_storage(self):
         """Save cnew storage to disk."""
         try:
             with open(self.cnew_storage_file, 'wb') as f:
-                pickle.dump(self.cnew_storage, f)
+                f.write(_serialize_cnew(self.cnew_storage))
         except Exception as e:
             logger.warning(f"Could not save cnew storage: {e}")
     
@@ -646,13 +719,13 @@ class DynamicContextManager:
     def get_stats(self) -> ContextStats:
         """Get comprehensive context management statistics."""
         hit_rate = self.stats['hits'] / max(1, self.stats['total_requests'])
-        
+
         # Estimate memory usage
         total_memory = 0
         all_items = list(self.hot_context.values()) + list(self.warm_context.values())
         for item in all_items:
-            total_memory += len(pickle.dumps(item))
-        
+            total_memory += sys.getsizeof(item)
+
         total_memory_mb = total_memory / (1024 * 1024)
         
         return ContextStats(

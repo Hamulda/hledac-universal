@@ -1126,7 +1126,7 @@ class MetadataExtractor:
                         if 'GPS GPSLongitudeRef' in tags and str(tags['GPS GPSLongitudeRef']) == 'W':
                             lon = -lon
                         result['gps_coords'] = (lat, lon)
-                    except:
+                    except Exception:
                         pass
 
                 # Date

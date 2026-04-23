@@ -8,7 +8,7 @@ import asyncio
 import importlib
 import importlib.util
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from functools import cached_property
 from typing import Any, Callable, Dict, List, Optional
 
@@ -108,7 +108,7 @@ class CapabilityProber:
     def __init__(self):
         self._cache: OrderedDict[str, bool] = OrderedDict()
         self._cache_max = _MAX_CACHE_SIZE
-        self._stats = {"hits": 0, "misses": 0, "missed_modules": []}
+        self._stats = {"hits": 0, "misses": 0, "missed_modules": deque()}
 
     def has_module(self, name: str) -> bool:
         """
@@ -132,7 +132,7 @@ class CapabilityProber:
             self._stats["misses"] += 1
             self._stats["missed_modules"].append(name)
             if len(self._stats["missed_modules"]) > _MAX_STATS_MISSED:
-                self._stats["missed_modules"].pop(0)
+                self._stats["missed_modules"].popleft()
         else:
             self._stats["hits"] += 1
 
@@ -156,7 +156,7 @@ class CapabilityProber:
             self._stats["misses"] += 1
             self._stats["missed_modules"].append(name)
             if len(self._stats["missed_modules"]) > _MAX_STATS_MISSED:
-                self._stats["missed_modules"].pop(0)
+                self._stats["missed_modules"].popleft()
             return None
 
     async def aget_class(self, module_name: str, class_name: str, timeout: float = 2.0):

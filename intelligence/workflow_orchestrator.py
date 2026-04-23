@@ -197,7 +197,8 @@ class ComprehensiveReport:
             "HIGH_RISK": "danger"
         }.get(self.verdict, "info")
 
-        html = f"""<!DOCTYPE html>
+        parts = [
+            f"""<!DOCTYPE html>
 <html>
 <head>
     <title>Analysis Report</title>
@@ -234,62 +235,66 @@ class ComprehensiveReport:
 
         <div class="section">
             <h2>Input Summary</h2>
-            <ul>
-"""
+            <ul>""",
+        ]
         for key, value in self.input_summary.items():
-            html += f"                <li><strong>{key}:</strong> {value}</li>\n"
+            parts.append(f"                <li><strong>{key}:</strong> {value}</li>")
 
-        html += """            </ul>
+        parts.extend([
+            """            </ul>
         </div>
 
         <div class="section">
-            <h2>Correlations</h2>
-"""
+            <h2>Correlations</h2>""",
+        ])
         for finding in self.correlations.cross_module_findings:
-            html += f"""            <div class="finding">
+            parts.append(
+                f"""            <div class="finding">
                 <strong>{finding.finding_type}</strong> ({finding.severity})
                 <p>{finding.description}</p>
                 <small>Modules: {', '.join(finding.modules)}</small>
-            </div>
-"""
+            </div>"""
+            )
 
-        html += """        </div>
+        parts.append("""        </div>
 
         <div class="section">
-            <h2>Anomalies</h2>
-"""
+            <h2>Anomalies</h2>""")
+
         for anomaly in self.anomalies:
-            html += f"""            <div class="anomaly">
+            parts.append(
+                f"""            <div class="anomaly">
                 <strong>{anomaly.anomaly_type}</strong> ({anomaly.severity})
                 <p>{anomaly.description}</p>
                 <small>Affected: {', '.join(anomaly.affected_modules)}</small>
-            </div>
-"""
+            </div>"""
+            )
 
-        html += """        </div>
+        parts.append("""        </div>
 
         <div class="section">
-            <h2>Recommendations</h2>
-"""
+            <h2>Recommendations</h2>""")
+
         for rec in self.recommendations:
-            html += f'            <div class="recommendation">{rec}</div>\n'
+            parts.append(f'            <div class="recommendation">{rec}</div>')
 
-        html += """        </div>
+        parts.append("""        </div>
 
         <div class="section">
-            <h2>Module Results</h2>
-"""
-        for module, result in self.module_results.items():
-            html += f"""            <h3>{module}</h3>
-            <pre>{json.dumps(result, indent=2, default=str)}</pre>
-"""
+            <h2>Module Results</h2>""")
 
-        html += """        </div>
+        for module, result in self.module_results.items():
+            parts.append(
+                f"""            <h3>{module}</h3>
+            <pre>{json.dumps(result, indent=2, default=str)}</pre>"""
+            )
+
+        parts.append("""        </div>
     </div>
 </body>
-</html>"""
+</html>""")
 
-        return html
+        return ''.join(parts)
 
 
 @dataclass

@@ -21,6 +21,7 @@ import logging
 import re
 import hashlib
 import time
+from collections import deque
 from typing import List, Dict, Set, Optional, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urlparse, urljoin, parse_qs, urlencode
@@ -623,10 +624,10 @@ class DeepProbeScanner:
 
         discovered = []
         visited = set()
-        to_visit = [(base_url, 0)]  # (url, depth)
+        to_visit = deque([(base_url, 0)])  # (url, depth)
 
         while to_visit and len(visited) < 1000:  # Safety limit
-            current_url, depth = to_visit.pop(0)
+            current_url, depth = to_visit.popleft()
 
             if current_url in visited or depth > max_depth:
                 continue
@@ -754,17 +755,17 @@ class DeepProbeScanner:
         for result in s3_results:
             if isinstance(result, dict) and result.get("accessible"):
                 results.append(result)
-                await self._store_bucket_finding(result, store, "s3_leak")
+                await self._store_bucket_finding(result, store, "deep_probe")
 
         for result in gcs_results:
             if isinstance(result, dict) and result.get("accessible"):
                 results.append(result)
-                await self._store_bucket_finding(result, store, "gcs_leak")
+                await self._store_bucket_finding(result, store, "deep_probe_gcs")
 
         for result in azure_results:
             if isinstance(result, dict) and result.get("accessible"):
                 results.append(result)
-                await self._store_bucket_finding(result, store, "azure_leak")
+                await self._store_bucket_finding(result, store, "deep_probe_azure")
 
         logger.info(f"scan_s3_buckets({domain}): {len(results)} open buckets found")
         return results
@@ -1214,7 +1215,7 @@ async def scan_ipfs(keyword: str, store=None) -> List[Dict[str, Any]]:
                 await store.async_record_shadow_finding(
                     finding_id=finding_id,
                     query=keyword,
-                    source_type="ipfs",
+                    source_type="deep_probe",
                     confidence=0.7,
                 )
 

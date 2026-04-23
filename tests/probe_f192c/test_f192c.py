@@ -301,8 +301,8 @@ class TestCircuitBreakerNoClearnetProliferation:
 
         assert resilient_fetch_node is not None, "resilient_fetch must exist"
 
-        # Extract the function source
-        func_source = inspect.getsource(resilient_fetch)
+        # Extract the function source using AST (not inspect on undefined var)
+        func_source = ast.get_source_segment(content, resilient_fetch_node)
 
         # Split into clearnet vs tor sections
         clearnet_part = func_source.split("elif transport")[0]

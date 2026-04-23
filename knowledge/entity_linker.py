@@ -36,6 +36,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -199,7 +200,7 @@ class SimpleCache:
         self.max_size = max_size
         self.ttl = timedelta(seconds=ttl_seconds)
         self._cache: Dict[str, Tuple[Any, datetime]] = {}
-        self._access_order: List[str] = []
+        self._access_order: deque = deque()
 
     def _generate_key(self, query: str) -> str:
         """Generate cache key from query."""
@@ -234,7 +235,7 @@ class SimpleCache:
 
         # Evict oldest if at capacity
         if len(self._cache) >= self.max_size and key not in self._cache:
-            oldest_key = self._access_order.pop(0)
+            oldest_key = self._access_order.popleft()
             if oldest_key in self._cache:
                 del self._cache[oldest_key]
 

@@ -400,7 +400,7 @@ class APIDocGenerator:
                             constants[target.id] = value_str
                     else:
                         constants[target.id] = str(node.value)
-                except:
+                except Exception:
                     constants[target.id] = "Unknown"
             return constants
     

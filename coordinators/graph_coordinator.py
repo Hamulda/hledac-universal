@@ -68,7 +68,7 @@ class GraphCoordinator(UniversalCoordinator):
         self._config = config or GraphCoordinatorConfig()
 
         # State
-        self._pending_queries: List[str] = []
+        self._pending_queries: deque = deque()
         self._walks_executed: int = 0
         self._paths_returned: int = 0
         self._stop_reason: Optional[str] = None
@@ -143,7 +143,7 @@ class GraphCoordinator(UniversalCoordinator):
             return self._get_step_result()
 
         # Process queries
-        query = self._pending_queries.pop(0)
+        query = self._pending_queries.popleft()
 
         # Execute graph reasoning
         result = await self._execute_graph_reasoning(query)

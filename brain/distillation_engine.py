@@ -19,11 +19,13 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import json
 import logging
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -254,28 +256,27 @@ class DistillationEngine:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Create connection with closing() to guarantee FD release
-            with closing(sqlite3.connect(str(self._db_path))) as conn:
-                cursor = conn.cursor()
+            def _init_db():
+                with closing(sqlite3.connect(str(self._db_path))) as conn:
+                    cursor = conn.cursor()
+                    # Create examples table
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS examples (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            query TEXT NOT NULL,
+                            chain TEXT NOT NULL,
+                            score REAL NOT NULL,
+                            metadata TEXT,
+                            timestamp REAL NOT NULL
+                        )
+                    """)
+                    # Create index for faster queries
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_timestamp ON examples(timestamp)
+                    """)
+                    conn.commit()
 
-            # Create examples table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS examples (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query TEXT NOT NULL,
-                    chain TEXT NOT NULL,
-                    score REAL NOT NULL,
-                    metadata TEXT,
-                    timestamp REAL NOT NULL
-                )
-            """)
-
-            # Create index for faster queries
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_timestamp ON examples(timestamp)
-            """)
-
-            conn.commit()
-            # closing() context manager guarantees FD release
+            await asyncio.to_thread(_init_db)
 
             logger.info(f"✓ Database initialized at {self._db_path}")
 
@@ -298,24 +299,26 @@ class DistillationEngine:
             return False
 
         try:
-            with closing(sqlite3.connect(str(self._db_path))) as conn:
-                cursor = conn.cursor()
+            with await asyncio.to_thread(closing, sqlite3.connect(str(self._db_path))) as conn:
+                cursor = await asyncio.to_thread(conn.cursor)
 
-                cursor.execute(
-                    """
+                await asyncio.to_thread(
+                    lambda: cursor.execute(
+                        """
                     INSERT INTO examples (query, chain, score, metadata, timestamp)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (
-                        example.query,
-                        json.dumps(example.chain),
-                        example.score,
-                        json.dumps(example.metadata),
-                        example.timestamp,
-                    ),
+                        (
+                            example.query,
+                            json.dumps(example.chain),
+                            example.score,
+                            json.dumps(example.metadata),
+                            example.timestamp,
+                        ),
+                    )
                 )
 
-                conn.commit()
+                await asyncio.to_thread(lambda: conn.commit())
                 # closing() context manager guarantees FD release
 
             logger.debug(f"Added example with score {example.score:.3f}")
@@ -337,13 +340,15 @@ class DistillationEngine:
             return []
 
         try:
-            with closing(sqlite3.connect(str(self._db_path))) as conn:
-                cursor = conn.cursor()
+            with await asyncio.to_thread(closing, sqlite3.connect(str(self._db_path))) as conn:
+                cursor = await asyncio.to_thread(conn.cursor)
 
-                cursor.execute(
-                    "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp"
+                await asyncio.to_thread(
+                    lambda: cursor.execute(
+                        "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp"
+                    )
                 )
-                rows = cursor.fetchall()
+                rows = await asyncio.to_thread(lambda: cursor.fetchall())
                 # closing() context manager guarantees FD release
 
             examples = []
@@ -391,14 +396,17 @@ class DistillationEngine:
 
             logger.info(f"Training on {len(examples)} examples for {n_epochs} epochs")
 
-            # Prepare data
-            X_list = []
-            y_list = []
+            # Prepare data - parallelize embeddings via run_in_executor
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                embedding_tasks = [
+                    loop.run_in_executor(executor, self._get_chain_embedding, example.chain)
+                    for example in examples
+                ]
+                embeddings = await asyncio.gather(*embedding_tasks)
 
-            for example in examples:
-                embedding = self._get_chain_embedding(example.chain)
-                X_list.append(embedding)
-                y_list.append(example.score)
+            X_list = embeddings
+            y_list = [example.score for example in examples]
 
             # Convert to MLX arrays
             X = mx.array(np.array(X_list))

@@ -68,6 +68,10 @@ autonomous_orchestrator — ROOT RE-EXPORT FACADE (Sprint F181A)
 
 import sys
 import os
+import time as _time_module  # Needed for test surface: patchable time.time
+
+# Re-export ActionResult for backward-compat test surface
+from hledac.universal.utils.action_result import ActionResult
 
 # Sprint 8VC: CRITICAL - Register this module in sys.modules BEFORE any other imports
 # This prevents __init__.py from failing when it does "from .autonomous_orchestrator import ..."
@@ -104,6 +108,32 @@ _legacy_mod.__path__ = [os.path.dirname(__file__)]
 sys.modules["legacy.autonomous_orchestrator"] = _legacy_mod
 assert _spec.loader is not None
 _spec.loader.exec_module(_legacy_mod)
+
+# Sprint 2A: Replace _log_task_error on the shared class with a facade-aware
+# static method so that patching facade.logger is visible to the method.
+import asyncio
+
+
+def _facade_log_task_error(task: asyncio.Task) -> None:
+    """Facade-aware task error logger — uses the facade's logger (patchable)."""
+    _facade_mod = sys.modules.get("hledac.universal.autonomous_orchestrator")
+    if _facade_mod is None:
+        return
+    _logger = getattr(_facade_mod, "logger", None)
+    if _logger is None:
+        return
+    try:
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                _logger.warning(f"[BG_TASK] {task.get_name()} failed: {exc}")
+    except asyncio.InvalidStateError:
+        pass
+
+
+_FullyAutonomousOrchestrator = getattr(_legacy_mod, "FullyAutonomousOrchestrator", None)
+if _FullyAutonomousOrchestrator is not None:
+    _FullyAutonomousOrchestrator._log_task_error = staticmethod(_facade_log_task_error)
 
 # Copy all exported names to this facade module
 _for_export = [
@@ -224,4 +254,18 @@ create_autonomous_orchestrator = getattr(_legacy_mod, "autonomous_research", Non
 globals()["create_autonomous_orchestrator"] = create_autonomous_orchestrator
 setattr(_facade_mod, "create_autonomous_orchestrator", create_autonomous_orchestrator)
 
-__all__ = _for_export + ["create_autonomous_orchestrator"]
+# time module — required for test surface (patchable time.time)
+globals()["time"] = _time_module
+setattr(_facade_mod, "time", _time_module)
+
+# ActionResult — re-exported for backward-compat test surface
+globals()["ActionResult"] = ActionResult
+setattr(_facade_mod, "ActionResult", ActionResult)
+
+# logger — re-exported from legacy for test surface (patchable logger)
+_legacy_logger = getattr(_legacy_mod, "logger", None)
+if _legacy_logger is not None:
+    globals()["logger"] = _legacy_logger
+    setattr(_facade_mod, "logger", _legacy_logger)
+
+__all__ = _for_export + ["create_autonomous_orchestrator", "ActionResult", "time", "logger"]

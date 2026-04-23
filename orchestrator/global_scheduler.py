@@ -124,6 +124,8 @@ class GlobalPriorityScheduler:
                         item = self.task_queue[0]
                         del self.task_queue[0]
                     else:
+                        # Safe: this is a sync worker process (ProcessPoolExecutor),
+                        # not an async context. Blocks only this worker process thread.
                         time.sleep(0.1)
                         continue
 
@@ -143,20 +145,24 @@ class GlobalPriorityScheduler:
 
                 func = _TASK_REGISTRY[task_name]
 
-                # Run async function in new event loop (worker is sync process)
+                # Run async function in existing event loop (worker is sync process)
+                # Use get_event_loop() instead of asyncio.run() to avoid creating
+                # a new event loop on every call, which is expensive and can cause
+                # issues on M1 when the process shares memory with the main event loop
                 try:
                     if inspect.iscoroutinefunction(func):
-                        asyncio.run(func(*args, **kwargs))
+                        loop = asyncio.get_event_loop()
+                        loop.run_until_complete(func(*args, **kwargs))
                     else:
                         func(*args, **kwargs)
                 except Exception as e:
                     logger.exception(f"Worker {worker_id} failed to execute {task_name}: {e}")
 
-            except Exception:
+            except Exception as e:
+                # Safe: sync worker process, not async context — blocks only this thread.
+                logger.exception(f"Worker {worker_id} error: {e}")
                 time.sleep(0.1)
                 continue
-            except Exception as e:
-                logger.exception(f"Worker {worker_id} error: {e}")
 
     def schedule(
         self,

@@ -322,6 +322,8 @@ async def run_sprint(
     duration_s: float = 1800.0,
     export_dir: str = str(Path.home() / ".hledac" / "reports"),
     aggressive_mode: bool = False,
+    deep_probe_enabled: bool = False,
+    ui_mode: bool = False,
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -389,10 +391,28 @@ async def run_sprint(
         _ct_cache = Path(os.path.expanduser("~/.hledac/ct_cache"))
         _ct_cache.mkdir(parents=True, exist_ok=True)
         _ct_log_client = CTLogClient(cache_dir=_ct_cache)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"CT log client initialization failed: {e}")
 
     try:
+        # Sprint F195C: Sprint dashboard — created when ui_mode=True
+        _dashboard: Any = None
+        if ui_mode:
+            try:
+                from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+                _dashboard = SprintDashboard(sprint_id, query, duration_s)
+                _dashboard.start()
+            except Exception as e:
+                logger.warning(f"Dashboard creation failed: {e}")  # fail-safe: dashboard must never block sprint
+
+        # Sprint F195C: Progress callback for dashboard updates
+        def _on_cycle(result: Any, phase: str, elapsed_s: float) -> None:
+            if _dashboard is not None:
+                try:
+                    _dashboard.update(result, phase, elapsed_s)
+                except Exception as e:
+                    logger.debug(f"Dashboard update failed: {e}")
+
         # Run sprint via scheduler directly (enables compute_sprint_intelligence access)
         # now_monotonic=None: scheduler uses live time internally via adapter.tick()
         result = await scheduler.run(
@@ -402,6 +422,7 @@ async def run_sprint(
             query=query,
             duckdb_store=store,
             ct_log_client=_ct_log_client,
+            progress_callback=_on_cycle,
         )
 
         # Sprint F150H: Pull scheduler intelligence (fail-soft, additive)
@@ -409,8 +430,8 @@ async def run_sprint(
         # public_verdict, branch_value, sprint_verdict
         try:
             intel = scheduler.compute_sprint_intelligence()
-        except Exception:
-            intel = {}
+        except Exception as e:
+            logger.debug(f"compute_sprint_intelligence failed: {e}")
 
         _phase_times["WINDUP"] = time.monotonic()
 
@@ -996,8 +1017,8 @@ async def run_sprint(
             top_seed_nodes: list = []
             try:
                 top_seed_nodes = store.get_top_seed_nodes(n=5) if store else []
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"get_top_seed_nodes failed: {e}")
 
             # Sprint F155: Determine handoff enrichment level (canonical_run_summary built inline)
             _handoff_enriched = bool(runtime_truth and intel)
@@ -1084,10 +1105,31 @@ async def run_sprint(
 
             export_result = await export_sprint(store=store, handoff=handoff, sprint_id=sprint_id)
             logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json','')}")
+
+            # Deep probe runs AFTER export completes — post-sprint, non-blocking
+            if deep_probe_enabled:
+                try:
+                    from hledac.universal.deep_research.probe_runner import run_deep_probe_if_enabled
+                    probe_result = await run_deep_probe_if_enabled(
+                        query=query,
+                        store=store,
+                        deep_probe_enabled=True,
+                    )
+                    if probe_result:
+                        logger.info(f"[DEEP_PROBE] completed: {probe_result}")
+                except Exception as probe_err:
+                    logger.warning(f"[DEEP_PROBE] probe runner failed (non-fatal): {probe_err}")
         except Exception as ex:
             logger.warning(f"[EXPORT] sprint_exporter seam failed (non-fatal): {ex}")
 
     finally:
+        # Sprint F195C: Finalize dashboard display
+        if _dashboard is not None:
+            try:
+                elapsed_s = time.monotonic() - _phase_times["BOOT"]
+                _dashboard.finish(result, elapsed_s)
+            except Exception as e:
+                logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
         await store.aclose()
 
 
@@ -1194,6 +1236,11 @@ def main() -> None:
         action="store_true",
         help="Sprint F195B: Enable aggressive mode with 8s branch budgets",
     )
+    parser.add_argument(
+        "--deep-probe",
+        action="store_true",
+        help="Run deep probe research post-sprint (deep web, S3 buckets, IPFS)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1204,7 +1251,7 @@ def main() -> None:
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
-        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive))
+        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe))
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:

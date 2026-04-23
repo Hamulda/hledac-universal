@@ -26,15 +26,19 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import pickle
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set
 from urllib.parse import urlparse, urlunparse
+
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -504,7 +508,7 @@ class QuotientFilterFrontier:
         if self._quotient_filter is not None:
             try:
                 self._quotient_filter.remove(url)
-            except:
+            except Exception:
                 pass
 
     def get_stats(self) -> FrontierStats:
@@ -530,7 +534,7 @@ class QuotientFilterFrontier:
                 from pyprobables import QuotientFilter
                 filter_size = self._quotient_filter.size
                 self._quotient_filter = QuotientFilter(filter_size=filter_size)
-            except:
+            except Exception:
                 pass
 
 
@@ -547,7 +551,7 @@ class PersistentFrontier:
     def __init__(
         self,
         storage_path: Optional[Path] = None,
-        backend: str = "pickle"
+        backend: str = "orjson"
     ):
         if storage_path is None:
             storage_path = Path.home() / ".cache" / "hledac" / "frontier"
@@ -564,10 +568,10 @@ class PersistentFrontier:
     def _get_storage_file(self) -> Path:
         """Get path to storage file."""
         extension = {
-            'pickle': '.pkl',
+            'orjson': '.json',
             'json': '.json',
             'sqlite': '.db'
-        }.get(self.backend, '.pkl')
+        }.get(self.backend, '.json')
 
         return self.storage_path / f"frontier{extension}"
 
@@ -576,15 +580,28 @@ class PersistentFrontier:
         storage_file = self._get_storage_file()
 
         try:
-            if self.backend == 'pickle':
-                with open(storage_file, 'wb') as f:
-                    pickle.dump({
-                        'urls': self._frontier._exact_set,
-                        'stats': self._frontier._stats,
-                        'timestamp': datetime.utcnow().isoformat()
-                    }, f)
+            if self.backend == 'orjson':
+                data = {
+                    'urls': list(self._frontier._exact_set),
+                    'stats': {
+                        'total_urls': self._frontier._stats.total_urls,
+                        'checked_urls': self._frontier._stats.checked_urls,
+                        'skipped_urls': self._frontier._stats.skipped_urls,
+                        'added_urls': self._frontier._stats.added_urls,
+                        'false_positives': self._frontier._stats.false_positives,
+                    },
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                if ORJSON_AVAILABLE:
+                    with open(storage_file, 'wb') as f:
+                        f.write(orjson.dumps(data))
+                else:
+                    import json
+                    with open(storage_file, 'w') as f:
+                        json.dump(data, f)
 
             elif self.backend == 'json':
+                import json
                 with open(storage_file, 'w') as f:
                     json.dump({
                         'urls': list(self._frontier._exact_set),
@@ -625,11 +642,11 @@ class PersistentFrontier:
             cursor.execute('DELETE FROM frontier')
             timestamp = datetime.utcnow().isoformat()
 
-            for url in self._frontier._exact_set:
-                cursor.execute(
-                    'INSERT OR REPLACE INTO frontier (url, timestamp) VALUES (?, ?)',
-                    (url, timestamp)
-                )
+            data = [(url, timestamp) for url in self._frontier._exact_set]
+            cursor.executemany(
+                'INSERT OR REPLACE INTO frontier (url, timestamp) VALUES (?, ?)',
+                data
+            )
 
             conn.commit()
             conn.close()
@@ -646,12 +663,18 @@ class PersistentFrontier:
             return
 
         try:
-            if self.backend == 'pickle':
-                with open(storage_file, 'rb') as f:
-                    data = pickle.load(f)
-                    self._frontier._exact_set = data.get('urls', set())
+            if self.backend == 'orjson':
+                if ORJSON_AVAILABLE:
+                    with open(storage_file, 'rb') as f:
+                        data = orjson.loads(f.read())
+                else:
+                    import json
+                    with open(storage_file, 'r') as f:
+                        data = json.load(f)
+                self._frontier._exact_set = set(data.get('urls', []))
 
             elif self.backend == 'json':
+                import json
                 with open(storage_file, 'r') as f:
                     data = json.load(f)
                     self._frontier._exact_set = set(data.get('urls', []))
@@ -744,7 +767,7 @@ class EfficientFrontier(PersistentFrontier):
     def __init__(
         self,
         storage_path: Optional[Path] = None,
-        backend: str = "pickle",
+        backend: str = "orjson",
         normalize_urls: bool = True
     ):
         super().__init__(storage_path, backend)

@@ -17957,8 +17957,8 @@ Provide a detailed synthesis with key findings and conclusions."""
         # Return default state
         return {
             'candidates': [],  # [{url, score, reason}]
-            'visited_url_hashes': [],  # Ring max 50
-            'failures': [],  # Ring max 20 [{url_hash, reason}]
+            'visited_url_hashes': deque(),  # Ring max 50
+            'failures': deque(),  # Ring max 20 [{url_hash, reason}]
             'best_primary_evidence_id': None,
             'run_count': 0
         }
@@ -18027,7 +18027,7 @@ Provide a detailed synthesis with key findings and conclusions."""
             url_hash = hashlib.sha256(c['url'].encode()).hexdigest()[:16]
             state['visited_url_hashes'].append(url_hash)
             if len(state['visited_url_hashes']) > self._PRIMARY_VISITED_RING_MAX:
-                state['visited_url_hashes'].pop(0)
+                state['visited_url_hashes'].popleft()
 
         self._save_primary_chase_state(cluster_id, state)
         return candidates[:self._PRIMARY_CANDIDATES_MAX]
@@ -18079,7 +18079,7 @@ Provide a detailed synthesis with key findings and conclusions."""
 
         state['failures'].append(failure)
         if len(state['failures']) > self._PRIMARY_FAILURES_RING_MAX:
-            state['failures'].pop(0)
+            state['failures'].popleft()
 
         self._save_primary_chase_state(cluster_id, state)
 
@@ -20721,7 +20721,7 @@ class HttpDiskCache:
         self._max_ram_entries = max_ram_entries
         self._ttl_seconds = ttl_seconds
         self._ram_cache: Dict[str, HttpCacheEntry] = {}
-        self._access_order: List[str] = []  # Simple LRU
+        self._access_order: deque = deque()  # Simple LRU
         # Stale usage tracking for domain health
         self._stale_usage_log: Dict[str, List[float]] = {}  # domain -> list of timestamps
 
@@ -20917,7 +20917,7 @@ class HttpDiskCache:
 
         # Evict if needed
         while len(self._ram_cache) >= self._max_ram_entries:
-            oldest = self._access_order.pop(0)
+            oldest = self._access_order.popleft()
             if oldest in self._ram_cache:
                 del self._ram_cache[oldest]
 
@@ -22575,7 +22575,7 @@ class _ResearchManager:
 
         # M1 8GB: Source reputation tracking (LRU max 200)
         self._source_reputation: Dict[str, SourceReputation] = {}
-        self._reputation_lru_order: List[str] = []  # For LRU eviction
+        self._reputation_lru_order: deque = deque()  # For LRU eviction
         self._max_reputation_ram = 200
 
         # M1 8GB: EvidenceLog pro event tracing
@@ -29132,7 +29132,8 @@ class _SynthesisManager:
         system_prompt = """You are an expert research analyst. Create a comprehensive research report.
 Use markdown formatting. Be thorough, cite sources, and acknowledge limitations."""
 
-        user_prompt = f"""Synthesize the following research findings into a comprehensive report:
+        user_prompt_parts = [
+            f"""Synthesize the following research findings into a comprehensive report:
 
 Query: {context['query']}
 Findings: {context['findings_count']}
@@ -29141,17 +29142,17 @@ Source Types: {context['source_breakdown']}
 Temporal Range: {context['temporal_range']}
 
 Top Findings:
-"""
-        # Continue with findings
+""",
+        ]
         for i, finding in enumerate(context['top_findings'], 1):
-            user_prompt += f"{i}. {finding}\n"
+            user_prompt_parts.append(f"{i}. {finding}")
 
         if context['insights']:
-            user_prompt += "\nKey Insights:\n"
+            user_prompt_parts.append("\nKey Insights:")
             for insight in context['insights'][:5]:
-                user_prompt += f"- {insight}\n"
+                user_prompt_parts.append(f"- {insight}")
 
-        return await self._orch._brain_mgr.generate(system_prompt, user_prompt, max_tokens=4096)
+        return await self._orch._brain_mgr.generate(system_prompt, ''.join(user_prompt_parts), max_tokens=4096)
 
     async def _moe_synthesize(self, context: Dict, language: str, contradictions: List[Dict] = None) -> str:
         """Synthesis using MoE router with multiple experts."""
@@ -29162,7 +29163,8 @@ Top Findings:
         moe = self._orch._brain_mgr.moe_router
 
         # Prepare synthesis query
-        synthesis_query = f"""Synthesize research findings into a comprehensive report in {language}.
+        synthesis_parts = [
+            f"""Synthesize research findings into a comprehensive report in {language}.
 
 Query: {context['query']}
 Findings Count: {context['findings_count']}
@@ -29171,14 +29173,17 @@ Source Types: {context['source_breakdown']}
 Temporal Range: {context['temporal_range']}
 
 Top Findings:
-"""
+""",
+        ]
         for i, finding in enumerate(context['top_findings'], 1):
-            synthesis_query += f"{i}. {finding}\n"
+            synthesis_parts.append(f"{i}. {finding}")
 
         if context['insights']:
-            synthesis_query += "\nKey Insights:\n"
+            synthesis_parts.append("\nKey Insights:")
             for insight in context['insights'][:5]:
-                synthesis_query += f"- {insight}\n"
+                synthesis_parts.append(f"- {insight}")
+
+        synthesis_query = ''.join(synthesis_parts)
 
         # Use MoE router for synthesis
         synthesis_context = {
@@ -30477,7 +30482,7 @@ class AutonomousWorkflowEngine:
         # LRU eviction if needed
         if len(self._source_reputation) >= self._max_reputation_ram and key not in self._source_reputation:
             if self._reputation_lru_order:
-                oldest_key = self._reputation_lru_order.pop(0)
+                oldest_key = self._reputation_lru_order.popleft()
                 if oldest_key in self._source_reputation:
                     del self._source_reputation[oldest_key]
 

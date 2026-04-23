@@ -515,9 +515,7 @@ async def register_all_coordinators(
     from .memory_coordinator import UniversalMemoryCoordinator
     from .advanced_research_coordinator import UniversalAdvancedResearchCoordinator
     from .swarm_coordinator import UniversalSwarmCoordinator
-    from .federated_learning_coordinator import UniversalFederatedLearningCoordinator
     from .multimodal_coordinator import UniversalMultimodalCoordinator
-    from .quantum_coordinator import UniversalQuantumCoordinator
     from .meta_reasoning_coordinator import UniversalMetaReasoningCoordinator
     
     # Register core coordinators
@@ -575,28 +573,14 @@ async def register_all_coordinators(
             weight=1.0,
             metadata={'category': 'advanced', 'type': 'swarm'}
         )
-        
-        await registry.register(
-            UniversalFederatedLearningCoordinator(),
-            priority=5,
-            weight=0.8,
-            metadata={'category': 'advanced', 'type': 'federated_learning'}
-        )
-        
+
         await registry.register(
             UniversalMultimodalCoordinator(),
             priority=6,
             weight=1.0,
             metadata={'category': 'advanced', 'type': 'multimodal'}
         )
-        
-        await registry.register(
-            UniversalQuantumCoordinator(),
-            priority=4,
-            weight=0.7,
-            metadata={'category': 'advanced', 'type': 'quantum'}
-        )
-        
+
         await registry.register(
             UniversalMetaReasoningCoordinator(),
             priority=6,
@@ -609,8 +593,9 @@ async def register_all_coordinators(
     registry.set_default(OperationType.EXECUTION, 'universal_execution_coordinator')
     registry.set_default(OperationType.SECURITY, 'universal_security_coordinator')
     registry.set_default(OperationType.REASONING, 'universal_meta_reasoning_coordinator')
-    registry.set_default(OperationType.OPTIMIZATION, 'universal_quantum_coordinator')
-    
+    # OPTIMIZATION default removed - quantum_coordinator was removed
+    # registry.set_default(OperationType.OPTIMIZATION, 'universal_quantum_coordinator')
+
     logger.info(f"Registered {len(registry.get_all_coordinators())} coordinators")
     
     return registry

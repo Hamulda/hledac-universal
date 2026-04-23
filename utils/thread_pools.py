@@ -167,6 +167,7 @@ class PersistentActorExecutor:
         self._initializer = initializer
         self._queue: list = []          # thread-safe list used as stack: append + pop
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)  # replaces sleep-polling in worker
         self._started = False
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -212,6 +213,7 @@ class PersistentActorExecutor:
         with self._lock:
             self._queue.append(item)
             self._submitted_count += 1
+            self._condition.notify()
 
         return fut
 
@@ -254,18 +256,14 @@ class PersistentActorExecutor:
             return
 
         while True:
-            # Pop last item (LIFO)
             item: Any = None
-            with self._lock:
-                if self._queue:
-                    item = self._queue.pop()
-
-            if item is None:
-                # Spinning is intentional here — prevents busy-wait on empty queue.
-                # In production, replace with threading.Event or Condition.
-                import time as _time
-                _time.sleep(0.001)
-                continue
+            # Wait for work: Condition.wait() blocks until notify() is called.
+            # Timeout (1s) prevents indefinite hang if notify is missed.
+            with self._condition:
+                while not self._queue:
+                    if not self._condition.wait(timeout=1.0):
+                        continue  # timeout, loop will re-check
+                item = self._queue.pop()
 
             if item is _SENTINEL:
                 break

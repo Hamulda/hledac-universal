@@ -14,6 +14,7 @@ archive operations to this coordinator.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -56,7 +57,7 @@ class ArchiveCoordinator(UniversalCoordinator):
         self._config = config or ArchiveCoordinatorConfig()
 
         # State
-        self._pending_urls: List[str] = []
+        self._pending_urls: deque = deque()
         self._escalations_executed: int = 0
         self._urls_emitted: int = 0
         self._stop_reason: Optional[str] = None
@@ -126,7 +127,7 @@ class ArchiveCoordinator(UniversalCoordinator):
             return self._get_step_result()
 
         # Process URLs
-        url = self._pending_urls.pop(0)
+        url = self._pending_urls.popleft()
 
         # Execute archive escalation
         result = await self._execute_archive_escalation(url)

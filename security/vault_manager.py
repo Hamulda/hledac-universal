@@ -1,8 +1,9 @@
 import os
 import logging
 import tempfile
+import warnings
 import zipfile
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from pathlib import Path
 from datetime import datetime
 
@@ -19,6 +20,10 @@ try:
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
+
+# Type-only import for pyzipper (may not have type stubs)
+if TYPE_CHECKING:
+    import pyzipper
 
 try:
     import pyzipper
@@ -59,7 +64,12 @@ class LootManager:
         self._use_fallback = not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE)
         
         if self._use_fallback:
-            logger.warning("Neither cryptography nor pyzipper available, using fallback encryption")
+            warnings.warn(
+                "FALLBACK MODE ACTIVE: vault_manager is using XOR encryption fallback which provides NO real security. "
+                "Data is obfuscated only, not encrypted. Install 'cryptography' or 'pyzipper' for actual encryption.",
+                UserWarning,
+                stacklevel=2
+            )
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         kdf = PBKDF2HMAC(
@@ -190,7 +200,12 @@ class LootManager:
             os.unlink(temp_path)
             # FALLBACK PATH: degraded choice when crypto deps unavailable
             # NOT a security feature — do not present as encryption authority
-            logger.warning("Using fallback XOR encryption (degraded - crypto dependencies unavailable)")
+            warnings.warn(
+                "FALLBACK MODE: Using XOR encryption which provides NO real security. "
+                "Data is obfuscated with trivial XOR — NOT encryption. Install 'cryptography' or 'pyzipper'.",
+                UserWarning,
+                stacklevel=2
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to create encrypted ZIP with fallback: {e}")

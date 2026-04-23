@@ -726,7 +726,7 @@ class HashAnalyzer:
         try:
             if all(c in '0123456789abcdefABCDEF' for c in data) and len(data) % 2 == 0:
                 data = binascii.unhexlify(data).decode('latin-1')
-        except:
+        except Exception:
             pass
 
         # Calculate entropy
@@ -811,7 +811,7 @@ class EncryptionDetector:
         if isinstance(data, bytes):
             try:
                 text = data.decode('utf-8')
-            except:
+            except Exception:
                 text = data.decode('latin-1')
         else:
             text = data
@@ -933,7 +933,7 @@ class EncryptionDetector:
         try:
             base64.b64decode(text)
             return True
-        except:
+        except Exception:
             return False
 
     def _detect_language(self, text: str) -> Optional[str]:

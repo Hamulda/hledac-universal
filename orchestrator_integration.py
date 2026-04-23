@@ -80,12 +80,8 @@ except ImportError:
     UniversalSwarmCoordinator = None
     SWARM_AVAILABLE = False
 
-try:
-    from .coordinators.quantum_coordinator import UniversalQuantumCoordinator
-    QUANTUM_AVAILABLE = True
-except ImportError:
-    UniversalQuantumCoordinator = None
-    QUANTUM_AVAILABLE = False
+# quantum_coordinator removed - moved to legacy/coordinators/
+# federated_learning_coordinator removed - moved to legacy/coordinators/
 
 import warnings
 warnings.warn(

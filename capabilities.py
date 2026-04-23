@@ -469,7 +469,7 @@ class CapabilityRegistry:
                    f"unavailable={len(unavailable)}, loaded={len(loaded)}")
 
         if available:
-            logger.info(f"[CAPABILITIES] available: {[c.value for c in available.keys()]}")
+            logger.info(f"[CAPABILITIES] available: {[c.value for c in available]}")
         if unavailable:
             logger.info(f"[CAPABILITIES] unavailable: "
                        f"{[(c.value, r) for c, r in unavailable.items()]}")

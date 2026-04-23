@@ -357,7 +357,7 @@ class DNSEnumerator:
                     z = dns.zone.from_xfr(dns.query.xfr(ns.value, domain))
                     names = z.nodes.keys()
                     return [str(n) for n in names]
-                except:
+                except Exception:
                     continue
 
         except Exception as e:

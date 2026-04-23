@@ -1300,13 +1300,13 @@ class GraphRAGOrchestrator:
     ) -> Dict[str, int]:
         """Calculate shortest distances from start to all nodes using BFS."""
         distances = {start: 0}
-        queue = [start]
+        queue = deque([start])
         visited = {start}
-        
+
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             current_distance = distances[current]
-            
+
             for neighbor in adjacency.get(current, set()):
                 if neighbor not in visited:
                     visited.add(neighbor)

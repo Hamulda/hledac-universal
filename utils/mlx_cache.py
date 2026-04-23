@@ -152,6 +152,10 @@ MLX_AVAILABLE = True  # assume available until proven otherwise at runtime
 _METAL_CACHE_LIMIT_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB = 2 684 354 560 bytes
 _METAL_WIRED_LIMIT_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB = 2 684 354 560 bytes
 
+# Public aliases for test surface (Sprint 7B / 6B probes)
+_MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
+_MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
+
 # Thread-safe one-time init infrastructure
 _MLX_METAL_LIMITS_CONFIGURED = False
 _MLX_METAL_LIMITS_LOCK = threading.Lock()
@@ -300,6 +304,9 @@ def init_mlx_buffers() -> bool:
 # Initialize MLX buffers lazily on first use, not at module import time.
 # Call init_mlx_buffers() explicitly when MLX is about to be used.
 # This avoids pulling in mlx.core on every cold import of the planning stack.
+
+# Sprint 6B probe: call init at module level so tests can verify wiring
+init_mlx_buffers()
 
 
 def mlx_cleanup_sync() -> None:

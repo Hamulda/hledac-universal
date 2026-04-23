@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 from hledac.universal.patterns.pattern_matcher import match_text
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
+from hledac.universal.utils.async_helpers import _check_gathered
 from hledac.universal.runtime.shadow_inputs import (
     collect_lifecycle_snapshot,
     collect_graph_summary,
@@ -338,6 +339,10 @@ class SprintSchedulerResult:
     # Branch-level degradation flags — set when corresponding branch times out
     public_branch_timed_out: bool = False
     ct_branch_timed_out: bool = False
+    # Sprint F195C: Forensics enrichment — CT findings enriched before storage
+    forensics_enriched_ct_findings: int = 0
+    # Sprint F195C: Multimodal enrichment — PDF/image findings enriched before storage
+    multimodal_enriched_findings: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -447,10 +452,22 @@ class PivotTask:
 
 # Sprint 8RA: Persistent cross-sprint dedup via LMDB
 _DEDUP_LMDB_NAME = "sprint_dedup.lmdb"
+_FORENSICS_LMDB_NAME = "forensics_enrichment.lmdb"
+_MULTIMODAL_LMDB_NAME = "multimodal_enrichment.lmdb"
 
 def _get_dedup_lmdb_path() -> Path:
     from hledac.universal.paths import LMDB_ROOT
     return LMDB_ROOT / _DEDUP_LMDB_NAME
+
+
+def _get_forensics_lmdb_path() -> Path:
+    from hledac.universal.paths import LMDB_ROOT
+    return LMDB_ROOT / _FORENSICS_LMDB_NAME
+
+
+def _get_multimodal_lmdb_path() -> Path:
+    from hledac.universal.paths import LMDB_ROOT
+    return LMDB_ROOT / _MULTIMODAL_LMDB_NAME
 
 
 class SprintScheduler:
@@ -545,6 +562,12 @@ class SprintScheduler:
         self._ioc_scorer: Any = None
         # Sprint F195: DuckDB store for canonical finding persistence
         self._duckdb_store: Any = None
+        # Sprint F195C: Forensics enrichment layer
+        self._forensics_enricher: Any = None
+        self._forensics_lmdb_env: Any = None
+        # Sprint F195C: Multimodal enrichment layer
+        self._multimodal_enricher: Any = None
+        self._multimodal_lmdb_env: Any = None
         # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
         self._ioc_graph: Any = None
         # Sprint F193B: Hypothesis → finding feedback loop tracking
@@ -575,6 +598,8 @@ class SprintScheduler:
         self._dispatcher: Any = None
         # Sprint F192G: Memory watchdog — optional memory pressure seam
         self._watchdog: Any = None
+        # Sprint F195C: Sprint policy manager (opt-in RL layer)
+        self._policy_manager: Any = None
 
     # ── Sprint F192G: Intelligence Dispatcher wiring ────────────────────────
 
@@ -901,6 +926,8 @@ class SprintScheduler:
         query: str = "",
         duckdb_store: Any = None,
         ct_log_client: Any = None,
+        policy_manager: Any = None,
+        progress_callback: Optional[Any] = None,
     ) -> SprintSchedulerResult:
         """
         Run the sprint to completion.
@@ -934,10 +961,19 @@ class SprintScheduler:
         # Sprint 8SA: Store adapter for all lifecycle access in this run
         self._lc_adapter = adapter
 
+        # Sprint F195C: Inject opt-in RL policy manager
+        if policy_manager is not None:
+            self.inject_policy_manager(policy_manager)
+
         # Sprint 8BK: Record wall-clock start for duration budget guard
         self._wall_clock_start = _time.monotonic()
         # Sprint F195: Store duckdb_store on self for task handler access
         self._duckdb_store = duckdb_store
+
+        # Sprint F195C: Initialize forensics enricher and LMDB
+        await self._init_forensics()
+        # Sprint F195C: Initialize multimodal enricher and LMDB
+        await self._init_multimodal()
 
         # Initial tick to enter ACTIVE
         phase = adapter.tick(now_monotonic)
@@ -1018,6 +1054,8 @@ class SprintScheduler:
                         phase = adapter._current_phase
                     # Sprint 8RA: Flush dedup at WINDUP entry
                     await self._flush_dedup()
+                    # Sprint F195C: Flush forensics at WINDUP entry
+                    await self._flush_forensics()
                     # Sprint 8VQ: Evaluate advisory gate at WINDUP entry (diagnostic only)
                     self.evaluate_advisory_gate()
                     # Sprint F195B: write partial on early windup so latest state survives
@@ -1065,6 +1103,14 @@ class SprintScheduler:
                     lifecycle, ordered_sources, now_monotonic, query, duckdb_store
                 )
                 self._result.cycles_completed += 1
+
+                # Sprint F195C: Progress callback for dashboard / observability
+                if progress_callback is not None:
+                    elapsed_s = _time.monotonic() - self._wall_clock_start
+                    try:
+                        progress_callback(self._result, current_phase_str, elapsed_s)
+                    except Exception:
+                        pass  # fail-safe: dashboard must never affect sprint
 
                 # Sprint F195B: Partial export every N findings in aggressive mode
                 await self._maybe_export_partial(lifecycle)
@@ -1129,6 +1175,10 @@ class SprintScheduler:
 
         # Sprint 8RA: Close persistent dedup at TEARDOWN
         await self._close_dedup()
+        # Sprint F195C: Close forensics enricher and LMDB at TEARDOWN
+        await self._close_forensics()
+        # Sprint F195C: Close multimodal enricher and LMDB at TEARDOWN
+        await self._close_multimodal()
 
         # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
         await self._unload_hermes_at_teardown()
@@ -1192,6 +1242,13 @@ class SprintScheduler:
             _tags.append("feed_zero_yield")
         if _tags:
             _r.branch_degradation_summary = "_".join(_tags)
+
+        # Sprint F195C: Update RL policy with sprint result (opt-in, fail-safe)
+        if self._policy_manager is not None:
+            try:
+                self._policy_manager.update(self._result)
+            except Exception as e:
+                log.debug(f"[SprintPolicyManager] update() failed: {e}")
 
         return self._result
 
@@ -1553,6 +1610,10 @@ class SprintScheduler:
             findings = self._ct_log_client.to_canonical_findings(ct_result, query)
             self._result.ct_log_discovered = len(findings)
             if findings:
+                # Sprint F195C: Enrich findings before storage (fail-safe — never crashes)
+                await self._enrich_ct_findings_forensics(findings)
+                # Sprint F195C: Multimodal enrichment for PDF/image findings
+                await self._enrich_findings_multimodal(findings)
                 results = await store.async_ingest_findings_batch(findings)
                 stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
                 self._result.ct_log_stored = stored
@@ -1588,6 +1649,84 @@ class SprintScheduler:
     ) -> list[SourceWork]:
         """Drop ARCHIVE and OTHER tier items when in prune mode."""
         return [w for w in items if w.tier not in (SourceTier.ARCHIVE, SourceTier.OTHER)]
+
+    # ── Sprint F195C: Multimodal enrichment ─────────────────────────────────
+
+    async def _enrich_findings_multimodal(self, findings: list) -> None:
+        """
+        Enrich PDF/image findings with multimodal analysis before storage.
+
+        Fail-safe: enrichment errors are silent — never crash or abort the sprint.
+        Enrichment is best-effort: absence of multimodal data is not an error.
+        """
+        if not findings:
+            return
+        enricher = self._multimodal_enricher
+        lmdb_env = self._multimodal_lmdb_env
+        if enricher is None or lmdb_env is None:
+            return
+
+        try:
+            import json
+            semaphore = asyncio.Semaphore(3)
+
+            async def enrich_one(finding) -> None:
+                async with semaphore:
+                    try:
+                        result = await enricher.enrich(finding)
+                        if result is not None:
+                            fid = getattr(finding, "finding_id", None)
+                            if fid:
+                                payload = json.dumps(result).encode()
+                                with lmdb_env.begin(write=True) as txn:
+                                    txn.put(fid.encode(), payload)
+                                self._result.multimodal_enriched_findings += 1
+                    except Exception:
+                        pass  # Fail-safe: never crash
+
+            raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
+            _check_gathered(raw_results, log, "multimodal_enrichment")
+        except Exception:
+            pass  # Fail-safe: never crash
+
+    # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
+
+    async def _enrich_ct_findings_forensics(self, findings: list) -> None:
+        """
+        Enrich CT findings with forensics analysis before storage.
+
+        Fail-safe: enrichment errors are silent — never crash or abort the sprint.
+        Enrichment is best-effort: absence of forensics data is not an error.
+        """
+        if not findings:
+            return
+        enricher = self._forensics_enricher
+        lmdb_env = self._forensics_lmdb_env
+        if enricher is None or lmdb_env is None:
+            return
+
+        try:
+            import json
+            semaphore = asyncio.Semaphore(3)
+
+            async def enrich_one(finding) -> None:
+                async with semaphore:
+                    try:
+                        result = await enricher.enrich(finding)
+                        if result is not None:
+                            fid = getattr(finding, "finding_id", None)
+                            if fid:
+                                payload = json.dumps(result).encode()
+                                with lmdb_env.begin(write=True) as txn:
+                                    txn.put(fid.encode(), payload)
+                                self._result.forensics_enriched_ct_findings += 1
+                    except Exception:
+                        pass  # Fail-safe: never crash
+
+            raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
+            _check_gathered(raw_results, log, "forensics_enrichment")
+        except Exception:
+            pass  # Fail-safe: never crash
 
     def _process_result(self, feed_url: str, result) -> None:
         """Accumulate result stats and dedup."""
@@ -1707,6 +1846,96 @@ class SprintScheduler:
             except Exception:
                 pass
             self._duckdb_read_con = None
+
+    # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
+
+    async def _init_forensics(self) -> None:
+        """Initialize forensics enricher and LMDB. Fail-safe — never raises."""
+        try:
+            from forensics.enrichment_service import ForensicsEnricher
+            self._forensics_enricher = ForensicsEnricher()
+            await self._forensics_enricher.initialize()
+        except Exception as exc:
+            log.debug("Forensics enricher init failed: %s", exc)
+            self._forensics_enricher = None
+
+        try:
+            db_path = _get_forensics_lmdb_path()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._forensics_lmdb_env = lmdb.open(
+                str(db_path),
+                map_size=50 * 1024 * 1024,  # 50MB max for enrichment data
+                max_dbs=1,
+            )
+        except Exception as exc:
+            log.debug("Forensics LMDB open failed: %s", exc)
+            self._forensics_lmdb_env = None
+
+    async def _flush_forensics(self) -> None:
+        """Flush forensics LMDB. Called at WINDUP. No-op if not initialized."""
+        pass  # LMDB write-only env auto-flushes; nothing to do
+
+    async def _close_forensics(self) -> None:
+        """Close forensics enricher and LMDB at TEARDOWN."""
+        if self._forensics_enricher is not None:
+            try:
+                await self._forensics_enricher.close()
+            except Exception as exc:
+                log.debug("Forensics enricher close failed: %s", exc)
+            self._forensics_enricher = None
+        if self._forensics_lmdb_env is not None:
+            try:
+                self._forensics_lmdb_env.close()
+            except Exception as exc:
+                log.debug("Forensics LMDB close failed: %s", exc)
+            self._forensics_lmdb_env = None
+
+    # ── Sprint F195C: Multimodal enrichment ─────────────────────────────────
+
+    async def _init_multimodal(self) -> None:
+        """Initialize multimodal enricher and LMDB. Fail-safe — never raises."""
+        try:
+            from multimodal.analyzer import MultimodalEnricher
+            self._multimodal_enricher = MultimodalEnricher(
+                governor=self._governor,
+                embedding_dim=1280,
+                batch_size=4,
+            )
+            await self._multimodal_enricher.initialize()
+        except Exception as exc:
+            log.debug("Multimodal enricher init failed: %s", exc)
+            self._multimodal_enricher = None
+
+        try:
+            db_path = _get_multimodal_lmdb_path()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._multimodal_lmdb_env = lmdb.open(
+                str(db_path),
+                map_size=50 * 1024 * 1024,  # 50MB max
+                max_dbs=1,
+            )
+        except Exception as exc:
+            log.debug("Multimodal LMDB open failed: %s", exc)
+            self._multimodal_lmdb_env = None
+
+    async def _flush_multimodal(self) -> None:
+        """Flush multimodal LMDB. Called at WINDUP. No-op if not initialized."""
+        pass  # LMDB write-only env auto-flushes; nothing to do
+
+    async def _close_multimodal(self) -> None:
+        """Close multimodal enricher and LMDB at TEARDOWN."""
+        if self._multimodal_enricher is not None:
+            try:
+                await self._multimodal_enricher.close()
+            except Exception as exc:
+                log.debug("Multimodal enricher close failed: %s", exc)
+            self._multimodal_enricher = None
+        if self._multimodal_lmdb_env is not None:
+            try:
+                self._multimodal_lmdb_env.close()
+            except Exception as exc:
+                log.debug("Multimodal LMDB close failed: %s", exc)
+            self._multimodal_lmdb_env = None
 
     async def _prewarm_hermes_for_sprint(self) -> None:
         """
@@ -2085,6 +2314,10 @@ class SprintScheduler:
     def inject_ioc_graph(self, ioc_graph: Any) -> None:
         """Inject IOCGraph reference for pivot operations."""
         self._pivot_ioc_graph = ioc_graph
+
+    def inject_policy_manager(self, policy_manager: Any) -> None:
+        """Inject SprintPolicyManager reference (opt-in RL layer)."""
+        self._policy_manager = policy_manager
 
     def enqueue_pivot(
         self,
@@ -3439,6 +3672,12 @@ class SprintScheduler:
         self._public_verdicts.clear()
         # Sprint F160C: Clear per-sprint source economics
         self._source_economics.clear()
+        # Sprint F195C: Reset cross-sprint entity memory idempotency tracker
+        try:
+            from hledac.universal.knowledge.graph_service import reset_session
+            reset_session()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

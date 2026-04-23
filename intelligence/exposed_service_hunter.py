@@ -432,7 +432,7 @@ class DatabasePortScanner:
                 await writer.drain()
                 banner = await asyncio.wait_for(reader.read(1024), timeout=2)
                 banner = banner.decode("utf-8", errors="ignore").strip()
-            except:
+            except Exception:
                 pass
 
             writer.close()
@@ -968,7 +968,7 @@ class ContainerAPIExplorer:
                                     "endpoint": url
                                 }
                             )
-                    except:
+                    except Exception:
                         # Not JSON, but endpoint responded
                         return ExposedService(
                             service_type=ServiceType.DOCKER.value,
@@ -1052,7 +1052,7 @@ class ContainerAPIExplorer:
                                     "endpoint": url
                                 }
                             )
-                    except:
+                    except Exception:
                         pass
 
                 # Check if it's K8s but requires auth

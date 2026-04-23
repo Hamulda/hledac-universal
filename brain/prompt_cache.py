@@ -15,6 +15,13 @@ try:
 except ImportError:
     XXHASH_AVAILABLE = False
 
+# Sprint F195: numpy for cosine similarity (module-level for performance)
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+
 # Cache versioning for migration
 CACHE_VERSION = "v2"
 CACHE_NAMESPACE = "pc"
@@ -95,9 +102,7 @@ class PromptCache:
 
     def _cosine_similarity(self, a: list, b: list) -> float:
         """Compute cosine similarity – numpy preferred, MLX optional."""
-        # Numpy je pro 256‑dim vektory dostatečně rychlé a stabilní
-        try:
-            import numpy as np
+        if NUMPY_AVAILABLE:
             a_np = np.array(a, dtype=np.float32)
             b_np = np.array(b, dtype=np.float32)
             dot = float(np.dot(a_np, b_np))
@@ -106,7 +111,7 @@ class PromptCache:
             if norm_a == 0 or norm_b == 0:
                 return 0.0
             return dot / (norm_a * norm_b)
-        except ImportError:
+        else:
             # Fallback – čistý Python (pomalé, ale funkční)
             dot = sum(x*y for x, y in zip(a, b))
             norm_a = math.sqrt(sum(x*x for x in a))
@@ -181,8 +186,6 @@ class PromptCache:
                 del self._cache[p]
                 if p in self._embeddings:
                     del self._embeddings[p]
-            if p in self._embeddings:
-                del self._embeddings[p]
 
 
 # Sprint 8UC B.3: Persistent KV cache for system prompt synthesis

@@ -617,24 +617,34 @@ class RelationshipDiscoveryEngine:
     # ========================================================================
 
     def _save_graph(self, path: str) -> None:
-        """Save the current graph to disk using pickle."""
+        """
+        Save the current graph to disk.
+
+        Uses igraph's native picklez format when available (faster than generic pickle,
+        handles igraph objects correctly). Falls back to generic pickle for other graph types.
+        """
         import pickle
         if IGRAPH_AVAILABLE and self._igraph_graph is not None:
-            with open(path, 'wb') as f:
-                pickle.dump(self._igraph_graph, f)
-        elif NETWORKX_AVAILABLE and self._nx_graph is not None:
-            with open(path, 'wb') as f:
-                pickle.dump(self._nx_graph, f)
+            # igraph native format — handles igraph serialization correctly
+            self._igraph_graph.write_picklez(path)
+            return
+        # For networkx and other graph types, pickle is the standard format.
+        # networkx.write_gpickle() is also pickle-based but requires specific networkx version.
+        if NETWORKX_AVAILABLE and self._nx_graph is not None:
+            graph_to_save = self._nx_graph
+        elif self._igraph_graph is not None:
+            graph_to_save = self._igraph_graph
         else:
             raise RuntimeError("No graph available to save")
+        with open(path, 'wb') as f:
+            pickle.dump(graph_to_save, f)
 
     def _load_graph(self, path: str) -> bool:
-        """Load a graph from disk using pickle."""
+        """Load a graph from disk. Supports both igraph native and pickle formats."""
         import pickle
         if IGRAPH_AVAILABLE:
             try:
-                with open(path, 'rb') as f:
-                    self._igraph_graph = pickle.load(f)
+                self._igraph_graph = ig.Graph.Load(path)
                 return True
             except Exception:
                 pass
@@ -645,6 +655,17 @@ class RelationshipDiscoveryEngine:
                 return True
             except Exception:
                 pass
+        # Generic pickle fallback for any graph type
+        try:
+            with open(path, 'rb') as f:
+                loaded = pickle.load(f)
+                if IGRAPH_AVAILABLE and loaded is not None:
+                    self._igraph_graph = loaded
+                elif NETWORKX_AVAILABLE:
+                    self._nx_graph = loaded
+                return True
+        except Exception:
+            pass
         return False
 
     # ========================================================================

@@ -449,8 +449,8 @@ def render_diagnostic_markdown_to_path(
         try:
             data = normalize_report_input(report)
             run_id = data.get("diagnostic_run_id") or data.get("run_id")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not extract run_id from report: {e}")
         if run_id:
             # Sanitise run_id for filename
             safe = str(run_id).replace("/", "_").replace("\\", "_")
@@ -460,8 +460,8 @@ def render_diagnostic_markdown_to_path(
             try:
                 data = normalize_report_input(report)
                 ts = data.get("started_ts") or data.get("finished_ts")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not extract timestamp from report: {e}")
             if ts:
                 filename = f"ghost_diagnostic_{int(ts)}.md"
             else:

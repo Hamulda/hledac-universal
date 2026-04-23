@@ -26,10 +26,11 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Iterator, Tuple, Set
 from dataclasses import dataclass, field, asdict
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from heapq import heappush, heappushpop
 import logging
 import pickle  # always available
+import orjson  # faster than pickle for JSON-serializable data
 
 # Optional delta compressor for snapshot storage
 try:
@@ -273,7 +274,7 @@ class AtomicJSONKnowledgeGraph:
                     with self._env.begin(write=True) as txn:
                         for entry_id, entry_data in data.items():
                             entry = KnowledgeEntry(**entry_data)
-                            txn.put(entry_id.encode(), pickle.dumps(entry))
+                            txn.put(entry_id.encode(), orjson.dumps(entry.to_dict()))
                 except (json.JSONDecodeError, IOError):
                     pass
 
@@ -407,7 +408,7 @@ class AtomicJSONKnowledgeGraph:
         if self._env is not None:
             try:
                 with self._env.begin(write=True) as txn:
-                    txn.put(entry.id.encode(), pickle.dumps(entry))
+                    txn.put(entry.id.encode(), orjson.dumps(entry.to_dict()))
                 self._total_entries += 1
                 self._clear_memory_if_aggressive()
                 return entry.id
@@ -454,7 +455,7 @@ class AtomicJSONKnowledgeGraph:
                 with self._env.begin() as txn:
                     data = txn.get(entry_id.encode())
                     if data:
-                        return pickle.loads(data)
+                        return KnowledgeEntry.from_dict(orjson.loads(data))
             except Exception as e:
                 logger.debug(f"LMDB get failed: {e}")
 
@@ -1100,22 +1101,22 @@ class EvidencePacket:
 
     def add_edge_ref(self, edge_id: str) -> None:
         """Add edge_id to graph_refs with hard limit (ring-like eviction)."""
-        edge_ids = self.graph_refs.setdefault('edge_ids', [])
+        edge_ids = self.graph_refs.setdefault('edge_ids', deque(maxlen=self.MAX_GRAPH_REFS))
         if edge_id in edge_ids:
             return  # Already present
         if len(edge_ids) >= self.MAX_GRAPH_REFS:
             # Ring-like: remove oldest (first), add new at end
-            edge_ids.pop(0)
+            edge_ids.popleft()
         edge_ids.append(edge_id)
 
     def add_node_ref(self, node_id: str) -> None:
         """Add node_id to graph_refs with hard limit (ring-like eviction)."""
-        node_ids = self.graph_refs.setdefault('node_ids', [])
+        node_ids = self.graph_refs.setdefault('node_ids', deque(maxlen=self.MAX_NODE_REFS))
         if node_id in node_ids:
             return  # Already present
         if len(node_ids) >= self.MAX_NODE_REFS:
             # Ring-like: remove oldest (first), add new at end
-            node_ids.pop(0)
+            node_ids.popleft()
         node_ids.append(node_id)
 
     def add_claims(self, claims: List[Claim]) -> None:
@@ -1243,13 +1244,13 @@ class ClaimCluster:
     claim_id: str
     subject: str  # First seen subject variant
     predicate: str
-    evidence_ids: List[str] = field(default_factory=list)  # Ring buffer max 20
-    domains: List[str] = field(default_factory=list)  # Ring buffer max 20
+    evidence_ids: deque = field(default_factory=lambda: deque(maxlen=MAX_EVIDENCE))  # Ring buffer max 20
+    domains: deque = field(default_factory=lambda: deque(maxlen=MAX_DOMAINS))  # Ring buffer max 20
     first_seen: str = ""  # ISO timestamp
     last_seen: str = ""  # ISO timestamp
     positive_count: int = 0
     negative_count: int = 0
-    object_variants: List[str] = field(default_factory=list)  # Max 10
+    object_variants: deque = field(default_factory=lambda: deque(maxlen=MAX_OBJECT_VARIANTS))  # Max 10
     timeline_events: List[Dict[str, Any]] = field(default_factory=list) # Max 10
     has_drift: bool = False  # Drift detected flag
     uncertainty_score: float = 0.0  # 0..1 uncertainty for evidence minimization
@@ -1285,8 +1286,8 @@ class ClaimCluster:
         if evidence_id not in self.evidence_ids:
             if len(self.evidence_ids) >= self.MAX_EVIDENCE:
                 # Ring eviction - remove oldest evidence_id and its source_fp
-                evicted_id = self.evidence_ids.pop(0)
-                self.domains.pop(0)
+                evicted_id = self.evidence_ids.popleft()
+                self.domains.popleft()
                 # Also evict from source_fp_map
                 if evicted_id in self.source_fp_map:
                     del self.source_fp_map[evicted_id]
@@ -1301,12 +1302,12 @@ class ClaimCluster:
 
         if domain not in self.domains:
             if len(self.domains) >= self.MAX_DOMAINS:
-                self.domains.pop(0)
+                self.domains.popleft()
             self.domains.append(domain)
 
         if obj_variant not in self.object_variants:
             if len(self.object_variants) >= self.MAX_OBJECT_VARIANTS:
-                self.object_variants.pop(0)
+                self.object_variants.popleft()
             self.object_variants.append(obj_variant)
 
         if polarity > 0:

@@ -51,7 +51,7 @@ import hashlib
 import logging
 import re
 import time
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, deque, OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -596,10 +596,10 @@ class BlockchainForensics:
         """
         all_transactions: List[Transaction] = []
         visited: Set[str] = set()
-        queue: List[Tuple[str, int]] = [(address, 0)]  # (address, depth)
+        queue: deque = deque([(address, 0)])  # (address, depth)
 
         while queue and len(all_transactions) < max_transactions:
-            current_addr, current_depth = queue.pop(0)
+            current_addr, current_depth = queue.popleft()
 
             if current_addr in visited or current_depth > depth:
                 continue

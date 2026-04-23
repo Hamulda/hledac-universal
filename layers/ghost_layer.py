@@ -851,7 +851,7 @@ class SystemContext:
             memory = psutil.virtual_memory()
             stats['current_memory_gb'] = round(memory.used / (1024**3), 2)
             stats['memory_available_gb'] = round(memory.available / (1024**3), 2)
-        except:
+        except Exception:
             pass
         
         return stats

@@ -472,14 +472,14 @@ class _JARMFingerprinter:
             sock.connect((domain, port))
             sock.sendall(payload)
 
-            # Receive response
-            response = b""
+            # Receive response — use bytearray for O(1) extend vs O(n) bytes +=
+            response = bytearray()
             while True:
                 try:
                     chunk = sock.recv(4096)
                     if not chunk:
                         break
-                    response += chunk
+                    response.extend(chunk)
                     # If we got a full TLS record, stop
                     if len(response) >= 5:
                         record_len = struct.unpack(">H", response[3:5])[0]
@@ -487,7 +487,7 @@ class _JARMFingerprinter:
                             break
                 except socket.timeout:
                     break
-            return response if response else None
+            return bytes(response) if response else None
         except Exception:
             return None
         finally:

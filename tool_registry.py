@@ -453,7 +453,17 @@ class ToolRegistry:
         def _execute_dns_tunnel(args: dict) -> dict:
             """Synchronous wrapper for tool dispatch."""
             try:
-                return asyncio.run(_execute_dns_tunnel_async(args))
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No running loop - safe to use asyncio.run()
+                    return asyncio.run(_execute_dns_tunnel_async(args))
+                else:
+                    # Running loop exists - use run_in_executor to avoid blocking
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = loop.run_in_executor(pool, lambda: asyncio.run(_execute_dns_tunnel_async(args)))
+                        return future.result()
             except RuntimeError as e:
                 # A loop is already running - return error for async caller
                 return {"error": "use async wrapper _check_dns_tunneling()", "findings": []}

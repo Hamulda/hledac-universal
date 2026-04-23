@@ -503,7 +503,7 @@ class SecureSession:
             try:
                 import os
                 os.remove(path)
-            except:
+            except Exception:
                 pass
         
         self._temp_files = []

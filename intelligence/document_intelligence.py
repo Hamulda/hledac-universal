@@ -1025,7 +1025,7 @@ class DeepForensicsAnalyzer:
                     lon_dec = -lon_dec
 
                 return {'lat': lat_dec, 'lon': lon_dec}
-        except:
+        except Exception:
             pass
         return None
 
@@ -1266,7 +1266,7 @@ class StegdetectServer:
                 try:
                     proc.kill()
                     await proc.wait()
-                except:
+                except Exception:
                     pass
             self._procs = []
             self._initialized = False
@@ -1311,7 +1311,18 @@ class DocumentIntelligenceEngine:
                 with open(file_path, "rb") as f:
                     content = f.read()
                 if hasattr(self, '_forensics'):
-                    forensics = asyncio.run(self._forensics.analyze_image(content))
+                    # Sprint 44: forensics - handle both sync and async caller context
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        # No running loop - safe to use asyncio.run()
+                        forensics = asyncio.run(self._forensics.analyze_image(content))
+                    else:
+                        # Running loop exists - use run_in_executor to avoid blocking
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            future = loop.run_in_executor(pool, lambda: asyncio.run(self._forensics.analyze_image(content)))
+                            forensics = future.result()
                     if forensics:
                         analysis.metadata.raw_metadata['forensics'] = forensics
             except Exception:

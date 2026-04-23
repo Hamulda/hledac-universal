@@ -5,6 +5,16 @@ Obsahuje:
 - StealthManager: Rate limiting, fingerprint rotation, headers
 """
 
-from .stealth_manager import StealthManager, StealthSession
+# Canonical exports — stealth_session.py is the canonical stealth surface
+from .stealth_session import StealthSession, StealthResponse
 
-__all__ = ["StealthManager", "StealthSession"]
+# Full system (for advanced use)
+from .stealth_manager import StealthManager
+
+__all__ = [
+    # Canonical
+    "StealthSession",
+    "StealthResponse",
+    # Full system
+    "StealthManager",
+]

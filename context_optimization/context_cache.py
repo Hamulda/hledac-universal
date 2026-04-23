@@ -17,15 +17,21 @@ import asyncio
 import hashlib
 import json
 import logging
-import pickle
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
+    import json as _json
 
 import numpy as np
 
@@ -56,6 +62,75 @@ L2_DISK = "l2_disk"
 SEMANTIC = "semantic"
 COMPUTATION = "computation"
 QUERY = "query"
+
+
+def _ndarray_to_list(obj: Any) -> Any:
+    """Convert numpy arrays to lists for JSON serialization."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if is_dataclass(obj):
+        return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
+    if isinstance(obj, dict):
+        return {k: _ndarray_to_list(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_ndarray_to_list(item) for item in obj]
+    return obj
+
+
+def _list_to_ndarray(obj: Any, target_type: Any = None) -> Any:
+    """Convert lists back to numpy arrays after JSON deserialization."""
+    if isinstance(obj, list) and target_type is not None:
+        return np.array(obj, dtype=target_type)
+    if isinstance(obj, dict):
+        return {k: _list_to_ndarray(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        # Heuristic: if it looks like an embedding (float list), keep as list
+        return [_list_to_ndarray(item) for item in obj]
+    return obj
+
+
+def _serialize_cache(data: Dict[str, CacheEntry]) -> bytes:
+    """Serialize cache data to bytes using orjson."""
+    serializable = {}
+    for k, v in data.items():
+        entry_dict = {
+            'cache_id': v.cache_id,
+            'content': v.content,
+            'embedding': v.embedding.tolist() if v.embedding is not None else None,
+            'access_count': v.access_count,
+            'last_accessed': v.last_accessed,
+            'created_at': v.created_at,
+            'size_bytes': v.size_bytes,
+            'cache_type': v.cache_type.value if isinstance(v.cache_type, Enum) else v.cache_type,
+            'metadata': v.metadata,
+        }
+        serializable[k] = entry_dict
+    if ORJSON_AVAILABLE:
+        return orjson.dumps(serializable)
+    return _json.dumps(serializable).encode()
+
+
+def _deserialize_cache(data: bytes) -> Dict[str, CacheEntry]:
+    """Deserialize cache data from bytes using orjson."""
+    if ORJSON_AVAILABLE:
+        raw = orjson.loads(data)
+    else:
+        raw = _json.loads(data.decode())
+
+    result = {}
+    for k, v in raw.items():
+        result[k] = CacheEntry(
+            cache_id=v['cache_id'],
+            content=v['content'],
+            embedding=np.array(v['embedding']) if v['embedding'] is not None else None,
+            access_count=v['access_count'],
+            last_accessed=v['last_accessed'],
+            created_at=v['created_at'],
+            size_bytes=v['size_bytes'],
+            cache_type=CacheType(v['cache_type']) if isinstance(v['cache_type'], str) else v['cache_type'],
+            metadata=v['metadata'],
+        )
+    return result
 
 
 class CacheType(Enum):
@@ -248,23 +323,23 @@ class MultiLevelContextCache:
     def _load_l2_cache(self):
         """Load L2 cache from disk."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.pkl"
+            cache_file = self.l2_storage_path / "l2_cache.json"
             if cache_file.exists():
                 with open(cache_file, 'rb') as f:
-                    self.l2_cache = pickle.load(f)
+                    self.l2_cache = _deserialize_cache(f.read())
                 logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache")
         except FileNotFoundError:
             self.l2_cache = {}
         except Exception as e:
             logger.warning(f"Could not load L2 cache: {e}")
             self.l2_cache = {}
-    
+
     def _save_l2_cache(self):
         """Save L2 cache to disk."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.pkl"
+            cache_file = self.l2_storage_path / "l2_cache.json"
             with open(cache_file, 'wb') as f:
-                pickle.dump(self.l2_cache, f)
+                f.write(_serialize_cache(self.l2_cache))
         except Exception as e:
             logger.warning(f"Could not save L2 cache: {e}")
     
@@ -288,7 +363,8 @@ class MultiLevelContextCache:
     
     def _estimate_size(self, content: Any) -> int:
         """Estimate size of content in bytes."""
-        return len(pickle.dumps(content))
+        import sys
+        return sys.getsizeof(content)
     
     def _get_embedding(self, text: str) -> Optional[np.ndarray]:
         """Get embedding for text (uses query task for retrieval)."""

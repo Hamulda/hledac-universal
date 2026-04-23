@@ -5,9 +5,15 @@ import logging
 import sys
 import time
 from pathlib import Path
-import pickle
 from typing import Optional, Dict, List
 from collections import defaultdict
+
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
+    import json as _json
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +35,7 @@ class DSPyOptimizer:
         self._circuit_open_until = 0.0
         self._circuit_duration = 3600
 
-        self._cache_path = Path.home() / '.hledac' / 'dspy_cache.pkl'
+        self._cache_path = Path.home() / '.hledac' / 'dspy_cache.json'
         self._load_cache()
         self._optimization_interval = 86400  # 24h (produkce)
 
@@ -37,22 +43,31 @@ class DSPyOptimizer:
         if self._cache_path.exists():
             try:
                 with open(self._cache_path, 'rb') as f:
-                    data = pickle.load(f)
-                    self._optimized_prompts = data.get('prompts', {})
-                    self._prompt_versions = defaultdict(list, data.get('versions', {}))
-                    self._current_version = defaultdict(int, data.get('current', {}))
+                    data_str = f.read()
+                if ORJSON_AVAILABLE:
+                    data = orjson.loads(data_str)
+                else:
+                    data = _json.loads(data_str.decode())
+                self._optimized_prompts = data.get('prompts', {})
+                self._prompt_versions = defaultdict(list, data.get('versions', {}))
+                self._current_version = defaultdict(int, data.get('current', {}))
                 logger.info(f"Loaded {len(self._optimized_prompts)} optimized prompts")
             except Exception as e:
                 logger.warning(f"Failed to load DSPy cache: {e}")
 
     def _save_cache(self):
         try:
+            data = {
+                'prompts': self._optimized_prompts,
+                'versions': dict(self._prompt_versions),
+                'current': dict(self._current_version)
+            }
+            if ORJSON_AVAILABLE:
+                data_bytes = orjson.dumps(data)
+            else:
+                data_bytes = _json.dumps(data).encode()
             with open(self._cache_path, 'wb') as f:
-                pickle.dump({
-                    'prompts': self._optimized_prompts,
-                    'versions': dict(self._prompt_versions),
-                    'current': dict(self._current_version)
-                }, f)
+                f.write(data_bytes)
         except Exception as e:
             logger.warning(f"Failed to save DSPy cache: {e}")
 
@@ -349,16 +364,21 @@ def load_optimized_prompts() -> dict:
         dict: {task_key: prompt_string} — prázdný dict pokud cache neexistuje
               nebo optimalizace neproběhla.
     """
-    cache_path = Path.home() / '.hledac' / 'dspy_cache.pkl'
+    cache_path = Path.home() / '.hledac' / 'dspy_cache.json'
     if not cache_path.exists():
         return {}
     try:
-        import pickle
-        with open(cache_path, 'rb') as f:
-            data = pickle.load(f)
-            prompts = data.get('prompts', {})
-            # Filter only valid non-empty prompts
-            return {k: v for k, v in prompts.items() if v and isinstance(v, str)}
+        if ORJSON_AVAILABLE:
+            import orjson
+            with open(cache_path, 'rb') as f:
+                data = orjson.loads(f.read())
+        else:
+            import json
+            with open(cache_path, 'r') as f:
+                data = json.load(f)
+        prompts = data.get('prompts', {})
+        # Filter only valid non-empty prompts
+        return {k: v for k, v in prompts.items() if v and isinstance(v, str)}
     except Exception:
         return {}
 

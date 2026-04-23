@@ -246,7 +246,8 @@ class NvdApiAdapter(SourceAdapter):
 
         try:
             data = json.loads(text)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[NVD] JSON parse error for {url}: {e}")
             return ()
 
         vulnerabilities = data.get("vulnerabilities", [])
@@ -278,8 +279,8 @@ class NvdApiAdapter(SourceAdapter):
                     from datetime import datetime
                     dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
                     published_ts = dt.timestamp()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[NVD] Timestamp parse error for {cve_id}: {e}")
 
             # References (bounded)
             references = cve_data.get("references", [])[:5]
@@ -380,7 +381,8 @@ class CisaKevAdapter(SourceAdapter):
 
         try:
             data = json.loads(text)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[CISA KEV] JSON parse error for {self.API_URL}: {e}")
             return ()
 
         vulns = data.get("vulnerabilities", [])
@@ -409,8 +411,8 @@ class CisaKevAdapter(SourceAdapter):
                     from datetime import datetime
                     dt = datetime.strptime(date_added, "%Y-%m-%d")
                     published_ts = dt.timestamp()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[CISA KEV] Date parse error for {cve_id}: {e}")
 
             source_url = vuln.get("knownRansomwareCampaignUse", "")
             if not source_url:
@@ -551,8 +553,8 @@ async def query_circl_pdns(
                             "last_seen":  rec.get("time_last", ""),
                             "source":     "circl_pdns"
                         })
-                    except Exception:
-                        continue
+                    except Exception as e:
+                        logger.debug(f"[CIRCL pDNS] JSON parse error for line: {e}")
                 return results
     except Exception as e:
         logger.debug(f"[CIRCL pDNS] {e}")
@@ -719,8 +721,8 @@ async def scrape_pastebin_for_keyword(
                                     "title":  f"Pastebin hit: {keyword}",
                                     "source": "pastebin_scrape"
                                 })
-                except Exception:
-                    continue
+                except Exception as e:
+                    logger.debug(f"[Pastebin] Paste fetch error for {raw_url}: {e}")
     except Exception as e:
         logger.debug(f"[Pastebin] {e}")
     return results
@@ -850,8 +852,8 @@ async def search_ahmia(
                         timeout=aiohttp.ClientTimeout(total=15)
                     ) as r:
                         html = await r.text() if r.status == 200 else ""
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[Ahmia] Tor fetch failed, falling back to clearnet: {e}")
         else:
             async with aiohttp.ClientSession() as s:
                 async with s.get(
@@ -1007,8 +1009,8 @@ class WaybackArchiveAdapter(SourceAdapter):
                         if ar.timestamp:
                             try:
                                 published_ts = ar.timestamp.timestamp()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[WaybackArchive] Timestamp parse error: {e}")
 
                         entries.append(
                             NormalizedEntry(
@@ -1283,8 +1285,8 @@ async def fetch_ipfs_cid(cid: str) -> dict:
                         "content": data[:100_000].decode("utf-8", errors="replace"),
                         "size": len(data), "error": None,
                     }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[IPFS] Local daemon fetch failed for CID {cid}: {e}")
     # Public gateways
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30)
@@ -1299,8 +1301,8 @@ async def fetch_ipfs_cid(cid: str) -> dict:
                             "content": data[:100_000].decode("utf-8", errors="replace"),
                             "size": len(data), "error": None,
                         }
-            except Exception:
-                continue
+            except Exception as e:
+                logger.debug(f"[IPFS] Gateway fetch failed for CID {cid} via {gw}: {e}")
     return {"cid": cid, "source": None, "content": "", "size": 0,
             "error": "IPFS nedostupný (daemon + všechny gateways selhaly)"}
 
@@ -1422,19 +1424,20 @@ async def fetch_gopher(host: str, selector: str = "/", port: int = 70) -> dict:
         )
         writer.write(f"{selector}\r\n".encode())
         await writer.drain()
-        data = b""
+        # Use bytearray for O(1) extend vs O(n) bytes +=
+        data = bytearray()
         while True:
             chunk = await asyncio.wait_for(reader.read(8192), timeout=15.0)
             if not chunk:
                 break
-            data += chunk
+            data.extend(chunk)
             if len(data) > 500_000:
                 break
         writer.close()
         try:
             await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[Gopher] Wait closed failed for {host}{selector}: {e}")
         content = data.decode("utf-8", errors="replace")
         return {
             "host": host, "selector": selector,
@@ -1732,7 +1735,8 @@ async def _handle_bgp_routing_history(task, scheduler):
             callback=bgp_callback,
             duration_seconds=30,
         )
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[BGP routing history] monitor_bgp failed for {task.ioc_value}: {e}")
         return  # fail-soft on monitoring errors
 
     for event in events:
