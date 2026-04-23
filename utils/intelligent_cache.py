@@ -229,6 +229,16 @@ class IntelligentCache:
         self._lock = asyncio.Lock()
         self._cleanup_task: Optional[asyncio.Task] = None
 
+        # F196B: Track background tasks for proper cleanup
+        self._background_tasks: set[asyncio.Task] = set()
+
+    def _track_task(self, coro) -> asyncio.Task:
+        """F196B: Track background tasks for proper cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
         # Persistence
         if self.config.persistence_path:
             self._persistence_path = Path(self.config.persistence_path)
@@ -257,10 +267,9 @@ class IntelligentCache:
             if self._persistence_path:
                 await self._load_persisted()
 
-            # Start background cleanup task
-            self._cleanup_task = asyncio.create_task(
-                self._background_cleanup(),
-                name="cache_cleanup"
+            # Start background cleanup task — F196B: track for cleanup
+            self._cleanup_task = self._track_task(
+                self._background_cleanup()
             )
 
             # Cache warming (Fix 4)
@@ -273,22 +282,29 @@ class IntelligentCache:
     
     async def close(self) -> None:
         """Close cache and cleanup resources."""
+        # F196B: Cancel all tracked background tasks
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+
         if self._cleanup_task:
             self._cleanup_task.cancel()
             try:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
-        
+
         # Persist cache if configured
         if self._persistence_path:
             await self._persist()
-        
+
         # Clear memory
         self._cache.clear()
         self._access_order.clear()
         self._frequency.clear()
-        
+
         self._initialized = False
         logger.info("IntelligentCache closed")
     

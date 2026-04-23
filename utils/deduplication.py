@@ -450,6 +450,10 @@ class SemanticDeduplicator(BaseDeduplicator):
         self._model_loaded = False
         self.logger.info("Semantic deduplicator cleanup complete")
 
+    def close(self):
+        """F196B: Non-blocking close of thread pool."""
+        self.executor.shutdown(wait=False)
+
 
 # =============================================================================
 # CONTENT DEDUPLICATOR
@@ -678,6 +682,10 @@ class ContentDeduplicator(BaseDeduplicator):
         self.content_cache.clear()
         self.logger.info("Content deduplicator cleanup complete")
 
+    def close(self):
+        """F196B: Non-blocking close of thread pool."""
+        self.executor.shutdown(wait=False)
+
 
 # =============================================================================
 # METADATA DEDUPLICATOR
@@ -884,6 +892,10 @@ class MetadataDeduplicator(BaseDeduplicator):
         self.normalization_cache.clear()
         self.logger.info("Metadata deduplicator cleanup complete")
 
+    def close(self):
+        """F196B: Non-blocking close of thread pool."""
+        self.executor.shutdown(wait=False)
+
 
 # =============================================================================
 # MAIN DEDUPLICATION ENGINE
@@ -1043,6 +1055,16 @@ class DeduplicationEngine:
         await self.content_dedup.cleanup()
         await self.metadata_dedup.cleanup()
         self.logger.info("DeduplicationEngine cleanup complete")
+
+    def close(self):
+        """F196B: Non-blocking close of all thread pools."""
+        # SemanticDeduplicator executor
+        self.semantic_dedup.executor.shutdown(wait=False)
+        # ContentDeduplicator executor
+        self.content_dedup.executor.shutdown(wait=False)
+        # MetadataDeduplicator executor
+        self.metadata_dedup.executor.shutdown(wait=False)
+        self.logger.info("DeduplicationEngine thread pools closed (non-blocking)")
 
 
 # =============================================================================

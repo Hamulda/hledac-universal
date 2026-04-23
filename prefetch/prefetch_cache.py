@@ -28,16 +28,37 @@ class PrefetchCache:
         self._writer_task: Optional[asyncio.Task] = None
         self._running = True
 
+        # F196B: Track background tasks for proper cleanup
+        self._background_tasks: set[asyncio.Task] = set()
+
+    def _track_task(self, coro) -> asyncio.Task:
+        """F196B: Track background tasks for proper cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     async def start(self):
-        self._writer_task = asyncio.create_task(self._writer_loop())
+        self._writer_task = self._track_task(self._writer_loop())
 
     async def stop(self):
         """Bezpečně ukončí writer a zpracuje zbytek fronty."""
         self._running = False
         await self._write_queue.put(("__stop__", "", None))
         await self._write_queue.join()
-        if self._writer_task:
-            await self._writer_task
+
+        # F196B: Cancel all tracked background tasks
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+
+    def close(self):
+        """F196B: Close LMDB environment."""
+        if hasattr(self, 'env') and self.env:
+            self.env.close()
+            self.env = None
 
     async def put(self, url: str, data: Dict[str, Any], ttl: int = 3600):
         """Zařadí zápis do fronty (neblokující)."""

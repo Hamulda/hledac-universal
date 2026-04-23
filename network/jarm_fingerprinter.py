@@ -377,35 +377,39 @@ class _JARMFingerprinter:
 
         # Client Hello structure:
         # 0x01 = Client Hello
-        client_hello = b"\x01"  # handshake type
+        # F196B: Use list + join — O(n) vs bytes += O(n²)
+        parts = [b"\x01"]  # handshake type
 
         # Placeholder for handshake length (will fill in later)
         hh = b"\x00\x00\x00"
 
         # TLS version
-        client_hello += tls_version
+        parts.append(tls_version)
 
         # Random (32 bytes)
         import time
         random_bytes = bytes([
             (int(time.time()) >> (8 * i)) & 0xFF for i in range(4)
         ] + [random.randint(0, 255) for _ in range(28)])
-        client_hello += random_bytes
+        parts.append(random_bytes)
 
         # Session ID
-        client_hello += bytes([len(session_id)]) + session_id
+        parts.append(bytes([len(session_id)]) + session_id)
 
         # Cipher suites
-        client_hello += struct.pack(">H", len(cipher_bytes)) + cipher_bytes
+        parts.append(struct.pack(">H", len(cipher_bytes)) + cipher_bytes)
 
         # Compression (null only)
-        client_hello += b"\x01\x00"
+        parts.append(b"\x01\x00")
 
         # Extensions
         if ext_bytes:
-            client_hello += struct.pack(">H", len(ext_bytes)) + ext_bytes
+            parts.append(struct.pack(">H", len(ext_bytes)) + ext_bytes)
         else:
-            client_hello += b"\x00\x00"
+            parts.append(b"\x00\x00")
+
+        # Join all parts
+        client_hello = b"".join(parts)
 
         # Fill in handshake length
         handshake_length = len(client_hello) - 4  # subtract header

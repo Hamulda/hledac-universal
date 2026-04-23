@@ -242,6 +242,9 @@ class EventDrivenProcessor:
         self.start_time = time.time()
         self._processing_task: Optional[asyncio.Task] = None
 
+        # F196B: Track background tasks for proper cleanup
+        self._background_tasks: set[asyncio.Task] = set()
+
         # Neural thresholds (LIF neuron model)
         self.v_rest = -65.0
         self.v_reset = -65.0
@@ -251,12 +254,19 @@ class EventDrivenProcessor:
 
         logger.info(f"EventDrivenProcessor initialized with {max_workers} workers")
 
+    def _track_task(self, coro) -> asyncio.Task:
+        """F196B: Track background tasks for proper cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     async def start(self) -> bool:
         """Start the event-driven processor."""
         try:
             self.running = True
             self.start_time = time.time()
-            self._processing_task = asyncio.create_task(self._process_loop())
+            self._processing_task = self._track_task(self._process_loop())
             logger.info("EventDrivenProcessor started")
             return True
         except Exception as e:
@@ -268,13 +278,12 @@ class EventDrivenProcessor:
         logger.info("Stopping EventDrivenProcessor...")
         self.running = False
 
-        # Cancel processing task
-        if self._processing_task:
-            self._processing_task.cancel()
-            try:
-                await self._processing_task
-            except asyncio.CancelledError:
-                pass
+        # F196B: Cancel all tracked background tasks
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
 
         # Shutdown thread pool
         self.thread_pool.shutdown(wait=True)
@@ -483,8 +492,8 @@ class EventDrivenProcessor:
                     neuron_type=NeuronType.HIDDEN,
                     priority=neuron_state.processing_priority
                 )
-                # Add to queue (non-blocking)
-                asyncio.create_task(self._enqueue_event(spike_event))
+                # Add to queue (non-blocking) — F196B: track for cleanup
+                self._track_task(self._enqueue_event(spike_event))
                 return True
             except Exception as e:
                 logger.warning(f"Failed to create spike event: {e}")
@@ -1919,7 +1928,10 @@ class GhostWatchdog:
         self.drivers: Dict[str, DriverHealth] = {}
         self.running = False
         self.watchdog_task: Optional[asyncio.Task] = None
-        
+
+        # F196B: Track background tasks for proper cleanup
+        self._background_tasks: set[asyncio.Task] = set()
+
         # Statistics
         self.stats = {
             'total_restarts': 0,
@@ -1928,13 +1940,20 @@ class GhostWatchdog:
             'uptime_seconds': 0,
             'last_check_time': None
         }
-        
+
         logger.info("GhostWatchdog initialized")
-    
+
+    def _track_task(self, coro) -> asyncio.Task:
+        """F196B: Track background tasks for proper cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     def register_driver(self, name: str, driver_instance: Any, max_restarts: int = 3):
         """
         Register a driver for monitoring.
-        
+
         Args:
             name: Driver name
             driver_instance: The actual driver object
@@ -1947,13 +1966,13 @@ class GhostWatchdog:
             max_restarts=max_restarts,
             driver_instance=driver_instance
         )
-        
+
         logger.info(f"GhostWatchdog: Registered driver '{name}'")
-    
+
     def update_heartbeat(self, driver_name: str):
         """
         Update heartbeat for a driver (called by drivers).
-        
+
         Args:
             driver_name: Name of the driver
         """
@@ -1962,29 +1981,29 @@ class GhostWatchdog:
             if self.drivers[driver_name].status == DriverStatus.UNRESPONSIVE:
                 self.drivers[driver_name].status = DriverStatus.HEALTHY
                 logger.info(f"GhostWatchdog: Driver '{driver_name}' recovered")
-    
+
     async def start_monitoring(self):
         """Start the watchdog monitoring task."""
         if self.running:
             logger.warning("GhostWatchdog already running")
             return
-        
+
         self.running = True
-        self.watchdog_task = asyncio.create_task(self._monitor_loop())
-        
+        self.watchdog_task = self._track_task(self._monitor_loop())
+
         logger.info("GhostWatchdog monitoring started")
-    
+
     async def stop_monitoring(self):
         """Stop the watchdog monitoring task."""
         self.running = False
-        
-        if self.watchdog_task:
-            self.watchdog_task.cancel()
-            try:
-                await self.watchdog_task
-            except asyncio.CancelledError:
-                pass
-        
+
+        # F196B: Cancel all tracked background tasks
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+
         logger.info("GhostWatchdog monitoring stopped")
     
     async def _monitor_loop(self):

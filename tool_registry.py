@@ -1186,9 +1186,17 @@ async def _python_execute_handler(
     timeout_seconds: int = 30,
     allowed_modules: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Handler for restricted Python execution.
+    """
+    Handler for restricted Python execution.
 
     Runs code in restricted environment with safe builtins only.
+
+    SECURITY NOTES (F196B):
+    - Uses whitelist of safe builtins (no file I/O, no os, no subprocess, no eval)
+    - Code is pre-compiled with compile() before exec()
+    - Timeout enforced via signal.alarm on Unix platforms
+    - Intentionally designed for sandboxed Python execution (registered as HIGH risk)
+    - NOT intended for untrusted external input — callers must validate
 
     Sprint F600B FIX: Respects timeout_seconds via signal.alarm() on Unix.
     Falls back to no-op timeout enforcement on non-Unix platforms.

@@ -387,6 +387,12 @@ class SemanticDedupCache:
             "lmdb_ready": self._lmdb_store is not None and self._lmdb_store._boot_error is None,
         }
 
+    def close(self) -> None:
+        """F196B: Close LMDB environment."""
+        if self._lmdb_store is not None:
+            self._lmdb_store.close()
+            self._lmdb_store = None
+
 
 # ---------------------------------------------------------------------------
 # Standalone helpers

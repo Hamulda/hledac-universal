@@ -640,8 +640,25 @@ class RelationshipDiscoveryEngine:
             pickle.dump(graph_to_save, f)
 
     def _load_graph(self, path: str) -> bool:
-        """Load a graph from disk. Supports both igraph native and pickle formats."""
+        """
+        Load a graph from disk.
+
+        Supports both igraph native and pickle formats.
+
+        SECURITY: F196B — pickle.load is only used as fallback for files within
+        the application's graph directory. External paths are rejected.
+        """
         import pickle
+        import os
+
+        # F196B: Security hardening — validate path is within expected graph directory
+        # This prevents loading malicious pickle files from unexpected locations
+        graph_base_dir = os.path.expanduser("~/.hledac/graphs")
+        resolved_path = os.path.realpath(path)
+        resolved_base = os.path.realpath(graph_base_dir)
+
+        is_safe_path = resolved_path.startswith(resolved_base + os.sep)
+
         if IGRAPH_AVAILABLE:
             try:
                 self._igraph_graph = ig.Graph.Load(path)
@@ -650,22 +667,32 @@ class RelationshipDiscoveryEngine:
                 pass
         if NETWORKX_AVAILABLE:
             try:
-                with open(path, 'rb') as f:
-                    self._nx_graph = pickle.load(f)
-                return True
+                if is_safe_path:
+                    with open(path, 'rb') as f:
+                        self._nx_graph = pickle.load(f)
+                    return True
+                else:
+                    logger.warning(
+                        f"[F196B] Pickle load rejected for path outside graphs dir: {path}"
+                    )
             except Exception:
                 pass
-        # Generic pickle fallback for any graph type
-        try:
-            with open(path, 'rb') as f:
-                loaded = pickle.load(f)
-                if IGRAPH_AVAILABLE and loaded is not None:
-                    self._igraph_graph = loaded
-                elif NETWORKX_AVAILABLE:
-                    self._nx_graph = loaded
-                return True
-        except Exception:
-            pass
+        # Generic pickle fallback for any graph type — only from safe paths
+        if is_safe_path:
+            try:
+                with open(path, 'rb') as f:
+                    loaded = pickle.load(f)
+                    if IGRAPH_AVAILABLE and loaded is not None:
+                        self._igraph_graph = loaded
+                    elif NETWORKX_AVAILABLE:
+                        self._nx_graph = loaded
+                    return True
+            except Exception:
+                pass
+        else:
+            logger.warning(
+                f"[F196B] Pickle fallback rejected for unsafe path: {path}"
+            )
         return False
 
     # ========================================================================

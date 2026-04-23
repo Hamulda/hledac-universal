@@ -47,17 +47,27 @@ class SketchExchange:
 
         self._digests: List[str] = []
 
+        # F196B: Track background tasks for proper cleanup
+        self._background_tasks: set[asyncio.Task] = set()
+
+    def _track_task(self, coro) -> asyncio.Task:
+        """F196B: Track background tasks for proper cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     async def start(self):
-        self._publish_task = asyncio.create_task(self._publish_loop())
+        self._publish_task = self._track_task(self._publish_loop())
 
     async def stop(self):
         self._running = False
-        if self._publish_task:
-            self._publish_task.cancel()
-            try:
-                await self._publish_task
-            except asyncio.CancelledError:
-                pass
+        # F196B: Cancel all tracked background tasks
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
 
     async def _refresh_digests(self):
         nodes = await self.local_graph.get_all_nodes(limit=MAX_SKETCH_ITEMS)
