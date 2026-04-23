@@ -430,12 +430,20 @@ class InferenceEngine:
         )
 
     def _run_coro_sync_safe(self, coro):
-        """Run coroutine safely - in thread if loop is already running."""
+        """Run coroutine safely in a thread pool.
+
+        M1-SAFE: When a loop is already running, use run_until_complete on the
+        existing loop from the worker thread. This avoids creating a nested event
+        loop with asyncio.run() which crashes Metal on Apple Silicon M1.
+        """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(coro)
-        return self._thread_pool.submit(asyncio.run, coro).result()
+        # M1-SAFE: Use run_until_complete on the existing loop from this worker thread.
+        # asyncio.run() creates a new nested event loop which crashes Metal on M1.
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(coro)
 
     def _shutdown_executor(self) -> None:
         """Shutdown thread pool fail-safe."""

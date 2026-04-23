@@ -516,6 +516,9 @@ class SprintScheduler:
         # Sprint 8RC: IOC-aware scoring state
         self._source_weights: dict[str, float] = {}  # source_type → hit_rate multiplier
         self._novelty_bonuses: dict[str, float] = {}  # source_type → novelty multiplier
+        # Sprint F199A: Per-source quality feedback for reward-driven weight adaptation
+        # Bounded accumulation: feed_url → {fetched, accepted} — reset per sprint via _reset_result
+        self._source_quality_feedback: dict[str, dict[str, int]] = {}
         # Sprint 8TB: Agentic Pivot Loop state
         self._pivot_queue: asyncio.PriorityQueue[PivotTask] = asyncio.PriorityQueue(maxsize=200)
         # Sprint 8XE: Last sources list for public discovery query hint
@@ -576,6 +579,8 @@ class SprintScheduler:
         self._hypothesis_query_count: int = 0  # total hypothesis-driven queries enqueued
         # Sprint 8VI §C: All findings collected during sprint
         self._all_findings: list[dict] = []
+        # Sprint F200A: Prefetch oracle integration (advisory only)
+        self._prefetch_oracle: Any = None
         # Sprint 8VM: Shadow pre-decision consumer — read-only, no mutable state
         self._shadow_pd_summary: Any = None
         # Sprint 8VQ: Advisory gate snapshot — ephemeral, computed at WINDUP entry, diagnostic only
@@ -594,141 +599,8 @@ class SprintScheduler:
         self._source_economics: dict[str, SourceEconomics] = {}
         # Sprint F193A: CT log canonical discovery client
         self._ct_log_client: Any = ct_log_client
-        # Sprint F192G: Intelligence dispatcher — optional bounded lifecycle sidecar
-        self._dispatcher: Any = None
-        # Sprint F192G: Memory watchdog — optional memory pressure seam
-        self._watchdog: Any = None
         # Sprint F195C: Sprint policy manager (opt-in RL layer)
         self._policy_manager: Any = None
-
-    # ── Sprint F192G: Intelligence Dispatcher wiring ────────────────────────
-
-
-    # ---------------------------------------------------------------------------
-    # Sprint 8AP: Memory watchdog callbacks for scheduler lifecycle hooks
-    # ---------------------------------------------------------------------------
-    # Watches memory pressure and calls scheduler windup/abort hooks:
-    #   CRITICAL → request_early_windup()  (graceful wind-down)
-    #   EMERGENCY → request_immediate_abort()  (abort + persist partial state)
-    #
-    # Delegates tier suspension to the dispatcher (existing behaviour).
-    # ---------------------------------------------------------------------------
-
-    class _SprintSchedulerWatchdogCallbacks:
-        """
-        MemoryWatchdogCallbacks that bridge pressure events to scheduler lifecycle.
-
-        - on_tier_suspended / on_tier_resumed: delegate to dispatcher (TIER2 policy)
-        - on_pressure_critical_windup: call scheduler.request_early_windup()
-        - on_emergency_gc: call scheduler.request_immediate_abort()
-        """
-
-        __slots__ = ("_scheduler", "_dispatcher_callbacks")
-
-        def __init__(self, scheduler: "SprintScheduler", dispatcher_callbacks: Any) -> None:
-            self._scheduler = scheduler
-            self._dispatcher_callbacks = dispatcher_callbacks
-
-        def on_tier_suspended(self, tier_name: str, level: Any) -> None:
-            try:
-                self._dispatcher_callbacks.on_tier_suspended(tier_name, level)
-            except Exception:
-                pass
-
-        def on_tier_resumed(self, tier_name: str) -> None:
-            try:
-                self._dispatcher_callbacks.on_tier_resumed(tier_name)
-            except Exception:
-                pass
-
-        def on_emergency_gc(self, snapshot: dict) -> None:
-            try:
-                self._scheduler.request_immediate_abort()
-            except Exception:
-                pass
-
-        def on_pressure_critical_windup(self, snapshot: dict) -> None:
-            try:
-                self._scheduler.request_early_windup()
-            except Exception:
-                pass
-
-    def attach_dispatcher(
-        self,
-        session: Any = None,
-        with_watchdog: bool = True,
-        watchdog_interval: float = 0.5,
-    ) -> Any:
-        """
-        Attach IntelligenceDispatcher as a bounded lifecycle sidecar.
-
-        Dispatcher is fail-soft: missing modules return empty results, never crash.
-        Watchdog is optional and also fail-soft: errors in watchdog callbacks
-        are swallowed. Canonical sprint is never blocked by intelligence tier failures.
-
-        When with_watchdog=True, the watchdog is wired to scheduler lifecycle hooks:
-        CRITICAL pressure → early wind-down (preserve partial state)
-        EMERGENCY pressure → immediate abort (persist what we have)
-
-        Args:
-            session: optional aiohttp.ClientSession for HTTP clients
-            with_watchdog: if True, attach MemoryWatchdog to dispatcher
-            watchdog_interval: polling interval for MemoryWatchdog (seconds)
-
-        Returns:
-            IntelligenceDispatcher instance attached to this scheduler
-        """
-        from hledac.universal.runtime.intelligence_dispatcher import IntelligenceDispatcher
-        from hledac.universal.runtime.memory_watchdog import (
-            attach_to_dispatcher,
-            MemoryWatchdogCallbacks,
-        )
-
-        dispatcher = IntelligenceDispatcher(session=session)
-        self._dispatcher = dispatcher
-
-        if with_watchdog:
-            try:
-                # Build dispatcher callbacks first (used by our scheduler-level wrapper)
-                from hledac.universal.runtime.memory_watchdog import _DispatcherWatchdogCallbacks
-
-                dispatcher_cbs = _DispatcherWatchdogCallbacks(dispatcher)
-                scheduler_cbs = self._SprintSchedulerWatchdogCallbacks(self, dispatcher_cbs)
-                self._watchdog = attach_to_dispatcher(
-                    dispatcher,
-                    callbacks=scheduler_cbs,
-                    watchdog_interval=watchdog_interval,
-                )
-            except Exception:
-                self._watchdog = None
-
-        return dispatcher
-
-    def suspend_intelligence(self, tier_name: str = "TIER2") -> None:
-        """
-        Suspend an intelligence tier (TIER2 by default).
-
-
-        TIER2 suspension is advisory: dispatcher skips TIER2 modules when
-        memory pressure is high. Canonical sprint continues unaffected.
-        """
-        if self._dispatcher is not None:
-            self._dispatcher._suspended_tiers.add(tier_name)
-
-
-    def resume_intelligence(self, tier_name: str = "TIER2") -> None:
-        """Resume a previously suspended intelligence tier."""
-        if self._dispatcher is not None:
-            self._dispatcher._suspended_tiers.discard(tier_name)
-
-
-    def is_intelligence_attached(self) -> bool:
-        """True if dispatcher has been attached."""
-        return self._dispatcher is not None
-
-    def get_dispatcher(self) -> Any:
-        """Return the attached dispatcher or None."""
-        return self._dispatcher
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -851,6 +723,10 @@ class SprintScheduler:
         2. Sources with hot/warm posture boosted
         3. Cold/in-cooldown sources at the end
         4. Tier ordering still applies as secondary sort key
+        5. F200A: Advisory prefetch oracle score multiplies the sort key
+
+        F200A: oracle is ADVISORY ONLY — scheduler retains authority.
+        If oracle is None or suggest_scores fails → falls back to default ordering.
         """
         def economics_sort_key(item: SourceWork) -> tuple:
             econ = self._source_economics.get(item.feed_url)
@@ -876,7 +752,27 @@ class SprintScheduler:
                 return (tier_order, 5, streak, item.feed_url)
             return (tier_order, posture_score, streak, item.feed_url)
 
-        return sorted(items, key=economics_sort_key)
+        # F200A: Get advisory oracle scores (fail-soft)
+        oracle_scores: dict[str, float] = {}
+        if self._prefetch_oracle is not None:
+            try:
+                oracle_scores = self._prefetch_oracle.suggest_scores(items, current_cycle)
+            except Exception:
+                # Advisory only — fall back to default ordering
+                oracle_scores = {}
+
+        # Sort with oracle advisory (oracle score affects effective priority)
+        def oracle_sort_key(item: SourceWork) -> tuple:
+            base_key = economics_sort_key(item)
+            # Oracle score multiplier: higher score → lower tuple value → higher priority
+            # neutral oracle score = 1.0 → no change
+            oracle_mult = oracle_scores.get(item.feed_url, 1.0)
+            # Scale oracle multiplier into sort key (oracle range [0.1, 3.0])
+            # This shifts items up/down within their tier/posture band
+            oracle_shift = (oracle_mult - 1.0) * 10
+            return (base_key[0], base_key[1], base_key[2] - oracle_shift, base_key[3])
+
+        return sorted(items, key=oracle_sort_key)
 
     # ── Sprint 8VI §B: RL Adaptive Pivot ────────────────────────────────
 
@@ -1191,15 +1087,6 @@ class SprintScheduler:
         self._bg_tasks.clear()
 
 
-        # Sprint F192G: Fail-soft teardown of intelligence sidecar
-        if self._watchdog is not None:
-            try:
-                self._watchdog.stop()
-            except Exception:
-                pass
-            self._watchdog = None
-        self._dispatcher = None
-
         # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
         _r = self._result
         # dominant_public_blocker: backend_degraded takes priority, else error string
@@ -1249,6 +1136,12 @@ class SprintScheduler:
                 self._policy_manager.update(self._result)
             except Exception as e:
                 log.debug(f"[SprintPolicyManager] update() failed: {e}")
+
+        # Sprint F199A: Adapt source weights from per-source quality feedback (fail-soft)
+        try:
+            self._adapt_source_weights_from_feedback()
+        except Exception as e:
+            log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
         return self._result
 
@@ -1542,39 +1435,48 @@ class SprintScheduler:
                         enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
                     )
                 )
-
-            public_result = public_task.result()
-
-            # Accumulate into result — fail-soft aggregation
-            self._result.public_discovered += public_result.discovered
-            self._result.public_fetched += public_result.fetched
-            self._result.public_matched_patterns += public_result.matched_patterns
-            self._result.public_accepted_findings += public_result.accepted_findings
-            self._result.public_stored_findings += public_result.stored_findings
-            if public_result.error:
-                self._result.public_error = public_result.error
-
-            # Sprint 8VD §F: Track public findings in scorecard count
-            self._finding_count += public_result.accepted_findings
-            # Sprint 8VN §C: Accumulate public branch verdict (additive, fail-soft)
-            pbv = getattr(public_result, 'public_branch_verdict', None)
-            if pbv and isinstance(pbv, dict) and len(self._public_verdicts) < 10:
-                self._public_verdicts.append(pbv)
-            # Sprint F169E: Public branch blocker aggregation — fail-soft
-            if getattr(public_result, 'backend_degraded', False):
-                self._result.public_backend_degraded = True
-
-            log.debug(
-                f"[8XE] Public discovery: discovered={public_result.discovered} "
-                f"matched={public_result.matched_patterns} "
-                f"accepted={public_result.accepted_findings}"
-            )
-
-        except asyncio.CancelledError:
-            raise  # [I6] propagate
+        except ExceptionGroup as eg:
+            # F196A: TaskGroup ExceptionGroup handler for Python 3.11+.
+            # TaskGroup __exit__ raises ExceptionGroup when a task fails.
+            # Handle CancelledError propagation, log others.
+            for e in eg.exceptions:
+                if isinstance(e, asyncio.CancelledError):
+                    raise e  # [I6] propagate CancelledError
+                log.error(f"Public pipeline task failed: {e}")
+            self._result.public_error = f"TaskGroup: {type(eg).__name__}"
+            return
         except Exception as exc:
             log.debug(f"[8XE] Public pipeline error: {exc}")
             self._result.public_error = f"{type(exc).__name__}:{exc}"
+            return
+
+        # Task succeeded - accumulate results
+        public_result = public_task.result()
+
+        # Accumulate into result — fail-soft aggregation
+        self._result.public_discovered += public_result.discovered
+        self._result.public_fetched += public_result.fetched
+        self._result.public_matched_patterns += public_result.matched_patterns
+        self._result.public_accepted_findings += public_result.accepted_findings
+        self._result.public_stored_findings += public_result.stored_findings
+        if public_result.error:
+            self._result.public_error = public_result.error
+
+        # Sprint 8VD §F: Track public findings in scorecard count
+        self._finding_count += public_result.accepted_findings
+        # Sprint 8VN §C: Accumulate public branch verdict (additive, fail-soft)
+        pbv = getattr(public_result, 'public_branch_verdict', None)
+        if pbv and isinstance(pbv, dict) and len(self._public_verdicts) < 10:
+            self._public_verdicts.append(pbv)
+        # Sprint F169E: Public branch blocker aggregation — fail-soft
+        if getattr(public_result, 'backend_degraded', False):
+            self._result.public_backend_degraded = True
+
+        log.debug(
+            f"[8XE] Public discovery: discovered={public_result.discovered} "
+            f"matched={public_result.matched_patterns} "
+            f"accepted={public_result.accepted_findings}"
+        )
 
     async def _run_ct_log_discovery_in_cycle(
         self,
@@ -1614,6 +1516,8 @@ class SprintScheduler:
                 await self._enrich_ct_findings_forensics(findings)
                 # Sprint F195C: Multimodal enrichment for PDF/image findings
                 await self._enrich_findings_multimodal(findings)
+                # Sprint F198A: Accumulate findings to cross-sprint graph (fail-soft)
+                self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
                 results = await store.async_ingest_findings_batch(findings)
                 stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
                 self._result.ct_log_stored = stored
@@ -1626,6 +1530,72 @@ class SprintScheduler:
         finally:
             if session is not None:
                 await session.close()
+
+    # ── F198A: Cross-Sprint Graph Accumulation ───────────────────────────────
+
+    def _accumulate_findings_to_graph(
+        self,
+        findings: list,
+        sprint_id: str = "",
+    ) -> int:
+        """
+        F198A: Extract IOCs from accepted findings and upsert to graph_service.
+
+        Each finding is represented as an IOC node:
+          - ioc_type  = source_type (e.g. "ct_log", "public", "feed")
+          - ioc_value = finding_id (stable cross-sprint identifier)
+          - confidence = finding.confidence
+          - source    = sprint_id
+
+        Fail-soft: graph errors must NOT prevent sprint continuation.
+
+        Returns:
+            Number of findings successfully upserted to graph.
+        """
+        if not findings:
+            return 0
+        count = 0
+        try:
+            from hledac.universal.knowledge import graph_service
+            for finding in findings:
+                fid = getattr(finding, "finding_id", None)
+                if not fid:
+                    continue
+                src_type = getattr(finding, "source_type", "unknown") or "unknown"
+                confidence = getattr(finding, "confidence", 0.5) or 0.5
+                if graph_service.upsert_ioc(
+                    value=fid,
+                    ioc_type=src_type,
+                    confidence=confidence,
+                    source=sprint_id or "",
+                ):
+                    count += 1
+        except Exception:
+            pass  # Fail-soft: graph must never block sprint
+        return count
+
+    # ── F198A: Graph stats summary for export teardown ───────────────────────
+
+    def _get_graph_signal(self) -> dict:
+        """
+        F198A: Read graph signal at teardown without blocking sprint.
+
+        Returns graph node/edge stats as a dict, or empty dict on error.
+        Non-blocking: called inside _build_diagnostic_report which is already
+        in the export teardown path (not on the critical sprint path).
+        """
+        try:
+            from hledac.universal.knowledge import graph_service
+            stats = graph_service.graph_stats()
+            if stats:
+                return {
+                    "graph_nodes": stats.get("nodes", 0),
+                    "graph_edges": stats.get("edges", 0),
+                    "graph_pgq_available": stats.get("pgq_available", False),
+                }
+        except Exception:
+            pass
+        return {}
 
     def _build_work_items(
         self, sources: Sequence[str]
@@ -1785,6 +1755,24 @@ class SprintScheduler:
         # Sprint F160C: Update source economics from pipeline result signals
         # Uses signal_stage, feed_confidence_score, winning_source_breakdown
         self._update_source_economics(feed_url, result, self._result.cycles_started)
+        # Sprint F199A: Collect per-source quality feedback for reward-driven weight adaptation
+        # Bounded accumulation: max 200 feed_urls tracked
+        if len(self._source_quality_feedback) < 200:
+            fb = self._source_quality_feedback.setdefault(feed_url, {"fetched": 0, "accepted": 0})
+            fb["fetched"] = fb.get("fetched", 0) + getattr(result, 'fetched_entries', 0)
+            fb["accepted"] = fb.get("accepted", 0) + getattr(result, 'accepted_findings', 0)
+        # Sprint F200A: Record outcome for prefetch oracle (advisory only, fail-soft)
+        if self._prefetch_oracle is not None:
+            try:
+                self._prefetch_oracle.record_outcome(
+                    feed_url=feed_url,
+                    fetched=getattr(result, 'fetched_entries', 0),
+                    accepted=getattr(result, 'accepted_findings', 0),
+                    cycle=self._result.cycles_started,
+                    seen_new_urls=getattr(result, 'matched_patterns', 0),
+                )
+            except Exception:
+                pass  # Advisory only — never affect scheduler
 
     # ── Dedup ─────────────────────────────────────────────────────────────
 
@@ -2195,6 +2183,10 @@ class SprintScheduler:
             "entries_per_source": dict(self._entries_per_source),
             "hits_per_source": dict(self._hits_per_source),
         }
+        # Sprint F198A: Append cross-sprint graph signal (read-only, non-blocking)
+        graph_signal = self._get_graph_signal()
+        if graph_signal:
+            report["graph_signal"] = graph_signal
         # Sprint 8VM: Append shadow pre-decision readiness preview (read-only, diagnostic)
         shadow_preview = self._build_shadow_readiness_preview()
         if shadow_preview:
@@ -2240,6 +2232,54 @@ class SprintScheduler:
                 log.debug(f"Source weight {src}: {clipped:.2f}")
         except Exception as e:
             log.warning(f"Source weight load failed: {e} — using defaults")
+
+    # ── Sprint F199A: Reward-driven source weight adaptation ─────────────
+
+    def _adapt_source_weights_from_feedback(self) -> None:
+        """
+        F199A: Adapt _source_weights from per-source quality feedback collected during the sprint.
+
+        Called at teardown (in run() after cycles complete). Updates each feed_url's weight
+        based on accepted/total ratio signal collected via _process_result().
+
+        Adaptation rule (B.6 bounds ±20% per sprint → clamp to [0.3, 2.5]):
+          - accepted/total >= 0.7 → reward: +10%
+          - accepted/total >= 0.4 → reward: +5%
+          - accepted/total >= 0.15 → reward: 0 (neutral)
+          - accepted/total < 0.15 → penalty: -5%
+          - no signal (total=0) → no change
+
+        Signal is per-feed_url (feed_url as key), not per-source_type.
+        For scoring, feed_url maps to source_type via _config.tier_of(feed_url).name.
+        """
+        for feed_url, fb in self._source_quality_feedback.items():
+            total = fb.get("fetched", 0)
+            accepted = fb.get("accepted", 0)
+            if total == 0:
+                continue
+
+            ratio = accepted / total
+            # Derive source_type from feed_url via tier config
+            source_type = self._config.tier_of(feed_url).name.lower()
+
+            current = self._source_weights.get(source_type, 1.0)
+            if ratio >= 0.7:
+                delta = 1.10  # +10%
+            elif ratio >= 0.4:
+                delta = 1.05  # +5%
+            elif ratio >= 0.15:
+                delta = 1.00  # neutral
+            else:
+                delta = 0.95  # -5%
+
+            new_weight = current * delta
+            # B.6: clamp to [0.3, 2.5]
+            new_weight = max(0.3, min(2.5, new_weight))
+            self._source_weights[source_type] = new_weight
+            log.debug(
+                f"[F199A] Source weight adaptation: {source_type} "
+                f"({accepted}/{total}={ratio:.2%}) {current:.3f} → {new_weight:.3f}"
+            )
 
     def score_source(
         self, source_type: str, ioc_graph_stats: dict | None = None
@@ -2318,6 +2358,16 @@ class SprintScheduler:
     def inject_policy_manager(self, policy_manager: Any) -> None:
         """Inject SprintPolicyManager reference (opt-in RL layer)."""
         self._policy_manager = policy_manager
+
+    def inject_prefetch_oracle(self, oracle: Any) -> None:
+        """
+        Inject PrefetchOracleIntegration reference (advisory prefetch ordering).
+
+        F200A: oracle is ADVISORY ONLY — scheduler retains all authority.
+        Oracle suggests sort scores; scheduler multiplies them into economics sort key.
+        All oracle calls are fail-soft — exception or None oracle → no-op.
+        """
+        self._prefetch_oracle = oracle
 
     def enqueue_pivot(
         self,
@@ -3662,6 +3712,14 @@ class SprintScheduler:
         self._shadow_pd_summary = None
         # Sprint 8VQ: Clear advisory gate snapshot
         self._advisory_gate_snapshot = None
+        # Sprint F199A: Clear per-source quality feedback for new sprint
+        self._source_quality_feedback.clear()
+        # Sprint F200A: Clear prefetch oracle state for new sprint
+        if self._prefetch_oracle is not None:
+            try:
+                self._prefetch_oracle.reset()
+            except Exception:
+                pass  # Advisory only — never affect scheduler
         # Sprint 8VN: Clear intelligence caches and findings accumulator
         self._all_findings.clear()
         self._correlation_cache = None

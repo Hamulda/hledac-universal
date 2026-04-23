@@ -1318,11 +1318,14 @@ class DocumentIntelligenceEngine:
                         # No running loop - safe to use asyncio.run()
                         forensics = asyncio.run(self._forensics.analyze_image(content))
                     else:
-                        # Running loop exists - use run_in_executor to avoid blocking
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            future = loop.run_in_executor(pool, lambda: asyncio.run(self._forensics.analyze_image(content)))
-                            forensics = future.result()
+                        # M1-SAFE: Use run_until_complete on existing loop from worker thread.
+                        # This avoids creating a nested event loop with asyncio.run() which
+                        # crashes Metal on Apple Silicon M1.
+                        future = loop.run_in_executor(
+                            self._thread_pool,
+                            lambda: loop.run_until_complete(self._forensics.analyze_image(content))
+                        )
+                        forensics = future.result()
                     if forensics:
                         analysis.metadata.raw_metadata['forensics'] = forensics
             except Exception:

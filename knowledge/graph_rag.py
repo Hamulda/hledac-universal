@@ -423,18 +423,21 @@ class GraphRAGOrchestrator:
         """
         Safely run an async coroutine synchronously.
 
-        Works both when no event loop is running and when a loop is already running.
-        Uses shared thread pool for efficiency.
+        M1-SAFE: When a loop is already running, use run_until_complete on the
+        existing loop from the worker thread. This avoids creating a nested event
+        loop (asyncio.run) in the worker thread, which crashes Metal on M1.
         """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop - use asyncio.run
+            # No running loop - asyncio.run in a fresh thread is safe (no existing loop)
             return asyncio.run(coro)
 
-        # Loop is running - execute in shared thread pool
-        fut = self._thread_pool.submit(asyncio.run, coro)
-        return fut.result()
+        # M1-safe: run on the existing loop from this worker thread.
+        # run_until_complete schedules coro on the loop and blocks until done —
+        # no nested loop created in the worker thread.
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(coro)
 
     def multi_hop_search_sync(
         self,
@@ -1423,18 +1426,20 @@ class GraphRAGOrchestrator:
         """Calculate cohesion score for a community."""
         if len(node_list) < 2:
             return 1.0
-        
+
         internal_edges = 0
         possible_edges = len(node_list) * (len(node_list) - 1)
-        
-        for node in node_list:
+
+        # F196A: Use set for O(1) neighbor lookup instead of O(n) list lookup.
+        node_set = set(node_list)
+        for node in node_set:
             for neighbor in adjacency.get(node, set()):
-                if neighbor in node_list:
+                if neighbor in node_set:
                     internal_edges += 1
-        
+
         # Divide by 2 because each edge is counted twice
         internal_edges //= 2
-        
+
         return internal_edges / possible_edges if possible_edges > 0 else 0.0
 
     def _extract_community_characteristics(self, node_list: List[str]) -> List[str]:

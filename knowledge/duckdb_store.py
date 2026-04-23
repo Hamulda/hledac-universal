@@ -3964,6 +3964,9 @@ class DuckDBShadowStore:
         Text mapping: URL (if present) or payload_text (if exists and non-empty), else query.
         If both are empty, falls back to query (may accept trivially).
         """
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+
         # Sprint 8AK: URL-first fingerprint
         url_from_provenance = self._extract_url_from_provenance(finding.provenance)
         url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ""
@@ -4027,10 +4030,30 @@ class DuckDBShadowStore:
                 duplicate=False,
             )
 
-        # Short strings (< 8 chars) skip entropy filter
+        # Short strings (< 8 chars) skip entropy filter — accept immediately
+        # WITHOUT storing to LMDB/hotcache. Storage deferred to after semantic dedup pass.
         # _accepted_count is incremented by async_record_canonical_findings_batch — NOT here
         if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
-            # Accept: store in LMDB + hot cache
+            # Sprint F197B: Check semantic dedup before storing short strings too
+            if self._semantic_dedup_cache is not None:
+                try:
+                    dedup_cache = self._semantic_dedup_cache
+                    text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+                    if text_for_embed and len(text_for_embed) >= 16:
+                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
+                        if is_dup:
+                            self._quality_duplicate_count += 1
+                            return FindingQualityDecision(
+                                accepted=False,
+                                reason="semantic_duplicate",
+                                entropy=entropy,
+                                normalized_hash=fingerprint,
+                                duplicate=True,
+                            )
+                except Exception as e:
+                    # F196A: Quality gate error must not be silent — log warning.
+                    _logger.warning(f"Quality gate error (short_string path): {e}")
+            # Short string + no semantic duplicate → store and accept
             self._store_persistent_dedup(fingerprint, finding.finding_id)
             self._add_to_hot_cache(fingerprint, finding.finding_id)
             return FindingQualityDecision(
@@ -4052,16 +4075,9 @@ class DuckDBShadowStore:
                 duplicate=False,
             )
 
-        # Accept: store in LMDB + hot cache
-        # NOTE: _accepted_count is NOT incremented here — it is incremented
-        # by async_record_canonical_findings_batch when the WAL write succeeds.
-        # This avoids double-counting between quality gate and storage layer.
-        self._store_persistent_dedup(fingerprint, finding.finding_id)
-        self._add_to_hot_cache(fingerprint, finding.finding_id)
-
-        # Sprint F195: Semantic dedup — embedding-based near-duplicate detection
+        # Sprint F197B: Semantic dedup BEFORE storing — check before committing LMDB write
         # Skip if no semantic dedup cache (memory pressure or init failed)
-        # Fail-soft: returns duplicate=False on any error
+        # Fail-soft: returns duplicate=False on any error (finding accepted even on error)
         if self._semantic_dedup_cache is not None:
             try:
                 dedup_cache = self._semantic_dedup_cache
@@ -4077,8 +4093,16 @@ class DuckDBShadowStore:
                             normalized_hash=fingerprint,
                             duplicate=True,
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                # F196A: Quality gate error must not be silent — log warning.
+                # Fail-open: embedder/LMDB error → accept the finding anyway
+                _logger.warning(f"Quality gate error (entropy path): {e}")
+
+        # Only reach here if semantic dedup passed or was skipped (fail-open)
+        # Now safe to commit to LMDB + hot cache
+        self._store_persistent_dedup(fingerprint, finding.finding_id)
+        self._add_to_hot_cache(fingerprint, finding.finding_id)
+
 
         return FindingQualityDecision(
             accepted=True,

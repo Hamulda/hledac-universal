@@ -150,10 +150,13 @@ def checkpoint() -> None:
 
 
 def reset_session() -> None:
-    """Clear session-level idempotency trackers. Call at sprint start."""
-    global _SEEN_IOCS, _SEEN_RELS
+    """Clear session-level idempotency trackers and graph singleton. Call at sprint start."""
+    global _SEEN_IOCS, _SEEN_RELS, _DUCKPGQ_GRAPH
     _SEEN_IOCS.clear()
     _SEEN_RELS.clear()
+    # F196A: Reset graph singleton to force re-init on next use.
+    # This prevents cross-sprint graph state leakage.
+    _DUCKPGQ_GRAPH = None
 
 
 __all__ = [

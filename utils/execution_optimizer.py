@@ -392,17 +392,23 @@ class ParallelExecutionOptimizer:
                 return min(cpu_count, self.config['execution']['max_workers'])
 
     def _run_in_executor_safe(self, executor, func):
-        """Run function in executor safely - handles running loop correctly."""
+        """Run function in executor safely - handles running loop correctly.
+
+        M1-SAFE: When a loop is already running, use run_until_complete on the
+        existing loop from the worker thread. This avoids creating a nested event
+        loop with asyncio.run() in the worker thread (which crashes Metal on M1).
+        """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop - use asyncio.run in a new thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, func())
-                return future.result()
-        # Running loop exists - use thread pool
-        return asyncio.get_running_loop().run_in_executor(executor, func)
+            # No running loop - asyncio.run() directly is safe (no existing loop).
+            # F196A: Do NOT wrap in ThreadPoolExecutor.submit() - that creates
+            # a nested event loop which crashes Metal on Apple Silicon M1.
+            return asyncio.run(func())
+        # M1-safe: run the coroutine on the existing loop from this worker thread.
+        # get_running_loop() from worker thread returns the main thread's loop.
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(func())
 
     async def _execute_round_robin(self, tasks: List[Any], max_workers: int) -> List[Any]:
         """Execute tasks using round-robin distribution"""

@@ -703,16 +703,18 @@ class UnicodeAttackAnalyzer:
                     # Already in async context - fire-and-forget cleanup
                     asyncio.create_task(self.cleanup())
                 else:
-                    # Loop exists but not running - use thread runner
+                    # M1-SAFE: Loop exists but not running - use run_until_complete on
+                    # the existing loop from this worker thread. This avoids creating
+                    # a nested event loop with asyncio.run() which crashes Metal on M1.
                     import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        pool.submit(asyncio.run, self.cleanup())
+                    _sync_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                    _sync_exec.submit(loop.run_until_complete, self.cleanup())
             except RuntimeError:
-                # No running loop - use thread runner
+                # No running loop - asyncio.run() directly is safe (no existing loop).
+                # F196A: Do NOT wrap in ThreadPoolExecutor.submit() - that creates
+                # a nested event loop which crashes Metal on Apple Silicon M1.
                 try:
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        pool.submit(asyncio.run, self.cleanup())
+                    asyncio.run(self.cleanup())
                 except Exception:
                     pass
 

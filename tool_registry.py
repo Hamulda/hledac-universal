@@ -322,6 +322,10 @@ class ToolRegistry:
         # via their respective _ensure_*() methods, not at registry construction time.
         self._inference_engine: Optional[Any] = None
         self._dns_tunnel_detector: Optional[Any] = None
+        # F196A: M1-safe dedicated single-thread executor for async DNS tunnel calls.
+        # Using a persistent worker thread avoids Metal context conflicts from nested
+        # event loops that occur when asyncio.run() is called in run_in_executor.
+        self._dns_tunnel_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
 
     def _ensure_inference_tool_registered(self) -> None:
         """Lazily register InferenceEngine tool on first use."""
@@ -421,7 +425,16 @@ class ToolRegistry:
 
     def _make_dns_tunnel_executor(self):
         """Create DNS tunnel detector executor method."""
+        import concurrent.futures
         detector = self._dns_tunnel_detector
+        # F196A: lazily created single-thread executor for M1-safe async dispatch
+        _dns_exec = None
+
+        def _get_executor():
+            nonlocal _dns_exec
+            if _dns_exec is None:
+                _dns_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            return _dns_exec
 
         async def _execute_dns_tunnel_async(args: dict) -> dict:
             """Async execution of DNS tunnel check."""
@@ -459,11 +472,14 @@ class ToolRegistry:
                     # No running loop - safe to use asyncio.run()
                     return asyncio.run(_execute_dns_tunnel_async(args))
                 else:
-                    # Running loop exists - use run_in_executor to avoid blocking
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        future = loop.run_in_executor(pool, lambda: asyncio.run(_execute_dns_tunnel_async(args)))
-                        return future.result()
+                    # M1-SAFE: Use run_until_complete on existing loop from worker thread.
+                    # This avoids creating a nested event loop with asyncio.run() which
+                    # crashes Metal on Apple Silicon M1.
+                    future = loop.run_in_executor(
+                        _get_executor(),
+                        lambda: loop.run_until_complete(_execute_dns_tunnel_async(args))
+                    )
+                    return future.result()
             except RuntimeError as e:
                 # A loop is already running - return error for async caller
                 return {"error": "use async wrapper _check_dns_tunneling()", "findings": []}
