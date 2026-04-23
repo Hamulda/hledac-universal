@@ -34,11 +34,18 @@ inside enrichment methods. Max 500MB memory per extraction.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import socket
+import ssl
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+# Default timeout for external lookups (seconds)
+_EXTERNAL_LOOKUP_TIMEOUT: float = 5.0
 
 # Lazy-loaded forensics modules
 _MetadataExtractor: Optional[type] = None
@@ -49,6 +56,8 @@ _STEGANOGRAPHY_AVAILABLE = False
 
 _DigitalGhostResult: Optional[type] = None
 _DIGITAL_GHOST_AVAILABLE = False
+
+# Lazily-loaded standard library for WHOIS/SSL/DNS/rDNS
 
 
 def _lazy_load_modules() -> None:
@@ -148,6 +157,85 @@ def _file_has_forensics_support(file_path: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Domain extraction from URL payload_text
+# ---------------------------------------------------------------------------
+
+def _extract_domain_from_url(url: str | None) -> Optional[str]:
+    """
+    Extract domain from a URL string.
+
+
+    Handles:
+    - https://example.com/path
+    - https://www.example.com/page.html
+    - http://sub.domain.example.com:8080/path?query=1
+
+    Returns None if no valid domain found.
+    """
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.netloc:
+            # Remove port and strip www. prefix for uniformity
+            host = parsed.netloc.split(":")[0]
+            if host.startswith("www."):
+                host = host[4:]
+            return host
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# ForensicsResult — typed enrichment result for canonical findings
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ForensicsResult:
+    """
+    Sprint F198B: Typed forensics enrichment result.
+
+
+    Produced by ForensicsEnricher.enrich() and stored in
+    finding.metadata["forensics"] on canonical findings.
+
+
+    Fields:
+        finding_id:          Finding identifier
+        file_path:           Local file path if enrichable, None otherwise
+        whois:               WHOIS lookup result dict or None
+        ssl:                 SSL certificate info dict or None
+        dns:                 DNS A/AAAA records dict or None
+        rdns:                Reverse DNS result dict or None
+        enrichment_available: True if any enrichment succeeded
+
+    All lookup fields are None on failure (graceful fallback).
+    Never raises — enrichment is best-effort.
+    """
+
+    finding_id: str
+    file_path: Optional[str] = None
+    whois: Optional[dict[str, Any]] = None
+    ssl: Optional[dict[str, Any]] = None
+    dns: Optional[dict[str, Any]] = None
+    rdns: Optional[dict[str, Any]] = None
+    enrichment_available: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for storage in finding.metadata."""
+        return {
+            "finding_id": self.finding_id,
+            "file_path": self.file_path,
+            "whois": self.whois,
+            "ssl": self.ssl,
+            "dns": self.dns,
+            "rdns": self.rdns,
+            "enrichment_available": self.enrichment_available,
+        }
+
+# ---------------------------------------------------------------------------
 # ForensicsEnricher
 # ---------------------------------------------------------------------------
 
@@ -228,9 +316,10 @@ class ForensicsEnricher:
         Enrich a CanonicalFinding with forensics analysis.
 
         Extracts file path from finding.payload_text and runs:
-        1. Metadata extraction (UniversalMetadataExtractor)
-        2. Steganography analysis (images only)
-        3. Digital ghost detection
+        1. Metadata extraction (UniversalMetadataExtractor) — file only
+        2. Steganography analysis (images only) — file only
+        3. Digital ghost detection — file only
+        4. WHOIS/SSL/DNS/rDNS — domain extracted from URL payload_text
 
         Args:
             finding: A CanonicalFinding (or any object with
@@ -238,13 +327,11 @@ class ForensicsEnricher:
 
         Returns:
             Enrichment dict with keys:
-            - "metadata": MetadataResult.to_dict() or None
-            - "steganography": SteganalysisResult.to_dict() or None
-            - "ghosts": DigitalGhostResult.to_dict() or None
+            - "forensics": ForensicsResult.to_dict() with all lookup results
             - "file_path": the extracted file path or None
-            - "enrichment_available": True if file was processable, False otherwise
+            - "enrichment_available": True if any enrichment succeeded
 
-            Returns None if no file path found or all enrichment failed.
+            Returns None if no enrichable target found or all enrichment failed.
             Never raises — failures return None with a warning log.
         """
         if not self._initialized:
@@ -253,12 +340,11 @@ class ForensicsEnricher:
         # Extract file path from payload_text
         payload_text = getattr(finding, "payload_text", None)
         file_path = _extract_file_path_from_payload(payload_text)
+        domain: Optional[str] = None
 
         if not file_path:
-            return None
-
-        if not _file_has_forensics_support(file_path):
-            return None
+            # Sprint F198B: try extracting domain from URL payload for external lookups
+            domain = _extract_domain_from_url(payload_text)
 
         finding_id = getattr(finding, "finding_id", "unknown")
         enrichment: dict[str, Any] = {
@@ -270,17 +356,25 @@ class ForensicsEnricher:
             "enrichment_available": False,
         }
 
-        # 1. Metadata extraction
-        if self._extractor is not None:
-            try:
-                result = await self._extractor.extract(file_path)
-                if result is not None:
-                    enrichment["metadata"] = result.to_dict()
-            except Exception as exc:
-                log.debug("Forensics metadata extraction failed for %s: %s", finding_id, exc)
+        # Sprint F198B: Build typed ForensicsResult
+        forensics_result = ForensicsResult(
+            finding_id=finding_id,
+            file_path=file_path,
+            enrichment_available=False,
+        )
+
+        # 1. Metadata extraction (file only)
+        if file_path and self._extractor is not None:
+            if _file_has_forensics_support(file_path):
+                try:
+                    result = await self._extractor.extract(file_path)
+                    if result is not None:
+                        enrichment["metadata"] = result.to_dict()
+                except Exception as exc:
+                    log.debug("Forensics metadata extraction failed for %s: %s", finding_id, exc)
 
         # 2. Steganography analysis (images only)
-        if _STEGANOGRAPHY_AVAILABLE:
+        if file_path and _STEGANOGRAPHY_AVAILABLE:
             ext = Path(file_path).suffix.lower()
             if ext in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}:
                 try:
@@ -291,8 +385,8 @@ class ForensicsEnricher:
                 except Exception as exc:
                     log.debug("Steganography analysis failed for %s: %s", finding_id, exc)
 
-        # 3. Digital ghost detection
-        if _DIGITAL_GHOST_AVAILABLE:
+        # 3. Digital ghost detection (file only)
+        if file_path and _DIGITAL_GHOST_AVAILABLE:
             try:
                 from forensics.digital_ghost_detector import analyze_file_ghosts
                 ghost_result = analyze_file_ghosts(file_path)
@@ -301,12 +395,42 @@ class ForensicsEnricher:
             except Exception as exc:
                 log.debug("Digital ghost detection failed for %s: %s", finding_id, exc)
 
+        # 4. Sprint F198B: External lookups (domain from URL)
+        if domain:
+            whois_data = await self._whois_lookup(domain)
+            if whois_data:
+                forensics_result.whois = whois_data
+                forensics_result.enrichment_available = True
+
+            ssl_data = await self._ssl_lookup(domain, 443)
+            if ssl_data:
+                forensics_result.ssl = ssl_data
+                forensics_result.enrichment_available = True
+
+            dns_data = await self._dns_lookup(domain)
+            if dns_data:
+                forensics_result.dns = dns_data
+                forensics_result.enrichment_available = True
+
+            rdns_data = await self._rdns_lookup(domain)
+            if rdns_data:
+                forensics_result.rdns = rdns_data
+                forensics_result.enrichment_available = True
+
         # Mark enrichment available if any module produced data
         if any(v is not None for k, v in enrichment.items() if k not in ("finding_id", "file_path", "enrichment_available")):
             enrichment["enrichment_available"] = True
+            forensics_result.enrichment_available = True
 
-        if not enrichment["enrichment_available"]:
+        if not forensics_result.enrichment_available:
             return None
+
+        # Sprint F198B: inject forensics result into finding.metadata["forensics"]
+        enrichment["forensics"] = forensics_result.to_dict()
+
+        # Also inject into the finding object itself if it has a metadata dict
+        if hasattr(finding, "metadata") and isinstance(finding.metadata, dict):
+            finding.metadata["forensics"] = forensics_result.to_dict()
 
         return enrichment
 
@@ -348,3 +472,173 @@ class ForensicsEnricher:
                 out[fid] = enrich_data
 
         return out
+
+    # ── Sprint F198B: External lookups (WHOIS/SSL/DNS/rDNS) ─────────────────
+
+    async def _whois_lookup(self, domain: str) -> Optional[dict[str, Any]]:
+        """
+        Sprint F198B: WHOIS lookup with timeout + graceful fallback.
+
+        Args:
+            domain: Domain name to lookup
+
+        Returns:
+            WHOIS result dict or None on timeout/failure (fail-soft).
+        """
+        if not domain:
+            return None
+
+        try:
+            import whois as _whois_pkg
+
+            def _sync_whois() -> dict[str, Any]:
+                try:
+                    # python-whois: main function is whois.whois()
+                    w = _whois_pkg.whois(domain)
+                    if w is None:
+                        return {}
+                    # Extract key fields
+                    return {
+                        "registrar": getattr(w, "registrar", None),
+                        "creation_date": (
+                            str(getattr(w, "creation_date", None)) if hasattr(w, "creation_date") else None
+                        ),
+                        "expiration_date": (
+                            str(getattr(w, "expiration_date", None)) if hasattr(w, "expiration_date") else None
+                        ),
+                        "name_servers": list(getattr(w, "name_servers", []) or []),
+                        "status": getattr(w, "status", None),
+                        "dns_sec": getattr(w, "dns_sec", None),
+                    }
+                except Exception:
+                    return {}
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_sync_whois),
+                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
+            )
+            return result if result else None
+        except (asyncio.TimeoutError, Exception):
+            return None
+
+    async def _ssl_lookup(self, hostname: str, port: int = 443) -> Optional[dict[str, Any]]:
+        """
+        Sprint F198B: SSL certificate info with timeout + graceful fallback.
+
+        Args:
+            hostname: Hostname to fetch SSL certificate from
+            port: Port number (default 443)
+
+        Returns:
+            SSL info dict or None on timeout/failure (fail-soft).
+        """
+        if not hostname:
+            return None
+
+        try:
+            def _sync_ssl() -> dict[str, Any]:
+                try:
+                    context = ssl.create_default_context()
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    with socket.create_connection((hostname, port), timeout=_EXTERNAL_LOOKUP_TIMEOUT) as sock:
+                        with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                                                    cert = ssock.getpeercert(binary_form=True)
+                                                    digest = hashlib.sha256(cert).hexdigest() if cert else None
+                                                    cipher = ssock.cipher()
+                                                    return {
+                                                        "cipher": cipher[0] if cipher else None,
+                                                        "protocol": cipher[2] if cipher else None,
+                                                        "sha256_fingerprint": digest,
+                                                        "cert_start": ssock.getpeercert() if ssock else None,
+                                                    }
+                except Exception:
+                    return {}
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_sync_ssl),
+                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
+            )
+            return result if result else None
+        except (asyncio.TimeoutError, Exception):
+            return None
+
+    async def _dns_lookup(self, domain: str) -> Optional[dict[str, Any]]:
+        """
+        Sprint F198B: DNS A/AAAA record lookup with timeout + graceful fallback.
+
+        Args:
+            domain: Domain name to resolve
+
+        Returns:
+            DNS result dict or None on timeout/failure (fail-soft).
+        """
+        if not domain:
+            return None
+
+        try:
+            def _sync_dns() -> dict[str, Any]:
+                try:
+                    import dns.resolver
+
+                    result: dict[str, Any] = {"a": [], "aaaa": [], "mx": [], "ns": []}
+                    try:
+                        a_records = dns.resolver.resolve(domain, "A", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
+                        result["a"] = [str(r) for r in a_records]
+                    except Exception:
+                        pass
+                    try:
+                        aaaa_records = dns.resolver.resolve(domain, "AAAA", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
+                        result["aaaa"] = [str(r) for r in aaaa_records]
+                    except Exception:
+                        pass
+                    try:
+                        mx_records = dns.resolver.resolve(domain, "MX", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
+                        result["mx"] = [f"{r.preference} {r.exchange}" for r in mx_records]
+                    except Exception:
+                        pass
+                    try:
+                        ns_records = dns.resolver.resolve(domain, "NS", lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
+                        result["ns"] = [str(r) for r in ns_records]
+                    except Exception:
+                        pass
+                    return result
+                except Exception:
+                    return {}
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_sync_dns),
+                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
+            )
+            return result if result else None
+        except (asyncio.TimeoutError, Exception):
+            return None
+
+    async def _rdns_lookup(self, ip_address: str) -> Optional[dict[str, Any]]:
+        """
+        Sprint F198B: Reverse DNS lookup with timeout + graceful fallback.
+
+        Args:
+            ip_address: IP address to reverse-lookup
+
+        Returns:
+            rDNS result dict {ip: hostname} or None on timeout/failure (fail-soft).
+        """
+        if not ip_address:
+            return None
+
+        try:
+            def _sync_rdns() -> dict[str, Any]:
+                try:
+                    hostname, _, _ = socket.gethostbyaddr(ip_address)
+                    return {ip_address: hostname}
+                except Exception:
+                    return {}
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_sync_rdns),
+                timeout=_EXTERNAL_LOOKUP_TIMEOUT,
+            )
+            return result if result else None
+        except (asyncio.TimeoutError, Exception):
+            return None

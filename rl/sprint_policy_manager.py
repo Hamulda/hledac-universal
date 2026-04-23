@@ -188,6 +188,27 @@ class SprintPolicyManager:
 
         self._save()
 
+    def update_with_quality_decisions(
+        self, decisions: list, feed_url: str = "unknown"
+    ) -> None:
+        """
+        F199A: Update policy with per-source FindingQualityDecision list.
+
+        Called by SprintScheduler when quality decisions are available from the store
+        (e.g., after async_ingest_findings_batch returns FindingQualityDecision list).
+        Currently a no-op stub — source-type-level quality signal is derived from
+        accepted_findings ratio and applied in SprintScheduler._adapt_source_weights_from_feedback().
+
+        The real reward loop:
+          1. SprintScheduler._process_result() → accumulates fetched/accepted per feed_url
+          2. SprintScheduler._adapt_source_weights_from_feedback() → adapts weight by ratio
+          3. SprintPolicyManager.update() → updates RL state with final sprint result
+
+        This stub exists so that future per-source reward injection (from FindingQualityDecision
+        list) can be wired here without changing the public API.
+        """
+        pass  # Stub: source weight adaptation lives in SprintScheduler._adapt_source_weights_from_feedback
+
     def should_explore(self) -> bool:
         """
         Decide whether the next sprint should be exploration (deep dive) or exploitation.

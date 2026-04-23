@@ -10,6 +10,11 @@ dnspython>=2.4.0
 aiobtcdht>=0.1.0
 aiohttp-socks>=0.8.0
 
+# F196A pre-review fixes: missing runtime dependencies
+probables>=4.0.0        # url_dedup.py RotatingBloomFilter import
+httpx>=0.27.0          # fetching/public_fetcher.py HTTP client
+pyzipper>=0.4.0        # security/vault_manager.py encryption
+
 # P13: Vector search and memory monitoring
 lancedb>=0.2.5
 psutil>=5.9.0

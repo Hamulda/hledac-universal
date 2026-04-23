@@ -363,7 +363,12 @@ def mlx_cleanup_aggressive() -> None:
         elif hasattr(mx, 'set_cache_limit'):
             mx.set_cache_limit(64 * 1024 * 1024)
 
-        # Clear cache — canonical order: metal first
+        # Clear cache — canonical order: gc.collect() → mx.eval([]) → clear_cache()
+        # mx.eval([]) settles the GPU lazy-evaluation queue before clearing cache.
+        try:
+            mx.eval([])
+        except Exception:
+            pass
         if hasattr(mx.metal, 'clear_cache'):
             mx.metal.clear_cache()
         elif hasattr(mx, 'clear_cache'):

@@ -28,6 +28,7 @@ PERSISTENCE:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections import OrderedDict
 from pathlib import Path
@@ -273,11 +274,19 @@ class SemanticDedupCache:
                     logger.debug(f"[SEMDEDUP] Duplicate detected: sim={sim:.3f}")
                     return True
 
-            # 5. Store in LMDB for cross-run persistence
-            if self._lmdb_store is not None and self._lmdb_store._boot_error is None:
-                import hashlib
+            # 5. ANN fast-path search (cross-run persistence via LanceDB)
+            key = hashlib.blake2b(text.encode("utf-8"), digest_size=32).hexdigest()
+            text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            try:
+                from hledac.universal.knowledge.ann_index import check_ann_duplicate
+                if check_ann_duplicate(emb, text_hash, key):
+                    self._duplicate_count += 1
+                    return True
+            except Exception:
+                pass  # Fail-open: ANN errors don't block findings
 
-                key = hashlib.blake2b(text.encode("utf-8"), digest_size=32).hexdigest()
+            # 6. Store in LMDB for cross-run persistence
+            if self._lmdb_store is not None and self._lmdb_store._boot_error is None:
                 self._lmdb_store.put(key, emb)
 
             return False

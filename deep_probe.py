@@ -381,7 +381,7 @@ class PathPattern:
 
     def generate_predictions(self) -> List[Tuple[str, float]]:
         """Generate path predictions with confidence scores."""
-        raise NotImplementedError
+        raise NotImplementedError("PathPattern.generate_predictions must be implemented by subclass")
 
 class DatePathPattern(PathPattern):
     """Pattern for date-based paths."""
@@ -706,7 +706,7 @@ class DeepProbeScanner:
         domain: str,
         store=None,
         max_buckets: int = 50
-    ) -> List[dict]:
+    ) -> Tuple[List[dict], List['CanonicalFinding']]:
         """
         P14: Scan for open S3/GCS/Azure Blob buckets.
 
@@ -752,23 +752,31 @@ class DeepProbeScanner:
         gcs_results = scan_results[len(s3_tasks):len(s3_tasks) + len(gcs_tasks)]
         azure_results = scan_results[len(s3_tasks) + len(gcs_tasks):]
 
+        bucket_findings: list[CanonicalFinding] = []
+
         for result in s3_results:
             if isinstance(result, dict) and result.get("accessible"):
                 results.append(result)
-                await self._store_bucket_finding(result, store, "deep_probe")
+                finding = self._make_bucket_finding(result, "deep_probe")
+                if finding:
+                    bucket_findings.append(finding)
 
         for result in gcs_results:
             if isinstance(result, dict) and result.get("accessible"):
                 results.append(result)
-                await self._store_bucket_finding(result, store, "deep_probe_gcs")
+                finding = self._make_bucket_finding(result, "deep_probe_gcs")
+                if finding:
+                    bucket_findings.append(finding)
 
         for result in azure_results:
             if isinstance(result, dict) and result.get("accessible"):
                 results.append(result)
-                await self._store_bucket_finding(result, store, "deep_probe_azure")
+                finding = self._make_bucket_finding(result, "deep_probe_azure")
+                if finding:
+                    bucket_findings.append(finding)
 
-        logger.info(f"scan_s3_buckets({domain}): {len(results)} open buckets found")
-        return results
+        logger.info(f"scan_s3_buckets({domain}): {len(results)} open buckets, {len(bucket_findings)} findings")
+        return results, bucket_findings
 
     def _generate_bucket_candidates(self, domain: str, max_count: int) -> Dict[str, List[str]]:
         """Generate probable bucket names for S3, GCS, and Azure."""
@@ -956,31 +964,39 @@ class DeepProbeScanner:
             except Exception:
                 return {"bucket": container_name, "provider": "azure", "objects": [], "accessible": False}
 
-    async def _store_bucket_finding(self, result: dict, store, source_type: str) -> None:
-        """Store bucket finding in DuckDB if store provided."""
-        if store is None:
-            return
+    def _make_bucket_finding(self, result: dict, source_type: str) -> Optional['CanonicalFinding']:
+        """
+        Build a CanonicalFinding from a bucket scan result.
 
+        Returns None if creation fails (fail-safe).
+        Does NOT persist — caller is responsible for batching and ingest.
+        """
         try:
             import hashlib
-            import time
 
-            finding_id = hashlib.sha256(
-                f"{result['bucket']}{source_type}{time.time()}".encode()
-            ).hexdigest()[:16]
+            # Build dedup key from bucket + provider
+            dedup_key = f"{result['bucket']}:{source_type}"
+            finding_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:16]
 
-            # Serialize objects list to JSON for storage
+            # Serialize objects list to JSON for payload_text
             import json
-            objects_json = json.dumps(result.get("objects", [])[:20])  # Cap at 20 objects in metadata
+            objects_json = json.dumps(result.get("objects", [])[:20])  # Cap at 20 objects
 
-            await store.async_record_shadow_finding(
+            # CanonicalFinding is imported lazily from duckdb_store to avoid circular import
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            return CanonicalFinding(
                 finding_id=finding_id,
                 query=result["bucket"],
                 source_type=source_type,
                 confidence=0.9 if result.get("objects") else 0.5,
+                ts=time.time(),
+                provenance=("deep_probe", f"bucket:{source_type}"),
+                payload_text=objects_json,
             )
         except Exception as e:
-            logger.debug(f"Failed to store bucket finding: {e}")
+            logger.debug(f"Failed to build bucket finding: {e}")
+            return None
 
 
 # Convenience functions for easy integration
@@ -1077,18 +1093,22 @@ __all__ = [
 ]
 
 
-async def scan_s3_buckets(domain: str, store=None, max_buckets: int = 50) -> List[dict]:
+async def scan_s3_buckets(
+    domain: str,
+    store=None,
+    max_buckets: int = 50
+) -> Tuple[List[dict], List['CanonicalFinding']]:
     """
     Convenience function for S3/GCS/Azure bucket scanning.
 
     Args:
         domain: Target domain (e.g., "example.com")
-        store: Optional DuckDBShadowStore for persisting findings
+        store: Optional DuckDBShadowStore (unused, kept for backward compat)
         max_buckets: Maximum bucket names to try (default 50)
 
     Returns:
-        List of dicts with structure:
-        {'bucket': str, 'provider': str, 'objects': List[dict], 'accessible': bool}
+        Tuple of (legacy dict results, canonical CanonicalFinding list).
+        Canonical findings should be ingested via async_ingest_findings_batch().
     """
     scanner = DeepProbeScanner()
     return await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
@@ -1201,26 +1221,28 @@ async def scan_ipfs(keyword: str, store=None) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.debug(f"ipfs-search.com API failed for '{keyword}': {e}")
 
-    # Store findings in DuckDB if store provided
-    if store and results:
+    # Build canonical findings instead of direct persistence
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    ipfs_findings: List[CanonicalFinding] = []
+    for result in results:
         try:
-            import hashlib
-            import time
+            dedup_key = f"{result.get('cid', '')}:ipfs"
+            finding_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:16]
 
-            for result in results:
-                finding_id = hashlib.sha256(
-                    f"{result['cid']}ipfs{time.time()}".encode()
-                ).hexdigest()[:16]
-
-                await store.async_record_shadow_finding(
-                    finding_id=finding_id,
-                    query=keyword,
-                    source_type="deep_probe",
-                    confidence=0.7,
-                )
-
+            finding = CanonicalFinding(
+                finding_id=finding_id,
+                query=keyword,
+                source_type="deep_probe",
+                confidence=0.7,
+                ts=time.time(),
+                provenance=("deep_probe", "ipfs"),
+                payload_text=json.dumps(result) if result else None,
+            )
+            ipfs_findings.append(finding)
         except Exception as e:
-            logger.debug(f"Failed to store IPFS findings: {e}")
+            logger.debug(f"Failed to build IPFS finding: {e}")
+            continue
 
-    logger.info(f"scan_ipfs('{keyword}'): {len(results)} results found")
-    return results
+    logger.info(f"scan_ipfs('{keyword}'): {len(results)} results, {len(ipfs_findings)} canonical findings")
+    return ipfs_findings

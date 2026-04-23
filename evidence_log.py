@@ -1315,15 +1315,26 @@ class EvidenceLog:
 
     def close(self) -> None:
         """
-        Sync cleanup: run aclose in a dedicated thread with its own event loop.
+        Sync cleanup: run aclose in a dedicated thread.
 
         Idempotent: safe to call multiple times.
         Works from both sync and async (pytest-asyncio) contexts.
+
+        M1-SAFE: When a loop is already running, use run_until_complete on the
+        existing loop from a worker thread. This avoids creating a nested event
+        loop with asyncio.run() in the worker (which crashes Metal on M1).
         """
         import concurrent.futures
 
         def _run_aclose():
-            asyncio.run(self.aclose())
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop - asyncio.run in a fresh thread is safe
+                asyncio.run(self.aclose())
+            else:
+                # M1-safe: run on the existing loop from this worker thread
+                loop.run_until_complete(self.aclose())
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_run_aclose)

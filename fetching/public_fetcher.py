@@ -548,13 +548,20 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
     Max 1 instance, protected by _CAMOUFOX_LOCK singleton.
     M1-optimized: headless, WebGL spoofed for Apple M1.
     """
-    # Memory guard: if LLM is loaded, skip JS rendering to preserve RAM
-    if FETCH_SEMAPHORE._value <= 3:
-        logger.warning(
-            f"LLM worker pool active ({FETCH_SEMAPHORE._value} slots), "
-            "skipping Camoufox JS render to preserve memory"
-        )
-        return ""
+    # F197C FIX: BROKEN old check `FETCH_SEMAPHORE._value <= 3` was always True
+    # since semaphore max=3 and _value is available permits (0..3), so <= 3 always fires.
+    # Replace with embedding context depth tracker — true M1 memory conflict guard:
+    # if embedding model is loaded (or in lifecycle), skip browser to avoid RAM conflict.
+    try:
+        from hledac.universal.embedding_pipeline import is_embedding_context_active
+        if is_embedding_context_active():
+            logger.warning(
+                "[F197C] Embedding context active — skipping Camoufox JS render "
+                "to avoid M1 memory conflict (model + JS renderer simultaneously)"
+            )
+            return ""
+    except Exception:
+        pass  # Fail-open: if import fails, proceed with caution
 
     try:
         from camoufox.async_api import AsyncCamoufox

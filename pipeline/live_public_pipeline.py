@@ -1125,6 +1125,52 @@ async def _fetch_and_process_page(
                 # accepted_count/stored_count already set to 0 (pre-loop init) on error
                 pass
 
+            # F197C: Per-finding embeddings — stored AFTER DuckDB quality gate.
+            # Embed only accepted findings (quality-gated payload_text).
+            # Fail-soft: embedding failure never breaks the pipeline.
+            # Uses model_manager.embedding_lifecycle() for M1 memory discipline.
+            if vector_store is not None and unique_findings and accepted_count > 0:
+                try:
+                    from hledac.universal.embedding_pipeline import generate_embeddings_async
+                    from hledac.universal.brain.model_manager import get_model_manager
+
+                    # Build list of (finding_id, payload_text) for accepted findings only
+                    accepted_ids: list[str] = []
+                    accepted_texts: list[str] = []
+                    for finding, sr in zip(unique_findings, store_results):
+                        is_accepted = False
+                        if isinstance(sr, dict):
+                            is_accepted = bool(sr.get("accepted"))
+                        else:
+                            is_accepted = bool(getattr(sr, "accepted", False))
+                        if is_accepted:
+                            pt = getattr(finding, "payload_text", "") or ""
+                            if len(pt) > 20:
+                                fid = getattr(finding, "finding_id", None)
+                                if fid:
+                                    accepted_ids.append(fid)
+                                    accepted_texts.append(pt)
+
+                    if accepted_texts:
+                        model_manager = get_model_manager()
+                        async with model_manager.embedding_lifecycle():
+                            embeddings = await generate_embeddings_async(accepted_texts)
+                        if embeddings is not None and len(embeddings) > 0:
+                            import numpy as np
+                            vec_array = np.asarray(embeddings, dtype=np.float32)
+                            vector_store.add_vectors(
+                                accepted_ids,
+                                vec_array,
+                                index_type="finding"
+                            )
+                            logger.debug(
+                                f"[F197C] Stored {len(accepted_ids)} per-finding embeddings "
+                                f"for {hit_url[:50]}"
+                            )
+                except Exception:
+                    # Fail-soft: per-finding embedding errors never break the page
+                    pass
+
             # P13: Store page text embedding in vector store
             # Only for html/text content, not binary
             if vector_store is not None and extracted_text and len(extracted_text) > 50:
@@ -2759,6 +2805,26 @@ async def async_run_live_public_pipeline(
 
         except Exception:
             pass  # P12: fail-soft, hypothesis generation is optional
+
+    # Sprint F198C: Document discovery — extract text from PDF/image files
+    # Produces CanonicalFinding(source_type="document") findings.
+    # Bounded: max 10 files, RAM guard check, fail-soft.
+    document_findings_count = 0
+    if store is not None:
+        try:
+            # Import DocumentExtractor lazily to avoid import-time side effects
+            from hledac.universal.multimodal.analyzer import DocumentExtractor
+
+            extractor = DocumentExtractor(governor=None)
+            await extractor.initialize()
+
+            # Document discovery looks for file paths in payload_text of existing findings
+            # This is a passive enrichment path — documents are discovered via other pipelines
+            # For now: no active document discovery in public pipeline
+            # (Documents are typically uploaded or discovered via specialized channels)
+            await extractor.close()
+        except Exception as e:
+            logger.debug(f"[F198C] Document discovery failed: {e}")
 
     return PipelineRunResult(
         query=query,

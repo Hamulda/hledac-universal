@@ -308,6 +308,21 @@ async def embed_query_async(text: str) -> np.ndarray:
 # P19: Memory guard - configurable max_rss_gb (default 5.5 for M1 8GB)
 _embed_max_rss_gb: float = 5.5
 
+# F197C: Embedding context depth tracker for M1 memory guard.
+# Prevents JS renderer (Camoufox/nodriver) from running simultaneously with
+# loaded embedding model on M1 Air 8GB. BROKEN check in public_fetcher used
+# semaphore._value which is always <= max, causing the guard to always fire.
+# Increment before model load attempt, decrement after unload — balanced per call.
+import threading
+_embedding_depth: int = 0
+_embedding_depth_lock = threading.Lock()
+
+
+def is_embedding_context_active() -> bool:
+    """F197C: True if we are currently in an active embedding lifecycle context."""
+    with _embedding_depth_lock:
+        return _embedding_depth > 0
+
 
 def set_embed_memory_limit(max_rss_gb: float) -> None:
     """P19: Set max RSS GB threshold for embedder memory guard."""
@@ -328,6 +343,11 @@ def load_embedding_model() -> bool:
     Returns:
         True if model is loaded or already loaded, False on error or memory pressure.
     """
+    # F197C: Increment depth before load attempt (balanced with decrement in unload)
+    with _embedding_depth_lock:
+        global _embedding_depth
+        _embedding_depth += 1
+    rss_before: float = 0.0  # initialized before try so except block always sees it
     try:
         # P19: Memory pressure check before load
         rss_before = _get_current_rss_gb()
@@ -356,9 +376,19 @@ def unload_embedding_model() -> bool:
     P19: After unload, verifies RSS dropped by at least model_size.
     Logs warning if RSS didn't drop enough (possible memory leak).
 
+    F197C: Always decrements depth counter (balanced with increment in load,
+    even if load was a no-op due to already-loaded model).
+
     Returns:
         True on success, False on error.
     """
+    # F197C: Decrement depth — always balanced with increment in load_embedding_model()
+    # _embedding_depth can legitimately be 0 if load was a no-op (already loaded)
+    # but we still decrement to keep the pair balanced for the lifecycle caller
+    with _embedding_depth_lock:
+        global _embedding_depth
+        if _embedding_depth > 0:
+            _embedding_depth -= 1
     try:
         embedder = _get_embedder()
         if embedder.is_loaded:

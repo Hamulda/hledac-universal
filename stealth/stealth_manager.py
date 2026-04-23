@@ -827,7 +827,8 @@ class StealthSession:
                 **kwargs
             ) as response:
                 # Streaming read with hard max_bytes limit
-                body_bytes = b''
+                # F196A: Use bytearray.extend() — O(1) amortized vs bytes += O(n²)
+                body_bytes = bytearray()
                 truncated = False
 
                 if response.content:
@@ -836,11 +837,11 @@ class StealthSession:
 
                     async for chunk in response.content.iter_chunked(chunk_size):
                         if len(chunk) > remaining:
-                            body_bytes += chunk[:remaining]
+                            body_bytes.extend(chunk[:remaining])
                             truncated = True
                             logger.debug(f"Preview truncated at {max_bytes} bytes")
                             break
-                        body_bytes += chunk
+                        body_bytes.extend(chunk)
                         remaining -= len(chunk)
 
                         if remaining <= 0:

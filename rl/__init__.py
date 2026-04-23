@@ -11,7 +11,6 @@ from hledac.universal.rl.actions import (
 from hledac.universal.rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer, QNetwork
 from hledac.universal.rl.replay_buffer import MARLReplayBuffer
 from hledac.universal.rl.state_extractor import StateExtractor
-from hledac.universal.rl.marl_coordinator import MARLCoordinator
 from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
 
 __all__ = [
@@ -25,6 +24,5 @@ __all__ = [
     "QNetwork",
     "MARLReplayBuffer",
     "StateExtractor",
-    "MARLCoordinator",
     "SprintPolicyManager",
 ]
