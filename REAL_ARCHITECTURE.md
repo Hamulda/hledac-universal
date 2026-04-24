@@ -525,6 +525,238 @@ DeepProbe findings now flow through the canonical persist path:
 
 **Ghost audit methodology**: counts source `.py` call-sites, not bytecode. Untracked user directories (`.backup/`, `.codebase-memory/`, `.full-review/`, `rl/.sprint_policy_state.json`) are excluded from hygiene scope.
 
+## F202E: Temporal Archaeology and Drift Timelines (2026-04-24)
+
+**Přidáno** — timeline synthesizer that composes CT timestamps, archive observations, document metadata timestamps, and finding timestamps into bounded explainable timeline:
+
+**Timeline Synthesizer** (`intelligence/timeline_synthesizer.py`):
+- `TimelineSynthesizer` — event aggregation from multiple sources
+- `TimelineEvent` — single timestamped event (ts, event_type, source, description, entity_id, confidence, evidence)
+- `TimelineMetadata` — aggregate stats (total_events, oldest/newest ts, event_types, sources)
+- `SynthesizedTimeline` — complete timeline with events and metadata
+
+**Event Sources**:
+- CT timestamps: `add_ct_events()` — extracts ts from `source_type="ct_log"` findings
+- Archive observations: `add_archive_events()` — from ArchiveResult/ArchivedVersion objects
+- Document timestamps: `add_document_timestamps()` — from DocumentMetadata created/modified fields
+- Finding timestamps: `add_finding_events()` — generic finding ts extraction
+
+**Bounds** (F202E-3):
+- `MAX_TIMELINE_EVENTS = 200` — hard cap on output events
+- `MAX_EVENT_AGE_DAYS = 1825` — 5 years, events older excluded
+- Invalid timestamps (NaN, negative, far future) skipped fail-soft (F202E-4)
+
+**Temporal Archaeologist Adapter** (`intelligence/temporal_archaeologist_adapter.py`):
+- `TemporalArchaeologistAdapter` — wraps TimelineSynthesizer for sprint pipeline
+- `synthesize_timeline()` — multi-source aggregation → `SynthesizedTimeline`
+- `to_derived_findings()` — converts timeline to CanonicalFinding with source_type="temporal_archaeology"
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_run_temporal_archaeology_sidecar()` — async sidecar after CT findings accepted
+- Filters CT findings (`source_type="ct_log"`) and synthesizes timeline
+- Derived findings ingested via `async_ingest_findings_batch()` — canonical write path
+- `timeline_findings_produced` counter in `SprintSchedulerResult`
+- Non-blocking, fail-soft (F202E-8)
+
+**Markdown Rendering** (`export/sprint_markdown_reporter.py`):
+- `_render_timeline_section()` — renders timeline with entity_id, event count, time span, event type/source breakdown, bounded event list
+- Bounded at 5 timelines displayed, 50 events per timeline
+
+**No Model Load** (F202E-12):
+- Pure Python timestamp processing — no MLX, no transformers
+- O(n log n) sort for timeline ordering (n ≤ 200)
+
+**Tests**: `tests/probe_f202e/test_temporal_archaeology_timeline.py` — 35 tests:
+- F202E-1: source_type="temporal_archaeology" for derived findings
+- F202E-2: payload_text contains serialized timeline JSON
+- F202E-3: MAX_TIMELINE_EVENTS=200 cap applied
+- F202E-4: Invalid timestamps skipped fail-soft
+- F202E-5: async_ingest_findings_batch integration
+- F202E-6: Sidecar wiring in SprintScheduler
+- F202E-7: timeline_findings_produced in result
+- F202E-8: Fail-soft error handling
+- F202E-9: Event types (ct_observed, archive_snapshot, document_dated, finding_accepted)
+- F202E-10: Timeline sorted ascending
+- F202E-11: Markdown rendering
+- F202E-12: No model load
+
+---
+
+## F202F: Local Graph/RAG Analyst Workbench (2026-04-24)
+
+**Přidáno** — analyst read-side facade for local questions over findings, graph, and vectors. Works without LLM (extractive fallback) and without external network calls.
+
+**AnalystWorkbench** (`knowledge/analyst_workbench.py`):
+- `AnalystWorkbench` — read-side facade aggregating DuckDBShadowStore, DuckPGQGraph, LanceDB VectorStore
+- `AnalystAnswer` — result DTO with extractive_answer, llm_answer, evidence_pointers, related_entities, context_bytes, model_used, sources_used, timing_ms
+- `EvidencePointer` — finding_id, source_type, query, confidence, ts, provenance, envelope_available, snippet
+- `RelatedEntity` — entity_value, entity_type, confidence, hops, relation_types
+
+**Bounds** (F202F-1 through F202F-5):
+- `MAX_CONTEXT_BYTES = 8192` — 8KB max context per answer
+- `MAX_TOP_K = 20` — max results from any single source
+- `MAX_GRAPH_HOPS = 2` — entity history max hops
+- `MAX_EVIDENCE_PTRS = 5` — max evidence pointers per answer
+- `MAX_RELATED_ENTITIES = 10` — max related entities per answer
+
+**Core pipeline** (`ask()`):
+1. `query_findings()` — keyword search over recent DuckDBShadowStore findings
+2. `query_graph()` — multi-hop entity traversal via DuckPGQGraph
+3. `_extract_answer()` — deterministic extractive text (no model required)
+4. `get_evidence_pointers()` — EvidencePointer list from findings
+5. `get_related_entities()` — RelatedEntity list from graph traversal
+6. (Optional) `_generate_llm_answer()` via `brain/model_lifecycle.py`
+
+**No-model invariants** (F202F-12, F202F-16):
+- `_extract_answer()` returns keyword-matched paragraph — pure Python, no MLX
+- No external network calls — all data sources are local (DuckDB, LanceDB, DuckPGQGraph)
+- Model lifecycle via `brain.model_lifecycle.load_model()` / `unload_model()` only
+- `ask()` always returns `extractive_answer` even when `model_used=False`
+
+**Export layer** (`export/jsonld_exporter.py`):
+- `render_analyst_evidence_jsonld()` — exports AnalystAnswer as JSON-LD with ghost: namespace
+- `render_analyst_evidence_jsonld_str()` — deterministic JSON string with sorted keys
+- Evidence pointers include: finding_id, source_type, query, confidence, ts, provenance, snippet
+
+**Store wiring** (pass-through to existing modules):
+- DuckDBShadowStore: `async_query_recent_findings(limit)` → finding dicts
+- DuckPGQGraph: `find_entity_history(entity, max_hops)` → entity history
+- LanceDB VectorStore: `query(vector, k, index_type="text")` → (id, score) tuples
+- SemanticStore: `semantic_pivot(query, top_k)` → finding_ids (if available)
+
+**Factory**: `create_analyst_workbench()` — lazily resolves VectorStore and DuckPGQGraph singletons; DuckDBShadowStore and SemanticStore passed explicitly by caller.
+
+**Tests**: `tests/probe_f202f/test_local_graph_rag_workbench.py` — 50 tests:
+- F202F-1 through F202F-5: bounds constants
+- F202F-6: `ask()` always returns extractive_answer
+- F202F-7: `query_findings()` keyword search
+- F202F-8: `query_graph()` bounded RelatedEntity list
+- F202F-9: `query_vectors()` bounded by MAX_TOP_K
+- F202F-10: evidence_pointers built from findings
+- F202F-11: related_entities from graph traversal
+- F202F-12: `_extract_answer()` no-model fallback
+- F202F-13: `_truncate_to_bytes()` respects MAX_CONTEXT_BYTES
+- F202F-14: `_build_evidence_pointers()` caps at MAX_EVIDENCE_PTRS
+- F202F-15: `create_analyst_workbench()` factory
+- F202F-16: no external network calls
+- F202F-17: JSON-LD evidence export
+- F202F-18: `ask_sync()` produces AnalystAnswer
+- F202F-19: graph_rag `multi_hop_search` has max_nodes bounded
+- F202F-20: rag_engine has no-model BM25/hybrid fallback
+
+---
+
+## F202G: Hypothesis-Driven Pivot Planner (2026-04-24)
+
+**Přidáno** — bounded advisory layer that generates next pivots from accepted findings and envelope facets. Scheduler uses pivots as advisory ordering input, NOT as new sprint owner.
+
+**PivotPlanner** (`runtime/pivot_planner.py`):
+- `Pivot` — dataclass with priority, pivot_type, ioc_value, ioc_type, reason, expected_value, source_hint, evidence_pointers
+- `PivotType` — constants: DOMAIN, IDENTITY, LEAK, ARCHIVE, GRAPH
+- `PivotPlanner.plan_pivots(findings, graph_stats, max_pivots)` → `list[Pivot]`
+
+**Pivot types** (5 total):
+- `domain` — DNS, WHOIS, passive DNS pivots from domain IOCs
+- `identity` — entity resolution, profile correlation from email/username IOCs
+- `leak` — paste/GitHub/breach signal pivots from email IOCs
+- `archive` — wayback, archive.org historical pivots from domain/URL IOCs
+- `graph` — IOC graph traversal pivots from IP/hash IOCs
+
+**Bounds** (F202G-1 through F202G-4):
+- `MAX_PIVOTS = 20` — max pivots per sprint
+- `MAX_ENVELOPE_SIZE` — envelope deserialization bounded
+- Graph stats optional — no graph means no novelty bonus
+- Deduplication key: `(pivot_type, ioc_type, ioc_value)` — same IOC can have multiple pivot types
+
+**Scoring**:
+- `_cheap_score_finding()` — heuristic scoring without model inference
+- Source type quality boost for ct_log, certificate, cisa_kev, threatfox_ioc, public, deep_probe, forensics, multimodal
+- Signal facets boost from envelope when available
+- Per-type scoring: domain (novelty bonus), identity (email/URL boost), leak (email breach bonus), archive (supplementary), graph (novelty + degree)
+
+**Evidence envelope integration**:
+- `_deserialize_envelope()` — extracts envelope from finding.payload_text if audit_reason present
+- Envelope signal_facets influence scoring
+- `source_hint` tracks which finding triggered each pivot
+
+**Discovery wiring** (`discovery/source_registry.py`):
+- `PIVOT_TYPE_MAP` — maps IOC types to default pivot types
+- `get_pivot_type(ioc_type)` → pivot_type string
+- `get_pivot_task_types(pivot_type)` → list of task types for each pivot
+
+**Scheduler advisory hook** (`runtime/sprint_scheduler.py`):
+- `_run_pivot_planner_advisory()` — called at sprint teardown
+- `inject_pivot_planner(planner)` — DI interface for PivotPlanner
+- Advisory only — scheduler retains authority, pivots influence ordering not execution
+- Fail-soft — planner failure never blocks export or sprint
+
+**Tests**: `tests/probe_f202g/test_hypothesis_pivot_planner.py` — 20 tests:
+- F202G-1: MAX_PIVOTS=20 bound enforced
+- F202G-2: Empty findings returns empty list (fail-soft)
+- F202G-3: Domain IOC → domain pivot + archive pivot
+- F202G-4: IP IOC → domain pivot (reverse DNS) + graph pivot
+- F202G-5: Hash IOC → graph pivot
+- F202G-6: Email IOC → leak pivot + identity pivot
+- F202G-7: URL IOC → domain pivot + archive pivot
+- F202G-8: Envelope deserialization from payload_text
+- F202G-9: Pivot has required fields (reason, expected_value, source_hint, evidence_pointers)
+- F202G-10: Deduplication by (pivot_type, ioc_type, ioc_value)
+- F202G-11: Sorting by expected_value descending
+- F202G-12: Planner fail-soft on exception
+- F202G-13: PIVOT_TYPE_MAP in source_registry
+- F202G-14: get_pivot_task_types returns task list
+
+**Constraints honored**:
+- Planner failure never blocks export or sprint (fail-soft)
+- Model load/unload only via brain.model_lifecycle (future: _score_with_model async stub exists)
+- No model + JS renderer concurrently (advisory only, no rendering)
+
+---
+
+## F202H: OPSEC Transport Policy Engine (2026-04-24)
+
+**Přidáno** — single read-side policy engine for transport posture. Prevents M1 model+renderer conflicts and provides concurrency/timeout hints.
+
+**OPSEC Policy Engine** (`runtime/opsec_policy.py`):
+- `OPSECContext` — dataclass with: `has_model_context`, `has_stealth`, `transport_hint`, `risk_level`
+- `RendererPolicy` — frozen dataclass: `allowed`, `max_concurrent`, `timeout_hint`, `blocked_reason`
+- `ConcurrencyHint` — frozen dataclass: `max_workers`, `timeout_s`
+- `TransportPolicy` — composite: `renderer` + `concurrency` + `transport` string
+
+**Core functions**:
+- `get_renderer_policy(ctx)` — M1 model+renderer conflict guard. Returns `allowed=False` when `has_model_context=True` (blocked_reason="M1_model_context_active"). Also blocks when renderer concurrency exhausted.
+- `get_concurrency_hint(transport_hint)` — per-transport concurrency hints: clearnet=3, tor=2, i2p=1, stealth=2
+- `get_transport_policy(ctx)` — composite policy combining renderer + concurrency. Lowers concurrency when renderer blocked.
+- `get_stealth_capability_flags(has_model_context)` — advisory flags for StealthSession. Disables TLS fingerprint under model load to reduce RAM pressure.
+
+**Renderer lifecycle tracking**:
+- `acquire_renderer_slot()` / `release_renderer_slot()` — thread-safe slot management
+- `get_renderer_active_count()` — current active renderer count
+- MAX_CONCURRENT_RENDERERS=1 (M1 single-JS-renderer constraint)
+
+**Transport resolver integration** (`transport/transport_resolver.py`):
+- `get_transport_hint_string(url)` — maps Transport enum to string ("clearnet", "tor", "i2p") for opsec_policy
+- Aligns with existing `get_transport_for_url()` — same classification logic
+
+**Public fetcher integration** (`fetching/public_fetcher.py`):
+- `_fetch_with_camoufox()` now uses `get_renderer_policy(OPSECContext(has_model_context=is_embedding_context_active()))` instead of inline check
+- Policy consulted before every Camoufox launch — centralized M1 conflict guard
+
+**Key invariants**:
+- [F202H-I1] `get_renderer_policy(OPSECContext(has_model_context=True)).allowed` is False
+- [F202H-I2] `get_concurrency_hint("clearnet").max_workers` == 3
+- [F202H-I3] `acquire/release` slot maintains count within [0, MAX_CONCURRENT_RENDERERS]
+- [F202H-I4] `get_stealth_capability_flags(has_model_context=True)["tls_fingerprint"]` is False
+- [F202H-I5] `get_transport_policy` returns `TransportPolicy` with correct `renderer.allowed`
+- [F202H-I6] `asyncio.gather(return_exceptions=True)` + `_check_gathered` pattern present
+- [F202H-I7] smoke: renderer disabled while model context active, fail-open to clearnet
+
+**Fail-safe**: All methods return safe defaults — renderer allowed=False with reason when blocked, concurrency hints are conservative. No crashes on import failure (fail-open).
+
+**Tests**: `tests/probe_f202h/test_opsec_transport_policy.py` — 28 tests all passing.
+
+---
+
 ## Architectural verdict
 
 ### What is real today
@@ -563,5 +795,187 @@ DeepProbe findings now flow through the canonical persist path:
 - `_render_envelope_findings()` helper — renders audit_reason, evidence_pointers, signal_facets, suggested_pivots; bounded at 10 findings; fail-soft skips invalid envelopes
 
 **Probe tests**: `tests/probe_f202a/test_evidence_envelope_schema.py` — 19 tests, all passing.
+
+## F202B Identity Stitching Sidecar (2026-04-24)
+
+**Přidáno** — deterministic entity extraction and identity stitching as a bounded sidecar on accepted findings:
+
+**Entity Signal Extractor** (`intelligence/entity_signal_extractor.py`):
+- `extract_entities_from_finding()` — extracts emails, usernames, domain handles from `CanonicalFinding.payload_text` via regex
+- `extract_entities_from_findings()` — groups entities into `EntitySignalProfile` list; bounded at MAX_PROFILES=500
+- `ExtractedEntity` dataclass: entity_type, value, raw_value, platform, finding_id, confidence
+- `EntitySignalProfile` dataclass: id, primary_name, emails, usernames, domain_handles, platforms, finding_ids, confidence
+- No ML models — pure regex/string heuristics
+- M1 8GB safe: bounded profile count, no large in-memory structures
+
+**Identity Stitching Canonical Adapter** (`intelligence/identity_stitching_canonical.py`):
+- `IdentityStitchingAdapter` wraps `IdentityStitchingEngine` with M1-safe bounds
+- `extract_and_stitch()` — converts EntitySignalProfile → IdentityProfile → IdentityStitchingEngine → IdentityCandidate list
+- `to_derived_findings()` — converts IdentityCandidate list → CanonicalFinding(source_type="identity_stitching") list
+- `upsert_identity_edges()` — writes same_identity edges to graph_service
+- Bounded: MAX_COMPARISONS=2000 cap enforced, `optimize_memory()` called after each batch
+- All methods fail-soft: sprint continues on any error
+- `IdentityCandidate` dataclass: candidate_id, profile_ids, primary_name, emails, usernames, platforms, confidence, signals, evidence, finding_ids
+
+**Graph Service** (`knowledge/graph_service.py`):
+- `upsert_identity_edge(src, dst, confidence, evidence)` — convenience wrapper around `upsert_relation` with `rel_type="same_identity"`. Advisory only.
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_identity_adapter` field (lazy, None until first use)
+- `_run_identity_stitching_sidecar(findings, store, query)` — async sidecar after CT findings are accepted and stored
+  - Extracts entity profiles (bounded MAX_PROFILES=500)
+  - Runs stitching (bounded MAX_COMPARISONS=2000)
+  - Upserts graph edges (advisory, fail-soft)
+  - Converts to derived CanonicalFinding list
+  - Ingests via `async_ingest_findings_batch()`
+- Called after `_run_ct_log_discovery_in_cycle()` stores findings — non-blocking sidecar
+- `identity_candidates_found` and `identity_findings_produced` counters in `SprintSchedulerResult`
+- `core/__main__.py`: scorecard includes `identity_candidates_found` and `identity_findings_produced`
+
+**Markdown Rendering** (`export/sprint_markdown_reporter.py`):
+- `_render_identity_candidates()` — renders candidate_id, primary_name, confidence (high/medium/low), platforms, emails, usernames, signals, evidence, finding_ids
+- Bounded at 10 candidates displayed
+- Graceful degradation: skips non-dict items, empty candidates
+
+**Data contracts**:
+- Derived findings have `source_type="identity_stitching"` — searchable in DuckDB
+- Identity candidates are explainable: each has confidence + individual signals + evidence pointers
+- Graph edges are advisory (same_identity rel_type) — do not affect sprint completion
+- No new public APIs beyond existing `async_ingest_findings_batch()`
+
+**M1 8GB bounds**:
+- MAX_PROFILES=500 entity profiles per sprint (from entity_signal_extractor)
+- MAX_COMPARISONS=2000 stitching comparisons per sprint (hard cap)
+- `optimize_memory()` called after each stitching batch
+
+**Tests**: `tests/probe_f202b/test_identity_stitching_canonical.py` — 9 test classes, all MagicMock/AsyncMock, no real DB deps:
+- F202B-1: Entity extraction (emails, usernames, domain handles)
+- F202B-2: Profile grouping and MAX_PROFILES bound
+- F202B-3: Adapter factory and stats
+- F202B-4: extract_and_stitch produces candidates
+- F202B-5: to_derived_findings produces CanonicalFinding
+- F202B-6: upsert_identity_edge delegates to upsert_relation
+- F202B-7: SprintSchedulerResult has identity counters
+- F202B-8: Markdown rendering with confidence/signals
+- F202B-9: SprintScheduler has _identity_adapter field
+
+## F202C Asset Exposure Correlator (2026-04-24)
+
+**Přidáno** — correlates asset exposure signals into explainable exposure findings:
+
+**Signal Sources Consumed** (`intelligence/exposure_correlator.py`):
+- `ct_log` findings: cert→SAN mappings, issuers, timestamps → `SIGNAL_TYPE_CT_CERT`
+- `open_storage` findings: exposed S3/Firebase/Elasticsearch/MongoDB buckets → `SIGNAL_TYPE_OPEN_BUCKET`
+- `jarm` findings: TLS fingerprint hashes → `SIGNAL_TYPE_JARM`
+- `passive_dns` findings: domain→IP mappings → `SIGNAL_TYPE_PASSIVE_DNS`
+
+**Correlation Types Produced**:
+- `exposed_host`: host with open bucket + cert-domain or DNS correlation
+- `cert_domain_relation`: CT cert SAN with issuer and timestamp
+- `open_bucket`: confirmed exposed cloud storage bucket (S3/Firebase/Elasticsearch/MongoDB)
+- `suspicious_service_fingerprint`: JARM hash with GREASE/000 prefix (known-suspicious)
+- `infra_cluster`: 2+ hosts sharing same JARM hash (co-located infrastructure)
+
+**ExposureCorrelatorAdapter** (`intelligence/exposure_correlator.py`):
+- `correlate(findings, query)` — entry point, returns `CanonicalFinding(source_type="exposure_correlation")` list
+- `get_stats()` / `reset()` — stats tracking for probe verification
+- `create_exposure_correlator_adapter()` — factory function
+
+**Evidence Envelope Fields** (in `payload_text` JSON):
+- `evidence_pointers`: list of source `finding_id`s
+- `signal_facets`: `{signal_type: confidence}` per-signal confidence contribution
+- `suggested_pivots`: recommended follow-up queries as `[{type, query}, ...]`
+- `correlation_payload`: full correlation data (jarm_hash, host_count, bucket_type, etc.)
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_exposure_adapter` field (lazy, None until first use)
+- `_run_exposure_correlator_sidecar(findings, store, query)` — async sidecar after CT findings are accepted
+  - Correlates signals into `ExposureFinding` objects
+  - Converts to `CanonicalFinding` list
+  - Ingests via `async_ingest_findings_batch()`
+- Called after `_run_identity_stitching_sidecar()` — non-blocking sidecar
+- `exposure_findings_produced` and `correlated_assets_count` counters in `SprintSchedulerResult`
+
+**Bounds**:
+- `MAX_ASSETS = 1000` — max unique assets per sprint (hard cap)
+- `MAX_SIGNALS_PER_ASSET = 3` — max signals per asset (hard cap)
+- `MAX_FINDINGS = 500` — max exposure findings produced (hard cap)
+- All methods fail-soft: sprint continues on any error
+
+**Data Contracts**:
+- Derived findings have `source_type="exposure_correlation"` — searchable in DuckDB
+- Correlation findings are explainable: each has confidence rationale + evidence pointers
+- `asyncio.gather(return_exceptions=True)` + `_check_gathered()` for all async operations
+- Persists only via `async_ingest_findings_batch()` (canonical write path)
+- External calls (JARM, open_storage scan) have timeouts + graceful fallback
+
+**M1 8GB Safety**:
+- Bounded asset map (MAX_ASSETS=1000) prevents OOM
+- Signal-per-asset cap (MAX_SIGNALS_PER_ASSET=3) limits correlation explosion
+- No ML models — pure regex/string heuristics
+
+---
+
+### F202D: Leak and Secret Sentinel
+
+**Module**: `intelligence/leak_sentinel.py`
+
+**Role**: Bounded optional branch that converts paste/GitHub/breach signals into redacted CanonicalFinding objects. No raw secrets in findings — all masked via redaction patterns.
+
+**Sources**:
+- `data_leak_hunter`: breach API results (HaveIBeenPwned, DeHashed, etc.)
+- `pastebin_monitor`: paste site scraping (pastebin, paste.gg, rentry)
+- `github_secret_scanner`: GitHub code search for leaked secrets
+
+**Signal types produced**:
+- `paste_leak`: paste site findings with redacted secrets
+- `github_secret`: GitHub secret findings with masked context
+- `leak_sentinel`: breach database findings with redacted PII
+
+**Redaction** (F202D-3):
+- Secret patterns applied BEFORE `fallback_sanitize` to prevent partial masking
+- AWS keys (`AKIA...`), Stripe keys (`sk_live_...`), Bearer tokens, private key headers
+- Generic credentials via `api_key=`, `password=`, `secret=`, `token=` patterns
+- Google API keys (`AIza...`)
+
+**Evidence envelope** (F202D-2):
+- Stored in `payload_text` alongside finding data
+- Contains: `audit_reason`, `evidence_pointers`, `signal_facets`, `suggested_pivots`
+- All secrets replaced with `[REDACTED]` tokens before envelope construction
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_leak_sentinel_adapter` field (lazy, None until first use)
+- `_run_leak_sentinel_sidecar(findings, store, query)` — async sidecar after CT findings accepted
+  - Runs bounded leak scans via `LeakSentinelAdapter.scan(query)`
+  - Converts findings to `CanonicalFinding` list
+  - Ingests via `async_ingest_findings_batch()`
+- Called after `_run_exposure_correlator_sidecar()` — non-blocking sidecar
+- `leak_findings_produced` counter in `SprintSchedulerResult`
+
+**Bounds** (F202D-4):
+- `MAX_LEAK_SOURCES = 3` — max concurrent source fetches
+- `MAX_FINDINGS_PER_SOURCE = 50` — max findings per source
+- `MAX_TOTAL_FINDINGS = 100` — max total findings (hard cap)
+- `TIMEOUT_PER_SOURCE = 30.0` — seconds per source fetch
+
+**Constraints**:
+- No raw secrets in report/export — all redacted before persistence
+- External calls timeout + fail-soft
+- No background monitoring loop — single-shot bounded execution
+- Persist only via `async_ingest_findings_batch()` (canonical write path)
+
+**Tests**: `tests/probe_f202c/test_asset_exposure_correlator.py` — 12 test classes, all MagicMock, no real DB deps:
+- F202C-1: Signal extraction (ct_log, open_storage, jarm, passive_dns)
+- F202C-2: Correlation — open_bucket
+- F202C-3: Correlation — exposed_host (bucket + cert/dns)
+- F202C-4: Correlation — cert_domain_relation
+- F202C-5: Correlation — infra_cluster (JARM clustering)
+- F202C-6: CanonicalFinding conversion with evidence envelope
+- F202C-7: Bounds degradation (MAX_ASSETS, MAX_SIGNALS_PER_ASSET, MAX_FINDINGS)
+- F202C-8: Public API — correlate_exposure_signals
+- F202C-9: ExposureCorrelatorAdapter stats and reset
+- F202C-10: Suspicious JARM fingerprints (GREASE/000 prefix)
+- F202C-11: Stats tracking
+- F202C-12: Evidence envelope fields completeness
 
 ## Architectural verdict

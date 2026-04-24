@@ -273,6 +273,7 @@ def get_transport_for_url(url: str) -> 'Transport':
     for explicit transport classification without changing execution.
 
     P10: Extended for .b32.i2p (base32 I2P) and .freenet addresses.
+    F202H: Also populates the transport_hint string consumed by opsec_policy.
 
     Args:
         url: URL string to classify
@@ -297,6 +298,23 @@ def get_transport_for_url(url: str) -> 'Transport':
     if host.endswith('.freenet'):
         return Transport.FREENET
     return Transport.DIRECT
+
+
+def get_transport_hint_string(url: str) -> str:
+    """
+    F202H: Return transport hint string for opsec_policy.
+
+    Maps Transport enum to string for the policy engine.
+    Used by callers that need to build OPSECContext.
+    """
+    transport = get_transport_for_url(url)
+    if transport == Transport.TOR:
+        return "tor"
+    if transport == Transport.I2P:
+        return "i2p"
+    if transport == Transport.FREENET:
+        return "clearnet"  # Freenet uses HTTP proxy, treated as clearnet
+    return "clearnet"
 
 
 # Backwards compatibility alias

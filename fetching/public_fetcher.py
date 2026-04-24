@@ -547,17 +547,22 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
     Fetch JS-heavy page via Camoufox (Firefox-based anti-detect).
     Max 1 instance, protected by _CAMOUFOX_LOCK singleton.
     M1-optimized: headless, WebGL spoofed for Apple M1.
+
+    F202H: Uses opsec_policy.get_renderer_policy() for M1 conflict guard —
+    replaces inline is_embedding_context_active() check with centralized policy.
     """
-    # F197C FIX: BROKEN old check `FETCH_SEMAPHORE._value <= 3` was always True
-    # since semaphore max=3 and _value is available permits (0..3), so <= 3 always fires.
-    # Replace with embedding context depth tracker — true M1 memory conflict guard:
-    # if embedding model is loaded (or in lifecycle), skip browser to avoid RAM conflict.
+    # F202H: Use opsec_policy for M1 model+renderer conflict guard
     try:
         from hledac.universal.embedding_pipeline import is_embedding_context_active
-        if is_embedding_context_active():
+        from hledac.universal.runtime.opsec_policy import get_renderer_policy, OPSECContext
+
+        has_model = is_embedding_context_active()
+        ctx = OPSECContext(has_model_context=has_model)
+        policy = get_renderer_policy(ctx)
+        if not policy.allowed:
             logger.warning(
-                "[F197C] Embedding context active — skipping Camoufox JS render "
-                "to avoid M1 memory conflict (model + JS renderer simultaneously)"
+                f"[F202H] Renderer blocked by opsec_policy: {policy.blocked_reason} "
+                f"— skipping Camoufox for {url}"
             )
             return ""
     except Exception:
