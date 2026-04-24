@@ -234,6 +234,20 @@ def render_sprint_markdown(
         if env_section:
             parts.append(env_section)
 
+    # Sprint F202B: render identity candidates section
+    identity_candidates = scorecard.get("identity_candidates", [])
+    if identity_candidates:
+        identity_section = _render_identity_candidates(identity_candidates)
+        if identity_section:
+            parts.append(identity_section)
+
+    # Sprint F202E: render temporal archaeology timeline section
+    timeline_findings = scorecard.get("timeline_findings", [])
+    if timeline_findings:
+        timeline_section = _render_timeline_section(timeline_findings)
+        if timeline_section:
+            parts.append(timeline_section)
+
     return "\n".join(parts)
 
 
@@ -302,4 +316,212 @@ def _render_envelope_findings(envelope_findings: list) -> str:
         return ""
 
     lines.append(f"_{count} finding(s) with evidence envelope_")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F202B: Identity Candidate rendering
+# ---------------------------------------------------------------------------
+
+def _render_identity_candidates(identity_candidates: list) -> str:
+    """
+    Render identity candidates as a markdown section.
+
+    Each candidate shows: candidate_id, confidence, signals, emails, usernames,
+    platforms, and evidence pointers. Bounded at 10 candidates displayed.
+
+    identity_candidates format:
+        List[dict] with keys: candidate_id, primary_name, confidence, signals,
+        emails, usernames, platforms, evidence, finding_ids
+    """
+    if not identity_candidates:
+        return ""
+
+    lines = ["", "## Identity Candidates", ""]
+
+    count = 0
+    for cand in identity_candidates[:10]:  # bounded display
+        if not isinstance(cand, dict):
+            continue
+
+        cand_id = cand.get("candidate_id", "unknown")
+        primary = cand.get("primary_name", "")
+        confidence = cand.get("confidence", 0.0)
+        signals = cand.get("signals", {})
+        emails = cand.get("emails", [])
+        usernames = cand.get("usernames", [])
+        platforms = cand.get("platforms", [])
+        evidence = cand.get("evidence", [])
+        finding_ids = cand.get("finding_ids", [])
+
+        conf_label = "high" if confidence >= 0.8 else "medium" if confidence >= 0.6 else "low"
+        lines.append(f"### `{cand_id[:32]}`")
+        lines.append(f"**Name:** {primary}")
+        lines.append(f"**Confidence:** {confidence:.2f} ({conf_label})")
+        lines.append("")
+
+        # Platforms
+        if platforms:
+            plat_str = ", ".join(f"`{p}`" for p in platforms[:8])
+            lines.append(f"**Platforms:** {plat_str}")
+            lines.append("")
+
+        # Emails
+        if emails:
+            email_str = ", ".join(f"`{e}`" for e in emails[:5])
+            lines.append(f"**Emails:** {email_str}")
+            lines.append("")
+
+        # Usernames
+        if usernames:
+            uname_str = ", ".join(f"`{u}`" for u in usernames[:8])
+            lines.append(f"**Usernames:** {uname_str}")
+            lines.append("")
+
+        # Signals
+        if signals:
+            signal_parts = []
+            for k, v in list(signals.items())[:5]:
+                sv = f"{v:.2f}" if isinstance(v, float) else str(v)
+                signal_parts.append(f"{k}={sv}")
+            lines.append(f"**Signals:** {', '.join(signal_parts)}")
+            lines.append("")
+
+        # Evidence pointers
+        if evidence:
+            lines.append("**Evidence:**")
+            for ev in evidence[:5]:
+                lines.append(f"  - {ev}")
+            lines.append("")
+
+        # Source finding IDs (bounded)
+        if finding_ids:
+            fid_str = ", ".join(f"`{fid[:12]}`" for fid in finding_ids[:5])
+            lines.append(f"**Source Findings:** {fid_str}")
+            lines.append("")
+
+        count += 1
+        lines.append("---")
+        lines.append("")
+
+    lines.append(f"_{count} identity candidate(s)_")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F202E: Temporal Archaeology Timeline rendering
+# ---------------------------------------------------------------------------
+
+def _render_timeline_section(timeline_findings: list) -> str:
+    """
+    Render temporal archaeology timeline as a markdown section.
+
+    Each timeline finding shows: entity_id, event count, time span,
+    event type breakdown, and bounded event list with evidence pointers.
+    Bounded at MAX_TIMELINE_EVENTS=200 events, displaying first 50.
+
+    timeline_findings format:
+        List[dict] with keys: finding_id, entity_id, events (list of event dicts),
+        metadata (dict with total_events, oldest_event_ts, newest_event_ts,
+        event_types, sources)
+    """
+    if not timeline_findings:
+        return ""
+
+    lines = ["", "## Temporal Archaeology Timeline", ""]
+
+    count = 0
+    for tl_finding in timeline_findings[:5]:  # max 5 timelines displayed
+        if not isinstance(tl_finding, dict):
+            continue
+
+        fid = tl_finding.get("finding_id", "unknown")
+        entity_id = tl_finding.get("entity_id", "unknown entity")
+        metadata = tl_finding.get("metadata", {}) or {}
+        events = tl_finding.get("events", []) or []
+
+        total_events = metadata.get("total_events", len(events))
+        oldest_ts = metadata.get("oldest_event_ts")
+        newest_ts = metadata.get("newest_event_ts")
+        event_types = metadata.get("event_types", {}) or {}
+        sources = metadata.get("sources", {}) or {}
+
+        # Format time span
+        time_span = "unknown"
+        if oldest_ts and newest_ts:
+            try:
+                from datetime import datetime as dt
+                oldest = dt.fromtimestamp(oldest_ts)
+                newest = dt.fromtimestamp(newest_ts)
+                delta = newest - oldest
+                days = delta.days
+                if days > 365:
+                    years = days / 365
+                    time_span = f"{years:.1f} years"
+                elif days > 30:
+                    months = days / 30
+                    time_span = f"{months:.1f} months"
+                else:
+                    time_span = f"{days} days"
+            except Exception:
+                pass
+
+        lines.append(f"### Timeline: `{entity_id[:48]}`")
+        lines.append(f"**Finding ID:** `{fid[:24]}`")
+        lines.append(f"**Events:** {total_events}  **Span:** {time_span}")
+        lines.append("")
+
+        # Event type breakdown
+        if event_types:
+            type_parts = []
+            for etype, ecnt in sorted(event_types.items(), key=lambda x: x[1], reverse=True)[:5]:
+                type_parts.append(f"{etype}={ecnt}")
+            lines.append(f"**Event Types:** {', '.join(type_parts)}")
+            lines.append("")
+
+        # Source breakdown
+        if sources:
+            src_parts = []
+            for src, scnt in sorted(sources.items(), key=lambda x: x[1], reverse=True)[:5]:
+                src_parts.append(f"{src}={scnt}")
+            lines.append(f"**Sources:** {', '.join(src_parts)}")
+            lines.append("")
+
+        # Event list (bounded display)
+        if events:
+            lines.append("**Timeline Events:**")
+            displayed = 0
+            for event in events[:50]:  # bounded display of 50 events
+                if not isinstance(event, dict):
+                    continue
+                evt_ts = event.get("ts")
+                evt_type = event.get("event_type", "unknown")
+                evt_desc = event.get("description", "")
+                evt_src = event.get("source", "")
+
+                # Format timestamp
+                ts_str = "?"
+                if evt_ts:
+                    try:
+                        from datetime import datetime as dt
+                        ts_dt = dt.fromtimestamp(evt_ts)
+                        ts_str = ts_dt.strftime("%Y-%m-%d")
+                    except Exception:
+                        ts_str = str(int(evt_ts))
+
+                evidence = event.get("evidence", []) or []
+                ev_str = f" [→{evidence[0][:30]}] " if evidence else ""
+
+                lines.append(f"- [{ts_str}] {evt_type}: {evt_desc[:60]}{ev_str}")
+                displayed += 1
+
+            if displayed < total_events:
+                lines.append(f"  _...and {total_events - displayed} more events_")
+            lines.append("")
+
+        count += 1
+        lines.append("---")
+        lines.append("")
+
+    lines.append(f"_{count} timeline(s)_")
     return "\n".join(lines)

@@ -19,6 +19,8 @@ __all__ = [
     "render_jsonld",
     "render_jsonld_str",
     "render_jsonld_to_path",
+    "render_analyst_evidence_jsonld",
+    "render_analyst_evidence_jsonld_str",
 ]
 
 # ---------------------------------------------------------------------------
@@ -395,3 +397,108 @@ def render_jsonld_to_path(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content, encoding="utf-8")
     return out_path
+
+
+# ============================================================================
+# Sprint F202F: Analyst Workbench Evidence Export
+# ============================================================================
+def render_analyst_evidence_jsonld(
+    question: str,
+    extractive_answer: str,
+    evidence_pointers: list,
+    related_entities: list,
+    sources_used: list[str],
+    context_bytes: int,
+    model_used: bool,
+    timing_ms: float,
+) -> dict[str, Any]:
+    """
+    Sprint F202F: Render analyst answer evidence as JSON-LD.
+
+    Formats an analyst workbench answer with evidence pointers and related
+    entities as a JSON-LD document using the ghost namespace.
+
+    Args:
+        question: Original analyst question
+        extractive_answer: Deterministic extractive text answer
+        evidence_pointers: List of EvidencePointer dataclass instances
+        related_entities: List of RelatedEntity dataclass instances
+        sources_used: List of source_type strings consulted
+        context_bytes: Bytes used for extractive answer context
+        model_used: True if LLM was used for this answer
+        timing_ms: Total time in milliseconds
+
+    Returns:
+        dict: JSON-LD formatted analyst evidence document
+    """
+    evidence_items = []
+    for ep in evidence_pointers:
+        item = {
+            "@type": "ghost:EvidencePointer",
+            "ghost:findingId": ep.finding_id,
+            "ghost:sourceType": ep.source_type,
+            "ghost:query": ep.query,
+            "ghost:confidence": ep.confidence,
+            "ghost:timestamp": ep.ts,
+            "ghost:provenance": list(ep.provenance),
+            "ghost:envelopeAvailable": ep.envelope_available,
+        }
+        if ep.snippet:
+            item["ghost:snippet"] = ep.snippet
+        evidence_items.append(item)
+
+    entity_items = []
+    for entity in related_entities:
+        item = {
+            "@type": "ghost:RelatedEntity",
+            "ghost:entityValue": entity.entity_value,
+            "ghost:entityType": entity.entity_type,
+            "ghost:confidence": entity.confidence,
+            "ghost:hops": entity.hops,
+            "ghost:relationTypes": list(entity.relation_types),
+        }
+        entity_items.append(item)
+
+    return {
+        "@context": _JSONLD_CONTEXT,
+        "@type": "ghost:AnalystEvidence",
+        "ghost:reportVersion": "1.0",
+        "ghost:question": question,
+        "ghost:extractiveAnswer": extractive_answer,
+        "ghost:evidencePointers": evidence_items,
+        "ghost:relatedEntities": entity_items,
+        "ghost:sourcesUsed": sources_used,
+        "ghost:contextBytes": context_bytes,
+        "ghost:modelUsed": model_used,
+        "ghost:timingMs": timing_ms,
+        "ghost:generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def render_analyst_evidence_jsonld_str(
+    question: str,
+    extractive_answer: str,
+    evidence_pointers: list,
+    related_entities: list,
+    sources_used: list[str],
+    context_bytes: int,
+    model_used: bool,
+    timing_ms: float,
+) -> str:
+    """
+    Render analyst evidence as a deterministic JSON string.
+
+    Returns:
+        str: JSON string with sorted keys for determinism.
+    """
+    obj = render_analyst_evidence_jsonld(
+        question=question,
+        extractive_answer=extractive_answer,
+        evidence_pointers=evidence_pointers,
+        related_entities=related_entities,
+        sources_used=sources_used,
+        context_bytes=context_bytes,
+        model_used=model_used,
+        timing_ms=timing_ms,
+    )
+    return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False)

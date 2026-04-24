@@ -159,9 +159,36 @@ def reset_session() -> None:
     _DUCKPGQ_GRAPH = None
 
 
+# ── F202B: Identity edge upsert ────────────────────────────────────────────────
+
+def upsert_identity_edge(
+    src: str,
+    dst: str,
+    confidence: float = 0.5,
+    evidence: str = "",
+) -> bool:
+    """
+    F202B: Idempotent identity edge upsert — links two profile IDs as same identity.
+
+    Convenience wrapper around upsert_relation with rel_type="same_identity".
+    Advisory only: graph errors do not prevent sprint continuation.
+
+    Returns:
+        True on success, False on error or if already seen.
+    """
+    return upsert_relation(
+        src=src,
+        dst=dst,
+        rel_type="same_identity",
+        weight=confidence,
+        evidence=evidence,
+    )
+
+
 __all__ = [
     "upsert_ioc",
     "upsert_relation",
+    "upsert_identity_edge",
     "find_entity_history",
     "graph_stats",
     "checkpoint",

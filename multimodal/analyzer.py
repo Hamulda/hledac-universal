@@ -100,6 +100,9 @@ _SUPPORTED_EXTENSIONS = {
 # Document source type for CanonicalFindings produced by DocumentExtractor
 _DOCUMENT_SOURCE_TYPE = "document"
 
+# Max envelope size for triage envelope (same as F202A evidence envelope)
+_MAX_ENVELOPE_SIZE = 4098
+
 
 # Lazy-loaded document extraction modules
 _PdfReader: Optional[type] = None
@@ -143,6 +146,72 @@ def _file_has_multimodal_support(file_path: str) -> bool:
     """Check if file extension is supported by multimodal enrichment."""
     ext = Path(file_path).suffix.lower()
     return ext in _SUPPORTED_EXTENSIONS
+
+
+def _build_document_envelope(
+    text_content: str | None,
+    triage_facets: dict[str, Any],
+    file_path: str,
+    file_type: str,
+) -> str:
+    """
+    Build an evidence envelope JSON for document findings with triage facets.
+
+    Combines F202A envelope pattern (audit_reason, evidence_pointers,
+    signal_facets, suggested_pivots) with F202I triage facets (title,
+    author, exif, gps, ocr_snippets, file_hashes, embedded_urls,
+    embedded_domains).
+
+    Args:
+        text_content: Extracted text from the document.
+        triage_facets: Triage facets dict from EvidenceTriageCoordinator.
+        file_path: Path to the source file.
+        file_type: File extension.
+
+    Returns:
+        JSON string envelope, bounded at _MAX_ENVELOPE_SIZE.
+        Falls back to plain text if serialization fails.
+    """
+    try:
+        import json
+        envelope = {
+            "audit_reason": f"document_triage:{file_type}",
+            "evidence_pointers": [file_path],
+            "signal_facets": {
+                "file_type": file_type,
+                "has_text": bool(text_content),
+                "text_len": len(text_content) if text_content else 0,
+                "triage_complete": triage_facets.get("triage_complete", False),
+            },
+            "suggested_pivots": [
+                {"type": "document_metadata", "query": "document author/title"},
+                {"type": "image_geolocation", "query": "GPS coordinates"},
+                {"type": "embedded_iocs", "query": "URLs/domains in document"},
+            ],
+            # F202I triage facets
+            "triage": {
+                "title": triage_facets.get("title"),
+                "author": triage_facets.get("author"),
+                "exif": triage_facets.get("exif", {}),
+                "gps": triage_facets.get("gps", {}),
+                "ocr_snippets": triage_facets.get("ocr_snippets", []),
+                "file_hashes": triage_facets.get("file_hashes", {}),
+                "embedded_urls": triage_facets.get("embedded_urls", []),
+                "embedded_domains": triage_facets.get("embedded_domains", []),
+            },
+            "content_preview": (text_content[:1000] + "...") if text_content and len(text_content) > 1000 else (text_content or ""),
+        }
+
+        json_text = json.dumps(envelope, separators=(",", ":"))
+        if len(json_text) > _MAX_ENVELOPE_SIZE:
+            # Truncate OCR snippets and content_preview to fit
+            envelope["triage"]["ocr_snippets"] = envelope["triage"]["ocr_snippets"][:5]
+            envelope["content_preview"] = envelope["content_preview"][:500]
+            json_text = json.dumps(envelope, separators=(",", ":"))
+        return json_text
+    except Exception:
+        # Fallback: return raw text content
+        return text_content or ""
 
 
 class MultimodalEnricher:
@@ -656,6 +725,30 @@ class DocumentExtractor:
         if text_content and len(text_content) > self.MAX_TEXT_CHARS:
             text_content = text_content[: self.MAX_TEXT_CHARS]
 
+        # F202I: Extract triage facets (metadata, OCR, URL/domain hits)
+        triage_facets: dict[str, Any] = {}
+        try:
+            from hledac.universal.multimodal.evidence_triage import (
+                EvidenceTriageCoordinator,
+            )
+            triage_coord = EvidenceTriageCoordinator(governor=self._governor)
+            try:
+                await triage_coord.initialize()
+                triage_result = await triage_coord.extract_triage_facets(
+                    file_path, _DOCUMENT_SOURCE_TYPE
+                )
+                triage_facets = triage_result.to_dict()
+            finally:
+                await triage_coord.close()
+        except Exception as e:
+            log.debug("DocumentExtractor: triage extraction failed: %s", e)
+            triage_facets = {}
+
+        # F202I: Build evidence envelope with triage facets
+        payload_text = _build_document_envelope(
+            text_content, triage_facets, str(path), ext
+        )
+
         # Build finding
         provenance: tuple[str, ...] = ("document", str(path), ext)
         try:
@@ -666,7 +759,7 @@ class DocumentExtractor:
                 confidence=0.85,
                 ts=_time.time(),
                 provenance=provenance,
-                payload_text=text_content,
+                payload_text=payload_text,
             )
             return canonical_finding
         except Exception as exc:

@@ -231,6 +231,33 @@ try:
 except ImportError:
     TEMPORAL_ARCHAEOLOGIST_AVAILABLE = False
 
+# Timeline Synthesizer (Sprint F202E)
+try:
+    from .timeline_synthesizer import (
+        TimelineSynthesizer,
+        TimelineEvent,
+        TimelineMetadata,
+        SynthesizedTimeline,
+        create_timeline_synthesizer,
+        MAX_TIMELINE_EVENTS,
+        MAX_EVENT_AGE_DAYS,
+    )
+    TIMELINE_SYNTHESIZER_AVAILABLE = True
+except ImportError:
+    TIMELINE_SYNTHESIZER_AVAILABLE = False
+
+# Temporal Archaeologist Adapter (Sprint F202E)
+try:
+    from .temporal_archaeologist_adapter import (
+        TemporalArchaeologistAdapter,
+        TimelineFindingResult,
+        create_temporal_archaeologist_adapter,
+        MAX_TIMELINE_FINDINGS,
+    )
+    TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE = True
+except ImportError:
+    TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE = False
+
 # Exposed Service Hunter (S3, Databases, GraphQL, CT logs, Container APIs)
 try:
     from .exposed_service_hunter import (
@@ -406,6 +433,8 @@ __all__ = [
     "CRYPTO_AVAILABLE",
     "DOCUMENT_INTELLIGENCE_AVAILABLE",
     "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
+    "TIMELINE_SYNTHESIZER_AVAILABLE",
+    "TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE",
     "EXPOSED_SERVICE_HUNTER_AVAILABLE",
     # Archive
     "ArchiveDiscovery",
@@ -533,6 +562,19 @@ __all__ = [
     "reconstruct_timeline",
     "detect_anomalies",
     "create_temporal_archaeologist",
+    # Timeline Synthesizer (Sprint F202E)
+    "TimelineSynthesizer",
+    "TimelineEvent",
+    "TimelineMetadata",
+    "SynthesizedTimeline",
+    "create_timeline_synthesizer",
+    "MAX_TIMELINE_EVENTS",
+    "MAX_EVENT_AGE_DAYS",
+    # Temporal Archaeologist Adapter (Sprint F202E)
+    "TemporalArchaeologistAdapter",
+    "TimelineFindingResult",
+    "create_temporal_archaeologist_adapter",
+    "MAX_TIMELINE_FINDINGS",
     # Exposed Service Hunter
     "EXPOSED_SERVICE_HUNTER_AVAILABLE",
     "ExposedServiceHunter",

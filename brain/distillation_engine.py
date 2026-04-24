@@ -403,7 +403,7 @@ class DistillationEngine:
                     loop.run_in_executor(executor, self._get_chain_embedding, example.chain)
                     for example in examples
                 ]
-                embeddings = await asyncio.gather(*embedding_tasks)
+                embeddings = await asyncio.gather(*embedding_tasks, return_exceptions=True)
 
             X_list = embeddings
             y_list = [example.score for example in examples]

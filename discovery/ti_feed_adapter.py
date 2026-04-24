@@ -1670,6 +1670,7 @@ async def _handle_bgp_asn_lookup(task, scheduler):
     ripe, cymru = await asyncio.gather(
         query_ripe_stat_asn(ioc),
         query_team_cymru_asn(ioc),
+        return_exceptions=True,
     )
     if ripe.get("asn") or cymru.get("asn"):
         await scheduler._buffer_ioc_pivot("ipv4", ioc, 0.80)

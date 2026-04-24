@@ -826,7 +826,7 @@ class EntityLinker:
             for text, context in zip(texts, contexts)
         ]
 
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""

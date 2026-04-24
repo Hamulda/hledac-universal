@@ -1033,6 +1033,9 @@ async def run_sprint(
                         ph: round(_phase_times.get(ph, 0) - _phase_times.get("BOOT", 0), 2)
                         for ph in phases if ph in _phase_times
                     },
+                    # Sprint F202B: Identity stitching sidecar counters
+                    "identity_candidates_found": result.identity_candidates_found,
+                    "identity_findings_produced": result.identity_findings_produced,
                 },
                 top_nodes=top_seed_nodes,
                 phase_durations={

@@ -749,7 +749,7 @@ class MultiLevelContextCache:
                 # Compute and cache
                 tasks.append(compute_func(input_data))
         
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for input_data, result in zip(inputs, results):
             await self.set(input_data, result, cache_type)

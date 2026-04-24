@@ -2043,47 +2043,6 @@ Commit message formát: "feat: sprint F202I — add multimodal evidence triage"
 ### Claude Code prompt
 
 ```text
-[FÁZE F202J — M1 SUSTAINED SPRINT BENCHMARK AND RESOURCE GOVERNOR]
-
-Kontext:
-
-M1 Air 8 GB UMA je tvrdý target. Repo má model_lifecycle.py, SprintScheduler, dashboard a benchmark artefakty, ale chybí jeden měřitelný sustained-sprint governor/benchmark contract.
-
-Co již existuje a funguje:
-
-Smoke prochází.
-FETCH_SEMAPHORE limit introspection funguje.
-Dashboard a scheduler counters existují.
-
-Zadání:
-
-Vytvoř ResourceGovernor jako advisory safety layer pro branch concurrency, model lease a renderer lease. Přidej hermetic M1 sustained benchmark, který měří OSINT throughput a memory safety bez networku. Governor nesmí být nový sprint owner.
-
-Soubory k úpravě/vytvoření:
-
-runtime/resource_governor.py — nový governor
-brain/model_lifecycle.py — read-only status/lease API
-runtime/sprint_scheduler.py — governor advisory hook
-monitoring/sprint_dashboard.py — governor state rendering
-benchmarks/m1_sustained_sprint.py — hermetic benchmark
-tests/probe_f202j/test_m1_resource_governor.py — probe tests
-REAL_ARCHITECTURE.md — docs
-
-Constraints:
-
-- Model lifecycle authority remains brain/model_lifecycle.py.
-- No model + JS renderer concurrently.
-- FETCH_SEMAPHORE limit=3 while model loaded.
-- Governor fail-soft fallback is safe low-concurrency mode.
-
-Definition of Done:
-
-pytest tests/probe_f202j/ -q → všechny pass
-python smoke_runner.py --smoke → OK
-python benchmarks/m1_sustained_sprint.py --hermetic → writes bounded benchmark summary
-
-Commit message formát: "feat: sprint F202J — add m1 sustained sprint governor"
-```
 
 ---
 

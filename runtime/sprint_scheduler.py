@@ -1281,7 +1281,7 @@ class SprintScheduler:
 
         # Execute all source fetches concurrently
         tasks = [fetch_one(w) for w in work_items]
-        results: list[tuple[str, FeedPipelineRunResult]] = await asyncio.gather(*tasks)
+        results: list[tuple[str, FeedPipelineRunResult]] = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Process results
         for feed_url, result in results:
@@ -1367,7 +1367,7 @@ class SprintScheduler:
                         )
 
             tasks = [fetch_one(w) for w in work_items]
-            results: list[tuple[str, FeedPipelineRunResult]] = await _asyncio.gather(*tasks)
+            results: list[tuple[str, FeedPipelineRunResult]] = await _asyncio.gather(*tasks, return_exceptions=True)
             for feed_url, result in results:
                 self._process_result(feed_url, result)
 

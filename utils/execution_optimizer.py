@@ -434,7 +434,7 @@ class ParallelExecutionOptimizer:
 
         # Run all chunks concurrently
         chunk_tasks = [execute_chunk(chunk) for chunk in task_chunks]
-        chunk_results = await asyncio.gather(*chunk_tasks)
+        chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
 
         # Flatten results
         return [result for chunk_result in chunk_results for result in chunk_result]
@@ -470,7 +470,7 @@ class ParallelExecutionOptimizer:
             for worker_id, tasks in task_distribution.items()
         ]
 
-        worker_results = await asyncio.gather(*worker_tasks)
+        worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         # Flatten results
         return [result for worker_result in worker_results for result in worker_result]
@@ -532,12 +532,12 @@ class ParallelExecutionOptimizer:
 
             # Execute batch
             if inspect.iscoroutinefunction(batch[0]):
-                    batch_results = await asyncio.gather(*[task() for task in batch])
+                    batch_results = await asyncio.gather(*[task() for task in batch], return_exceptions=True)
             else:
                 batch_results = await asyncio.gather(*[
                     self._run_in_executor_safe(self.thread_pool, task)
                     for task in batch
-                ])
+                ], return_exceptions=True)
 
             results.extend(batch_results)
 
@@ -650,7 +650,7 @@ class ParallelExecutionOptimizer:
             cpu_results = await asyncio.gather(*[
                 self._run_in_executor_safe(self.process_pool, task)
                 for task in cpu_tasks
-            ])
+            ], return_exceptions=True)
             results.extend(cpu_results)
 
         # Execute memory tasks with limited concurrency
@@ -661,7 +661,7 @@ class ParallelExecutionOptimizer:
             memory_results = await asyncio.gather(*[
                 self._run_in_executor_safe(self.thread_pool, task)
                 for task in memory_tasks
-            ])
+            ], return_exceptions=True)
             results.extend(memory_results)
 
         # Execute I/O tasks with high concurrency
@@ -672,7 +672,7 @@ class ParallelExecutionOptimizer:
             io_results = await asyncio.gather(*[
                 self._run_in_executor_safe(self.thread_pool, task)
                 for task in io_tasks
-            ])
+            ], return_exceptions=True)
             results.extend(io_results)
 
             return results
@@ -761,12 +761,12 @@ class ParallelExecutionOptimizer:
 
             # Execute batch
             if inspect.iscoroutinefunction(batch[0]):
-                    batch_results = await asyncio.gather(*[task() for task in batch])
+                    batch_results = await asyncio.gather(*[task() for task in batch], return_exceptions=True)
             else:
                 batch_results = await asyncio.gather(*[
                     self._run_in_executor_safe(self.thread_pool, task)
                     for task in batch
-                ])
+                ], return_exceptions=True)
 
             results.extend(batch_results)
             task_index += batch_size

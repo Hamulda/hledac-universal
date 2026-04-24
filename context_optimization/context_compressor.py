@@ -698,7 +698,7 @@ class ContextCompressor:
             task = self.compress_context(context, metadata=metadata)
             tasks.append(task)
         
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*tasks, return_exceptions=True)
     
     async def batch_decompress(
         self,
@@ -712,7 +712,7 @@ class ContextCompressor:
             task = self.decompress_context(context_id, detail_level, query)
             tasks.append(task)
         
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*tasks, return_exceptions=True)
     
     def list_compressed_contexts(self) -> List[Dict[str, Any]]:
         """List all compressed contexts with metadata."""

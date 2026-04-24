@@ -262,12 +262,15 @@ class SecurityGate:
         # Sort by position in reverse order to preserve indices
         sorted_matches = sorted(matches, key=lambda m: m.start, reverse=True)
 
-        result = text
+        # O(n) approach: collect segments and join once instead of O(n²) string concat
+        segments = []
+        last_pos = len(text)
         for match in sorted_matches:
-            mask = self.mask_char * len(match.text)
-            result = result[:match.start] + mask + result[match.end:]
-
-        return result
+            segments.append(text[match.end:last_pos])
+            segments.append(self.mask_char * len(match.text))
+            last_pos = match.start
+        segments.append(text[:last_pos])
+        return ''.join(reversed(segments))
 
     def analyze_risk(self, text: str) -> Dict[str, Any]:
         """
@@ -536,10 +539,15 @@ def fallback_sanitize(text: str, max_length: int = MAX_FALLBACK_LENGTH) -> str:
     # Apply replacements from HIGHEST start position to LOWEST (reverse order)
     # This ensures earlier replacements don't shift indices of later ones
     non_overlapping.sort(key=lambda x: -x[0])
+    # O(n) approach: collect segments and join once instead of O(n²) string concat
+    segments = []
+    last_pos = len(result)
     for start, end, replacement, priority in non_overlapping:
-        result = result[:start] + replacement + result[end:]
-
-    return result
+        segments.append(result[end:last_pos])
+        segments.append(replacement)
+        last_pos = start
+    segments.append(result[:last_pos])
+    return ''.join(reversed(segments))
 
 
 def is_fallback_available() -> bool:
