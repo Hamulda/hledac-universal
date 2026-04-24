@@ -238,4 +238,24 @@ class SprintDashboard:
         if result is not None and result.total_pattern_hits > 0:
             table.add_row(Text.assemble(("hits: ", "magenta"), str(result.total_pattern_hits)))
 
+        # ── Row 7: Governor state (F202J) ─────────────────────────────────────
+        try:
+            from hledac.universal.runtime.resource_governor import get_governor
+            gov = get_governor()
+            snap = gov.snapshot()
+            gov_parts: list[str] = [
+                f"uma={snap.uma_state}",
+                f"fetch={snap.fetch_limit}",
+                f"branches={snap.branch_concurrency}",
+            ]
+            if snap.model_loaded:
+                gov_parts.append("model=LOADED")
+            if snap.renderer_denied_count > 0:
+                gov_parts.append(f"renderer_denied={snap.renderer_denied_count}")
+            if snap.model_denied_count > 0:
+                gov_parts.append(f"model_denied={snap.model_denied_count}")
+            table.add_row(Text.assemble(("governor: ", "cyan"), "  ".join(gov_parts)))
+        except Exception:
+            pass  # Governor state is optional dashboard info
+
         return table

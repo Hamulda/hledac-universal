@@ -343,6 +343,18 @@ class SprintSchedulerResult:
     forensics_enriched_ct_findings: int = 0
     # Sprint F195C: Multimodal enrichment — PDF/image findings enriched before storage
     multimodal_enriched_findings: int = 0
+    # Sprint F202B: Identity stitching sidecar
+    identity_candidates_found: int = 0
+    identity_findings_produced: int = 0
+    # Sprint F202C: Asset exposure correlator sidecar
+    exposure_findings_produced: int = 0
+    correlated_assets_count: int = 0
+    # Sprint F202D: Leak sentinel sidecar
+    leak_findings_produced: int = 0
+    # Sprint F202E: Temporal archaeology sidecar
+    timeline_findings_produced: int = 0
+    # Sprint F202I: Evidence triage sidecar
+    evidence_triage_findings_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +567,8 @@ class SprintScheduler:
         self._ARROW_FLUSH_S: float = 60.0
         self._fetch_semaphore: asyncio.Semaphore = asyncio.Semaphore(20)
         self.sprint_id: str = ""
+        # Sprint F202J: M1 resource governor advisory (lazy init)
+        self._governor = None
         # Sprint 8VD §F: Scorecard tracking
         self._finding_count: int = 0
         # Partial export tracking — reset per sprint
@@ -604,6 +618,17 @@ class SprintScheduler:
         self._ct_log_client: Any = ct_log_client
         # Sprint F195C: Sprint policy manager (opt-in RL layer)
         self._policy_manager: Any = None
+        # Sprint F202B: Identity stitching sidecar adapter
+        self._identity_adapter: Any = None
+        # Sprint F202C: Asset exposure correlator adapter
+        self._exposure_adapter: Any = None
+        # Sprint F202D: Leak sentinel adapter
+        self._leak_sentinel_adapter: Any = None
+        # Sprint F202I: Evidence triage adapter
+        self._evidence_triage_adapter: Any = None
+        # Sprint F202G: Pivot planner (advisory, advisory ordering input only)
+        self._pivot_planner: Any = None
+        self._planned_pivots: list = []  # Last planned pivots for diagnostics
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -845,6 +870,13 @@ class SprintScheduler:
         adapter.start()
         self._reset_result()
 
+        # Sprint F202J: Initialize M1 resource governor (lazy, advisory only)
+        try:
+            from hledac.universal.runtime.resource_governor import get_governor
+            self._governor = get_governor()
+        except Exception:
+            self._governor = None
+
         # Sprint F193A: CT log client can be injected at run() call time
         if ct_log_client is not None:
             self._ct_log_client = ct_log_client
@@ -1079,6 +1111,12 @@ class SprintScheduler:
         # Sprint F195C: Close multimodal enricher and LMDB at TEARDOWN
         await self._close_multimodal()
 
+        # Sprint F202G: Run pivot planner advisory at TEARDOWN (fail-soft, non-blocking)
+        await self._run_pivot_planner_advisory()
+
+        # Sprint F202J: Run resource governor advisory at TEARDOWN (fail-soft, non-blocking)
+        await self._run_resource_governor_advisory()
+
         # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
         await self._unload_hermes_at_teardown()
 
@@ -1285,7 +1323,14 @@ class SprintScheduler:
         async def _run_feed_branch() -> None:
             """Feed branch: fetches all sources concurrently."""
             async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
-            semaphore = _asyncio.Semaphore(self._config.max_parallel_sources)
+            branch_concurrency = 4
+            if self._governor is not None:
+                try:
+                    decision = await self._governor.evaluate()
+                    branch_concurrency = decision.branch_concurrency
+                except Exception:
+                    pass
+            semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
             async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
                 async with semaphore:
@@ -1527,6 +1572,29 @@ class SprintScheduler:
                 # Sprint F194A: ct_log_accepted_findings tracks accepted CT findings
                 # for canonical truth accounting (additive to feed/public accepted_findings)
                 self._result.ct_log_accepted_findings = stored
+                # Sprint F202B: Identity stitching sidecar (fail-soft, non-blocking)
+                accepted_findings = [f for f, r in zip(findings, results)
+                                     if isinstance(r, dict) and r.get("accepted")]
+                if accepted_findings:
+                    await self._run_identity_stitching_sidecar(
+                        accepted_findings, store, query
+                    )
+                    # Sprint F202C: Asset exposure correlator sidecar (fail-soft, non-blocking)
+                    await self._run_exposure_correlator_sidecar(
+                        accepted_findings, store, query
+                    )
+                    # Sprint F202D: Leak sentinel sidecar (fail-soft, non-blocking)
+                    await self._run_leak_sentinel_sidecar(
+                        accepted_findings, store, query
+                    )
+                    # Sprint F202E: Temporal archaeology sidecar (fail-soft, non-blocking)
+                    await self._run_temporal_archaeology_sidecar(
+                        accepted_findings, store, query
+                    )
+                    # Sprint F202I: Evidence triage sidecar (fail-soft, non-blocking)
+                    await self._run_evidence_triage_sidecar(
+                        accepted_findings, store, query
+                    )
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
@@ -1576,6 +1644,372 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: graph must never block sprint
         return count
+
+    # ── F202B: Identity Stitching Sidecar ────────────────────────────────────
+
+    async def _run_identity_stitching_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F202B: Run identity stitching on accepted findings.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Derived identity findings are ingested via async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (for derived finding query field)
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.entity_signal_extractor import (
+                extract_entities_from_findings,
+            )
+            from hledac.universal.intelligence.identity_stitching_canonical import (
+                create_identity_stitching_adapter,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependencies
+
+        try:
+            # 1. Extract entity profiles from findings (bounded: MAX_PROFILES=500)
+            profiles = extract_entities_from_findings(findings)
+            if not profiles:
+                return
+
+            # 2. Create adapter lazily (imports heavy stitching engine)
+            if self._identity_adapter is None:
+                self._identity_adapter = create_identity_stitching_adapter()
+
+            # 3. Run stitching (bounded: MAX_COMPARISONS=2000)
+            candidates = self._identity_adapter.extract_and_stitch(profiles)
+            if not candidates:
+                return
+
+            # 4. Upsert identity edges to graph (advisory, fail-soft)
+            try:
+                self._identity_adapter.upsert_identity_edges(candidates)
+            except Exception:
+                pass  # Advisory only
+
+            # 5. Convert to derived findings
+            derived_findings = self._identity_adapter.to_derived_findings(
+                candidates, query
+            )
+            if not derived_findings:
+                return
+
+            # 6. Ingest derived findings via async_ingest_findings_batch
+            try:
+                results = await store.async_ingest_findings_batch(derived_findings)
+                stored = sum(
+                    1 for r in results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                self._result.identity_findings_produced += stored
+            except Exception:
+                pass  # Fail-soft: derived findings are advisory
+
+            self._result.identity_candidates_found = len(candidates)
+
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F202C: Asset Exposure Correlator Sidecar ─────────────────────────────
+
+    async def _run_exposure_correlator_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F202C: Run asset exposure correlation on accepted findings.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Derived exposure findings are ingested via async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (for derived finding query field)
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.exposure_correlator import (
+                create_exposure_correlator_adapter,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependencies
+
+        try:
+            # 1. Create adapter lazily (imports heavy correlation logic)
+            if self._exposure_adapter is None:
+                self._exposure_adapter = create_exposure_correlator_adapter()
+
+            # 2. Correlate signals into exposure findings
+            derived_findings = self._exposure_adapter.correlate(findings, query)
+            if not derived_findings:
+                return
+
+            # 3. Ingest derived findings via async_ingest_findings_batch
+            try:
+                results = await store.async_ingest_findings_batch(derived_findings)
+                stored = sum(
+                    1 for r in results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                self._result.exposure_findings_produced = stored
+            except Exception:
+                pass  # Fail-soft: derived findings are advisory
+
+            # 4. Track correlated assets count
+            stats = self._exposure_adapter.get_stats()
+            self._result.correlated_assets_count = stats.get("assets_registered", 0)
+
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F202D: Leak Sentinel Sidecar ─────────────────────────────────────────
+
+    async def _run_leak_sentinel_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F202D: Run leak and secret sentinel on accepted findings.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Derived leak findings are ingested via async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (for derived finding query field)
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.leak_sentinel import (
+                create_leak_sentinel_adapter,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependency
+
+        try:
+            # 1. Create adapter lazily
+            if self._leak_sentinel_adapter is None:
+                self._leak_sentinel_adapter = create_leak_sentinel_adapter()
+
+            # 2. Run bounded leak scan
+            derived_findings = await self._leak_sentinel_adapter.scan(query)
+            if not derived_findings:
+                return
+
+            # 3. Ingest derived findings via async_ingest_findings_batch
+            try:
+                results = await store.async_ingest_findings_batch(derived_findings)
+                stored = sum(
+                    1 for r in results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                self._result.leak_findings_produced = stored
+            except Exception:
+                pass  # Fail-soft: derived findings are advisory
+
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F202E: Temporal Archaeology Sidecar ───────────────────────────────────
+
+    async def _run_temporal_archaeology_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F202E: Run temporal archaeology on accepted findings.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Synthesizes timeline from CT timestamps, archive events, document metadata,
+        and finding timestamps. Derived timeline findings are ingested via
+        async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (for derived finding query field)
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.temporal_archaeologist_adapter import (
+                create_temporal_archaeologist_adapter,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependencies
+
+        try:
+            # Create adapter
+            adapter = create_temporal_archaeologist_adapter()
+
+            # Synthesize timeline from CT findings
+            ct_findings = [f for f in findings if getattr(f, "source_type", "") == "ct_log"]
+            result = adapter.synthesize_timeline(
+                ct_findings=ct_findings,
+                entity_id=query[:64],
+            )
+
+            timeline = result.timeline
+            derived_findings = result.derived_findings
+
+            if not derived_findings:
+                return
+
+            # Ingest derived findings via async_ingest_findings_batch
+            try:
+                results = await store.async_ingest_findings_batch(derived_findings)
+                stored = sum(
+                    1 for r in results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                self._result.timeline_findings_produced = stored
+            except Exception:
+                pass  # Fail-soft: derived findings are advisory
+
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F202I: Evidence Triage Sidecar ─────────────────────────────────────
+
+    async def _run_evidence_triage_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F202I: Count document findings with triage facets.
+
+        Document findings already have triage facets embedded by DocumentExtractor
+        via _build_document_envelope. This sidecar counts them for observability.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance (unused — findings already stored)
+            query: Original sprint query (unused)
+        """
+        if not findings:
+            return
+
+        try:
+            import json
+            triage_count = 0
+            for finding in findings:
+                if not hasattr(finding, "source_type") or finding.source_type != "document":
+                    continue
+                if not hasattr(finding, "payload_text") or not finding.payload_text:
+                    continue
+                # Check if payload_text contains triage envelope
+                try:
+                    payload = json.loads(finding.payload_text)
+                    if isinstance(payload, dict) and "triage" in payload:
+                        triage_count += 1
+                except Exception:
+                    pass
+            self._result.evidence_triage_findings_count = triage_count
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
+
+    async def _run_pivot_planner_advisory(self) -> None:
+        """
+        F202G: Run pivot planner on accepted findings for advisory ordering.
+
+        Advisory only: scheduler retains all authority. Planner generates
+        pivot suggestions; scheduler may use them as ordering input for future sprints.
+
+        Fail-soft: errors never crash teardown or export.
+
+        Pivots are stored in self._planned_pivots for diagnostics.
+        """
+        planner = getattr(self, "_pivot_planner", None)
+        if planner is None:
+            return
+
+        try:
+            # Get all accepted findings from the sprint
+            findings = getattr(self, "_all_findings", [])
+            if not findings:
+                return
+
+            # Get graph stats for scoring
+            graph_stats = {}
+            try:
+                from hledac.universal.knowledge import graph_service
+                stats = graph_service.graph_stats()
+                if stats:
+                    graph_stats = {
+                        "nodes": stats.get("nodes", 0),
+                        "edges": stats.get("edges", 0),
+                        "domains": [],  # Would need specific query
+                        "connected_iocs": set(),
+                        "node_degrees": {},
+                    }
+            except Exception:
+                pass  # Fail-soft: graph stats are optional
+
+            # Plan pivots (synchronous, fail-soft)
+            pivots = planner.plan_pivots(findings, graph_stats=graph_stats)
+            self._planned_pivots = pivots
+            log.debug(f"[F202G] Planned {len(pivots)} pivots from {len(findings)} findings")
+
+        except Exception:
+            pass  # Fail-soft: pivot planner must never crash teardown
+
+    # ── F202J: Resource Governor Advisory ─────────────────────────────────
+
+    async def _run_resource_governor_advisory(self) -> None:
+        """
+        F202J: Apply resource governor decision at TEARDOWN.
+
+        Advisory only: governor evaluates and applies concurrency hints.
+        Sprint retains all authority.
+
+        Fail-soft: errors never crash teardown or export.
+        """
+        governor = getattr(self, "_governor", None)
+        if governor is None:
+            return
+        try:
+            decision = await governor.evaluate()
+            await governor.apply_decision(decision)
+        except Exception:
+            pass  # Fail-soft: governor must never crash teardown
 
     # ── F198A: Graph stats summary for export teardown ───────────────────────
 
@@ -2377,6 +2811,25 @@ class SprintScheduler:
         All oracle calls are fail-soft — exception or None oracle → no-op.
         """
         self._prefetch_oracle = oracle
+
+    def inject_pivot_planner(self, planner: Any) -> None:
+        """
+        Inject PivotPlanner reference (F202G advisory pivot ordering).
+
+        F202G: planner is ADVISORY ONLY — scheduler retains all authority.
+        Planner generates pivot suggestions from findings; scheduler uses them
+        as advisory ordering input, NOT as new sprint owner.
+        All planner calls are fail-soft — exception or None planner → no-op.
+        """
+        self._pivot_planner = planner
+
+    def get_planned_pivots(self) -> list:
+        """
+        F202G: Return last planned pivots for diagnostics.
+
+        Returns empty list if no pivots were planned or planner failed.
+        """
+        return getattr(self, "_planned_pivots", [])
 
     def enqueue_pivot(
         self,
@@ -3745,6 +4198,8 @@ class SprintScheduler:
             reset_session()
         except Exception:
             pass
+        # Sprint F202J: Reset governor telemetry (but keep singleton instance)
+        self._governor = None  # Will be re-initialized on next run()
 
 
 # ---------------------------------------------------------------------------

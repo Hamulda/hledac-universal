@@ -582,6 +582,123 @@ DeepProbe findings now flow through the canonical persist path:
 
 ---
 
+## F202I: Multimodal Evidence Triage (2026-04-24)
+
+**Přidáno** — bounded triage extraction from PDF/image artifacts discovered in sprint runs. Extracts: title/author, EXIF/GPS, OCR snippets, file hashes, embedded URL/domain hits.
+
+**EvidenceTriageCoordinator** (`multimodal/evidence_triage.py`):
+- `TriageFacets` dataclass: title, author, exif, gps, ocr_snippets, file_hashes, embedded_urls, embedded_domains, triage_complete
+- `EvidenceTriageCoordinator.extract_triage_facets(file_path, source_type)` — orchestrator method
+- Metadata extraction via `UniversalMetadataExtractor` (forensic metadata: title, author, EXIF, GPS, hashes)
+- OCR text extraction via `VisionOCR` (macOS Vision framework — no VLM)
+- URL/domain hit detection in OCR text via regex
+- All operations are **fail-safe**: partial facets returned on any error
+
+**Bounds** (F202I-3, F202I-4, F202I-17):
+- `MAX_URL_HITS = 20` — max embedded URLs/domains per file
+- `MAX_OCR_SNIPPETS = 10` — max OCR text snippets stored
+- `MAX_OCR_CHARS = 5000` — max OCR characters per file
+- `MAX_FILE_SIZE_FOR_TRIAGE = 100MB` — files larger are skipped
+- `METADATA_TIMEOUT_S = 30.0` — metadata extraction timeout
+- `OCR_TIMEOUT_S = 30.0` — OCR timeout
+
+**No VLM** (F202I-15):
+- Uses `VisionOCR` (macOS Vision OCR) only — no VisionEncoder, no MambaFusion, no MLX models
+- Model load/unload only via `brain/model_lifecycle.py`
+
+**Evidence Envelope** (`multimodal/analyzer.py` `_build_document_envelope()`):
+- Combines F202A envelope pattern (audit_reason, evidence_pointers, signal_facets, suggested_pivots) with F202I triage facets
+- F202I triage section: title, author, exif, gps, ocr_snippets, file_hashes, embedded_urls, embedded_domains
+- `content_preview`: first 1000 chars of extracted text
+- Bounded at `_MAX_ENVELOPE_SIZE = 4098` bytes
+
+**DocumentExtractor Integration** (`multimodal/analyzer.py`):
+- `DocumentExtractor.extract()` calls `EvidenceTriageCoordinator.extract_triage_facets()` before building `CanonicalFinding`
+- Resulting `CanonicalFinding(source_type="document")` has `payload_text` containing triage envelope JSON
+- RAM guard via `_check_ram_guard()` — blocks when UMA critical/emergency
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_evidence_triage_adapter` field (lazy, None until first use)
+- `_evidence_triage_findings_count` counter in `SprintSchedulerResult`
+- `_run_evidence_triage_sidecar(findings, store, query)` — counts document findings with triage envelopes
+- Called after `_run_temporal_archaeology_sidecar()` — non-blocking sidecar
+- **No change to live_feed tuple contract** — sidecar is purely observational
+
+**Tests**: `tests/probe_f202i/test_multimodal_evidence_triage.py` — 36 tests:
+- F202I-1: Lazy initialization of metadata extractor
+- F202I-2: extract_triage_facets returns TriageFacets
+- F202I-3: URL/domain extraction bounded at MAX_URL_HITS=20
+- F202I-4: OCR snippets bounded at MAX_OCR_SNIPPETS=10
+- F202I-5: File hashes extracted from GenericMetadata
+- F202I-6: TriageFacets.to_dict() includes all required fields
+- F202I-7: DocumentExtractor.extract() calls triage and builds envelope
+- F202I-8: _build_document_envelope produces JSON with triage facets
+- F202I-9: Envelope bounded at _MAX_ENVELOPE_SIZE=4098
+- F202I-10: _run_evidence_triage_sidecar counts document findings with triage
+- F202I-11: SprintSchedulerResult.evidence_triage_findings_count field exists
+- F202I-12: _evidence_triage_adapter field exists in SprintScheduler
+- F202I-13: Sidecar called after F202E temporal archaeology sidecar
+- F202I-14: Fail-soft throughout
+- F202I-15: No VLM (VisionOCR only)
+- F202I-16: RAM guard blocks when UMA tight
+- F202I-17: Size guard skips files > 100MB
+- F202I-18: OCR timeout after 30s
+- F202I-19: Metadata timeout after 30s
+- F202I-20: No live_feed tuple contract change
+
+---
+
+## F202J: M1 Sustained Sprint Governor (2026-04-24)
+
+**Přidáno** — advisory safety layer for M1 8GB branch concurrency, model lease, and renderer lease.
+
+**M1ResourceGovernor** (`runtime/resource_governor.py`):
+- Advisory safety layer — NOT a sprint owner. Reads from canonical sources only.
+- Governs branch concurrency, model lease, renderer lease via fail-soft decisions
+- `GovernorDecision` dataclass: `fetch_limit`, `allow_renderer`, `allow_model_load`, `branch_concurrency`, `reason`, `uma_state`, `model_loaded`
+- `GovernorSnapshot` dataclass: current state for dashboard rendering
+- `evaluate()` async: evaluates governor decisions per cycle
+- `apply_decision()` async: applies decisions to runtime surfaces via `adjust_fetch_workers()`
+- Singleton via `get_governor()`
+
+**Read-only surfaces**:
+- `brain/model_lifecycle.get_model_lifecycle_status()` — model lease state
+- `core/resource_governor.sample_uma_status()` — UMA memory state
+- `utils/concurrency.adjust_fetch_workers()` — fetch concurrency control
+
+**Decision logic**:
+- CRITICAL/EMERGENCY UMA → `fetch_limit=3`, `allow_renderer=False`, `branch_concurrency=1`
+- Model loaded → `fetch_limit=3`, `allow_renderer=False`, `branch_concurrency=2`
+- WARN UMA → `fetch_limit=12` (half of 25), `branch_concurrency=3`
+- Normal → `fetch_limit=25`, `branch_concurrency=4`
+
+**Sprint Scheduler integration** (`runtime/sprint_scheduler.py`):
+- `_governor` field: lazy singleton, initialized in `run()` via `get_governor()`
+- `_run_resource_governor_advisory()` at TEARDOWN: evaluates and applies governor decision
+- Aggressive branch concurrency uses `decision.branch_concurrency` via semaphore limit
+- `_reset_result()` resets governor reference (singleton stays across sprints)
+- Governor is advisory only — scheduler retains all authority
+
+**Dashboard** (`monitoring/sprint_dashboard.py`):
+- Governor state row: uma state, fetch limit, branches, model status, denied counts
+- Fail-safe: errors silently ignored (optional dashboard info)
+
+**Hermetic benchmark** (`benchmarks/m1_sustained_sprint.py`):
+- `--hermetic` flag (default True) — canned data, no network, no MLX
+- Measures: findings/min, acceptance ratio, RSS peak, UMA state summary, denied counts
+- M1 8GB ceiling: `M1_8GB_CEILING_MB = 6.5 * 1024`
+- Writes bounded summary to stdout and optional JSON
+
+**Key invariants**:
+- Model lifecycle authority remains `brain/model_lifecycle.py` (read-only client)
+- No model + JS renderer concurrently — enforced via `allow_renderer=False` when model loaded
+- FETCH_SEMAPHORE limit=3 while model loaded — via `adjust_fetch_workers(3)`
+- Governor fails soft — safe defaults on any error
+
+**Tests**: `tests/probe_f202j/test_m1_resource_governor.py` — 10 probe tests (F202J-1 through F202J-10)
+
+---
+
 ## F202F: Local Graph/RAG Analyst Workbench (2026-04-24)
 
 **Přidáno** — analyst read-side facade for local questions over findings, graph, and vectors. Works without LLM (extractive fallback) and without external network calls.
