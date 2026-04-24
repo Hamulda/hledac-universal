@@ -18,7 +18,15 @@ results = await asyncio.gather(task1(), task2(), return_exceptions=True)
 ```
 
 ### `_check_gathered` is called after every `gather`
-After every `asyncio.gather(return_exceptions=True)` call, the results MUST be passed through `_check_gathered()` from `utils.async_helpers` to filter exceptions and log them.
+After every `asyncio.gather(return_exceptions=True)` call, the results MUST be passed through `_check_gathered()` from `network.session_runtime` to partition ok results from errors.
+
+**Canonical contract** (`network.session_runtime._check_gathered`):
+- Returns `Tuple[List[Any], List[Any]]` — `(ok_results, error_results)`
+- `asyncio.CancelledError` is **re-raised** immediately (never swallowed)
+- Other `BaseException` (`KeyboardInterrupt`, `SystemExit`) is **re-raised** immediately
+- Regular `Exception` items are appended to `error_results`
+
+**Legacy variant** (`utils.async_helpers._check_gathered`): returns `List[Any]` only (exceptions logged at debug level, not re-raised). Used by `network_reconnaissance.py`. Do not use in new canonical-path code.
 
 ### `async_getaddrinfo` is used instead of `socket.getaddrinfo`
 DNS resolution in async contexts MUST use `async_getaddrinfo()` from `utils.async_helpers`, which wraps `loop.getaddrinfo`. Never use blocking `socket.getaddrinfo` in async code.
@@ -91,4 +99,4 @@ All findings written to persistent storage flow through `DuckDBShadowStore.async
 
 ---
 
-*Last updated: Sprint F195B (2026-04-22)*
+*Last updated: Sprint F201B (2026-04-24)*

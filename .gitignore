@@ -40,13 +40,31 @@ htmlcov/
 *.local
 .env
 
-# Sprint 8UF B.7: Artifact cleanup patterns
+# Artifact hygiene — bytecode
+*.pyc
+*.pyo
+__pycache__/
+*.so
+.Python
+
+# Artifact hygiene — backup/backup-source variants
 *.py.new
 *.py.new2
 *.py.bak
 *.bak
+*.bak_*
+*_bak_*
+.bak_*
 None
 None.*
+
+# Artifact hygiene — srclight backup
 .srclight/
-tests/test_pattern_matcher.py
+.srclight_bak/
+
+# Artifact hygiene — probe test venv
+tests/probe_*/runtime/.venv*/
+tests/probe_*/runtime/.venv*/
+
+# Test artifacts
 tests/test_pattern_matcher.py

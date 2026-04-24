@@ -1,5 +1,6 @@
 # Storage Layer Documentation
 ## Per CLAUDE.md - Sprint F195 Documentation Task
+*(F201B: canonical write path clarified — `async_ingest_findings_batch` is the primary ingress seam)*
 
 ---
 
@@ -41,12 +42,15 @@ The `knowledge/` module contains multiple storage implementations with distinct 
 
 **API**:
 - `async_initialize()` - async init wrapper
-- `async_record_shadow_run(...)` - insert run record
-- `async_record_shadow_findings_batch(..., max_batch_size=500)` - chunked batch insert
+- `async_ingest_findings_batch(...)` - **canonical batch write** (all pipeline findings go here)
+- `async_record_shadow_run(...)` - insert run record (shadow/analytics path)
+- `async_record_shadow_findings_batch(..., max_batch_size=500)` - shadow batch insert
 - `async_query_recent_findings(limit=10)` - query findings
 - `aclose()` - async idempotent shutdown
 
 **Storage**: DuckDB + LMDB WAL (dual-write pattern)
+
+**Canonical write path**: `async_ingest_findings_batch()` — all findings from `live_public_pipeline`, `live_feed_pipeline`, `ct_log_client`, `deep_research`, and `ti_feed_adapter` flow through this seam. Use this for all new finding ingress. The `async_record_shadow_*` methods are the shadow/analytics path used by `analytics_hook.py`.
 
 **Usage**: When to store sprint analytics and derived facts
 
@@ -216,7 +220,7 @@ OBSERVED(finding_id, source_type, first_seen, last_seen)
 
 1. **Sprint analytics/facts** → `DuckDBShadowStore`
    - Metrics, scorecards, source attribution
-   - Example: `await store.async_record_shadow_finding(finding)`
+   - Example: `await store.async_ingest_findings_batch(findings)` — canonical batch write
 
 2. **Entity resolution/identity** → `LanceDBIdentityStore`
    - Identity stitching, alias matching

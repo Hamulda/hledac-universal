@@ -1,4 +1,4 @@
-# Hledač — Real Architecture (aktualizováno 2026-04-23, F200C)
+# Hledač — Real Architecture (aktualizováno 2026-04-24, F201B)
 
 ## F200C Async Batch Public Pipeline (2026-04-23)
 
@@ -304,23 +304,23 @@ core/__main__.py runtime truth + report_dict + ExportHandoff
 
 | Modul/adresář | Co reálně dělá | Napojení na canonical sprint path | Testy | Potenciál / priorita |
 |---|---|---|---|---|
-| `forensics/` | metadata extraction, steganography, digital ghost for file artifacts | nenašel jsem přímý import z canonical sprint path | jen nepřímý odkaz ve `tests/test_sprint48_49.py` | vysoký potenciál jako enrichment layer |
+| `forensics/` | metadata extraction, steganography, digital ghost for file artifacts | **ano** — `forensics/enrichment_service.py` je wired do `duckdb_store._enrich_ct_findings_forensics()` (F195C); F198B rozšířeno o ForensicsResult na URL payload | `tests/probe_f196b/`, `tests/probe_f198b/` | **active — enrichment layer for CT findings** |
 | `knowledge/` | mix canonical store + analytics + entity/context modules | **ano**, hlavně `duckdb_store`, `semantic_store`, **graph_service** (F198A cross-sprint accumulation seam) | ano | aktivní jádro + zbytek částečně dormant |
 | `graph/` | `quantum_pathfinder.py` (ML overlay/read analytics), `duck_pgq_graph.py` (DuckDB SQL/PGQ donor backend) | **ano**, `graph_service` upsert v sprint_scheduler (F198A); quantum_pathfinder is read-only analytics | ano | read-side analytics overlay; DuckPGQGraph is donor backend, not truth store |
 | `loops/` | RL research loop (`ResearchLoop`) | **ano**, public pipeline jej importuje v P16/P17 bloku | vlastní coverage minimální | střední, ale experimentální |
 | `federated/` | federated learning, DP, peer/model store; část souborů archivní | nenašel jsem canonical import | 3 test hits | nízká priorita pro OSINT sprint |
 | `memory/` | `MemoryManager`, shared memory | **ano**, scheduler/public pipeline | mnoho test hitů | aktivní sidecar |
 | `layers/` | univerzální orchestration layers, content/communication/ghost wrappers | nenašel jsem canonical sprint import | bez přímých testů v canonical flow | spíš legacy/integration stack |
-| `multimodal/` | fusion/vision encoder primitives | nenašel jsem canonical import | bez testů | střední potenciál, dnes dormant |
+| `multimodal/` | fusion/vision encoder, DocumentExtractor, MultimodalEnricher | **ano** — `multimodal/analyzer.py` je wired do sprint_scheduler (F195C); F198C přidává DocumentExtractor pro PDF/image → CanonicalFinding | `tests/probe_f196b/`, `tests/probe_f198c/` | **active — vision + document enrichment layer** |
 | `context_optimization/` | cache/compression/MMR/active learning | **ano**, public pipeline používá MMR | bez cílených canonical testů | střední potenciál |
 | `coordinators/` | široká vrstva coordinatorů, archive/claims/security atd. | pouze `security_coordinator` je aktivně volán v exportu | bez přímé canonical suite mapy | velká část dormant/secondary |
 | `execution/` | `GhostExecutor` | nenašel jsem canonical import | 1 test hit | dormant |
 | `network/` | BGP/IPFS/CT scanner/favicon/JARM/JS extraction | **ano**, některé moduly jsou aktivní přes pipeline/adaptery | ano | částečně aktivní, částečně dormancy |
 | `planning/` | HTN planner, cost/search, task cache | nenašel jsem canonical sprint import | bez přímých testů v sprintu | dormant, možný future planner |
 | `policy/` | Nym/Tor transport policy | nenašel jsem přímé zapojení do canonical sprintu | pár test hitů | dormant |
-| `prefetch/` | prefetch cache/oracle/budget/reranker | nenašel jsem canonical import | bez testů | dormant |
+| `prefetch/` | prefetch cache/oracle/budget/reranker | **částečně** — `prefetch_oracle_integration.py` je aktivní v sprint_scheduler via `inject_prefetch_oracle()` (F200A); `prefetch_oracle.py` (predikční model) zůstává dormant; `prefetch_cache.py` je podpůrná cache, není wired | bez testů | **částečně aktivní — oracle integration active, cache/predictor dormant** |
 | `research/` | branch manager, scheduler, prioritizer | nenašel jsem canonical import | 10 test hitů | dormant/alternative scheduler stack |
-| `stealth/` | `StealthManager`, `StealthSession`, host telemetry/token bucket | nenašel jsem přímý canonical import; public fetcher má vlastní stealth logic | 3 test hits | dobrý kandidát na sjednocení stealth vrstvy |
+| `stealth/` | `StealthManager`, `StealthSession`, host telemetry/token bucket | **ano** via `stealth/stealth_session.py` → `public_fetcher.py` (F195C canonical StealthSession wired); `StealthManager` is secondary owner | 3 test hits | **ACTIVE — canonical stealth surface in fetch path** |
 | `security/` | audit, destruction, deep research security, obfuscation, encryption | canonical export používá `security_coordinator` z coordinators, ne tyto moduly přímo | několik testů | většinou dormant pro sprint path |
 | `text/` | encoding/hash/unicode analyzers | nenašel jsem přímé canonical napojení | hodně test hitů | usable analyzers, dnes mimo sprint |
 | `transport/` | Tor/I2P/Nym/circuit breaker/resolver | `core.__main__` importuje `TorTransport`; resolver/testy existují | ano | částečně aktivní |
@@ -499,6 +499,31 @@ DeepProbe findings now flow through the canonical persist path:
 - `TestF201ALLMPathConcurrency`: F201A-5/6 (load/release lifecycle)
 - `TestF201AImportContract`: root import surface verification
 - 320 probe tests across F196A-F201A passing
+
+## F201C Repository Artifact Hygiene (2026-04-24)
+
+**Přidáno** — hygiene guards preventing bytecode and ghost backup artifacts from entering tracked tree:
+
+**Ghost artifact cleanup (F201C-1)**:
+- `runtime/telemetry.py.bak_F180F` — removed from git index (was tracked ghost backup)
+- `tests/probe_8bh/runtime/.venv_ddgs/` — removed from git index (test venv artifact)
+- `.srclight_bak/index.db*` — removed from git index (srclight backup artifact)
+
+**`.gitignore` artifact patterns**:
+- Bytecode: `__pycache__/`, `*.pyc`, `*.pyo`, `*.so`
+- Ghost backups: `*.bak`, `*.bak_*`, `*_bak_*`, `.bak_*`
+- Srclight: `.srclight/`, `.srclight_bak/`
+- Probe venv: `tests/probe_*/runtime/.venv*/`
+
+**Probe tests**: `tests/probe_f201c/test_repo_artifact_hygiene.py` — 6 invariants:
+- `test_no_tracked_pycache`: `__pycache__/` not tracked
+- `test_no_tracked_pyc`: `*.pyc`/`*.pyo` not tracked
+- `test_no_tracked_dsvc`: `.DS_Store` not tracked
+- `test_no_tracked_bak_files`: ghost backup source not tracked
+- `test_no_tracked_srclight_bak`: `.srclight_bak/` not tracked
+- `test_no_tracked_probe_venv`: probe venv not tracked
+
+**Ghost audit methodology**: counts source `.py` call-sites, not bytecode. Untracked user directories (`.backup/`, `.codebase-memory/`, `.full-review/`, `rl/.sprint_policy_state.json`) are excluded from hygiene scope.
 
 ## Architectural verdict
 
