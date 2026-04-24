@@ -21,7 +21,7 @@ Aktualizace po reálném auditu repozitáře dne 2026-04-24. Audit četl skuteč
   - `e40035d feat: sprint F200D integration — ghost module cleanup, semantic dedup, stealth, prefetch`
   - `2e0f252 fix: sprint F200D pre-integration — async patterns, scheduler bounds, optimizations`
 - `F200D` work exists outside this original roadmap: ghost cleanup hardening, async-pattern fixes, scheduler bounds, JARM/hypothesis optimizations and probe lane `tests/probe_f196c/` → **8 passed**.
-- New debt found by the audit is tracked below as `F201A` through `F201C`. `F201A` is the next blocker because every phase Definition of Done still requires `python smoke_runner.py --smoke`.
+- New debt found by the audit was tracked below as `F201A` through `F201C`; strategic audit 2026-04-24 verified those lanes as done enough for Phase 2 planning (`tests/probe_f201a`-`f201c` green and smoke green).
 
 ### Changes since 2026-04-23 baseline
 
@@ -1096,7 +1096,9 @@ Není potřeba generovat další implementační prompt; fáze je již hotová v
 
 ---
 
-## F201A — Smoke Runner Concurrency Contract Repair
+## [DONE] F201A — Smoke Runner Concurrency Contract Repair
+
+**Strategic audit 2026-04-24:** hotovo v commitu `7179a2c feat: sprint F201A — repair smoke concurrency contract`. Ověřeno: `pytest tests/probe_f201a tests/probe_f201b tests/probe_f201c -q` → **33 passed** a `python smoke_runner.py --smoke` → **SMOKE TEST PASSED**.
 
 ### 1. Název a cíl fáze
 
@@ -1185,7 +1187,9 @@ Commit message formát: "feat: sprint F201A — repair smoke concurrency contrac
 
 ---
 
-## F201B — Truth Docs Drift Repair
+## [DONE] F201B — Truth Docs Drift Repair
+
+**Strategic audit 2026-04-24:** hotovo v commitu `e9fc143 chore: sprint F201B — artifact hygiene, doc updates, srclight cleanup`. Truth docs nyní uvádějí `network.session_runtime._check_gathered`, canonical write seam `async_ingest_findings_batch()` a F201B probe lane prochází.
 
 ### 1. Název a cíl fáze
 
@@ -1263,7 +1267,9 @@ Commit message formát: "feat: sprint F201B — repair truth docs drift"
 
 ---
 
-## F201C — Repository Artifact Hygiene And Ghost Bytecode Cleanup
+## [DONE] F201C — Repository Artifact Hygiene And Ghost Bytecode Cleanup
+
+**Strategic audit 2026-04-24:** F201C probe lane je přítomná a zelená. Audit zároveň zjistil, že poslední hygiene commit historicky obsahuje rozsáhlé tracked test/runtime artefakty pod `tests/probe_8bh/runtime/.venv_ddgs/`; Phase 2 proto obsahuje samostatnou kvalitu repozitáře jako průběžný DoD, ale hlavní strategický plán se soustředí na měřitelnou OSINT hodnotu.
 
 ### 1. Název a cíl fáze
 
@@ -1337,10 +1343,755 @@ Commit message formát: "feat: sprint F201C — add repository artifact hygiene 
 
 ---
 
+## Phase 2 Roadmap
+
+### Strategic Audit Baseline 2026-04-24
+
+Audit četl skutečné soubory v aktuálním repozitáři: `REAL_ARCHITECTURE.md`, `GHOST_INVARIANTS.md`, `STORAGE_LAYER_DOCUMENTATION.md`, `LONGTERM_PLAN.md`, `project_types.py`, `core/__main__.py`, `runtime/sprint_scheduler.py`, `knowledge/duckdb_store.py`, `pipeline/live_public_pipeline.py`, `pipeline/live_feed_pipeline.py`, `intelligence/`, `knowledge/`, `network/`, `forensics/`, `multimodal/`, `graph/`, `rl/`, `discovery/`, `fetching/`, `transport/`, `security/`, `dht/`, `tools/`, `export/` a ukázkové benchmark/export artefakty.
+
+Aktuální runtime baseline:
+
+- `python smoke_runner.py --smoke` → **SMOKE TEST PASSED**.
+- `pytest tests/probe_f201a tests/probe_f201b tests/probe_f201c -q` → **33 passed**.
+- `async_ingest_findings_batch()` má reálné canonical call-sites z `live_public_pipeline.py`, `live_feed_pipeline.py`, `runtime/sprint_scheduler.py`, `deep_research/probe_runner.py`, `discovery/ti_feed_adapter.py`, `intelligence/ct_log_client.py` a souvisejících producerů.
+- Některé schopnosti jsou silné, ale nedostatečně využité v canonical sprint path: `intelligence/identity_stitching.py`, `intelligence/data_leak_hunter.py`, `intelligence/pastebin_monitor.py`, `intelligence/github_secret_scanner.py`, `intelligence/temporal_archaeologist.py`, `knowledge/graph_rag.py`, `knowledge/rag_engine.py`, `network/open_storage_scanner.py`, `network/js_bundle_extractor.py`, `transport/transport_resolver.py`, `security/pii_gate.py`.
+- M1 8 GB UMA není jen limit: je to design constraint pro lokální-first OSINT, kde vítězí bounded extraction, streaming pivots, cheap heuristics před ML, lazy model lifecycle a auditovatelná evidence nad masivním crawlingem.
+
+Strategické pravidlo Phase 2: žádná fáze není “jen cleanup”. Každá fáze musí zvýšit analytickou hodnotu, přidat měřitelný signal nebo snížit analyst time-to-answer. Cleanup/hygiene je povinný DoD, ne samostatný cíl.
+
+---
+
+## F202A — Evidence Envelope And Signal Schema
+
+**Proč:** systém už sbírá findings, ale analyst potřebuje vědět “proč je to důležité”, jaký je evidence chain a jaké další pivoty z toho plynou.
+
+### Soubory k vytvoření/upravení
+
+- `knowledge/finding_envelope.py` — nový bounded adapter pro evidence envelope: `FindingEnvelope`, `EvidencePointer`, `SignalFacet`, `to_canonical_finding()`, `from_canonical_result()`.
+- `knowledge/duckdb_store.py` — uložit envelope metadata přes existující provenance/payload JSON bez změny canonical write seam.
+- `export/sprint_exporter.py` — přidat envelope fields do export handoffu.
+- `export/sprint_markdown_reporter.py` — zobrazit evidence pointers, signal facets a analyst next pivots bez fulltext dumpu.
+- `tests/probe_f202a/test_evidence_envelope_schema.py` — probe lane.
+- `REAL_ARCHITECTURE.md` — zdokumentovat envelope jako active metadata layer, ne nový storage owner.
+
+### Definition of Done
+
+- Každý nový envelope producer zapisuje pouze přes `async_ingest_findings_batch()`.
+- Envelope má bounded size: max 8 evidence pointers, max 12 facets, max 5 next pivots na finding.
+- Export umí zobrazit evidence pointers i bez LLM.
+- `pytest tests/probe_f202a/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202a/test_evidence_envelope_schema.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202A — EVIDENCE ENVELOPE AND SIGNAL SCHEMA]
+
+Kontext:
+
+Canonical sprint owner je core/__main__.py::run_sprint().
+Canonical write seam je knowledge/duckdb_store.py::async_ingest_findings_batch().
+CanonicalFinding je v knowledge/duckdb_store.py a má omezené pole payload_text/provenance; nepřidávej do něj těžký mutable metadata blob bez auditu všech call-sites.
+
+Co již existuje a funguje:
+
+live_public_pipeline.py, live_feed_pipeline.py, deep_research/probe_runner.py a ct_log_client.py už produkují CanonicalFinding.
+export/sprint_exporter.py a export/sprint_markdown_reporter.py už tvoří sprint reporty.
+
+Zadání:
+
+Implementuj bounded evidence envelope layer, který umožní každému findingu nést auditovatelný důvod, evidence pointers, signal facets a suggested next pivots. Envelope musí být serializovatelný do payload/provenance bez obcházení async_ingest_findings_batch().
+
+Soubory k úpravě/vytvoření:
+
+knowledge/finding_envelope.py — nový datový adapter a size guards
+knowledge/duckdb_store.py — fail-soft ingest/read helpers pro envelope payload
+export/sprint_exporter.py — export envelope fields
+export/sprint_markdown_reporter.py — markdown rendering evidence pointers
+tests/probe_f202a/test_evidence_envelope_schema.py — TDD probe tests
+REAL_ARCHITECTURE.md — zdokumentuj active metadata layer
+
+Constraints:
+
+- Žádný nový persistent write path.
+- Envelope max size musí být bounded a deterministický.
+- Fail-soft: nevalidní envelope nesmí zablokovat finding, jen degradovat na plain finding.
+- M1 safe: žádný model load, žádný JS renderer.
+
+Definition of Done:
+
+pytest tests/probe_f202a/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+export report ukáže evidence pointers a next pivots u envelope findings
+
+Commit message formát: "feat: sprint F202A — add evidence envelope schema"
+```
+
+---
+
+## F202B — Entity Extraction And Identity Stitching
+
+**Proč:** pokročilý OSINT nestojí na izolovaných URL, ale na spojování aliasů, e-mailů, domén, handles a organizací do vysvětlitelných identit.
+
+### Soubory k vytvoření/upravení
+
+- `intelligence/entity_signal_extractor.py` — nový lightweight extractor z `CanonicalFinding.payload_text`/`provenance`: email, domain, handle, org-ish names, wallet-ish IDs.
+- `intelligence/identity_stitching.py` — přidat bounded canonical adapter pro `IdentityProfile` bez rozšiřování starého example API.
+- `runtime/sprint_scheduler.py` — po accepted findings spustit optional identity stitch sidecar a ukládat derived findings přes canonical seam.
+- `knowledge/graph_service.py` — zapisovat identity edges jako cross-sprint memory.
+- `export/sprint_markdown_reporter.py` — “identity candidates” sekce s confidence a evidence.
+- `tests/probe_f202b/test_identity_stitching_canonical.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Minimálně e-mail, domain a username handle jsou extrahované deterministicky bez modelu.
+- Identity match je explainable: každá edge má signals a evidence pointers.
+- Sidecar je bounded: max 500 candidate profiles za sprint, max 2 000 pair comparisons.
+- `pytest tests/probe_f202b/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202b/test_identity_stitching_canonical.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202B — ENTITY EXTRACTION AND IDENTITY STITCHING]
+
+Kontext:
+
+intelligence/identity_stitching.py už obsahuje IdentityStitchingEngine s M1-friendly fuzzy/string heuristikami, ale není dostatečně wired do canonical sprint path.
+knowledge/graph_service.py už existuje jako cross-sprint memory seam.
+
+Co již existuje a funguje:
+
+Canonical findings přicházejí přes duckdb_store.async_ingest_findings_batch().
+F202A evidence envelope poskytuje místo pro evidence pointers a signal facets.
+
+Zadání:
+
+Vytvoř deterministic entity extraction sidecar nad accepted findings a zapoj IdentityStitchingEngine tak, aby produkoval derived identity findings a graph edges. Výsledek musí být explainable a bounded pro M1 Air 8 GB.
+
+Soubory k úpravě/vytvoření:
+
+intelligence/entity_signal_extractor.py — nový extractor + tests-first contract
+intelligence/identity_stitching.py — canonical adapter a bounds
+runtime/sprint_scheduler.py — optional sidecar hook po accepted findings
+knowledge/graph_service.py — identity edge upsert helper
+export/sprint_markdown_reporter.py — identity candidate rendering
+tests/probe_f202b/test_identity_stitching_canonical.py — probe tests
+REAL_ARCHITECTURE.md — active identity sidecar docs
+
+Constraints:
+
+- Žádné ML modely v této fázi.
+- Max 500 profiles a max 2 000 comparisons per sprint.
+- Derived findings jdou přes async_ingest_findings_batch().
+- Graph writes jsou fail-soft a advisory.
+
+Definition of Done:
+
+pytest tests/probe_f202b/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+identity candidates mají confidence, signals a evidence pointers
+
+Commit message formát: "feat: sprint F202B — wire identity stitching sidecar"
+```
+
+---
+
+## F202C — Asset Exposure Correlator
+
+**Proč:** CT logs, DNS, BGP, JARM, open storage a exposed service signály jsou silné samostatně, ale analyst potřebuje korelovaný attack surface pohled.
+
+### Soubory k vytvoření/upravení
+
+- `intelligence/exposure_correlator.py` — nový correlator pro domain/IP/service/bucket/cert fingerprints.
+- `network/open_storage_scanner.py` — adapter output na exposure signals bez přímé persistence.
+- `network/jarm_fingerprinter.py` — bounded fingerprint facade pro correlator.
+- `intelligence/ct_log_client.py` — přidat normalized cert/domain facets do envelope metadata.
+- `runtime/sprint_scheduler.py` — volitelný exposure correlation hook po CT/public/feed branchích.
+- `tests/probe_f202c/test_asset_exposure_correlator.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Correlator vytvoří asset exposure finding pro multi-signal asset, např. CT + open storage nebo DNS + JARM.
+- External calls mají timeout a graceful fallback.
+- Žádné persistence mimo `async_ingest_findings_batch()`.
+- `pytest tests/probe_f202c/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202c/test_asset_exposure_correlator.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202C — ASSET EXPOSURE CORRELATOR]
+
+Kontext:
+
+Repo už má intelligence/ct_log_client.py, network/bgp_monitor.py, network/jarm_fingerprinter.py, network/open_storage_scanner.py, intelligence/shodan_wrapper.py a passive DNS surfaces.
+Tyto signály jsou užitečné, ale zatím nejsou sjednocené do attack surface findingů.
+
+Co již existuje a funguje:
+
+CT log findings jsou canonical.
+F202A envelope a F202B entity sidecar dávají metadata/evidence formát.
+
+Zadání:
+
+Vytvoř AssetExposureCorrelator, který bere bounded set signalů z aktuálního sprintu a produkuje explainable exposure findings: exposed host, cert-domain relation, open bucket, suspicious service fingerprint, infra cluster.
+
+Soubory k úpravě/vytvoření:
+
+intelligence/exposure_correlator.py — nový correlator
+network/open_storage_scanner.py — normalize scan result DTO
+network/jarm_fingerprinter.py — bounded/fail-soft fingerprint facade
+intelligence/ct_log_client.py — cert/domain facets pro envelope
+runtime/sprint_scheduler.py — exposure hook
+tests/probe_f202c/test_asset_exposure_correlator.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- External calls timeout + graceful fallback.
+- asyncio.gather vždy return_exceptions=True + _check_gathered().
+- Correlation is bounded: max 1 000 assets, max 3 signals per asset in sprint memory.
+- Persist only via async_ingest_findings_batch().
+
+Definition of Done:
+
+pytest tests/probe_f202c/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+sample correlated exposure finding includes evidence pointers and confidence rationale
+
+Commit message formát: "feat: sprint F202C — correlate asset exposure signals"
+```
+
+---
+
+## F202D — Leak And Secret Sentinel
+
+**Proč:** nejvyšší OSINT hodnota často přichází z uniklých tokenů, paste dumpů a GitHub secret stop; systém má moduly, ale potřebuje bezpečný bounded canonical lane.
+
+### Soubory k vytvoření/upravení
+
+- `intelligence/leak_sentinel.py` — nový coordinator nad pastebin/GitHub/data leak moduly.
+- `intelligence/data_leak_hunter.py` — bounded single-shot adapter bez background monitoring loopu v canonical sprintu.
+- `intelligence/pastebin_monitor.py` — normalize `PasteFinding` na safe redacted finding.
+- `intelligence/github_secret_scanner.py` — org/repo search adapter s timeoutem a redaction.
+- `security/pii_gate.py` — redaction guard pro secrets/PII před exportem.
+- `runtime/sprint_scheduler.py` — optional leak sentinel branch.
+- `tests/probe_f202d/test_leak_secret_sentinel.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Secret values jsou v exportu masked; raw secret není uložen do reportu.
+- Sentinel produkuje canonical findings se `source_type="leak_sentinel"`.
+- API absence/rate-limit neblokuje sprint.
+- `pytest tests/probe_f202d/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202d/test_leak_secret_sentinel.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202D — LEAK AND SECRET SENTINEL]
+
+Kontext:
+
+intelligence/data_leak_hunter.py, intelligence/pastebin_monitor.py a intelligence/github_secret_scanner.py existují, ale canonical sprint path má používat bounded single-shot práci, ne long-running monitoring loop.
+security/pii_gate.py existuje jako safety seam.
+
+Co již existuje a funguje:
+
+Canonical write path a F202A envelope.
+Scheduler má branch/cycle architecture a fail-soft conventions.
+
+Zadání:
+
+Implementuj LeakSecretSentinel jako bounded optional branch. Převáděj paste/GitHub/breach signály na redacted CanonicalFinding, přidej evidence pointers a nikdy neukládej raw secret do exportu.
+
+Soubory k úpravě/vytvoření:
+
+intelligence/leak_sentinel.py — nový coordinator
+intelligence/data_leak_hunter.py — bounded adapter
+intelligence/pastebin_monitor.py — safe conversion helper
+intelligence/github_secret_scanner.py — timeout/redaction adapter
+security/pii_gate.py — redaction guard
+runtime/sprint_scheduler.py — optional branch hook
+tests/probe_f202d/test_leak_secret_sentinel.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- No raw secrets in report/export.
+- External calls timeout + fail-soft.
+- No background monitoring loop in sprint.
+- Persist only via async_ingest_findings_batch().
+
+Definition of Done:
+
+pytest tests/probe_f202d/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+probe verifies raw secret redaction and canonical persistence
+
+Commit message formát: "feat: sprint F202D — add leak and secret sentinel"
+```
+
+---
+
+## F202E — Temporal Archaeology And Drift Timelines
+
+**Proč:** OSINT analyst potřebuje časovou osu: kdy se asset objevil, kdy zmizel, kdy se změnil certifikát, metadata nebo identity signal.
+
+### Soubory k vytvoření/upravení
+
+- `intelligence/timeline_synthesizer.py` — nový bounded timeline builder z findings, archive hits, CT timestamps a metadata timestamps.
+- `intelligence/temporal_archaeologist.py` — adapter pro canonical timeline events.
+- `intelligence/archive_discovery.py` — normalized archive event output.
+- `forensics/metadata_extractor.py` — expose timestamp facets pro timeline.
+- `export/sprint_markdown_reporter.py` — timeline section.
+- `tests/probe_f202e/test_temporal_archaeology_timeline.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Timeline obsahuje event type, timestamp, source, confidence a evidence pointer.
+- Missing/invalid timestamps jsou fail-soft a nevyhazují celý sprint.
+- Timeline export funguje bez LLM.
+- `pytest tests/probe_f202e/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202e/test_temporal_archaeology_timeline.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202E — TEMPORAL ARCHAEOLOGY AND DRIFT TIMELINES]
+
+Kontext:
+
+Repo má intelligence/temporal_archaeologist.py, intelligence/archive_discovery.py a forensics/metadata_extractor.py. Tyto moduly mohou dát analystovi časový kontext, ale nejsou sjednocené v canonical sprint outputu.
+
+Co již existuje a funguje:
+
+F202A evidence envelope a canonical findings.
+Export markdown report already exists.
+
+Zadání:
+
+Vytvoř TimelineSynthesizer, který skládá CT timestamps, archive observations, document metadata timestamps a finding timestamps do bounded explainable timeline. Výsledek přidej do exportu a volitelně jako derived timeline findings přes canonical seam.
+
+Soubory k úpravě/vytvoření:
+
+intelligence/timeline_synthesizer.py — nový timeline builder
+intelligence/temporal_archaeologist.py — canonical adapter
+intelligence/archive_discovery.py — normalized archive events
+forensics/metadata_extractor.py — timestamp facets
+export/sprint_markdown_reporter.py — timeline rendering
+tests/probe_f202e/test_temporal_archaeology_timeline.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- No heavy model load.
+- Max 200 timeline events per sprint export.
+- Invalid timestamps are skipped fail-soft.
+- Derived findings persist only through async_ingest_findings_batch().
+
+Definition of Done:
+
+pytest tests/probe_f202e/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+markdown report includes a bounded timeline with evidence pointers
+
+Commit message formát: "feat: sprint F202E — add temporal archaeology timelines"
+```
+
+---
+
+## F202F — Local Graph/RAG Analyst Workbench
+
+**Proč:** po sběru dat musí analyst umět lokálně položit otázku “co spolu souvisí a proč”, bez cloud závislosti a bez načtení velkých modelů vedle rendereru.
+
+### Soubory k vytvoření/upravení
+
+- `knowledge/analyst_workbench.py` — nový query facade nad `graph_service`, `graph_rag`, `rag_engine`, `vector_store`.
+- `knowledge/graph_rag.py` — bounded context assembly adapter.
+- `knowledge/rag_engine.py` — no-model fallback retrieval path pro M1 safe quick answers.
+- `knowledge/vector_store.py` — expose bounded top-k read helper.
+- `export/jsonld_exporter.py` — export graph/RAG evidence context.
+- `tests/probe_f202f/test_local_graph_rag_workbench.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Workbench odpoví na lokální dotaz přes graph/vector evidence bez external network callu.
+- Top-k a context bytes jsou bounded.
+- Pokud model není loaded, vrátí extractive answer + evidence pointers.
+- `pytest tests/probe_f202f/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202f/test_local_graph_rag_workbench.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202F — LOCAL GRAPH/RAG ANALYST WORKBENCH]
+
+Kontext:
+
+knowledge/graph_rag.py, knowledge/rag_engine.py, knowledge/vector_store.py a knowledge/graph_service.py existují, ale analyst-facing local query facade chybí.
+
+Co již existuje a funguje:
+
+Cross-sprint graph accumulation a vector/semantic stores.
+F202A evidence envelope.
+
+Zadání:
+
+Vytvoř analyst_workbench.py jako lokální read-side facade pro otázky nad findings, graphem a vektory. Musí fungovat i bez LLM: extractive odpověď, related entities, evidence pointers. Pokud LLM použiješ, load/unload pouze přes brain/model_lifecycle.py.
+
+Soubory k úpravě/vytvoření:
+
+knowledge/analyst_workbench.py — nový facade
+knowledge/graph_rag.py — bounded context adapter
+knowledge/rag_engine.py — no-model fallback retrieval
+knowledge/vector_store.py — bounded top-k helper
+export/jsonld_exporter.py — evidence context export
+tests/probe_f202f/test_local_graph_rag_workbench.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- No external network calls.
+- Model lifecycle only through brain/model_lifecycle.py.
+- No model + JS renderer concurrently.
+- Context max bytes and top-k are bounded.
+
+Definition of Done:
+
+pytest tests/probe_f202f/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+workbench returns answer, related entities and evidence pointers for fixture data
+
+Commit message formát: "feat: sprint F202F — add local graph rag workbench"
+```
+
+---
+
+## F202G — Hypothesis-Driven Pivot Planner
+
+**Proč:** nejlepší OSINT nástroj nemá jen sbírat; má navrhovat další pivots podle přijatých findings, nejistot a source economics.
+
+### Soubory k vytvoření/upravení
+
+- `runtime/pivot_planner.py` — nový bounded planner pro next sprint queries/pivots.
+- `brain/hypothesis_engine.py` — adapter pro cheap hypothesis scoring bez povinného model loadu.
+- `tot_integration.py` — optional ToT scoring přes model lifecycle, jen mimo JS renderer path.
+- `runtime/sprint_scheduler.py` — přijmout planner suggestions jako advisory source ordering input.
+- `discovery/source_registry.py` — mapovat pivot typy na source adapters.
+- `tests/probe_f202g/test_hypothesis_pivot_planner.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Planner z accepted findings vytvoří max 20 next pivots s reason, expected value a source hint.
+- Scheduler bere planner jako advisory only; sprint owner se nemění.
+- Model path je optional a M1-safe.
+- `pytest tests/probe_f202g/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202g/test_hypothesis_pivot_planner.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202G — HYPOTHESIS-DRIVEN PIVOT PLANNER]
+
+Kontext:
+
+brain/hypothesis_engine.py, tot_integration.py a scheduler source economics existují. Chybí jasný bounded planner, který překládá accepted findings na next pivots.
+
+Co již existuje a funguje:
+
+F199A reward source adaptation, F200A prefetch oracle, F202A evidence envelope.
+
+Zadání:
+
+Vytvoř PivotPlanner, který z accepted findings a envelope facets generuje bounded next pivots: domain pivot, identity pivot, leak pivot, archive pivot, graph pivot. Scheduler smí tyto pivots použít jako advisory ordering input, ne jako nový sprint owner.
+
+Soubory k úpravě/vytvoření:
+
+runtime/pivot_planner.py — nový planner
+brain/hypothesis_engine.py — cheap scoring adapter
+tot_integration.py — optional model-backed scoring přes model_lifecycle
+runtime/sprint_scheduler.py — advisory hook
+discovery/source_registry.py — pivot type mapping
+tests/probe_f202g/test_hypothesis_pivot_planner.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- Max 20 pivots per sprint.
+- Planner failure never blocks export or sprint.
+- Model load/unload only via brain/model_lifecycle.py.
+- No model + JS renderer concurrently.
+
+Definition of Done:
+
+pytest tests/probe_f202g/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+planner output includes reason, expected_value, source_hint and evidence pointers
+
+Commit message formát: "feat: sprint F202G — add hypothesis pivot planner"
+```
+
+---
+
+## F202H — OPSEC Transport Policy Engine
+
+**Proč:** pokročilý OSINT na lokálním stroji musí být schopný zvolit clearnet/Tor/I2P/nym transport podle risku, bez toho aby OPSEC logika byla rozházená po fetcherech.
+
+### Soubory k vytvoření/upravení
+
+- `runtime/opsec_policy.py` — nový policy engine pro transport posture a renderer/model mutual exclusion.
+- `transport/transport_resolver.py` — přijmout policy decision facade.
+- `stealth/stealth_session.py` — expose safe capability flags bez side effects.
+- `fetching/public_fetcher.py` — aplikovat policy timeout/concurrency hints.
+- `network/session_runtime.py` — centralizovat `_check_gathered` usage pro policy fanout tests.
+- `tests/probe_f202h/test_opsec_transport_policy.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Policy vrací transport, timeout class, renderer_allowed a max_concurrency pro query/source.
+- LLM loaded path vynutí `FETCH_SEMAPHORE` limit 3 a renderer disallow.
+- Policy failure fallbackuje na safe clearnet bounded mode.
+- `pytest tests/probe_f202h/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202h/test_opsec_transport_policy.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202H — OPSEC TRANSPORT POLICY ENGINE]
+
+Kontext:
+
+transport/transport_resolver.py, stealth/stealth_session.py, fetching/public_fetcher.py a network/session_runtime.py existují. M1 invariant zakazuje současně LLM model + JS renderer.
+
+Co již existuje a funguje:
+
+FETCH_SEMAPHORE lazy proxy a adjust_fetch_workers().
+StealthSession + Tor/Camoufox/nodriver fallback.
+
+Zadání:
+
+Vytvoř runtime/opsec_policy.py jako jediný read-side policy engine pro transport posture. Integruj ho do transport resolveru a public fetcheru jako advisory/safety layer. Policy musí bránit model+renderer konfliktu a dávat timeout/concurrency hints.
+
+Soubory k úpravě/vytvoření:
+
+runtime/opsec_policy.py — nový policy engine
+transport/transport_resolver.py — policy integration
+stealth/stealth_session.py — safe capability flags
+fetching/public_fetcher.py — apply timeout/concurrency hints
+network/session_runtime.py — gather helper tests if needed
+tests/probe_f202h/test_opsec_transport_policy.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- No new sprint owner.
+- No model lifecycle bypass.
+- asyncio.gather return_exceptions=True + _check_gathered().
+- Fail-safe fallback is bounded clearnet, not crash.
+
+Definition of Done:
+
+pytest tests/probe_f202h/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+probe verifies renderer is disabled while model context is active
+
+Commit message formát: "feat: sprint F202H — add opsec transport policy"
+```
+
+---
+
+## F202I — Multimodal Evidence Triage
+
+**Proč:** dokumenty a obrázky už umí generovat findings, ale state-of-the-art OSINT potřebuje z nich vytáhnout EXIF/GPS/OCR/loga/text a prioritizovat je jako evidence, ne jako vedlejší přílohy.
+
+### Soubory k vytvoření/upravení
+
+- `multimodal/evidence_triage.py` — nový bounded triage coordinator pro PDF/image artefakty.
+- `multimodal/analyzer.py` — emitovat triage facets do envelope.
+- `forensics/metadata_extractor.py` — sjednotit EXIF/GPS/timestamp output.
+- `tools/ocr_engine.py` — bounded OCR facade s timeoutem.
+- `tools/vision_analyzer.py` — optional lightweight image features bez VLM defaultu.
+- `pipeline/live_public_pipeline.py` — optional document/image discovery hook bez změny tuple contractu.
+- `tests/probe_f202i/test_multimodal_evidence_triage.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- PDF/image fixture vytvoří canonical document finding s triage facets.
+- OCR/EXIF failure neblokuje finding.
+- VLM není default; pokud se použije, jde přes model lifecycle a memory guard.
+- `pytest tests/probe_f202i/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202i/test_multimodal_evidence_triage.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202I — MULTIMODAL EVIDENCE TRIAGE]
+
+Kontext:
+
+multimodal/analyzer.py už produkuje CanonicalFinding(source_type="document"). forensics/metadata_extractor.py, tools/ocr_engine.py a tools/vision_analyzer.py existují jako capability surfaces.
+
+Co již existuje a funguje:
+
+F198C document findings.
+F202A evidence envelope.
+
+Zadání:
+
+Vytvoř multimodal/evidence_triage.py, který pro PDF/image artefakty extrahuje bounded facets: title/author, EXIF/GPS, OCR snippets, file hashes, embedded URL/domain hits. Zapoj do live_public_pipeline jako optional hook bez změny live_feed tuple contractu.
+
+Soubory k úpravě/vytvoření:
+
+multimodal/evidence_triage.py — nový coordinator
+multimodal/analyzer.py — envelope facets
+forensics/metadata_extractor.py — normalized metadata output
+tools/ocr_engine.py — bounded OCR facade
+tools/vision_analyzer.py — lightweight image features
+pipeline/live_public_pipeline.py — optional hook
+tests/probe_f202i/test_multimodal_evidence_triage.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- No VLM by default.
+- Model load/unload only via brain/model_lifecycle.py.
+- No model + JS renderer concurrently.
+- OCR/metadata extraction timeout + fail-soft.
+
+Definition of Done:
+
+pytest tests/probe_f202i/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+document/image findings include triage facets and evidence pointers
+
+Commit message formát: "feat: sprint F202I — add multimodal evidence triage"
+```
+
+---
+
+## F202J — M1 Sustained Sprint Benchmark And Resource Governor
+
+**Proč:** “nejpokročilejší na M1 Air 8 GB” musí být měřitelné: 30min sprint bez swap spirály, bez model/renderer konfliktu a s jasnou throughput/quality metrikou.
+
+### Soubory k vytvoření/upravení
+
+- `runtime/resource_governor.py` — nový governor pro memory pressure, branch concurrency, model lease a renderer lease.
+- `brain/model_lifecycle.py` — expose read-only lease/status API bez druhého ownera.
+- `runtime/sprint_scheduler.py` — governor advisory input pro branch concurrency a windup.
+- `monitoring/sprint_dashboard.py` — zobrazit governor state a memory pressure.
+- `benchmarks/m1_sustained_sprint.py` — hermetic benchmark runner.
+- `tests/probe_f202j/test_m1_resource_governor.py`.
+- `REAL_ARCHITECTURE.md`.
+
+### Definition of Done
+
+- Hermetic benchmark reportuje findings/min, accepted ratio, peak RSS/UMA proxy, model lease count a renderer denied count.
+- Governor při critical memory sníží concurrency a nikdy nenutí model+renderer současně.
+- `pytest tests/probe_f202j/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+
+### Probe testy
+
+- `tests/probe_f202j/test_m1_resource_governor.py`
+
+### Claude Code prompt
+
+```text
+[FÁZE F202J — M1 SUSTAINED SPRINT BENCHMARK AND RESOURCE GOVERNOR]
+
+Kontext:
+
+M1 Air 8 GB UMA je tvrdý target. Repo má model_lifecycle.py, SprintScheduler, dashboard a benchmark artefakty, ale chybí jeden měřitelný sustained-sprint governor/benchmark contract.
+
+Co již existuje a funguje:
+
+Smoke prochází.
+FETCH_SEMAPHORE limit introspection funguje.
+Dashboard a scheduler counters existují.
+
+Zadání:
+
+Vytvoř ResourceGovernor jako advisory safety layer pro branch concurrency, model lease a renderer lease. Přidej hermetic M1 sustained benchmark, který měří OSINT throughput a memory safety bez networku. Governor nesmí být nový sprint owner.
+
+Soubory k úpravě/vytvoření:
+
+runtime/resource_governor.py — nový governor
+brain/model_lifecycle.py — read-only status/lease API
+runtime/sprint_scheduler.py — governor advisory hook
+monitoring/sprint_dashboard.py — governor state rendering
+benchmarks/m1_sustained_sprint.py — hermetic benchmark
+tests/probe_f202j/test_m1_resource_governor.py — probe tests
+REAL_ARCHITECTURE.md — docs
+
+Constraints:
+
+- Model lifecycle authority remains brain/model_lifecycle.py.
+- No model + JS renderer concurrently.
+- FETCH_SEMAPHORE limit=3 while model loaded.
+- Governor fail-soft fallback is safe low-concurrency mode.
+
+Definition of Done:
+
+pytest tests/probe_f202j/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+python benchmarks/m1_sustained_sprint.py --hermetic → writes bounded benchmark summary
+
+Commit message formát: "feat: sprint F202J — add m1 sustained sprint governor"
+```
+
+---
+
 ## Exit Criteria For The Whole Roadmap
 
-- Ghost authority surfaces are removed or truly wired. **DONE for source files as of 2026-04-24; bytecode/cache cleanup tracked in F201C.**
+- Ghost authority surfaces are removed or truly wired. **DONE for source files as of 2026-04-24; F201C probe lane is green.**
 - DeepProbe, semantic dedup, embeddings, graph accumulation and enrichers are on the canonical path. **DONE by probe evidence through F200C.**
 - Forensics and multimodal produce probe-covered, persisted, auditovatelné outputs. **DONE by F196B/F198B/F198C probes.**
 - Scheduler adapts based on real acceptance signal. **DONE by F199A probes.**
-- Performance work lands only after correctness and architecture debt are paid down. **Partially satisfied; next blocker is F201A because smoke is red.**
+- Smoke and F201 stabilization are green. **DONE as of strategic audit 2026-04-24.**
+- Phase 2 success means: findings become evidence envelopes, entities become graph memory, exposures/leaks/timelines become analyst-facing signal, and M1 sustained sprint performance is measured rather than assumed.
