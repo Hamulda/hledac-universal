@@ -1,5 +1,35 @@
 # LONGTERM_PLAN
 
+## Audit Update 2026-04-24
+
+Aktualizace po reálném auditu repozitáře dne 2026-04-24. Audit četl skutečné soubory v `universal/`, ne historické předpoklady:
+
+- Truth docs: `REAL_ARCHITECTURE.md`, `GHOST_INVARIANTS.md`, `STORAGE_LAYER_DOCUMENTATION.md`, `AGENTS.md`.
+- Canonical runtime: `core/__main__.py`, `runtime/sprint_scheduler.py`, `pipeline/live_feed_pipeline.py`, `pipeline/live_public_pipeline.py`, `knowledge/duckdb_store.py`.
+- Integrační moduly: `deep_probe.py`, `deep_research/probe_runner.py`, `semantic_deduplicator.py`, `embedding_pipeline.py`, `forensics/enrichment_service.py`, `multimodal/analyzer.py`, `knowledge/ann_index.py`, `prefetch/prefetch_oracle_integration.py`, `monitoring/sprint_dashboard.py`.
+- Probe lanes: `tests/probe_f196a/` až `tests/probe_f200c/`.
+
+### Audit verdict
+
+- `pytest tests/probe_f196a tests/probe_f196b tests/probe_f197a tests/probe_f197b tests/probe_f197c tests/probe_f198a tests/probe_f198b tests/probe_f198c tests/probe_f199a tests/probe_f199b tests/probe_f200a tests/probe_f200b tests/probe_f200c -q` → **307 passed, 1 warning**.
+- `python smoke_runner.py --smoke` → **FAILED** on stale `AdaptiveSemaphore` / `FETCH_SEMAPHORE` expectations:
+  - `AdaptiveSemaphore.__init__()` does not accept `initial_value`.
+  - root `FETCH_SEMAPHORE` is `_FetchSemaphoreProxy`, not `AdaptiveSemaphore`.
+  - smoke expects `current_limit` on a plain `asyncio.Semaphore`.
+- Original phases `F196A` through `F200C` have implementation commits and passing probe lanes, but historical commits did not preserve the intended one-phase-one-commit convention. Evidence commits:
+  - `9afd1b4 feat: sprint F200C integration — async batch pipeline, ANN fast path, prefetch oracle`
+  - `e40035d feat: sprint F200D integration — ghost module cleanup, semantic dedup, stealth, prefetch`
+  - `2e0f252 fix: sprint F200D pre-integration — async patterns, scheduler bounds, optimizations`
+- `F200D` work exists outside this original roadmap: ghost cleanup hardening, async-pattern fixes, scheduler bounds, JARM/hypothesis optimizations and probe lane `tests/probe_f196c/` → **8 passed**.
+- New debt found by the audit is tracked below as `F201A` through `F201C`. `F201A` is the next blocker because every phase Definition of Done still requires `python smoke_runner.py --smoke`.
+
+### Changes since 2026-04-23 baseline
+
+- New or newly-active files: `knowledge/ann_index.py`, `prefetch/prefetch_oracle_integration.py`, `monitoring/sprint_dashboard.py`, `tests/probe_f196a/` through `tests/probe_f200c/`, `tests/probe_f196c/`.
+- Deleted files in current git history: `runtime/intelligence_dispatcher.py`, `runtime/memory_watchdog.py`, `runtime/session_authority.py`, `rl/marl_coordinator.py`; backup variants for deleted runtime ghosts are also gone in history, while old bytecode artifacts may still exist locally.
+- Added dependencies in `requirements.txt`: `probables>=4.0.0`, `httpx>=0.27.0`, `pyzipper>=0.4.0`.
+- Current untracked/local artifacts observed but not part of this roadmap commit: `.backup/`, `.codebase-memory/`, `.full-review/`, `rl/.sprint_policy_state.json`, caches and `.DS_Store` files.
+
 ## Planning Baseline
 
 This plan is based on the current repo state in `universal/` as of 2026-04-23 and on the following sources:
@@ -30,7 +60,9 @@ This plan is based on the current repo state in `universal/` as of 2026-04-23 an
 
 ---
 
-## F196A — Canonical Baseline And Ghost Verdict
+## [DONE] F196A — Canonical Baseline And Ghost Verdict
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f196a/` passed as part of the 307-test run. `runtime/telemetry.py` is correctly retained as active; `runtime/intelligence_dispatcher.py`, `runtime/memory_watchdog.py`, `runtime/session_authority.py` and `rl/marl_coordinator.py` are deleted from source.
 
 ### 1. Název a cíl fáze
 
@@ -115,7 +147,9 @@ Commit message formát: "feat: sprint F196A — canonical baseline and ghost ver
 
 ---
 
-## F196B — Probe Coverage For Forensics And Multimodal
+## [DONE] F196B — Probe Coverage For Forensics And Multimodal
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f196b/` passed as part of the 307-test run. This lane also grew extra hardening tests for async correctness, memory bounds and security behavior.
 
 ### 1. Název a cíl fáze
 
@@ -191,7 +225,9 @@ Commit message formát: "feat: sprint F196B — add probe coverage for forensics
 
 ---
 
-## F197A — DeepProbe Canonical Ingest
+## [DONE] F197A — DeepProbe Canonical Ingest
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f197a/` passed as part of the 307-test run. `deep_research/probe_runner.py` now documents and calls `async_ingest_findings_batch()`.
 
 ### 1. Název a cíl fáze
 
@@ -270,7 +306,9 @@ Commit message formát: "feat: sprint F197A — wire DeepProbe into canonical in
 
 ---
 
-## F197B — Semantic Dedup At Canonical Write Seam
+## [DONE] F197B — Semantic Dedup At Canonical Write Seam
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f197b/` passed as part of the 307-test run. `DuckDBShadowStore._assess_finding_quality()` contains the fail-open semantic dedup hook.
 
 ### 1. Název a cíl fáze
 
@@ -343,7 +381,9 @@ Commit message formát: "feat: sprint F197B — add semantic dedup to canonical 
 
 ---
 
-## F197C — Embedding Pipeline Wiring In Public Pipeline
+## [DONE] F197C — Embedding Pipeline Wiring In Public Pipeline
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f197c/` passed as part of the 307-test run. `pipeline/live_public_pipeline.py` has embedding sidecar wiring and renderer/model guard checks.
 
 ### 1. Název a cíl fáze
 
@@ -419,7 +459,9 @@ Commit message formát: "feat: sprint F197C — wire embedding pipeline into pub
 
 ---
 
-## F198A — Cross-Sprint Graph Accumulation
+## [DONE] F198A — Cross-Sprint Graph Accumulation
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f198a/` passed as part of the 307-test run. `runtime/sprint_scheduler.py` has `_accumulate_findings_to_graph()` and fail-soft graph signal reads.
 
 ### 1. Název a cíl fáze
 
@@ -494,7 +536,9 @@ Commit message formát: "feat: sprint F198A — add cross-sprint graph accumulat
 
 ---
 
-## F198B — Forensics Metadata On Canonical Findings
+## [DONE] F198B — Forensics Metadata On Canonical Findings
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f198b/` passed as part of the 307-test run. `forensics/enrichment_service.py` exposes typed `ForensicsResult` and injects `finding.metadata["forensics"]`.
 
 ### 1. Název a cíl fáze
 
@@ -570,7 +614,9 @@ Commit message formát: "feat: sprint F198B — enrich canonical findings with f
 
 ---
 
-## F198C — Multimodal Document Findings
+## [DONE] F198C — Multimodal Document Findings
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f198c/` passed as part of the 307-test run. `multimodal/analyzer.py` has `DocumentExtractor` producing `CanonicalFinding(source_type="document")`.
 
 ### 1. Název a cíl fáze
 
@@ -647,7 +693,9 @@ Commit message formát: "feat: sprint F198C — add multimodal document findings
 
 ---
 
-## F199A — Real Reward Loop In Scheduler
+## [DONE] F199A — Real Reward Loop In Scheduler
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f199a/` passed as part of the 307-test run. Scheduler source weights adapt from `_source_quality_feedback`.
 
 ### 1. Název a cíl fáze
 
@@ -722,7 +770,9 @@ Commit message formát: "feat: sprint F199A — add reward-driven source weighti
 
 ---
 
-## F199B — Terminal Dashboard
+## [DONE] F199B — Terminal Dashboard
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f199b/` passed as part of the 307-test run. Dashboard lives at `monitoring/sprint_dashboard.py`, not `runtime/sprint_dashboard.py`.
 
 ### 1. Název a cíl fáze
 
@@ -794,7 +844,9 @@ Commit message formát: "feat: sprint F199B — add live terminal sprint dashboa
 
 ---
 
-## F200A — Prefetch Oracle
+## [DONE] F200A — Prefetch Oracle
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f200a/` passed as part of the 307-test run. The active integration file is `prefetch/prefetch_oracle_integration.py`; `prefetch/prefetch_oracle.py` remains a separate older oracle surface.
 
 ### 1. Název a cíl fáze
 
@@ -863,7 +915,9 @@ Commit message formát: "feat: sprint F200A — implement bounded prefetch oracl
 
 ---
 
-## F200B — LanceDB ANN Fast Path
+## [DONE] F200B — LanceDB ANN Fast Path
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f200b/` passed as part of the 307-test run. Active ANN file is `knowledge/ann_index.py` and the semantic dedup hook calls `check_ann_duplicate()`.
 
 ### 1. Název a cíl fáze
 
@@ -934,7 +988,9 @@ Commit message formát: "feat: sprint F200B — add LanceDB ANN fast path"
 
 ---
 
-## F200C — Async Batch Public Pipeline
+## [DONE] F200C — Async Batch Public Pipeline
+
+**Audit 2026-04-24:** implemented in current repo. Probe lane `tests/probe_f200c/` passed as part of the 307-test run. `python smoke_runner.py --smoke` still fails, but the failure is in smoke/concurrency contract drift, not in the F200C probe lane.
 
 ### 1. Název a cíl fáze
 
@@ -1006,10 +1062,285 @@ Commit message formát: "feat: sprint F200C — add bounded async batching to pu
 
 ---
 
+## [DONE] F200D — Pre-Integration Hardening
+
+### 1. Název a cíl fáze
+
+Zachytit již provedené hardening změny, které vznikly po původním plánu: async pattern fixes, scheduler bounds a micro-optimizations.
+
+### 2. Konkrétní soubory vytvořené/upravené
+
+- `utils/execution_optimizer.py` — bezpečnější handling nested async runtimes.
+- `network/jarm_fingerprinter.py` — async sleep místo blocking sleep.
+- `runtime/sprint_scheduler.py` — bounded latency EMA state.
+- `brain/hypothesis_engine.py` — string concat optimalizace v reasoning path.
+- `tests/probe_f196c/test_asyncio_run_patterns.py`
+- `tests/probe_f196c/test_sprint_scheduler_bounds.py`
+- `tests/probe_f196c/test_misc_optimizations.py`
+
+### 3. Definition of Done
+
+- `pytest tests/probe_f196c/ -q` passes.
+- Změny jsou dokumentované jako hotové v audit update.
+- Nezavádí se nový runtime owner ani nový write path.
+
+### 4. Probe testy
+
+- `tests/probe_f196c/test_asyncio_run_patterns.py`
+- `tests/probe_f196c/test_sprint_scheduler_bounds.py`
+- `tests/probe_f196c/test_misc_optimizations.py`
+
+### 5. Claude Code prompt pro tuto fázi
+
+Není potřeba generovat další implementační prompt; fáze je již hotová v commitu `2e0f252`.
+
+---
+
+## F201A — Smoke Runner Concurrency Contract Repair
+
+### 1. Název a cíl fáze
+
+Opravit drift mezi `smoke_runner.py` a aktuální concurrency realitou tak, aby `python smoke_runner.py --smoke` znovu prošel bez obcházení M1 memory invariantů.
+
+### 2. Konkrétní soubory k vytvoření/upravení
+
+- `smoke_runner.py` — aktualizovat smoke assertions na skutečný lazy proxy contract nebo na explicitní adaptive wrapper contract.
+- `utils/concurrency.py` — pokud se smoke rozhodne požadovat jednotný wrapper, doplnit bounded `current_limit`/limit introspection bez rozbití existing imports.
+- `resource_allocator.py` — případně sladit `AdaptiveSemaphore` constructor kompatibilitu (`initial_value` alias vs `initial_limit`) a root re-export.
+- `__init__.py` — jen pokud se mění root export contract.
+- `tests/probe_f201a/test_smoke_concurrency_contract.py` — nový probe test pro smoke contract.
+- `REAL_ARCHITECTURE.md` — aktualizovat Known test failures a concurrency smoke status.
+
+### 3. Definition of Done
+
+- `pytest tests/probe_f201a/ -q` passes.
+- `python smoke_runner.py --smoke` passes.
+- `FETCH_SEMAPHORE` při loaded LLM path stále respektuje limit 3 přes `adjust_fetch_workers(3)`.
+- Žádný model load/unload path není přesunut mimo `brain/model_lifecycle.py` / existing model manager lifecycle.
+- `REAL_ARCHITECTURE.md` už neuvádí AdaptiveSemaphore smoke failure jako aktuální baseline.
+
+### 4. Probe testy
+
+- `tests/probe_f201a/test_smoke_concurrency_contract.py`
+
+### 5. Claude Code prompt pro tuto fázi
+
+```text
+[FÁZE F201A — SMOKE RUNNER CONCURRENCY CONTRACT REPAIR]
+
+Kontext:
+
+Audit 2026-04-24 ověřil, že probes F196A-F200C passují: 307 passed.
+Současně `python smoke_runner.py --smoke` failuje na driftu mezi smoke expectations a aktuálním concurrency contractem:
+- AdaptiveSemaphore.__init__() nepřijímá `initial_value`
+- FETCH_SEMAPHORE je lazy `_FetchSemaphoreProxy`, ne AdaptiveSemaphore
+- smoke očekává `current_limit` na plain asyncio.Semaphore
+
+Co již existuje a funguje (relevantní pro tuto fázi):
+
+`utils/concurrency.py` poskytuje lazy `FETCH_SEMAPHORE` a `adjust_fetch_workers()`.
+`brain/model_manager.py` volá `adjust_fetch_workers(3)` při loaded LLM path a `adjust_fetch_workers(25)` při release.
+`resource_allocator.py` stále exportuje `AdaptiveSemaphore` kvůli root compatibility.
+
+Na co navazuješ:
+
+Na F200C/F200D hotový probe baseline. Tahle fáze je blocker pro roadmap DoD, protože každá fáze vyžaduje `python smoke_runner.py --smoke`.
+
+Zadání:
+
+1. Přečti `smoke_runner.py`, `utils/concurrency.py`, `resource_allocator.py`, `__init__.py` a relevantní model lifecycle callers.
+2. Rozhodni a implementuj jeden jasný compatibility contract:
+   - buď smoke test aktualizuj na lazy proxy reality,
+   - nebo zaveď bezpečný wrapper/introspection API tak, aby root export znovu splnil smoke bez rozbití pipeline.
+3. Zachovej M1 invariant: při loaded LLM path musí být fetch limit 3.
+4. Přidej probe test, který spustí smoke contract bez networku a ověří `adjust_fetch_workers(3)` / restore behavior.
+5. Aktualizuj `REAL_ARCHITECTURE.md` Known test failures.
+
+Soubory k úpravě/vytvoření:
+
+smoke_runner.py — aktualizace smoke assertions na skutečný contract
+utils/concurrency.py — případný limit introspection/helper
+resource_allocator.py — případný constructor alias nebo root compatibility fix
+__init__.py — jen pokud se mění export contract
+tests/probe_f201a/test_smoke_concurrency_contract.py — nové probe testy
+REAL_ARCHITECTURE.md — odstranit resolved smoke failure z current baseline
+
+Constraints:
+
+- FETCH_SEMAPHORE limit=3 při loaded LLM path.
+- Fail-soft everywhere.
+- Žádné absolutní cesty mimo paths.py.
+- Nerozbíjet imports `from hledac.universal import FETCH_SEMAPHORE, AdaptiveSemaphore, adjust_fetch_workers`.
+- Nezavádět druhý model lifecycle owner.
+
+Definition of Done:
+
+pytest tests/probe_f201a/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+pytest tests/probe_f196a tests/probe_f196b tests/probe_f197a tests/probe_f197b tests/probe_f197c tests/probe_f198a tests/probe_f198b tests/probe_f198c tests/probe_f199a tests/probe_f199b tests/probe_f200a tests/probe_f200b tests/probe_f200c -q → stále pass
+REAL_ARCHITECTURE.md updated
+
+Commit message formát: "feat: sprint F201A — repair smoke concurrency contract"
+```
+
+---
+
+## F201B — Truth Docs Drift Repair
+
+### 1. Název a cíl fáze
+
+Srovnat dokumentaci s aktuálním stavem po F200C/F200D, protože truth docs samy obsahují staré kontrakty a rozpory.
+
+### 2. Konkrétní soubory k vytvoření/upravení
+
+- `GHOST_INVARIANTS.md` — aktualizovat last-updated a explicitně sjednotit `_check_gathered` import authority podle skutečného kódu (`network.session_runtime` vs `utils.async_helpers`).
+- `STORAGE_LAYER_DOCUMENTATION.md` — opravit API guide, který stále ukazuje staré `async_record_shadow_finding(finding)` příklady místo canonical `async_ingest_findings_batch()`.
+- `REAL_ARCHITECTURE.md` — odstranit stale řádky typu “forensics/multimodal nejsou canonical import” tam, kde pozdější sekce říkají F198B/F198C active.
+- `tests/probe_f201b/test_truth_docs_current.py` — nový probe test pro dokumentační invarianty.
+
+### 3. Definition of Done
+
+- Truth docs neobsahují přímé doporučení používat starý finding write path.
+- `REAL_ARCHITECTURE.md` má konzistentní verdict pro `forensics/`, `multimodal/`, `prefetch/`, `monitoring/` a `deep_research/`.
+- `GHOST_INVARIANTS.md` odpovídá skutečnému helper importu použitému po `asyncio.gather()`.
+- `pytest tests/probe_f201b/ -q` passes.
+- `python smoke_runner.py --smoke` passes, pokud F201A už byla sloučena.
+
+### 4. Probe testy
+
+- `tests/probe_f201b/test_truth_docs_current.py`
+
+### 5. Claude Code prompt pro tuto fázi
+
+```text
+[FÁZE F201B — TRUTH DOCS DRIFT REPAIR]
+
+Kontext:
+
+REAL_ARCHITECTURE.md je truth doc, ale po rychlém F196A-F200D sledu obsahuje kombinaci aktuálních sekcí a starších dormant verdictů.
+GHOST_INVARIANTS.md říká, že `_check_gathered` je z `utils.async_helpers`, zatímco F200C dokumentace a aktuální kód používají `network.session_runtime`.
+STORAGE_LAYER_DOCUMENTATION.md obsahuje staré příklady, které mohou svádět k obcházení `async_ingest_findings_batch()`.
+
+Co již existuje a funguje (relevantní pro tuto fázi):
+
+Canonical write path je `knowledge/duckdb_store.py::async_ingest_findings_batch()`.
+Canonical sprint owner je `core/__main__.py::run_sprint()`.
+F196A-F200C probe lanes passují.
+
+Na co navazuješ:
+
+Na F201A smoke repair. Tahle fáze je dokumentační stabilizace před dalšími feature sprinty.
+
+Zadání:
+
+1. Přečti `REAL_ARCHITECTURE.md`, `GHOST_INVARIANTS.md`, `STORAGE_LAYER_DOCUMENTATION.md` a reálný kód, kterého se tvrzení týkají.
+2. Oprav pouze nepravdivé nebo zavádějící části, nemaž celé sekce.
+3. V `STORAGE_LAYER_DOCUMENTATION.md` nahraď staré finding write příklady canonical batch ingest ukázkou.
+4. V `REAL_ARCHITECTURE.md` sjednoť active/dormant verdict pro moduly, které byly v F197-F200 zapojené.
+5. Přidej probe test, který hlídá, že docs už neobsahují banned write-path guidance.
+
+Soubory k úpravě/vytvoření:
+
+GHOST_INVARIANTS.md — update async helper authority a last-updated
+STORAGE_LAYER_DOCUMENTATION.md — canonical write examples
+REAL_ARCHITECTURE.md — remove/resolve contradictory active/dormant verdicts
+tests/probe_f201b/test_truth_docs_current.py — nové probe testy
+
+Constraints:
+
+- Neodstraňuj celé sekce z GHOST_INVARIANTS.md ani STORAGE_LAYER_DOCUMENTATION.md.
+- Nepoužívej ARCHITECTURE_MAP.py jako zdroj pravdy.
+- Žádné změny runtime kódu, pokud probe neodhalí triviální import-doc mismatch.
+
+Definition of Done:
+
+pytest tests/probe_f201b/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+REAL_ARCHITECTURE.md, GHOST_INVARIANTS.md a STORAGE_LAYER_DOCUMENTATION.md si neodporují v canonical write/async contracts
+
+Commit message formát: "feat: sprint F201B — repair truth docs drift"
+```
+
+---
+
+## F201C — Repository Artifact Hygiene And Ghost Bytecode Cleanup
+
+### 1. Název a cíl fáze
+
+Vyčistit nezdrojové artefakty, které zamlžují ghost audit a způsobují falešné signály při `find`/`rg` auditech.
+
+### 2. Konkrétní soubory k vytvoření/upravení
+
+- `.gitignore` — doplnit nebo ověřit ignorování `.DS_Store`, `__pycache__/`, `*.pyc`, lokálních audit/cache adresářů a runtime state souborů.
+- `tests/probe_f201c/test_repo_artifact_hygiene.py` — nový probe test, který kontroluje, že tracked source neobsahuje ghost `.py` backups ani tracked bytecode.
+- Lokální odstranění pouze tracked artefaktů, pokud nějaké existují; untracked osobní cache adresáře nemaž bez explicitního rozhodnutí.
+- `REAL_ARCHITECTURE.md` — dokumentovat, že bytecode `.pyc` ghost zbytky nejsou canonical call-sites.
+
+### 3. Definition of Done
+
+- `git ls-files` neukazuje žádné tracked `.pyc`, `__pycache__`, `.DS_Store` nebo `*.bak*` ghost source backups.
+- Ghost audit v `tests/probe_f196a/` kontroluje source files, ne bytecode leftovers.
+- `pytest tests/probe_f201c/ -q` passes.
+- `python smoke_runner.py --smoke` passes, pokud F201A už byla sloučena.
+
+### 4. Probe testy
+
+- `tests/probe_f201c/test_repo_artifact_hygiene.py`
+
+### 5. Claude Code prompt pro tuto fázi
+
+```text
+[FÁZE F201C — REPOSITORY ARTIFACT HYGIENE AND GHOST BYTECODE CLEANUP]
+
+Kontext:
+
+Audit 2026-04-24 našel mnoho lokálních `.pyc`, `__pycache__`, `.DS_Store` a cache artefaktů. Některé staré ghost moduly existují už jen jako bytecode v lokálním workspace, což může mást ruční audity.
+Untracked osobní/cache adresáře aktuálně existují: `.backup/`, `.codebase-memory/`, `.full-review/`, `rl/.sprint_policy_state.json`.
+
+Co již existuje a funguje (relevantní pro tuto fázi):
+
+F196A source ghost cleanup je hotový a probe lane passuje.
+Git source tree už nemá `runtime/intelligence_dispatcher.py`, `runtime/memory_watchdog.py`, `runtime/session_authority.py` ani `rl/marl_coordinator.py`.
+
+Na co navazuješ:
+
+Na F201B truth docs drift repair. Tahle fáze je hygiene guard, ne runtime feature.
+
+Zadání:
+
+1. Audituj tracked files přes `git ls-files`, ne přes lokální cache noise.
+2. Ověř `.gitignore` pro `.DS_Store`, `__pycache__/`, `*.pyc`, `*.bak*`, lokální audit/cache dirs a runtime state.
+3. Odstraň z git indexu pouze tracked artefakty, pokud existují.
+4. Nepřidávej ani nemaž uživatelovy untracked cache/work dirs bez explicitního zadání.
+5. Přidej probe test, který failne, pokud se do git tracked tree vrátí bytecode nebo ghost backup source.
+
+Soubory k úpravě/vytvoření:
+
+.gitignore — artifact ignore rules
+tests/probe_f201c/test_repo_artifact_hygiene.py — nové probe testy
+REAL_ARCHITECTURE.md — artifact hygiene note
+
+Constraints:
+
+- Nemaž untracked uživatelské adresáře bez explicitního souhlasu.
+- Žádné runtime behavior změny.
+- Ghost audit počítá source `.py` call-sites, ne bytecode.
+
+Definition of Done:
+
+pytest tests/probe_f201c/ -q → všechny pass
+python smoke_runner.py --smoke → OK
+git ls-files neobsahuje tracked `.pyc`, `__pycache__`, `.DS_Store`, `*.bak*`
+
+Commit message formát: "feat: sprint F201C — add repository artifact hygiene guards"
+```
+
+---
+
 ## Exit Criteria For The Whole Roadmap
 
-- Ghost authority surfaces are removed or truly wired.
-- DeepProbe, semantic dedup, embeddings, graph accumulation and enrichers are on the canonical path.
-- Forensics and multimodal produce probe-covered, persisted, auditovatelné outputs.
-- Scheduler adapts based on real acceptance signal.
-- Performance work lands only after correctness and architecture debt are paid down.
+- Ghost authority surfaces are removed or truly wired. **DONE for source files as of 2026-04-24; bytecode/cache cleanup tracked in F201C.**
+- DeepProbe, semantic dedup, embeddings, graph accumulation and enrichers are on the canonical path. **DONE by probe evidence through F200C.**
+- Forensics and multimodal produce probe-covered, persisted, auditovatelné outputs. **DONE by F196B/F198B/F198C probes.**
+- Scheduler adapts based on real acceptance signal. **DONE by F199A probes.**
+- Performance work lands only after correctness and architecture debt are paid down. **Partially satisfied; next blocker is F201A because smoke is red.**
