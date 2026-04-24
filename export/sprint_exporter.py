@@ -363,6 +363,15 @@ async def export_sprint(
         except Exception:
             pass
 
+    # Sprint F202A §4: attach envelope fields to JSON report
+    # Read findings with envelope metadata from duckdb_store
+    envelope_findings: list[dict] = []
+    try:
+        if hasattr(store, "async_get_findings_with_envelope"):
+            envelope_findings = await store.async_get_findings_with_envelope(limit=20)
+    except Exception:
+        pass
+
     return {
         "report_json": str(report_path) if report_path else "",
         "seeds_json": str(seeds_path),
@@ -378,6 +387,8 @@ async def export_sprint(
         "research_depth_metric": research_depth,
         # Sprint F193A: graph context annotations (read-only, from donor backend)
         "graph_enriched_findings": graph_context_annotations,
+        # Sprint F202A §4: evidence envelope fields (findings with audit metadata)
+        "envelope_findings": envelope_findings,
     }
 
 

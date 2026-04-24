@@ -227,4 +227,79 @@ def render_sprint_markdown(
     if timings:
         parts.append(timings)
 
+    # Sprint F202A §5: render evidence envelope findings section
+    env_findings = scorecard.get("envelope_findings", [])
+    if env_findings:
+        env_section = _render_envelope_findings(env_findings)
+        if env_section:
+            parts.append(env_section)
+
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F202A §5: Evidence Envelope rendering
+# ---------------------------------------------------------------------------
+
+def _render_envelope_findings(envelope_findings: list) -> str:
+    """
+    Render evidence envelope findings as a markdown section.
+
+    Each finding with a valid envelope shows: audit_reason, evidence_pointers,
+    and suggested_pivots. Findings without envelopes are skipped.
+    """
+    if not envelope_findings:
+        return ""
+
+    lines = ["", "## Evidence Envelope Findings", ""]
+
+    count = 0
+    for f in envelope_findings:
+        env = f.get("envelope") if isinstance(f, dict) else None
+        if env is None:
+            continue
+        if not hasattr(env, "audit_reason") or not env.audit_reason:
+            continue
+
+        fid = f.get("finding_id", f.get("id", "unknown")) if isinstance(f, dict) else "unknown"
+        lines.append(f"### Finding: `{fid[:16]}`")
+        lines.append(f"**Audit Reason:** {env.audit_reason}")
+        lines.append("")
+
+        # Evidence pointers
+        if hasattr(env, "evidence_pointers") and env.evidence_pointers:
+            lines.append("**Evidence Pointers:**")
+            for ptr in env.evidence_pointers[:10]:  # bounded display
+                lines.append(f"  - {ptr}")
+            lines.append("")
+
+        # Signal facets
+        if hasattr(env, "signal_facets") and env.signal_facets:
+            facet_parts = []
+            for k, v in list(env.signal_facets.items())[:5]:
+                facet_parts.append(f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}")
+            lines.append(f"**Signal Facets:** `{', '.join(facet_parts)}`")
+            lines.append("")
+
+        # Suggested pivots
+        if hasattr(env, "suggested_pivots") and env.suggested_pivots:
+            lines.append("**Suggested Next Pivots:**")
+            for pivot in env.suggested_pivots[:5]:  # bounded display
+                if isinstance(pivot, dict):
+                    direction = pivot.get("direction", "")
+                    query_hint = pivot.get("query_hint", "")
+                    priority = pivot.get("priority", "")
+                    lines.append(f"- [{priority}] {direction}: {query_hint}")
+                elif isinstance(pivot, str):
+                    lines.append(f"- {pivot}")
+            lines.append("")
+
+        count += 1
+        if count >= 10:  # max 10 envelope findings displayed
+            break
+
+    if count == 0:
+        return ""
+
+    lines.append(f"_{count} finding(s) with evidence envelope_")
+    return "\n".join(lines)

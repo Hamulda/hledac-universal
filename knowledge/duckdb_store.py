@@ -4207,6 +4207,161 @@ class DuckDBShadowStore:
         assert None not in results, "Internal error: 1:1 invariant violated"
         return results  # type: ignore[annotation-unchecked]
 
+    # --------------------------------------------------------------------------
+    # Sprint F202A: Evidence Envelope helpers
+    # --------------------------------------------------------------------------
+
+    def _envelope_to_payload(self, envelope: "FindingEnvelope") -> str | None:
+        """
+        Sprint F202A §2: Serialize FindingEnvelope to payload_text string.
+
+        Fail-soft: returns None if serialization fails or size exceeds limit.
+        Caller degrades to plain finding when None is returned.
+        """
+        from hledac.universal.knowledge.finding_envelope import (
+            FindingEnvelope,
+            envelope_size_guard,
+            serialize_envelope,
+        )
+        if not isinstance(envelope, FindingEnvelope):
+            return None
+        if not envelope_size_guard(envelope):
+            return None
+        return serialize_envelope(envelope)
+
+    def _payload_to_envelope(self, payload_text: str | None) -> "FindingEnvelope | None":
+        """
+        Sprint F202A §2: Deserialize FindingEnvelope from payload_text string.
+
+        Fail-soft: returns None if payload_text is None/empty, parsing fails,
+        or required audit_reason field is missing.
+        """
+        from hledac.universal.knowledge.finding_envelope import deserialize_envelope
+        return deserialize_envelope(payload_text)
+
+    def _store_envelope_payload(self, finding_id: str, payload_text: str) -> bool:
+        """
+        Sprint F202A §2: Update LMDB WAL entry with envelope payload_text.
+
+        Called after initial ingest when envelope is attached post-hoc.
+        Returns True if LMDB update succeeded.
+        """
+        try:
+            from hledac.universal.tools.lmdb_kv import LMDBKVStore
+            if not hasattr(self, "_wal_lmdb"):
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    return False
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+            key = f"finding:{finding_id}"
+            # Read existing WAL entry and update payload_text
+            existing = self._wal_lmdb.get(key)
+            if existing is None:
+                return False
+            if isinstance(existing, dict):
+                existing["payload_text"] = payload_text
+            else:
+                return False
+            return self._wal_lmdb.put(key, existing)
+        except Exception:
+            return False
+
+    async def async_ingest_findings_with_envelope(
+        self,
+        findings: list["CanonicalFinding"],
+        envelopes: list["FindingEnvelope"],
+    ) -> list[ActivationResult | FindingQualityDecision]:
+        """
+        Sprint F202A §2: Ingest findings WITH pre-built evidence envelopes.
+
+        Envelope is serialized and stored in payload_text field of LMDB WAL.
+        Size guard: oversized envelope → degraded to plain finding (no crash).
+        Returns same 1:1 result list as async_ingest_findings_batch.
+
+        Args:
+            findings:  List of CanonicalFinding instances
+            envelopes: List of FindingEnvelope instances (same length as findings)
+        """
+        from hledac.universal.knowledge.finding_envelope import FindingEnvelope
+
+        if not findings:
+            return []
+        if len(envelopes) != len(findings):
+            # Fall back to plain ingest if length mismatch
+            return await self.async_ingest_findings_batch(findings)
+
+        # Build payload_text overrides using size guard
+        payload_overrides: dict[int, str | None] = {}
+        for i, env in enumerate(envelopes):
+            if not isinstance(env, FindingEnvelope):
+                payload_overrides[i] = None
+                continue
+            from hledac.universal.knowledge.finding_envelope import envelope_size_guard
+            if not envelope_size_guard(env):
+                payload_overrides[i] = None
+            else:
+                from hledac.universal.knowledge.finding_envelope import serialize_envelope
+                payload_overrides[i] = serialize_envelope(env)
+
+        # Run standard ingest
+        results = await self.async_ingest_findings_batch(findings)
+
+        # Patch LMDB payload_text for findings that got an envelope
+        for i, override in payload_overrides.items():
+            if override is None:
+                continue
+            if results[i].get("lmdb_success") if isinstance(results[i], dict) else False:
+                fid = results[i].get("finding_id", "")
+                if fid:
+                    self._store_envelope_payload(fid, override)
+
+        return results
+
+    def _sync_read_envelope(self, finding_id: str) -> "FindingEnvelope | None":
+        """
+        Sprint F202A §3: Read and deserialize envelope from LMDB WAL entry.
+
+        Returns None if finding doesn't exist or has no valid envelope.
+        Fail-soft: does not raise.
+        """
+        try:
+            from hledac.universal.tools.lmdb_kv import LMDBKVStore
+            if not hasattr(self, "_wal_lmdb"):
+                _wal_root = self._db_path.parent if self._db_path else None
+                if _wal_root is None:
+                    return None
+                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+            key = f"finding:{finding_id}"
+            entry = self._wal_lmdb.get(key)
+            if entry is None or not isinstance(entry, dict):
+                return None
+            payload_text = entry.get("payload_text")
+            return self._payload_to_envelope(payload_text)
+        except Exception:
+            return None
+
+    async def async_get_findings_with_envelope(
+        self,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Sprint F202A §3: Read recent findings with deserialized envelopes.
+
+        Returns list of dicts with envelope fields attached:
+          {finding_id, query, source_type, confidence, ts, provenance,
+           payload_text, envelope: FindingEnvelope | None}
+        Fail-soft: any finding without valid envelope has envelope=None.
+        """
+        raw_findings = await self.async_query_recent_findings(limit=limit)
+        result = []
+        for f in raw_findings:
+            fid = f.get("id", f.get("finding_id", ""))
+            env = self._sync_read_envelope(fid) if fid else None
+            item = dict(f)
+            item["envelope"] = env
+            result.append(item)
+        return result
+
     def _sync_insert_findings_bulk_as_tuples(
         self,
         rows: list[list],

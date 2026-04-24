@@ -540,3 +540,28 @@ DeepProbe findings now flow through the canonical persist path:
 - `rl/marl_coordinator.py` was deleted in F196A (stub with zero production call-sites); `rl/sprint_policy_manager.py` is the surviving RL plane.
 - Ghost modules (`intelligence_dispatcher`, `memory_watchdog`, `session_authority`) were removed in F196A; sprint_scheduler.py is clean.
 - Test baseline is not green; there is still real debt before major new subsystem activation.
+
+## F202A Evidence Envelope and Signal Schema (2026-04-24)
+
+**Přidáno** — bounded evidence envelope layer for CanonicalFinding audit trail:
+
+**Schema** (`knowledge/finding_envelope.py`):
+- `FindingEnvelope` plain Python class with fields: `audit_reason: str`, `evidence_pointers: list[str]`, `signal_facets: dict[str, float]`, `suggested_pivots: list[dict]`
+- `MAX_ENVELOPE_SIZE = 4098` bytes — deterministic upper bound
+- `envelope_size_guard()` — returns True if serialized JSON fits within bound
+- `serialize_envelope()` / `deserialize_envelope()` — roundtrip to/from JSON string
+
+**Storage seam** (`knowledge/duckdb_store.py`):
+- Envelope serialized into `CanonicalFinding.payload_text` JSON field — no new write path
+- `async_ingest_findings_with_envelope()` — ingest with envelope; size guard degrades oversized to plain
+- `async_get_findings_with_envelope()` — read seam with deserialized envelope attached
+
+**Export** (`export/sprint_exporter.py`):
+- `envelope_findings` key in export result dict — list of findings with deserialized envelopes
+
+**Markdown rendering** (`export/sprint_markdown_reporter.py`):
+- `_render_envelope_findings()` helper — renders audit_reason, evidence_pointers, signal_facets, suggested_pivots; bounded at 10 findings; fail-soft skips invalid envelopes
+
+**Probe tests**: `tests/probe_f202a/test_evidence_envelope_schema.py` — 19 tests, all passing.
+
+## Architectural verdict
