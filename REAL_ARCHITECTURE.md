@@ -124,12 +124,7 @@ scheduler.inject_prefetch_oracle(oracle)
 #   oracle.reset()  # clears all state for next sprint
 ```
 
-**Existing smoke failures (pre-existing, not introduced by F200A)**:
-- `AdaptiveSemaphore.__init__()` signature mismatch (`initial_value` kwarg)
-- `FETCH_SEMAPHORE` is `_FetchSemaphoreProxy` not `AdaptiveSemaphore`
-- `'Semaphore' object has no attribute 'current_limit'`
-
-## F199B Terminal Sprint Dashboard (2026-04-23)
+**Invariants maintained**:
 
 **Přidáno** — rich terminal dashboard sidecar for live sprint metrics:
 - `monitoring/sprint_dashboard.py`: `SprintDashboard` class — rich-based live terminal dashboard. Reads `SprintSchedulerResult` fields directly (data contract: dashboard is NOT a second source of truth, it mirrors scheduler result). Exposes `start()`, `update(result, phase, elapsed_s)`, `finish(result, elapsed_s)`. All render failures are fail-soft (`try/except` throughout, `Live = None` when rich unavailable).
@@ -142,12 +137,7 @@ scheduler.inject_prefetch_oracle(oracle)
 3. Dashboard `Live` is `None` when rich is not installed — all methods no-op
 4. `ui_mode=False` skips all dashboard code path entirely
 
-**Existing smoke failures (pre-existing, not introduced by F199B)**:
-- `AdaptiveSemaphore.__init__()` signature mismatch (`initial_value` kwarg)
-- `FETCH_SEMAPHORE` is `_FetchSemaphoreProxy` not `AdaptiveSemaphore`
-- `'Semaphore' object has no attribute 'current_limit'`
-
-**Invariants maintained**:
+**Dashboard non-blocking invariants**:
 - Dashboard does NOT own lifecycle authority
 - Dashboard does NOT create duplicate state — reads from `SprintSchedulerResult`
 - Sprint completes regardless of dashboard render failure
@@ -465,7 +455,6 @@ Sprint F198C adds document extraction for PDF/image inputs producing CanonicalFi
 - 17 probe tests in `tests/probe_f198c/test_multimodal_document_findings.py`
   - Invariants: source_type="document" (exact), fail-soft, RAM guard, size limits, batch concurrency
   - F198C-1 through F198C-10 cover all invariants
-- smoke_runner pre-existing failures: AdaptiveSemaphore/FETCH_SEMAPHORE (unrelated to F198C)
 - 99 probe tests across F196A-F198C passing
 
 ## F197A DeepProbe Canonical Ingest
@@ -480,6 +469,36 @@ DeepProbe findings now flow through the canonical persist path:
   - Invariants: source_type="deep_probe", bounded timeout/depth, fail-safe everywhere
   - `async_ingest_findings_batch()` is the only write path
   - Counter contract: `result["findings_ingested"]` tracks accepted count
+
+## F201A Smoke Concurrency Contract Repair (2026-04-24)
+
+**Přidáno** — repaired smoke_runner.py --smoke concurrency contract:
+- `utils/concurrency.py`: `_FetchSemaphoreProxy.limit()` method added — returns current semaphore limit via `get_fetch_semaphore()._value`. Fail-safe, delegates to underlying lazy singleton.
+- `smoke_runner.py`: smoke test updated to match actual contract:
+  - `AdaptiveSemaphore()` initialized without `initial_value` kwarg — asserts `current_limit == 3` (M1 hard ceiling)
+  - `FETCH_SEMAPHORE` checked via `hasattr(limit)` and `FETCH_SEMAPHORE.limit()` instead of `isinstance(AdaptiveSemaphore)`
+  - `adjust_fetch_workers` assertions use `FETCH_SEMAPHORE.limit()` instead of `._value`
+
+**Concurrency contract invariants (F201A-1 až F201A-6)**:
+- `AdaptiveSemaphore()` initializes with `current_limit=3` (M1 hard ceiling, `_CONCURRENCY_CEILING=3`)
+- `FETCH_SEMAPHORE.limit()` returns current underlying semaphore limit via proxy delegation
+- `adjust_fetch_workers(3)` sets FETCH_SEMAPHORE to limit 3 (model loaded path)
+- `adjust_fetch_workers(25)` restores FETCH_SEMAPHORE to limit 25 (model released path)
+- M1 invariant: LLM loaded → fetch limit 3, LLM released → fetch limit 25
+- No new model lifecycle owner introduced — `brain/model_manager.py` remains the single owner
+
+**Updated sections**:
+- `utils/concurrency.py`: `limit()` method on `_FetchSemaphoreProxy`
+- `smoke_runner.py`: all 6 smoke checks updated to match actual lazy proxy contract
+- `REAL_ARCHITECTURE.md`: F200A and F199B smoke failure bullets removed (resolved by F201A)
+
+**Tests**: 13 probe tests in `tests/probe_f201a/test_smoke_concurrency_contract.py`:
+- `TestF201AAdaptiveSemaphoreContract`: F201A-1 (current_limit=3 default)
+- `TestF201AFetchSemaphoreProxy`: F201A-2 (limit() returns int)
+- `TestF201AAdjustFetchWorkers`: F201A-3/4 (3→25→3 roundtrip)
+- `TestF201ALLMPathConcurrency`: F201A-5/6 (load/release lifecycle)
+- `TestF201AImportContract`: root import surface verification
+- 320 probe tests across F196A-F201A passing
 
 ## Architectural verdict
 

@@ -48,6 +48,10 @@ class _FetchSemaphoreProxy:
         sem = get_fetch_semaphore()
         return getattr(sem, name)
 
+    def limit(self) -> int:
+        """Return current semaphore limit (delegates to underlying semaphore)."""
+        return get_fetch_semaphore()._value
+
     def __repr__(self):
         sem = get_fetch_semaphore()
         return f"FetchSemaphore(limit={sem._value})"

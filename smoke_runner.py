@@ -82,30 +82,31 @@ async def run_smoke_test() -> int:
     # 2. Test AdaptiveSemaphore initialization
     log.info("[2/6] Testing AdaptiveSemaphore...")
     try:
-        sem = AdaptiveSemaphore(initial_value=10)
-        assert sem.current_limit == 10, f"Expected limit 10, got {sem.current_limit}"
-        log.info(f"  ✓ AdaptiveSemaphore initialized with limit={sem.current_limit}")
+        sem = AdaptiveSemaphore()
+        assert sem.current_limit == 3, f"Expected limit 3 (M1 hard ceiling), got {sem.current_limit}"
+        log.info(f"  ✓ AdaptiveSemaphore initialized with current_limit={sem.current_limit}")
     except Exception as e:
         errors.append(f"AdaptiveSemaphore test failed: {e}")
         log.error(f"  ✗ AdaptiveSemaphore test failed: {e}")
 
-    # 3. Test FETCH_SEMAPHORE is AdaptiveSemaphore
-    log.info("[3/6] Verifying FETCH_SEMAPHORE is AdaptiveSemaphore...")
+    # 3. Verify FETCH_SEMAPHORE is the lazy proxy with limit introspection
+    log.info("[3/6] Verifying FETCH_SEMAPHORE limit introspection...")
     try:
-        assert isinstance(FETCH_SEMAPHORE, AdaptiveSemaphore), \
-            f"Expected AdaptiveSemaphore, got {type(FETCH_SEMAPHORE)}"
-        log.info(f"  ✓ FETCH_SEMAPHORE is AdaptiveSemaphore with limit={FETCH_SEMAPHORE.current_limit}")
+        # FETCH_SEMAPHORE is _FetchSemaphoreProxy (lazy singleton)
+        assert hasattr(FETCH_SEMAPHORE, 'limit'), \
+            f"FETCH_SEMAPHORE has no limit() method — got {type(FETCH_SEMAPHORE)}"
+        log.info(f"  ✓ FETCH_SEMAPHORE is FetchSemaphoreProxy with limit()={FETCH_SEMAPHORE.limit()}")
     except Exception as e:
-        errors.append(f"FETCH_SEMAPHORE type check failed: {e}")
-        log.error(f"  ✗ FETCH_SEMAPHORE type check failed: {e}")
+        errors.append(f"FETCH_SEMAPHORE limit check failed: {e}")
+        log.error(f"  ✗ FETCH_SEMAPHORE limit check failed: {e}")
 
     # 4. Test adjust_fetch_workers modifies semaphore
     log.info("[4/6] Testing adjust_fetch_workers dynamic adjustment...")
     try:
-        original_limit = FETCH_SEMAPHORE.current_limit
+        original_limit = FETCH_SEMAPHORE.limit()
         await adjust_fetch_workers(5)
-        assert FETCH_SEMAPHORE._value == 5, f"Expected semaphore._value=5, got {FETCH_SEMAPHORE._value}"
-        log.info(f"  ✓ adjust_fetch_workers(5) worked — semaphore._value={FETCH_SEMAPHORE._value}")
+        assert FETCH_SEMAPHORE.limit() == 5, f"Expected limit=5, got {FETCH_SEMAPHORE.limit()}"
+        log.info(f"  ✓ adjust_fetch_workers(5) worked — limit={FETCH_SEMAPHORE.limit()}")
 
         # Restore original limit
         await adjust_fetch_workers(25)
