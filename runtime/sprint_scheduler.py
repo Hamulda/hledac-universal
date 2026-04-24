@@ -533,7 +533,10 @@ class SprintScheduler:
         self._ooda_interval: float = 60.0
         self._last_ooda: float = 0.0
         # Sprint 8VB: Adaptive timeout EMA
+        # F196C: Bounded to prevent unbounded growth across sprints
         self._fetch_latency_ema: dict[str, float] = {}
+        self._fetch_latency_ema_order: list[str] = []  # track insertion order for LRU
+        self._MAX_FETCH_LATENCY_EMA: int = 1000  # max domains to track
         _EMA_ALPHA: float = 0.3
         _TIMEOUT_MIN: float = 5.0
         _TIMEOUT_MAX: float = 30.0
@@ -2320,11 +2323,17 @@ class SprintScheduler:
     # ── Sprint 8VB: Adaptive Timeout ───────────────────────────────────
 
     def _update_latency_ema(self, domain: str, latency: float) -> None:
-        """Update EMA for domain fetch latency."""
+        """Update EMA for domain fetch latency. Bounded to _MAX_FETCH_LATENCY_EMA entries."""
         prev = self._fetch_latency_ema.get(domain, latency)
         self._fetch_latency_ema[domain] = (
             0.3 * latency + 0.7 * prev
         )
+        # F196C: LRU eviction if exceeding max entries
+        if domain not in self._fetch_latency_ema_order:
+            self._fetch_latency_ema_order.append(domain)
+            if len(self._fetch_latency_ema_order) > self._MAX_FETCH_LATENCY_EMA:
+                old_domain = self._fetch_latency_ema_order.pop(0)
+                self._fetch_latency_ema.pop(old_domain, None)
 
     def get_adaptive_timeout(self, domain: str) -> float:
         """Get adaptive timeout based on EMA latency. Clamped to [5, 30]s."""

@@ -2837,7 +2837,7 @@ Formát (pouze seznam, žádný další text):
         counter_evidence: List[str] = []
         falsified = False
         confidence = 0.0
-        reasoning = ""
+        reasoning_parts: List[str] = []  # F196C: O(1) append instead of O(n) string concat
 
         # Check for conflicting evidence
         if hypothesis.conflicting_evidence:
@@ -2851,7 +2851,7 @@ Formát (pouze seznam, žádný další text):
             if falsification_strength > 0.5:
                 falsified = True
                 confidence = falsification_strength
-                reasoning = (
+                reasoning_parts.append(
                     f"Strong counter-evidence ({len(hypothesis.conflicting_evidence)} items) "
                     f"contradicts hypothesis"
                 )
@@ -2861,7 +2861,7 @@ Formát (pouze seznam, žádný další text):
         if failed_tests:
             falsified = True
             confidence = max(confidence, max(t.confidence for t in failed_tests))
-            reasoning += f"; {len(failed_tests)} tests failed"
+            reasoning_parts.append(f"{len(failed_tests)} tests failed")
             counter_evidence.extend([t.test_type for t in failed_tests])
 
         # Check for logical inconsistencies
@@ -2870,7 +2870,7 @@ Formát (pouze seznam, žádný další text):
             if inconsistency:
                 falsified = True
                 confidence = 0.8
-                reasoning = f"Logical inconsistency detected: {inconsistency}"
+                reasoning_parts.append(f"Logical inconsistency detected: {inconsistency}")
 
         # Enhanced adversarial verification
         if use_adversarial and self.enable_adversarial_verification:
@@ -2885,10 +2885,7 @@ Formát (pouze seznam, žádný další text):
                     falsified = True
                     confidence = max(confidence, adversarial_falsification.confidence)
                     counter_evidence.extend(adversarial_falsification.counter_evidence)
-                    if reasoning:
-                        reasoning += "; " + adversarial_falsification.reasoning
-                    else:
-                        reasoning = adversarial_falsification.reasoning
+                    reasoning_parts.append(adversarial_falsification.reasoning)
 
             except Exception as e:
                 logger.warning(f"Adversarial falsification failed: {e}")
@@ -2897,7 +2894,7 @@ Formát (pouze seznam, žádný další text):
             falsified=falsified,
             confidence=confidence,
             counter_evidence=counter_evidence,
-            reasoning=reasoning or "No falsification criteria met",
+            reasoning="; ".join(reasoning_parts) if reasoning_parts else "No falsification criteria met",
         )
 
     def _attempt_adversarial_falsification(

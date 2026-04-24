@@ -189,10 +189,9 @@ class _JARMFingerprinter:
         if cached:
             return cached
 
-        loop = asyncio.get_running_loop()
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, self._compute_jarm, domain, port),
+                self._compute_jarm_async(domain, port),
                 timeout=TOTAL_TIMEOUT
             )
             if result:
@@ -205,9 +204,9 @@ class _JARMFingerprinter:
             logger.debug(f"[JARM] Fingerprint failed for {domain}: {e}")
             return None
 
-    def _compute_jarm(self, domain: str, port: int) -> Optional[str]:
+    async def _compute_jarm_async(self, domain: str, port: int) -> Optional[str]:
         """
-        Blocking JARM computation - runs in executor.
+        Async JARM computation - uses asyncio.sleep instead of blocking time.sleep.
 
         Sends 10 TLS Client Hello packets and computes the JARM hash.
         """
@@ -226,10 +225,9 @@ class _JARMFingerprinter:
                 else:
                     # Server didn't respond - use placeholder
                     results.append("000")
-                # Small delay between packets to avoid rate limiting
+                # F196C: Use asyncio.sleep instead of blocking time.sleep
                 if i < len(payloads) - 1:
-                    import time
-                    time.sleep(0.05)
+                    await asyncio.sleep(0.05)
 
             # Compute JARM hash
             concatenated = "".join(results)
