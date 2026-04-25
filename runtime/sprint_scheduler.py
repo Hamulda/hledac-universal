@@ -355,6 +355,8 @@ class SprintSchedulerResult:
     timeline_findings_produced: int = 0
     # Sprint F202I: Evidence triage sidecar
     evidence_triage_findings_count: int = 0
+    # Sprint F203A: Sprint diff sidecar
+    sprint_diff_findings_produced: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +628,8 @@ class SprintScheduler:
         self._leak_sentinel_adapter: Any = None
         # Sprint F202I: Evidence triage adapter
         self._evidence_triage_adapter: Any = None
+        # Sprint F203A: Sprint diff engine (lazy — imported inside sidecar method)
+        self._diff_engine: Any = None
         # Sprint F202G: Pivot planner (advisory, advisory ordering input only)
         self._pivot_planner: Any = None
         self._planned_pivots: list = []  # Last planned pivots for diagnostics
@@ -1595,6 +1599,10 @@ class SprintScheduler:
                     await self._run_evidence_triage_sidecar(
                         accepted_findings, store, query
                     )
+                    # Sprint F203A: Sprint diff sidecar (fail-soft, non-blocking)
+                    await self._run_sprint_diff_sidecar(
+                        accepted_findings, store, query
+                    )
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
@@ -1694,7 +1702,21 @@ class SprintScheduler:
             if not candidates:
                 return
 
+            # 3a. F203B: Run attribution confidence scoring on candidates
+            if len(candidates) > 1:
+                try:
+                    from hledac.universal.intelligence.attribution_scorer import (
+                        create_attribution_scorer,
+                    )
+                    scorer = create_attribution_scorer()
+                    candidates = self._identity_adapter.score_and_enrich_candidates(
+                        candidates, scorer
+                    )
+                except Exception:
+                    pass  # Fail-soft: attribution scoring is optional enhancement
+
             # 4. Upsert identity edges to graph (advisory, fail-soft)
+            #    F203B: edges now use attribution_confidence from signals if available
             try:
                 self._identity_adapter.upsert_identity_edges(candidates)
             except Exception:
@@ -1943,6 +1965,195 @@ class SprintScheduler:
             self._result.evidence_triage_findings_count = triage_count
         except Exception:
             pass  # Fail-soft: sidecar must never crash sprint
+
+    async def _run_sprint_diff_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F203A: Compute cross-sprint diff for target.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Reads previous findings for the same target from DuckDB target_profiles,
+        computes diff (new/disappeared/changed), updates profile, ingests diff
+        findings via async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (used as target_id)
+        """
+        if not findings or store is None:
+            return
+
+        target_id = query[:128]  # bounded target_id from query
+
+        try:
+            from hledac.universal.knowledge.sprint_diff_engine import SprintDiffEngine
+        except Exception:
+            return  # Fail-soft: missing dependency
+
+        try:
+            # 1. Get previous findings for this target
+            try:
+                prev_findings_raw = await store.async_get_previous_findings_for_target(
+                    target_id, limit=1000
+                )
+            except Exception:
+                prev_findings_raw = []
+
+            # 2. Serialize previous findings to dicts
+            previous_findings: list[dict] = []
+            for f in prev_findings_raw:
+                try:
+                    previous_findings.append({
+                        "finding_id": getattr(f, "finding_id", "") or "",
+                        "source_type": getattr(f, "source_type", "") or "",
+                        "ioc_type": getattr(f, "ioc_type", "") or "",
+                        "ioc_value": getattr(f, "ioc_value", "") or "",
+                        "confidence": getattr(f, "confidence", 0.5) or 0.5,
+                        "ts": getattr(f, "ts", 0.0) or 0.0,
+                        "payload_text": getattr(f, "payload_text", "") or "",
+                    })
+                except Exception:
+                    continue
+
+            # 3. Serialize current findings to dicts
+            current_findings: list[dict] = []
+            for f in findings:
+                try:
+                    current_findings.append({
+                        "finding_id": getattr(f, "finding_id", "") or "",
+                        "source_type": getattr(f, "source_type", "") or "",
+                        "ioc_type": getattr(f, "ioc_type", "") or "",
+                        "ioc_value": getattr(f, "ioc_value", "") or "",
+                        "confidence": getattr(f, "confidence", 0.5) or 0.5,
+                        "ts": getattr(f, "ts", 0.0) or 0.0,
+                        "payload_text": getattr(f, "payload_text", "") or "",
+                    })
+                except Exception:
+                    continue
+
+            # 4. Create diff engine and compute diff
+            engine = SprintDiffEngine()
+            current_sprint_id = self.sprint_id or f"unknown-{id(self)}"
+            previous_sprint_id = prev_findings_raw[0].sprint_id if prev_findings_raw else None  # type: ignore[attr-defined]
+
+            diff_result = engine.compute_diff(
+                current_findings=current_findings,
+                previous_findings=previous_findings if previous_findings else None,
+                target_id=target_id,
+                current_sprint_id=current_sprint_id,
+                previous_sprint_id=previous_sprint_id,
+            )
+
+            # 5. Build derived diff findings for canonical ingest
+            class _DiffFinding:
+                """Minimal CanonicalFinding-like object with __slots__ for efficiency."""
+                __slots__ = ('finding_id', 'source_type', 'query', 'target_id',
+                             'ioc_type', 'ioc_value', 'confidence', 'ts', 'payload_text')
+                def __init__(self, **kw):
+                    for k, v in kw.items():
+                        setattr(self, k, v)
+
+            derived_findings: list[Any] = []
+            ts_now = _time.time()
+
+            # Add new findings as derived findings
+            for nf in diff_result.new_findings[:50]:  # bounded
+                try:
+                    finding_id = f"diff-new-{nf.get('finding_id', 'unknown')[:32]}"
+                    payload = {
+                        "diff_action": "new",
+                        "target_id": target_id,
+                        "previous_sprint_id": diff_result.previous_sprint_id,
+                        "current_sprint_id": diff_result.current_sprint_id,
+                        **nf,
+                    }
+                    derived_findings.append(_DiffFinding(
+                        finding_id=finding_id,
+                        source_type="sprint_diff",
+                        query=query,
+                        target_id=target_id,
+                        ioc_type=nf.get("ioc_type") or "unknown",
+                        ioc_value=nf.get("ioc_value") or "unknown",
+                        confidence=nf.get("confidence", 0.5),
+                        ts=ts_now,
+                        payload_text=str(payload),
+                    ))
+                except Exception:
+                    continue
+
+            # Add disappeared findings as derived findings
+            for df in diff_result.disappeared_findings[:50]:  # bounded
+                try:
+                    finding_id = f"diff-gone-{df.get('finding_id', 'unknown')[:32]}"
+                    payload = {
+                        "diff_action": "disappeared",
+                        "target_id": target_id,
+                        "previous_sprint_id": diff_result.previous_sprint_id,
+                        "current_sprint_id": diff_result.current_sprint_id,
+                        **df,
+                    }
+                    derived_findings.append(_DiffFinding(
+                        finding_id=finding_id,
+                        source_type="sprint_diff",
+                        query=query,
+                        target_id=target_id,
+                        ioc_type=df.get("ioc_type") or "unknown",
+                        ioc_value=df.get("ioc_value") or "unknown",
+                        confidence=df.get("confidence", 0.5),
+                        ts=ts_now,
+                        payload_text=str(payload),
+                    ))
+                except Exception:
+                    continue
+
+            # 6. Ingest derived findings via async_ingest_findings_batch
+            if derived_findings:
+                try:
+                    results = await store.async_ingest_findings_batch(derived_findings)
+                    stored = sum(
+                        1 for r in results
+                        if isinstance(r, dict) and r.get("accepted")
+                    )
+                    self._result.sprint_diff_findings_produced = stored
+                except Exception:
+                    pass  # Fail-soft
+
+            # 7. Update target profile in DuckDB
+            try:
+                from hledac.universal.knowledge.sprint_diff_engine import TargetProfileSummary
+                prev_profile = None
+                try:
+                    prev_profile_raw = await store.async_get_target_profile(target_id)
+                    if prev_profile_raw:
+                        prev_profile = TargetProfileSummary(
+                            target_id=prev_profile_raw.target_id,
+                            first_seen=prev_profile_raw.first_seen,
+                            last_seen=prev_profile_raw.last_seen,
+                            cumulative_finding_count=prev_profile_raw.cumulative_finding_count,
+                            entity_summary_json=prev_profile_raw.entity_summary_json,
+                        )
+                except Exception:
+                    prev_profile = None
+
+                new_profile = engine.build_target_profile(
+                    current_findings=current_findings,
+                    previous_profile=prev_profile,
+                    target_id=target_id,
+                    current_ts=ts_now,
+                )
+                await store.async_upsert_target_profile(new_profile)
+            except Exception:
+                pass  # Fail-soft: profile update is non-critical
+
+        except Exception:
+            pass  # Fail-soft: diff sidecar must never crash sprint
 
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 

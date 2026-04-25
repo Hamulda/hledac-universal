@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List  # noqa: F401 used in subclasses
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +286,75 @@ class IdentityStitchingAdapter:
             logger.warning(f"IdentityStitchingAdapter.extract_and_stitch error: {e}")
             return []
 
+    # ── F203B: Attribution Confidence Scoring ───────────────────────────────────
+
+    def score_and_enrich_candidates(
+        self,
+        candidates: List[IdentityCandidate],
+        scorer: "AttributionConfidenceScorer",  # type: ignore[name-defined]
+    ) -> List[IdentityCandidate]:
+        """
+        F203B: Score pairs of identity candidates using AttributionConfidenceScorer
+        and enrich signals/evidence with attribution data.
+
+        Runs in O(n²) over candidate pairs (bounded by scorer max_comparisons).
+        Fail-soft: returns original candidates unchanged on any error.
+
+        Args:
+            candidates: List of IdentityCandidate from extract_and_stitch
+            scorer: AttributionConfidenceScorer instance
+
+        Returns:
+            Same candidates list, with attribution_confidence and
+            attribution_factor_types added to signals, and factor evidence
+            appended to evidence list. Returns original list on error.
+        """
+        if not candidates or not scorer:
+            return candidates
+
+        try:
+            from .attribution_scorer import enrich_candidate_with_attribution
+
+            # Score all candidate pairs
+            scores = scorer.score_candidates(candidates)
+
+            if not scores:
+                return candidates
+
+            # Build lookup of pair → score (bidirectional)
+            left_to_right: Dict[str, Any] = {}
+            right_to_left: Dict[str, Any] = {}
+            for key, score in scores.items():
+                left_id, right_id = key.split("|", 1)
+                left_to_right[left_id] = score  # last score wins for each direction
+                right_to_left[right_id] = score
+
+            # Enrich each candidate by averaging its pair scores
+            enriched = []
+            for cand in candidates:
+                # Find all scores involving this candidate (look in both directions)
+                relevant_scores: List[Any] = []
+                if cand.candidate_id in left_to_right:
+                    relevant_scores.append(left_to_right[cand.candidate_id])
+                if cand.candidate_id in right_to_left:
+                    relevant_scores.append(right_to_left[cand.candidate_id])
+
+                if relevant_scores:
+                    # Use the highest-confidence score to enrich
+                    best_score = max(relevant_scores, key=lambda s: s.confidence)
+                    enriched_cand = enrich_candidate_with_attribution(cand, best_score)
+                    enriched.append(enriched_cand)
+                else:
+                    enriched.append(cand)
+
+            self._stats["candidates_enriched"] = len([c for c in enriched if "attribution_confidence" in c.signals])
+
+            return enriched
+
+        except Exception as e:
+            logger.debug(f"IdentityStitchingAdapter.score_and_enrich_candidates error: {e}")
+            return candidates
+
     # ── Graph edge upsert ──────────────────────────────────────────────────────
 
     def upsert_identity_edges(
@@ -318,11 +387,13 @@ class IdentityStitchingAdapter:
                 # Upsert edges between all constituent profiles
                 primary = cand.profile_ids[0]
                 for secondary in cand.profile_ids[1:]:
+                    # F203B: Use attribution confidence from signals if available, else fallback to cand.confidence
+                    edge_weight = cand.signals.get("attribution_confidence", cand.confidence)
                     ok = graph_service.upsert_relation(
                         src=primary,
                         dst=secondary,
                         rel_type="same_identity",
-                        weight=cand.confidence,
+                        weight=edge_weight,
                         evidence=f"stitch:{cand.candidate_id}",
                     )
                     if ok:
@@ -380,13 +451,17 @@ class IdentityStitchingAdapter:
                 import json
                 payload_text = json.dumps(payload)
 
+                # F203B: Check if candidate was enriched with attribution confidence
+                has_attribution = "attribution_confidence" in cand.signals
+                attribution_confidence = cand.signals.get("attribution_confidence", cand.confidence)
+
                 finding = CanonicalFinding(
                     finding_id=fid,
                     query=query,
-                    source_type="identity_stitching",
-                    confidence=cand.confidence,
+                    source_type="identity_attribution" if has_attribution else "identity_stitching",
+                    confidence=attribution_confidence if has_attribution else cand.confidence,
                     ts=time.time(),
-                    provenance=("identity_stitching",),
+                    provenance=("identity_attribution" if has_attribution else "identity_stitching",),
                     payload_text=payload_text,
                 )
                 findings.append(finding)

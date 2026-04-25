@@ -248,6 +248,13 @@ def render_sprint_markdown(
         if timeline_section:
             parts.append(timeline_section)
 
+    # Sprint F203A: render sprint diff section
+    sprint_diff_findings = scorecard.get("sprint_diff_findings", [])
+    if sprint_diff_findings:
+        diff_section = _render_sprint_diff_section(sprint_diff_findings)
+        if diff_section:
+            parts.append(diff_section)
+
     return "\n".join(parts)
 
 
@@ -358,6 +365,20 @@ def _render_identity_candidates(identity_candidates: list) -> str:
         lines.append(f"### `{cand_id[:32]}`")
         lines.append(f"**Name:** {primary}")
         lines.append(f"**Confidence:** {confidence:.2f} ({conf_label})")
+
+        # F203B: Attribution confidence breakdown
+        attribution_conf = signals.get("attribution_confidence")
+        attribution_factors = signals.get("attribution_factor_types", [])
+        if attribution_conf is not None:
+            lines.append(f"**Attribution Confidence:** {attribution_conf:.2f}")
+            if attribution_factors:
+                factor_str = ", ".join(f"`{ft}`" for ft in attribution_factors)
+                lines.append(f"**Attribution Factors:** {factor_str}")
+            # Show stitch confidence if different from attribution
+            if attribution_conf != confidence:
+                lines.append(f"**Base Confidence:** {confidence:.2f}")
+            lines.append("")
+
         lines.append("")
 
         # Platforms
@@ -524,4 +545,52 @@ def _render_timeline_section(timeline_findings: list) -> str:
         lines.append("")
 
     lines.append(f"_{count} timeline(s)_")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F203A: Sprint Diff rendering
+# ---------------------------------------------------------------------------
+
+def _render_sprint_diff_section(sprint_diff_findings: list) -> str:
+    """
+    Render sprint diff findings as a markdown section.
+
+    Each diff finding shows: diff_action (new/disappeared/changed), target_id,
+    previous_sprint_id, current_sprint_id, ioc_type, ioc_value.
+    Bounded at MAX_DIFF_FINDINGS=100 displayed, first 20 shown.
+
+    sprint_diff_findings format:
+        List[dict] with keys: diff_action, target_id, previous_sprint_id,
+        current_sprint_id, ioc_type, ioc_value, finding_id
+    """
+    if not sprint_diff_findings:
+        return ""
+
+    lines = ["", "## Sprint Diff", ""]
+
+    count = 0
+    for df in sprint_diff_findings[:20]:  # bounded display of 20
+        if not isinstance(df, dict):
+            continue
+
+        action = df.get("diff_action", "unknown")
+        target_id = df.get("target_id", "unknown")
+        prev_sprint = df.get("previous_sprint_id", "none")
+        curr_sprint = df.get("current_sprint_id", "none")
+        ioc_type = df.get("ioc_type", "?")
+        ioc_value = df.get("ioc_value", "?")
+
+        label = "🆕 NEW" if action == "new" else "❌ GONE" if action == "disappeared" else "⚡ CHANGED"
+        lines.append(f"### {label}: `{ioc_value[:48] if ioc_value else '?'}`")
+        lines.append(f"**Target:** `{target_id[:64] if target_id else '?'}`")
+        lines.append(f"**Type:** `{ioc_type}`")
+        lines.append(f"**From:** `{prev_sprint}` → **`{curr_sprint}`")
+        lines.append("")
+
+        count += 1
+        lines.append("---")
+        lines.append("")
+
+    lines.append(f"_{count} diff finding(s)_")
     return "\n".join(lines)

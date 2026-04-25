@@ -976,6 +976,50 @@ DeepProbe findings now flow through the canonical persist path:
 - F202B-8: Markdown rendering with confidence/signals
 - F202B-9: SprintScheduler has _identity_adapter field
 
+## F203B Attribution Confidence Scorer (2026-04-25)
+
+**Přidáno** — explainable confidence scoring for identity stitching candidates using multiple attribution factors. No model load, no network, pure Python with Levenshtein fallback.
+
+**AttributionConfidenceScorer** (`intelligence/attribution_scorer.py`):
+- `score_pair(left, right, context)` → `AttributionScore` with confidence 0.0-1.0, factors, evidence_ids, factor_weights
+- `score_candidates(candidates)` → dict of `"left_id|right_id" → AttributionScore`
+- `get_factor_breakdown(score)` → human-readable factor analysis
+- `MAX_FACTOR_COMPARISONS=5000` hard cap, `comparison_count` property
+
+**AttributionScore** dataclass (frozen=True):
+- `confidence: float` — final weighted score 0.0-1.0
+- `factors: Tuple[AttributionFactor, ...]` — contributing factor details
+- `evidence_ids: Tuple[str, ...]` — audit trail of factor_ids
+- `factor_weights: Dict[str, float]` — weights used for reproducibility
+
+**AttributionFactor** dataclass (frozen=True):
+- `factor_id`, `factor_type`, `raw_score`, `weighted_score`, `evidence`, `metadata`
+
+**Five Attribution Factors** (weighted, sum=1.0):
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| `email_domain_match` | 0.25 | Exact domain or shared TLD |
+| `username_pattern_similarity` | 0.20 | Levenshtein similarity ≥0.6 |
+| `temporal_overlap` | 0.20 | Jaccard ≥0.3 on shared finding_ids |
+| `shared_infrastructure` | 0.20 | Shared platform presence |
+| `pgp_key_correlation` | 0.15 | Matching PGP fingerprint in evidence |
+
+**Integration Points**:
+- `IdentityStitchingAdapter.score_and_enrich_candidates(candidates, scorer)` — post-processes candidates, adds `attribution_confidence` and `attribution_factor_types` to signals
+- `upsert_identity_edges()` — now uses `attribution_confidence` from signals as edge weight (fallback: `cand.confidence`)
+- `_run_identity_stitching_sidecar()` — calls `score_and_enrich_candidates()` after stitching, before graph upsert
+- `to_derived_findings()` — sets `source_type="identity_attribution"` for enriched candidates, uses attribution confidence as finding confidence
+- Markdown reporter — shows `Attribution Confidence`, `Attribution Factors`, and `Base Confidence` in identity section
+
+**Guardrails**:
+- No model load; no network I/O
+- Fail-soft: empty scores returned on any error
+- Canonical persist via `async_ingest_findings_batch()`
+- Confidence clamped to [0.0, 1.0]
+- Pure Python Levenshtein fallback (no rapidfuzz dependency)
+
+**Tests**: `tests/probe_f203b/test_attribution_confidence_scorer.py` — 41 probe tests covering all factors, fail-soft behavior, and enrichment integration.
+
 ## F202C Asset Exposure Correlator (2026-04-24)
 
 **Přidáno** — correlates asset exposure signals into explainable exposure findings:
@@ -1094,5 +1138,85 @@ DeepProbe findings now flow through the canonical persist path:
 - F202C-10: Suspicious JARM fingerprints (GREASE/000 prefix)
 - F202C-11: Stats tracking
 - F202C-12: Evidence envelope fields completeness
+
+## F203A: Sprint Diff Engine & Target Profile Persistence (2026-04-25)
+
+**Phase 3 seam — cross-sprint memory for target analytics.**
+
+**Role**: Analyst-visible diff: what is new, disappeared, or changed compared to previous sprints of the same target. Enables temporal tracking of entity evolution across sprint runs.
+
+**Dependencies**: F202A (evidence envelope), F202B (entity extraction).
+
+**Module**: `knowledge/sprint_diff_engine.py`
+
+**API**:
+```python
+@dataclass(frozen=True)
+class SprintDiffResult:
+    target_id: str
+    current_sprint_id: str
+    previous_sprint_id: str | None
+    new_findings: list[dict]        # bounded MAX_DIFF_FINDINGS=100
+    disappeared_findings: list[dict]
+    changed_entities: list[dict]
+
+@dataclass
+class TargetProfileSummary:
+    target_id: str
+    first_seen: float
+    last_seen: float
+    cumulative_finding_count: int
+    entity_summary_json: str         # JSON: {total, by_type, by_source}
+    finding_velocity: float = 0.0
+    entity_types: dict[str, int] = field(default_factory=dict)
+```
+
+**Diff logic**:
+- Entity key = `(ioc_type::ioc_value)` — case-insensitive composite
+- `new` = current entities NOT in previous sprint
+- `disappeared` = previous entities NOT in current sprint
+- `changed` = same `ioc_value` but different `ioc_type` or `finding_id`
+
+**Profile logic**:
+- `first_seen` = min(previous.first_seen, current_ts) — oldest first-seen across sprints
+- `cumulative_finding_count` = previous + len(current)
+- `finding_velocity` = cumulative / max(days_since_first_seen, 1)
+- `entity_summary_json` = `{total, by_type:{}, by_source:{}}` — capped at MAX_PROFILE_ENTRIES=500 per bucket
+
+**DuckDB schema** (`knowledge/duckdb_store.py`):
+```sql
+CREATE TABLE IF NOT EXISTS target_profiles (
+    target_id TEXT PRIMARY KEY,
+    first_seen DOUBLE,
+    last_seen DOUBLE,
+    cumulative_finding_count INTEGER,
+    entity_summary_json TEXT
+);
+```
+Methods: `ensure_target_profiles_schema()`, `async_upsert_target_profile()`, `async_get_target_profile()`, `async_get_previous_findings_for_target()`.
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_run_sprint_diff_sidecar(findings, store, query)` — async sidecar after accepted findings are stored
+  - Reads previous findings via `store.async_get_previous_findings_for_target(target_id)`
+  - Computes diff via `SprintDiffEngine.compute_diff()`
+  - Ingest diff findings via `async_ingest_findings_batch()` with `source_type="sprint_diff"`
+  - Updates target profile via `store.async_upsert_target_profile()`
+- `sprint_diff_findings_produced` counter in `SprintSchedulerResult`
+- Wired after `_run_evidence_triage_sidecar()` in the CT log sidecar chain
+
+**Markdown Rendering** (`export/sprint_markdown_reporter.py`):
+- `_render_sprint_diff_section()` — bounded display of 20 diff findings
+- Emoji labels: 🆕 NEW / ❌ GONE / ⚡ CHANGED
+- Fields: ioc_value, target_id, ioc_type, previous→current sprint
+
+**Exporter** (`export/sprint_exporter.py`):
+- Queries duckdb for `source_type="sprint_diff"` findings at export time
+- Populates `scorecard["sprint_diff_findings"]` for reporter consumption
+
+**Guardrails**:
+- Canonical writes only via `async_ingest_findings_batch()` — no direct writes
+- Persistent metadata methods only in `duckdb_store.py` — no new store APIs elsewhere
+- Fail-soft throughout: all external calls wrapped in try/except
+- No absolute paths; no full payload dumps in reports
 
 ## Architectural verdict
