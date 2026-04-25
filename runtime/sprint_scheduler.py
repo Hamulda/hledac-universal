@@ -357,6 +357,10 @@ class SprintSchedulerResult:
     evidence_triage_findings_count: int = 0
     # Sprint F203A: Sprint diff sidecar
     sprint_diff_findings_produced: int = 0
+    # Sprint F203C: Kill chain tagging sidecar
+    kill_chain_tags_produced: int = 0
+    # Sprint F203D: Evidence chain tracker
+    chain_steps_recorded: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -930,6 +934,13 @@ class SprintScheduler:
         _dedup_elapsed = _time.monotonic() - _dedup_t0
         self._result.dedup_preload_elapsed_s = _dedup_elapsed
         self._result.dedup_preload_count = len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
+
+        # Sprint F203D: Initialize evidence chain builder at sprint start
+        try:
+            from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
+            set_global_builder(EvidenceChainBuilder())
+        except Exception:
+            pass  # Fail-soft: chain tracking is optional advisory
 
         # Sprint F166B: Identify pre-loop cost center (additive — first reason only)
         if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
@@ -1603,6 +1614,10 @@ class SprintScheduler:
                     await self._run_sprint_diff_sidecar(
                         accepted_findings, store, query
                     )
+                    # Sprint F203C: Kill chain tagging sidecar (fail-soft, non-blocking)
+                    await self._run_kill_chain_tagging_sidecar(
+                        accepted_findings, store, query
+                    )
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
@@ -1729,6 +1744,43 @@ class SprintScheduler:
             if not derived_findings:
                 return
 
+            # F203D: Record identity stitching chain step (fail-soft)
+            try:
+                from knowledge.evidence_chain import get_global_builder
+                builder = get_global_builder()
+                root_ids = [getattr(f, "finding_id", "") or "" for f in findings if getattr(f, "finding_id", "")]
+                output_ids = [getattr(df, "finding_id", "") or "" for df in derived_findings if getattr(df, "finding_id", "")]
+                if root_ids and output_ids:
+                    # One identity step: all roots → all derived findings
+                    builder.record_identity(
+                        root_finding_id=root_ids[0],
+                        input_ids=root_ids,
+                        output_id=f"identity-stitched-{len(output_ids)}",
+                        confidence=float(sum(getattr(c, "confidence", 0.5) for c in candidates) / max(len(candidates), 1)),
+                        reason=f"Linked {len(profiles)} profiles → {len(candidates)} identity candidates → {len(derived_findings)} derived findings",
+                    )
+                    self._result.chain_steps_recorded += 1
+            except Exception:
+                pass  # Fail-soft: chain recording must never crash sidecar
+
+            # F203D: Record attribution scoring chain step (fail-soft)
+            if len(candidates) > 1:
+                try:
+                    from knowledge.evidence_chain import get_global_builder
+                    builder = get_global_builder()
+                    root_ids = [getattr(f, "finding_id", "") or "" for f in findings if getattr(f, "finding_id", "")]
+                    if root_ids:
+                        builder.record_attribution(
+                            root_finding_id=root_ids[0],
+                            input_ids=root_ids,
+                            output_id=f"attribution-scored-{len(candidates)}",
+                            confidence=float(sum(getattr(c, "confidence", 0.5) for c in candidates) / max(len(candidates), 1)),
+                            reason=f"Attribution scoring applied to {len(candidates)} identity candidates",
+                        )
+                        self._result.chain_steps_recorded += 1
+                except Exception:
+                    pass  # Fail-soft
+
             # 6. Ingest derived findings via async_ingest_findings_batch
             try:
                 results = await store.async_ingest_findings_batch(derived_findings)
@@ -1785,6 +1837,24 @@ class SprintScheduler:
             derived_findings = self._exposure_adapter.correlate(findings, query)
             if not derived_findings:
                 return
+
+            # F203D: Record exposure correlation chain step (fail-soft)
+            try:
+                from knowledge.evidence_chain import get_global_builder
+                builder = get_global_builder()
+                root_ids = [getattr(f, "finding_id", "") or "" for f in findings if getattr(f, "finding_id", "")]
+                output_ids = [getattr(df, "finding_id", "") or "" for df in derived_findings if getattr(df, "finding_id", "")]
+                if root_ids and output_ids:
+                    builder.record_exposure(
+                        root_finding_id=root_ids[0],
+                        input_ids=root_ids,
+                        output_id=f"exposure-correlated-{len(output_ids)}",
+                        confidence=0.75,
+                        reason=f"Correlated {len(findings)} findings → {len(derived_findings)} exposure findings",
+                    )
+                    self._result.chain_steps_recorded += 1
+            except Exception:
+                pass  # Fail-soft: chain recording must never crash sidecar
 
             # 3. Ingest derived findings via async_ingest_findings_batch
             try:
@@ -1844,6 +1914,24 @@ class SprintScheduler:
             derived_findings = await self._leak_sentinel_adapter.scan(query)
             if not derived_findings:
                 return
+
+            # F203D: Record leak sentinel chain step (fail-soft)
+            try:
+                from knowledge.evidence_chain import get_global_builder
+                builder = get_global_builder()
+                root_ids = [getattr(f, "finding_id", "") or "" for f in findings if getattr(f, "finding_id", "")]
+                output_ids = [getattr(df, "finding_id", "") or "" for df in derived_findings if getattr(df, "finding_id", "")]
+                if root_ids and output_ids:
+                    builder.record_leak(
+                        root_finding_id=root_ids[0],
+                        input_ids=root_ids,
+                        output_id=f"leak-detected-{len(output_ids)}",
+                        confidence=0.8,
+                        reason=f"Leak scan on query → {len(derived_findings)} leak findings",
+                    )
+                    self._result.chain_steps_recorded += 1
+            except Exception:
+                pass  # Fail-soft: chain recording must never crash sidecar
 
             # 3. Ingest derived findings via async_ingest_findings_batch
             try:
@@ -1908,6 +1996,24 @@ class SprintScheduler:
 
             if not derived_findings:
                 return
+
+            # F203D: Record temporal archaeology chain step (fail-soft)
+            try:
+                from knowledge.evidence_chain import get_global_builder
+                builder = get_global_builder()
+                root_ids = [getattr(f, "finding_id", "") or "" for f in ct_findings if getattr(f, "finding_id", "")]
+                output_ids = [getattr(df, "finding_id", "") or "" for df in derived_findings if getattr(df, "finding_id", "")]
+                if root_ids and output_ids:
+                    builder.record_temporal(
+                        root_finding_id=root_ids[0],
+                        input_ids=root_ids,
+                        output_id=f"timeline-synthesized-{len(output_ids)}",
+                        confidence=0.7,
+                        reason=f"Synthesized {len(timeline)} timeline events from {len(ct_findings)} CT findings → {len(derived_findings)} timeline findings",
+                    )
+                    self._result.chain_steps_recorded += 1
+            except Exception:
+                pass  # Fail-soft: chain recording must never crash sidecar
 
             # Ingest derived findings via async_ingest_findings_batch
             try:
@@ -2113,6 +2219,36 @@ class SprintScheduler:
                 except Exception:
                     continue
 
+            # F203D: Record sprint diff chain steps (fail-soft)
+            try:
+                from knowledge.evidence_chain import get_global_builder
+                builder = get_global_builder()
+                all_root_ids = [getattr(f, "finding_id", "") or "" for f in findings if getattr(f, "finding_id", "")]
+                if all_root_ids:
+                    root_id = all_root_ids[0]
+                    new_ids = [f"diff-new-{nf.get('finding_id', 'unknown')[:32]}" for nf in diff_result.new_findings[:50]]
+                    gone_ids = [f"diff-gone-{df.get('finding_id', 'unknown')[:32]}" for df in diff_result.disappeared_findings[:50]]
+                    if new_ids:
+                        builder.record_diff(
+                            root_finding_id=root_id,
+                            input_ids=all_root_ids,
+                            output_id=f"diff-new-{len(new_ids)}",
+                            confidence=0.75,
+                            reason=f"Sprint diff: {len(new_ids)} new findings appeared vs previous sprint",
+                        )
+                        self._result.chain_steps_recorded += 1
+                    if gone_ids:
+                        builder.record_diff(
+                            root_finding_id=root_id,
+                            input_ids=all_root_ids,
+                            output_id=f"diff-gone-{len(gone_ids)}",
+                            confidence=0.75,
+                            reason=f"Sprint diff: {len(gone_ids)} findings disappeared since previous sprint",
+                        )
+                        self._result.chain_steps_recorded += 1
+            except Exception:
+                pass  # Fail-soft: chain recording must never crash sidecar
+
             # 6. Ingest derived findings via async_ingest_findings_batch
             if derived_findings:
                 try:
@@ -2154,6 +2290,130 @@ class SprintScheduler:
 
         except Exception:
             pass  # Fail-soft: diff sidecar must never crash sprint
+
+    # ── F203C: Kill Chain Tagging Sidecar ─────────────────────────────────
+
+    async def _run_kill_chain_tagging_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F203C: Tag findings with MITRE ATT&CK kill chain phases.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Tags findings via regex/lookup patterns, stores kill-chain-tagged findings
+        via async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored.
+            store: DuckDBShadowStore instance for async_ingest_findings_batch.
+            query: Original sprint query.
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.kill_chain_tagger import (
+                create_kill_chain_tagger,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependency
+
+        try:
+            tagger = create_kill_chain_tagger()
+            tagged_results: dict[str, list] = {}  # finding_id -> list of tag dicts
+            tagged_count = 0
+
+            for finding in findings:
+                fid = getattr(finding, "finding_id", None)
+                if not fid:
+                    continue
+                tags = tagger.tag_finding(finding)
+                if tags:
+                    tagged_results[str(fid)] = [tag.to_dict() for tag in tags]
+                    tagged_count += len(tags)
+
+            if not tagged_results:
+                return
+
+            # F203D: Record kill chain tagging chain step (fail-soft)
+            try:
+                from knowledge.evidence_chain import get_global_builder
+                builder = get_global_builder()
+                root_ids = [getattr(f, "finding_id", "") or "" for f in findings if getattr(f, "finding_id", "")]
+                output_ids = [f"kct-{fid[:32]}" for fid in tagged_results.keys()]
+                if root_ids and output_ids:
+                    builder.record_killchain(
+                        root_finding_id=root_ids[0],
+                        input_ids=root_ids,
+                        output_id=f"killchain-tagged-{len(output_ids)}",
+                        confidence=0.7,
+                        reason=f"Tagged {len(tagged_results)} findings with {tagged_count} ATT&CK technique labels",
+                    )
+                    self._result.chain_steps_recorded += 1
+            except Exception:
+                pass  # Fail-soft: chain recording must never crash sidecar
+
+            # Store tagged findings as derived findings for the canonical write path
+            # Each tagged finding becomes a synthetic finding with kill chain tags
+            derived_findings: list[Any] = []
+            ts_now = _time.time()
+
+            class _KCTFinding:
+                """Minimal finding-like object with __slots__ for efficiency."""
+                __slots__ = (
+                    "finding_id", "source_type", "query", "target_id",
+                    "ioc_type", "ioc_value", "confidence", "ts", "payload_text",
+                )
+
+                def __init__(self, **kw: Any) -> None:
+                    for k, v in kw.items():
+                        setattr(self, k, v)
+
+            for fid, tags_list in tagged_results.items():
+                try:
+                    # Find original finding to get ioc_type, ioc_value
+                    orig = next(
+                        (f for f in findings if getattr(f, "finding_id", "") == fid),
+                        None,
+                    )
+                    ioc_type = getattr(orig, "ioc_type", "unknown") if orig else "unknown"
+                    ioc_value = getattr(orig, "ioc_value", fid) if orig else fid
+                    confidence = getattr(orig, "confidence", 0.5) if orig else 0.5
+
+                    derived_findings.append(
+                        _KCTFinding(
+                            finding_id=f"kct-{fid[:32]}",
+                            source_type="killchain_tag",
+                            query=query,
+                            target_id=query[:128],
+                            ioc_type=ioc_type,
+                            ioc_value=ioc_value,
+                            confidence=confidence,
+                            ts=ts_now,
+                            payload_text=str({"kill_chain_tags": tags_list}),
+                        )
+                    )
+                except Exception:
+                    continue
+
+            if derived_findings:
+                try:
+                    results = await store.async_ingest_findings_batch(derived_findings)
+                    stored = sum(
+                        1 for r in results
+                        if isinstance(r, dict) and r.get("accepted")
+                    )
+                    self._result.kill_chain_tags_produced = stored
+                except Exception:
+                    pass  # Fail-soft
+
+        except Exception:
+            pass  # Fail-soft: kill chain sidecar must never crash sprint
 
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
@@ -4403,6 +4663,12 @@ class SprintScheduler:
         self._public_verdicts.clear()
         # Sprint F160C: Clear per-sprint source economics
         self._source_economics.clear()
+        # Sprint F203D: Reset evidence chain builder for new sprint
+        try:
+            from hledac.universal.knowledge.evidence_chain import reset_global_builder
+            reset_global_builder()
+        except Exception:
+            pass
         # Sprint F195C: Reset cross-sprint entity memory idempotency tracker
         try:
             from hledac.universal.knowledge.graph_service import reset_session

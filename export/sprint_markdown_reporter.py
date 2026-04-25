@@ -255,6 +255,20 @@ def render_sprint_markdown(
         if diff_section:
             parts.append(diff_section)
 
+    # Sprint F203C: render kill chain heat map section
+    kill_chain_findings = scorecard.get("kill_chain_findings", [])
+    if kill_chain_findings:
+        kc_section = _render_kill_chain_section(kill_chain_findings)
+        if kc_section:
+            parts.append(kc_section)
+
+    # Sprint F203D: render top-5 evidence chains section
+    evidence_chains = scorecard.get("evidence_chains", [])
+    if evidence_chains:
+        chain_section = _render_evidence_chains_section(evidence_chains)
+        if chain_section:
+            parts.append(chain_section)
+
     return "\n".join(parts)
 
 
@@ -518,7 +532,7 @@ def _render_timeline_section(timeline_findings: list) -> str:
                 evt_ts = event.get("ts")
                 evt_type = event.get("event_type", "unknown")
                 evt_desc = event.get("description", "")
-                evt_src = event.get("source", "")
+                _evt_src = event.get("source", "")
 
                 # Format timestamp
                 ts_str = "?"
@@ -593,4 +607,138 @@ def _render_sprint_diff_section(sprint_diff_findings: list) -> str:
         lines.append("")
 
     lines.append(f"_{count} diff finding(s)_")
+    return "\n".join(lines)
+
+
+# ── F203C: Kill Chain Heat Map ──────────────────────────────────────────────
+
+
+def _render_kill_chain_section(kill_chain_findings: list) -> str:
+    """
+    Render kill chain heat map as a markdown section.
+
+    Groups findings by tactic and technique, showing counts and confidence.
+    kill_chain_findings format:
+        List[dict] with keys: kill_chain_tags (list of tag dicts with
+        tactic, technique_id, phase, confidence), ioc_type, ioc_value.
+    """
+    if not kill_chain_findings:
+        return ""
+
+    lines = ["", "## Kill Chain Heat Map", ""]
+
+    # Aggregate by tactic and technique
+    tactic_counts: dict[str, int] = {}
+    technique_counts: dict[str, tuple[int, float]] = {}  # tech_id -> (count, avg_conf)
+
+    for f in kill_chain_findings[:100]:  # bounded
+        if not isinstance(f, dict):
+            continue
+        tags = f.get("kill_chain_tags", [])
+        if not isinstance(tags, list):
+            tags = []
+        for tag in tags:
+            if not isinstance(tag, dict):
+                continue
+            tactic = tag.get("tactic", "Unknown")
+            tech_id = tag.get("technique_id", "?")
+            conf = tag.get("confidence", 0.0)
+
+            tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
+            if tech_id in technique_counts:
+                cnt, avg_conf = technique_counts[tech_id]
+                technique_counts[tech_id] = (cnt + 1, (avg_conf * cnt + conf) / (cnt + 1))
+            else:
+                technique_counts[tech_id] = (1, conf)
+
+    if not tactic_counts:
+        return ""
+
+    # Sort tactics by count
+    sorted_tactics = sorted(tactic_counts.items(), key=lambda x: -x[1])
+    for tactic, count in sorted_tactics:
+        lines.append(f"### {tactic} ({count} finding(s))")
+        lines.append("")
+        # Show top techniques by count
+        tactic_techs_sorted = sorted(
+            [(tid, cnt, avg_conf) for tid, (cnt, avg_conf) in technique_counts.items()],
+            key=lambda x: -x[1],
+        )[:10]
+        for tid, cnt, avg_conf in tactic_techs_sorted:
+            conf_str = f"{avg_conf:.0%}"
+            lines.append(f"- `{tid}` — {cnt} finding(s) (avg conf {conf_str})")
+        lines.append("")
+
+    total_tags = sum(tactic_counts.values())
+    lines.append(f"_{total_tags} kill chain tag(s) across {len(tactic_counts)} tactic(s)_")
+    return "\n".join(lines)
+
+
+# ── F203D: Evidence Chain Rendering ────────────────────────────────────────
+
+
+def _render_evidence_chains_section(evidence_chains: list) -> str:
+    """
+    F203D: Render top-5 evidence chains as a markdown section.
+
+    Each chain shows the reasoning path from raw finding through sidecar processing
+    to derived findings. Enables analyst to answer "proč tomu věříme".
+
+    evidence_chains format:
+        List[EvidenceChain] (as dicts with keys:
+        root_finding_id, steps: list[ChainStep], conclusion).
+        ChainStep dict: step_type, input_ids, output_id, confidence, reason.
+    """
+    if not evidence_chains:
+        return ""
+
+    lines = ["", "## Evidence Chains", ""]
+
+    # Sort chains by depth (longest first), take top 5
+    sorted_chains = sorted(
+        evidence_chains,
+        key=lambda c: len(c.get("steps", [])) if isinstance(c, dict) else len(c.steps),
+        reverse=True,
+    )[:5]
+
+    for i, chain in enumerate(sorted_chains, 1):
+        if isinstance(chain, dict):
+            root_id = chain.get("root_finding_id", "?")
+            steps = chain.get("steps", [])
+            conclusion = chain.get("conclusion")
+        else:
+            root_id = chain.root_finding_id
+            steps = chain.steps
+            conclusion = chain.conclusion
+
+        lines.append(f"### Chain {i}: `{root_id[:32]}...`")
+
+        for j, step in enumerate(steps):
+            if isinstance(step, dict):
+                step_type = step.get("step_type", "?")
+                output_id = step.get("output_id", "?")
+                confidence = step.get("confidence", 0.0)
+                reason = step.get("reason", "")
+                input_ids = step.get("input_ids", [])
+            else:
+                step_type = step.step_type
+                output_id = step.output_id
+                confidence = step.confidence
+                reason = step.reason
+                input_ids = step.input_ids
+
+            conf_str = f"{confidence:.0%}" if confidence else "?"
+            step_label = step_type.replace("_", " ").title()
+            lines.append(f"- **{step_label}** → `{output_id[:24]}...` (conf {conf_str})")
+            if reason:
+                lines.append(f"  - {reason}")
+            if input_ids:
+                lines.append(f"  - Inputs: {len(input_ids)} finding(s)")
+
+        if conclusion:
+            lines.append(f"- **Conclusion**: {conclusion}")
+
+        lines.append("")
+
+    lines.append(f"_{len(sorted_chains)} chain(s) shown (top 5 by depth)_")
     return "\n".join(lines)

@@ -1219,4 +1219,45 @@ Methods: `ensure_target_profiles_schema()`, `async_upsert_target_profile()`, `as
 - Fail-soft throughout: all external calls wrapped in try/except
 - No absolute paths; no full payload dumps in reports
 
+## F203C: Kill Chain Tagger — ATT&CK Mapping (2026-04-25)
+
+**Phase 3 seam — OSINT finding to threat-intel mapping.**
+
+**Role**: Maps raw OSINT findings to MITRE ATT&CK tactics and techniques, enabling threat-intel heat maps instead of raw IOC dumps.
+
+**Dependencies**: F202A (evidence envelope). Benefits from F202C (exposure correlator) and F202D (leak sentinel).
+
+**Module**: `intelligence/kill_chain_tagger.py`
+
+**ATT&CK Coverage**:
+| Tactic | Techniques | Phase |
+|--------|-----------|-------|
+| Reconnaissance (TA0043) | T1590–T1598 | reconnaissance |
+| Resource Development (TA0042) | T1583–T1588 | resource_development |
+
+**Pattern types**: ~150 regex/lookup patterns across T1590–T1598 (recon) and T1583–T1588 (resource dev). Techniques covered: DNS records, WHOIS, certificate transparency, passive DNS, subdomains, SSL/TLS, CVE/vulnerability scanning, leaked credentials, phishing kits, infrastructure acquisition, malware tools, VPN services, DNS server, web services, supply chain.
+
+**Bounds**:
+- `MAX_TAGS_PER_FINDING=5` — cap per finding
+- `MAX_TAGGED_FINDINGS=1000` — cap per sprint
+- No model load, no network — deterministic
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_run_kill_chain_tagging_sidecar(findings, store, query)` — async sidecar after findings are stored
+- `kill_chain_tags_produced` counter in `SprintSchedulerResult`
+- Wired after `_run_sprint_diff_sidecar()` in the sidecar chain
+
+**Dashboard** (`monitoring/sprint_dashboard.py`):
+- Row 8: `kill-chain: N` when `kill_chain_tags_produced > 0`
+
+**Markdown Rendering** (`export/sprint_markdown_reporter.py`):
+- `_render_kill_chain_section()` — grouped by tactic, shows technique counts and average confidence
+- Scorecard key: `kill_chain_findings`
+
+**Guardrails**:
+- Deterministic: pattern matching only, no model inference, no network
+- Fail-soft throughout: all errors caught, never crash sprint
+- Frozen dataclass for KillChainTag — immutable
+- No live_feed_pipeline tuple expansion
+
 ## Architectural verdict

@@ -58,12 +58,17 @@ class FindingEnvelope:
         suggested_pivots:  List of recommended next investigation directions.
                            Each pivot is a dict with keys: direction, query_hint, priority.
                            Empty list means no pivots derived.
+        chain_refs:        F203D: List of evidence chain IDs (root_finding_id) that
+                           this finding is part of. Enables "why do we believe this"
+                           traceability from derived findings back to raw sources.
+                           Empty list means no chain participation.
 
     Invariants:
         - audit_reason must be non-empty str when envelope is present
         - evidence_pointers is list[str], may be empty
         - signal_facets is dict[str, float], may be empty
         - suggested_pivots is list[dict], may be empty
+        - chain_refs is list[str], may be empty
         - Serialized JSON must fit within MAX_ENVELOPE_SIZE bytes
     """
 
@@ -71,6 +76,7 @@ class FindingEnvelope:
     evidence_pointers: list[str]
     signal_facets: dict[str, float]
     suggested_pivots: list[dict]
+    chain_refs: list[str]
 
     def __init__(
         self,
@@ -78,11 +84,13 @@ class FindingEnvelope:
         evidence_pointers: list[str] | None = None,
         signal_facets: dict[str, float] | None = None,
         suggested_pivots: list[dict] | None = None,
+        chain_refs: list[str] | None = None,
     ) -> None:
         self.audit_reason = audit_reason
         self.evidence_pointers = evidence_pointers if evidence_pointers is not None else []
         self.signal_facets = signal_facets if signal_facets is not None else {}
         self.suggested_pivots = suggested_pivots if suggested_pivots is not None else []
+        self.chain_refs = chain_refs if chain_refs is not None else []
 
     def is_populated(self) -> bool:
         """True if envelope carries any meaningful metadata beyond default empty."""
@@ -91,6 +99,7 @@ class FindingEnvelope:
             or self.evidence_pointers
             or self.signal_facets
             or self.suggested_pivots
+            or self.chain_refs
         )
 
 
@@ -141,6 +150,7 @@ def serialize_envelope(envelope: FindingEnvelope) -> str | None:
                 "evidence_pointers": envelope.evidence_pointers,
                 "signal_facets": envelope.signal_facets,
                 "suggested_pivots": envelope.suggested_pivots,
+                "chain_refs": envelope.chain_refs,
             }
         )
     except Exception:
@@ -203,4 +213,5 @@ def deserialize_envelope(payload_text: str | None) -> FindingEnvelope | None:
         evidence_pointers=data.get("evidence_pointers", []),
         signal_facets=data.get("signal_facets", {}),
         suggested_pivots=data.get("suggested_pivots", []),
+        chain_refs=data.get("chain_refs", []),
     )

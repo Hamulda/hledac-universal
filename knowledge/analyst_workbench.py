@@ -50,6 +50,7 @@ __all__ = [
     "EvidencePointer",
     "RelatedEntity",
     "create_analyst_workbench",
+    "get_evidence_chain",
 ]
 
 # ============================================================================
@@ -707,6 +708,35 @@ class AnalystWorkbench:
                 self.ask(question, use_model=use_model, model_name=model_name)
             )
 
+    # -------------------------------------------------------------------------
+    # F203D: Evidence Chain lookup
+    # -------------------------------------------------------------------------
+
+    async def get_evidence_chain(self, finding_id: str) -> "EvidenceChain | None":
+        """
+        F203D: Retrieve the evidence chain for a given finding_id.
+
+        Chains are accumulated by the EvidenceChainBuilder during sprint teardown
+        and stored as a sprint artifact. This method queries the module-level
+        registry for the chain.
+
+        Args:
+            finding_id: The finding ID to look up.
+
+        Returns:
+            EvidenceChain if found, None otherwise.
+            Returns None if no sprint has been run yet or if the finding_id
+            is not part of any tracked chain.
+        """
+        # Import here to avoid circular imports
+        try:
+            from knowledge.evidence_chain import _get_chain_for_finding
+
+            return _get_chain_for_finding(finding_id)
+        except Exception:
+            self._logger.warning(f"get_evidence_chain({finding_id}) failed")
+            return None
+
 
 # ============================================================================
 # Factory
@@ -749,3 +779,22 @@ def create_analyst_workbench() -> AnalystWorkbench:
         vector_store=vector,
         semantic_store=semantic,
     )
+
+
+# ============================================================================
+# F203D: Evidence Chain Lookup
+# ============================================================================
+
+def get_evidence_chain(finding_id: str) -> EvidenceChain | None:
+    """
+    F203D: Retrieve the evidence chain for a given finding_id.
+
+    Chains are accumulated during sprint teardown by the EvidenceChainBuilder
+    (evidence_chain.py) and stored as a sprint artifact. This function looks up
+    the chain from the module-level registry.
+
+    Returns the EvidenceChain if found, None otherwise.
+    """
+    from knowledge.evidence_chain import _get_chain_for_finding
+
+    return _get_chain_for_finding(finding_id)
