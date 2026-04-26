@@ -45,6 +45,11 @@ from hledac.universal.runtime.shadow_inputs import (
     collect_model_control_facts,
     collect_provider_runtime_facts,
 )
+from hledac.universal.runtime.sidecar_bus import (
+    SidecarBatch,
+    SidecarRunResult,
+    create_sidecar_bus,
+)
 from hledac.universal.runtime.shadow_parity import run_shadow_parity
 from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
 
@@ -639,6 +644,8 @@ class SprintScheduler:
         # Sprint F202G: Pivot planner (advisory, advisory ordering input only)
         self._pivot_planner: Any = None
         self._planned_pivots: list = []  # Last planned pivots for diagnostics
+        # Sprint F204A: Canonical sidecar bus for all accepted-finding sidecars
+        self._sidecar_bus: Any = None
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -935,6 +942,9 @@ class SprintScheduler:
             self._governor = get_governor()
         except Exception:
             self._governor = None
+
+        # Sprint F204A: Initialize canonical sidecar bus (bounded orchestrator for all accepted-finding sidecars)
+        self._sidecar_bus = create_sidecar_bus(governor=self._governor)
 
         # Sprint F193A: CT log client can be injected at run() call time
         if ct_log_client is not None:
@@ -1638,45 +1648,18 @@ class SprintScheduler:
                 # Sprint F194A: ct_log_accepted_findings tracks accepted CT findings
                 # for canonical truth accounting (additive to feed/public accepted_findings)
                 self._result.ct_log_accepted_findings = stored
-                # Sprint F202B: Identity stitching sidecar (fail-soft, non-blocking)
+                # Sprint F204A: Route all accepted CT findings through FindingSidecarBus
                 accepted_findings = [f for f, r in zip(findings, results)
                                      if isinstance(r, dict) and r.get("accepted")]
-                if accepted_findings:
-                    await self._run_identity_stitching_sidecar(
-                        accepted_findings, store, query
+                if accepted_findings and self._sidecar_bus is not None:
+                    batch = SidecarBatch(
+                        sprint_id=self.sprint_id or "",
+                        query=query,
+                        source_branch="ct",
+                        findings=tuple(accepted_findings),
+                        created_ts=_time.time(),
                     )
-                    # Sprint F202C: Asset exposure correlator sidecar (fail-soft, non-blocking)
-                    await self._run_exposure_correlator_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F202D: Leak sentinel sidecar (fail-soft, non-blocking)
-                    await self._run_leak_sentinel_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F202E: Temporal archaeology sidecar (fail-soft, non-blocking)
-                    await self._run_temporal_archaeology_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F202I: Evidence triage sidecar (fail-soft, non-blocking)
-                    await self._run_evidence_triage_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F203A: Sprint diff sidecar (fail-soft, non-blocking)
-                    await self._run_sprint_diff_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F203C: Kill chain tagging sidecar (fail-soft, non-blocking)
-                    await self._run_kill_chain_tagging_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F203F: Wayback diff sidecar (fail-soft, non-blocking)
-                    await self._run_wayback_diff_sidecar(
-                        accepted_findings, store, query
-                    )
-                    # Sprint F203I: Streaming embedding sidecar (fail-soft, non-blocking)
-                    await self._run_embedding_sidecar(
-                        accepted_findings, store, query
-                    )
+                    await self._sidecar_bus.run_all_sidecars(batch, store)
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)

@@ -144,12 +144,12 @@ def test_osint_frameworks_tempfile_dir():
 
 
 def test_autonomous_orchestrator_mkdtemp_dir():
-    """INVARIANT: autonomous_orchestrator.py mkdtemp uses dir= parameter."""
-    import hledac.universal.autonomous_orchestrator as ao_mod
-    import inspect
+    """INVARIANT: legacy/autonomous_orchestrator.py mkdtemp uses dir= parameter."""
+    import pathlib
 
-    source = inspect.getsource(ao_mod)
-    # Should find mkdtemp with dir=
+    legacy_path = pathlib.Path(__file__).parent.parent.parent / "legacy" / "autonomous_orchestrator.py"
+    source = legacy_path.read_text()
+    # Legacy module contains the actual mkdtemp implementation
     assert "mkdtemp" in source
     # Verify the pattern exists
     assert "dir=tempfile.gettempdir()" in source
