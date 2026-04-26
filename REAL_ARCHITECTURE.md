@@ -1972,4 +1972,19 @@ core/__main__.py run_sprint()
 
 **Tests**: `tests/probe_f204f/test_production_cti_export.py` — 21 probe tests.
 
+## F205 Baseline — Sprint F204A-I Verification (2026-04-27)
+
+**Scope**: Restore green verification baseline for F204A–I lanes; no new intelligence capabilities.
+
+### Changes
+- **F204A** (`test_sidecar_bus_all_sources.py`): Updated `DEFAULT_SIDECAR_RUNNERS` count 9→12; added `passive_fingerprint`, `rir_correlator`, `social_identity_surface` to expected names; updated `_is_heavy_blocked` assertions to use `tuple[bool, str]` unpacking; switched mocks from `sample_uma_status` to `sidecar_admission()`.
+- **probe_8ve** (`circuit_breaker.py`): Added `resilient_fetch()` and `get_transport_for_domain()` as TEST-SEAM ONLY shims. These are NOT wired into production fetch path (per SF-6 audit gate).
+
+### GHOST_INVARIANTS enforced
+- `asyncio.gather(..., return_exceptions=True)` + `_check_gathered()` in `run_all_sidecars`
+- `asyncio.CancelledError` re-raised, never swallowed
+- Fail-soft: sidecar error captured in `SidecarRunResult.skipped_reason`, never propagated
+- RAM guard: `governor.sidecar_admission()` blocks heavy sidecars at critical/emergency
+- Canonical write path: `async_ingest_findings_batch()` only
+
 ## Architectural verdict

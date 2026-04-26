@@ -6,7 +6,7 @@ Invariant mapping:
   F204A-1  | SidecarBatch is frozen=True with correct fields (sprint_id, query, source_branch, findings, created_ts)
   F204A-2  | SidecarRunResult is frozen=True with correct fields (sidecar_name, attempted, produced_count, stored_count, skipped_reason, elapsed_ms)
   F204A-3  | FindingSidecarBus.__init__ accepts governor parameter
-  F204A-4  | create_sidecar_bus() returns bus with 9 registered DEFAULT_SIDECAR_RUNNERS
+  F204A-4  | create_sidecar_bus() returns bus with 12 registered DEFAULT_SIDECAR_RUNNERS
   F204A-5  | Bus.register() rejects duplicate sidecar names
   F204A-6  | Bus._is_heavy_blocked returns False for light sidecars (leak_sentinel, exposure_correlator, etc.)
   F204A-7  | Bus._is_heavy_blocked returns True for heavy sidecars (identity_stitching, embedding, sprint_diff) at critical/emergency RAM
@@ -145,9 +145,9 @@ class TestFindingSidecarBusInit:
         bus = FindingSidecarBus(governor=mockGov)
         assert bus._governor is mockGov
 
-    def test_create_sidecar_bus_has_nine_default_runners(self):
+    def test_create_sidecar_bus_has_twelve_default_runners(self):
         bus = create_sidecar_bus()
-        assert len(bus._runners) == 9
+        assert len(bus._runners) == 12
 
     def test_default_runner_names_are_correct(self):
         bus = create_sidecar_bus()
@@ -160,7 +160,10 @@ class TestFindingSidecarBusInit:
             "sprint_diff",
             "kill_chain_tagging",
             "wayback_diff",
+            "passive_fingerprint",
+            "rir_correlator",
             "embedding",
+            "social_identity_surface",
         }
         assert set(bus._runners.keys()) == expected
 
@@ -201,51 +204,68 @@ class TestBusRegister:
 class TestRAMGovernorGuard:
     """F204A-6: Light sidecars never blocked. F204A-7: Heavy blocked at critical. F204A-8: Heavy allowed at normal."""
 
+    def _mock_admission(self, allowed: bool, reason: str = ""):
+        adm = MagicMock()
+        adm.allowed = allowed
+        adm.reason = reason
+        return adm
+
     def _mock_gov(self, is_critical=False, is_emergency=False, high_water=0.5):
         gov = MagicMock()
-        snap = MagicMock()
-        snap.is_critical = is_critical
-        snap.is_emergency = is_emergency
-        snap.high_water = high_water
-        gov.sample_uma_status.return_value = snap
+        # _is_heavy_blocked uses governor.sidecar_admission() with name + RAM estimate
+        if is_critical or is_emergency or high_water >= 0.85:
+            gov.sidecar_admission.return_value = self._mock_admission(False, "ram_governor_critical")
+        else:
+            gov.sidecar_admission.return_value = self._mock_admission(True, "")
         return gov
 
     def test_light_sidecar_never_blocked_at_critical(self):
         gov = self._mock_gov(is_critical=True)
         bus = FindingSidecarBus(governor=gov)
-        assert bus._is_heavy_blocked("leak_sentinel") is False
-        assert bus._is_heavy_blocked("exposure_correlator") is False
+        blocked, reason = bus._is_heavy_blocked("leak_sentinel")
+        assert blocked is False
+        blocked, reason = bus._is_heavy_blocked("exposure_correlator")
+        assert blocked is False
 
     def test_heavy_sidecar_blocked_at_critical(self):
         gov = self._mock_gov(is_critical=True)
         bus = FindingSidecarBus(governor=gov)
-        assert bus._is_heavy_blocked("identity_stitching") is True
-        assert bus._is_heavy_blocked("embedding") is True
-        assert bus._is_heavy_blocked("sprint_diff") is True
+        blocked, reason = bus._is_heavy_blocked("identity_stitching")
+        assert blocked is True
+        blocked, reason = bus._is_heavy_blocked("embedding")
+        assert blocked is True
+        blocked, reason = bus._is_heavy_blocked("sprint_diff")
+        assert blocked is True
 
     def test_heavy_sidecar_blocked_at_emergency(self):
         gov = self._mock_gov(is_emergency=True)
         bus = FindingSidecarBus(governor=gov)
-        assert bus._is_heavy_blocked("identity_stitching") is True
+        blocked, reason = bus._is_heavy_blocked("identity_stitching")
+        assert blocked is True
 
     def test_heavy_sidecar_blocked_at_85_percent_high_water(self):
         gov = self._mock_gov(high_water=0.85)
         bus = FindingSidecarBus(governor=gov)
-        assert bus._is_heavy_blocked("embedding") is True
+        blocked, reason = bus._is_heavy_blocked("embedding")
+        assert blocked is True
 
     def test_heavy_sidecar_not_blocked_at_normal(self):
         gov = self._mock_gov(high_water=0.5)
         bus = FindingSidecarBus(governor=gov)
-        assert bus._is_heavy_blocked("identity_stitching") is False
-        assert bus._is_heavy_blocked("embedding") is False
-        assert bus._is_heavy_blocked("sprint_diff") is False
+        blocked, reason = bus._is_heavy_blocked("identity_stitching")
+        assert blocked is False
+        blocked, reason = bus._is_heavy_blocked("embedding")
+        assert blocked is False
+        blocked, reason = bus._is_heavy_blocked("sprint_diff")
+        assert blocked is False
 
     def test_governor_error_allows_heavy_sidecars(self):
         gov = MagicMock()
-        gov.sample_uma_status.side_effect = RuntimeError("governor unavailable")
+        gov.sidecar_admission.side_effect = RuntimeError("governor unavailable")
         bus = FindingSidecarBus(governor=gov)
         # Fail-soft: allow heavy sidecars if governor errors
-        assert bus._is_heavy_blocked("identity_stitching") is False
+        blocked, reason = bus._is_heavy_blocked("identity_stitching")
+        assert blocked is False
 
 
 # ============================================================================
@@ -417,11 +437,10 @@ class TestHeavySidecarSkipped:
     @pytest.mark.asyncio
     async def test_heavy_sidecar_skipped_at_critical_ram(self):
         mockGov = MagicMock()
-        snap = MagicMock()
-        snap.is_critical = True
-        snap.is_emergency = False
-        snap.high_water = 0.9
-        mockGov.sample_uma_status.return_value = snap
+        adm = MagicMock()
+        adm.allowed = False
+        adm.reason = "ram_governor_critical"
+        mockGov.sidecar_admission.return_value = adm
 
         bus = FindingSidecarBus(governor=mockGov)
 

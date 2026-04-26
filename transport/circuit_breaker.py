@@ -224,3 +224,56 @@ def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:
 def clear_all_breakers() -> None:
     """Clear all circuit breaker state — used for testing."""
     _BREAKERS.clear()
+
+
+# =============================================================================
+# TEST-SEAM ONLY — NOT wired into any production fetch path
+# These functions exist solely to satisfy probe_8ve / probe_8sf test surface.
+# Production code must NOT call these; use FetchCoordinator instead.
+# =============================================================================
+
+
+async def resilient_fetch(url: str) -> None:
+    """
+    TEST-SEAM ONLY: Minimal CB-aware fetch stub.
+
+    Checks the domain circuit breaker before any fetch attempt.
+    - Circuit OPEN  → return None immediately (no fetch)
+    - Circuit CLOSED → simulate one attempt; record success (stub)
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc
+    except Exception:
+        return None
+
+    # Strip tor-portal prefix if present
+    if domain.startswith("tor:"):
+        domain = domain[4:]
+
+    breaker = get_breaker(domain)
+    decision = breaker.check_circuit()
+    if not decision.allowed:
+        return None  # circuit open — fail fast
+
+    # Stub: record success and return None (no actual HTTP)
+    breaker.record_success()
+    return None
+
+
+async def get_transport_for_domain(domain: str) -> str:
+    """
+    TEST-SEAM ONLY: Return resolved transport hint for domain.
+
+    - onion domains: check CB → open returns "nym", closed returns "tor"
+    - clearnet: returns "clearnet"
+    """
+    if domain.endswith(".onion"):
+        breaker = get_breaker(domain)
+        decision = breaker.check_circuit()
+        if not decision.allowed:
+            return "nym"  # fallback when tor CB is open
+        return "tor"
+    return "clearnet"
