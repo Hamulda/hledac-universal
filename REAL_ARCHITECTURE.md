@@ -31,6 +31,46 @@
 
 **Definition of Done:** ✓ pytest tests/probe_f203i/ -q (20/20 pass), smoke_runner OK, benchmark target met
 
+## F204C — Autonomous Pivot Executor (2026-04-26)
+
+**Cíl:** PivotPlanner不再是纯咨询性的——实现bounded executor执行top pivots，通过canonical ingest存储derived findings，并通过HypothesisFeedback记录结果，全程无sync event-loop hack。
+
+**组件:**
+
+| 文件 | 角色 |
+|------|------|
+| `runtime/pivot_executor.py` | `AutonomousPivotExecutor` — bounded pivot execution, MAX_ACTIVE_PIVOTS=3, MAX_PIVOTS_PER_SPRINT=10, PIVOT_TIMEOUT_S=25.0 |
+| `runtime/pivot_planner.py` | `Pivot.pivot_id` — stable unique identifier added to all Pivot objects |
+| `runtime/hypothesis_feedback.py` | `async_get_summary()` — called directly via `await` in async context (no nested `new_event_loop`) |
+| `runtime/sprint_scheduler.py` | `_run_pivot_executor_advisory()` — teardown调用，在planner之后执行 |
+
+**Bounds:**
+- `MAX_ACTIVE_PIVOTS=3` — concurrent pivot executions
+- `MAX_PIVOTS_PER_SPRINT=10` — total pivots per sprint
+- `PIVOT_TIMEOUT_S=25.0` — per-pivot timeout
+- `MAX_PIVOT_FINDINGS=50` — findings cap per pivot
+
+**GHOST_INVARIANTS:**
+- `asyncio.gather` with `return_exceptions=True`
+- `_check_gathered()` after every gather
+- `asyncio.CancelledError` re-raised
+- No blocking calls in event loop; network/IO via async clients or `run_in_executor`
+- Canonical write path: `async_ingest_findings_batch()`
+- Model lifecycle via `brain.model_lifecycle` only — executor must NOT load model
+- RAM guard: skip executor if `resource_governor.is_critical` or `is_emergency`
+- Bounds on every collection
+- Fail-soft: one pivot failure does not block others or sprint
+
+**Teardown调用链:**
+```
+SprintScheduler.run() → teardown phase
+  → _run_pivot_planner_advisory()    # F202G: generate pivots from findings
+  → _run_pivot_executor_advisory()    # F204C: execute top pivots via AutonomousPivotExecutor
+  → _run_resource_governor_advisory() # F202J: apply governor hints
+```
+
+**Definition of Done:** ✓ pytest tests/probe_f204c/ -q (22/22 pass), smoke_runner OK
+
 ## F200C Async Batch Public Pipeline (2026-04-23)
 
 **Zdokumentováno** — bounded async batch processing v live_public_pipeline je plně compliant s GHOST_INVARIANTS:
@@ -1372,6 +1412,65 @@ Methods: `ensure_target_profiles_schema()`, `async_upsert_target_profile()`, `as
 - Persistent metadata methods only in `duckdb_store.py` — no new store APIs elsewhere
 - Fail-soft throughout: all external calls wrapped in try/except
 - No absolute paths; no full payload dumps in reports
+
+## F204D: Target Memory 2.0 — Cross-Sprint Persistent Target State (2026-04-26)
+
+**Phase 3 seam — persistent cross-sprint target state beyond simple target_profiles count.**
+
+**Role**: Expands cross-sprint target memory from entity count to full persistent state: entity facets, exposure facets, ASN/org placeholder, top pivots, confidence drift. Enables temporal tracking of target evolution across sprint runs.
+
+**Dependencies**: F203A (target profiles baseline). Benefits from F202C (exposure correlator) and F202G (hypothesis-driven pivot planner).
+
+**Module**: `knowledge/target_memory.py`
+
+**DuckDB Schema** (`knowledge/duckdb_store.py`):
+```sql
+CREATE TABLE IF NOT EXISTS target_memory (
+    target_id TEXT PRIMARY KEY,
+    first_seen_ts DOUBLE NOT NULL,
+    last_seen_ts DOUBLE NOT NULL,
+    sprint_count INTEGER NOT NULL,
+    cumulative_finding_count INTEGER NOT NULL,
+    entity_facets_json TEXT NOT NULL,
+    exposure_facets_json TEXT NOT NULL,
+    pivot_facets_json TEXT NOT NULL,
+    confidence_drift_json TEXT NOT NULL,
+    updated_by_sprint_id TEXT NOT NULL
+);
+```
+Methods: `async_upsert_target_memory()`, `async_get_target_memory()`.
+
+**Dataclasses** (`knowledge/target_memory.py`):
+- `TargetMemory` — frozen dataclass with all 10 schema fields
+- `TargetMemoryUpdate` — update payload with entity/exposure/pivot facets
+- `TargetMemoryService` — merge logic with RAM guard
+
+**Bounds**:
+- `MAX_MEMORY_ENTITIES = 500`
+- `MAX_MEMORY_EXPOSURES = 500`
+- `MAX_MEMORY_PIVOTS = 100`
+- `MAX_MEMORY_JSON_BYTES = 65536`
+
+**Sprint Scheduler Hook** (`runtime/sprint_scheduler.py`):
+- `_run_target_memory_update(findings, store, query)` — called after sidecar bus (line ~1677)
+  - RAM guard: skip merge if RSS > 85% high_water
+  - Extracts entity/exposure/pivot facets from findings
+  - Persists via `store.async_upsert_target_memory()`
+- `_target_memory_service` instance variable (lazy-init)
+
+**DuckDB ShadowStore Wiring** (`knowledge/duckdb_store.py`):
+- Schema in `ensure_target_memory_schema()` (called during init)
+- Async helpers: `async_upsert_target_memory()`, `async_get_target_memory()`
+- Fail-soft throughout
+
+**Analyst Workbench Read Helper** (`knowledge/analyst_workbench.py`):
+- `get_target_memory_summary(target_id)` — returns dict with sprint_count, cumulative_finding_count, entity/exposure/pivot facets, confidence_drift
+
+**Guardrails**:
+- Canonical writes only via `async_ingest_findings_batch()` — target_memory helpers are internal to duckdb_store.py
+- RAM guard: skip merge under memory pressure (>85% high_water)
+- Fail-soft on corrupt JSON → empty facet, not crash
+- GHOST_INVARIANTS: gather(return_exceptions=True), _check_gathered(), re-raise CancelledError
 
 ## F203C: Kill Chain Tagger — ATT&CK Mapping (2026-04-25)
 

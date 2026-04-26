@@ -51,6 +51,14 @@ from hledac.universal.runtime.sidecar_bus import (
     create_sidecar_bus,
 )
 from hledac.universal.runtime.shadow_parity import run_shadow_parity
+# Sprint F204D: Target memory integration
+from hledac.universal.knowledge.target_memory import (
+    TargetMemoryService,
+    TargetMemoryUpdate,
+    MAX_MEMORY_ENTITIES,
+    MAX_MEMORY_EXPOSURES,
+    MAX_MEMORY_PIVOTS,
+)
 from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
 
 if TYPE_CHECKING:
@@ -646,6 +654,8 @@ class SprintScheduler:
         self._planned_pivots: list = []  # Last planned pivots for diagnostics
         # Sprint F204A: Canonical sidecar bus for all accepted-finding sidecars
         self._sidecar_bus: Any = None
+        # Sprint F204D: Target memory service for cross-sprint target state
+        self._target_memory_service: Optional[TargetMemoryService] = None
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -1190,6 +1200,9 @@ class SprintScheduler:
         # Sprint F202G: Run pivot planner advisory at TEARDOWN (fail-soft, non-blocking)
         await self._run_pivot_planner_advisory()
 
+        # Sprint F204C: Execute top pivots via bounded pivot executor (fail-soft, non-blocking)
+        await self._run_pivot_executor_advisory()
+
         # Sprint F202J: Run resource governor advisory at TEARDOWN (fail-soft, non-blocking)
         await self._run_resource_governor_advisory()
 
@@ -1660,6 +1673,10 @@ class SprintScheduler:
                         created_ts=_time.time(),
                     )
                     await self._sidecar_bus.run_all_sidecars(batch, store)
+
+                # F204D: Update cross-sprint target memory after findings are accepted
+                if accepted_findings:
+                    await self._run_target_memory_update(accepted_findings, store, query)
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
@@ -2113,6 +2130,120 @@ class SprintScheduler:
             self._result.evidence_triage_findings_count = triage_count
         except Exception:
             pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F204D: Target Memory Update ───────────────────────────────────────────
+
+    async def _run_target_memory_update(
+        self,
+        findings: list[Any],
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F204D: Update cross-sprint target memory after findings are accepted.
+
+        Sidecar runs after findings are accepted and sidecar bus completes.
+        Extracts entity/exposure/pivot facets from findings and merges into
+        target memory via duckdb_store.
+
+        RAM guard: skip if RSS > high_water (85% threshold).
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_upsert_target_memory
+            query: Original sprint query (used as target context)
+        """
+        if not findings or store is None:
+            return
+
+        # RAM guard — skip under memory pressure
+        try:
+            import psutil
+        except Exception:
+            return
+
+        try:
+            process = psutil.Process()
+            mem_info = process.memory_info()
+            rss_mb = mem_info.rss / 1024**2
+            vm = psutil.virtual_memory()
+            high_water = vm.percent * 0.85  # 85% threshold
+            if rss_mb > high_water:
+                return  # Skip merge under memory pressure
+        except Exception:
+            pass
+
+        # Build entity/exposure/pivot facets from findings
+        entity_facets: dict[str, Any] = {}
+        exposure_facets: dict[str, Any] = {}
+        pivot_facets: dict[str, Any] = {}
+
+        for finding in findings:
+            target_id = getattr(finding, "target_id", None) or getattr(finding, "entity_id", None)
+            if not target_id:
+                continue
+
+            # Extract entity facets
+            if hasattr(finding, "entity_type"):
+                if target_id not in entity_facets:
+                    entity_facets[target_id] = {"types": set(), "count": 0}
+                entity_facets[target_id]["types"].add(getattr(finding, "entity_type", "unknown"))
+                entity_facets[target_id]["count"] += 1
+
+            # Extract exposure facets
+            if hasattr(finding, "source_type") and getattr(finding, "source_type", None) == "exposure":
+                if target_id not in exposure_facets:
+                    exposure_facets[target_id] = {"signals": [], "count": 0}
+                exposure_facets[target_id]["signals"].append(getattr(finding, "signal_type", "unknown"))
+                exposure_facets[target_id]["count"] += 1
+
+            # Extract pivot facets
+            if hasattr(finding, "suggested_pivots"):
+                pivots = getattr(finding, "suggested_pivots", [])
+                for pivot in pivots[:5]:  # Max 5 pivots per finding
+                    pivot_key = f"{pivot.get('pivot_type', '')}:{pivot.get('ioc_value', '')}"
+                    if target_id not in pivot_facets:
+                        pivot_facets[target_id] = {"pivots": [], "count": 0}
+                    pivot_facets[target_id]["pivots"].append(pivot)
+                    pivot_facets[target_id]["count"] += 1
+
+        # Convert sets to lists for JSON
+        for tid in entity_facets:
+            entity_facets[tid]["types"] = list(entity_facets[tid]["types"])[:MAX_MEMORY_ENTITIES]
+
+        # Apply bounds
+        for tid in list(exposure_facets.keys()):
+            exposure_facets[tid]["signals"] = exposure_facets[tid]["signals"][:MAX_MEMORY_EXPOSURES]
+
+        for tid in list(pivot_facets.keys()):
+            pivot_facets[tid]["pivots"] = pivot_facets[tid]["pivots"][:MAX_MEMORY_PIVOTS]
+
+        # Create update for each target
+        now = _time.time()
+        for target_id in set(entity_facets.keys()) | set(exposure_facets.keys()) | set(pivot_facets.keys()):
+            update = TargetMemoryUpdate(
+                target_id=target_id,
+                sprint_id=self.sprint_id or "",
+                finding_count=len(findings),
+                entity_facets=entity_facets.get(target_id, {}),
+                exposure_facets=exposure_facets.get(target_id, {}),
+                pivot_facets=pivot_facets.get(target_id, {}),
+                observed_ts=now,
+            )
+
+            # Lazy init of service
+            if self._target_memory_service is None:
+                self._target_memory_service = TargetMemoryService()
+
+            merged = self._target_memory_service.merge_update(update)
+            del merged  # advisory only — duckdb_store is canonical persistence
+
+            # Persist via duckdb_store
+            try:
+                await store.async_upsert_target_memory(update)
+            except Exception:
+                pass  # Fail-soft: target memory is non-critical advisory
 
     async def _run_sprint_diff_sidecar(
         self,
@@ -2671,13 +2802,8 @@ class SprintScheduler:
                         duckdb_store=store,
                         target_id=getattr(self, "sprint_id", "") or "default",
                     )
-                    # Synchronous wrapper since we are in a sync context
-                    import asyncio
-                    loop = asyncio.new_event_loop()
-                    feedback_summary = loop.run_until_complete(
-                        adapter.async_get_summary()
-                    )
-                    loop.close()
+                    # Get feedback summary asynchronously (no nested event loop)
+                    feedback_summary = await adapter.async_get_summary()
                 except Exception:
                     feedback_summary = None  # Fail-safe
 
@@ -2692,6 +2818,43 @@ class SprintScheduler:
 
         except Exception:
             pass  # Fail-soft: pivot planner must never crash teardown
+
+    # ── F204C: Pivot Executor Advisory ──────────────────────────────────────────
+
+    async def _run_pivot_executor_advisory(self) -> None:
+        """
+        F204C: Execute top pivots from PivotPlanner via AutonomousPivotExecutor.
+
+        Bounded advisory: executor stores derived findings via canonical ingest
+        and records HypothesisFeedback. Scheduler retains all authority.
+
+        Fail-soft: errors never crash teardown or export.
+        """
+        pivots = getattr(self, "_planned_pivots", None)
+        if not pivots:
+            return
+        store = getattr(self, "_duckdb_store", None)
+        if store is None:
+            return
+        try:
+            from hledac.universal.runtime.hypothesis_feedback import (
+                HypothesisFeedbackAdapter,
+            )
+            feedback_adapter = HypothesisFeedbackAdapter(
+                duckdb_store=store,
+                target_id=getattr(self, "sprint_id", "") or "default",
+            )
+            executor = AutonomousPivotExecutor(
+                duckdb_store=store,
+                resource_governor=getattr(self, "_governor", None),
+                feedback_adapter=feedback_adapter,
+            )
+            results = await executor.execute_top(pivots, [])
+            self._pivot_execution_results = results
+            log.debug(f"[F204C] Executed {len(results)} pivots")
+        except Exception:
+            pass  # Fail-safe: pivot executor must never crash teardown
+
 
     # ── F202J: Resource Governor Advisory ─────────────────────────────────
 

@@ -737,6 +737,41 @@ class AnalystWorkbench:
             self._logger.warning(f"get_evidence_chain({finding_id}) failed")
             return None
 
+    # -------------------------------------------------------------------------
+    # F204D: Target memory read helper
+    # -------------------------------------------------------------------------
+
+    async def get_target_memory_summary(self, target_id: str) -> Optional[dict]:
+        """
+        F204D: Get target memory summary for a target.
+
+        Returns dict with keys: target_id, sprint_count, cumulative_finding_count,
+        entity_facets, exposure_facets, pivot_facets, confidence_drift,
+        updated_by_sprint_id or None if not found.
+
+        Thread-safe: runs on duckdb_worker via run_in_executor.
+        Fail-soft: returns None on any error.
+        """
+        if not self._duckdb:
+            return None
+
+        try:
+            memory = await self._duckdb.async_get_target_memory(target_id)
+            if memory is None:
+                return None
+            return {
+                "target_id": memory.target_id,
+                "sprint_count": memory.sprint_count,
+                "cumulative_finding_count": memory.cumulative_finding_count,
+                "entity_facets": memory.entity_facets,
+                "exposure_facets": memory.exposure_facets,
+                "pivot_facets": memory.pivot_facets,
+                "confidence_drift": memory.confidence_drift,
+                "updated_by_sprint_id": memory.updated_by_sprint_id,
+            }
+        except Exception:
+            return None
+
 
 # ============================================================================
 # Factory

@@ -84,6 +84,12 @@ except ImportError:
         cumulative_finding_count: int = 0
         entity_summary_json: str = "{}"
 
+# Sprint F204D: TargetMemoryUpdate import
+try:
+    from hledac.universal.knowledge.target_memory import TargetMemoryUpdate, TargetMemory
+except ImportError:
+    pass
+
 __all__ = ["DuckDBShadowStore", "ActivationResult", "ReplayResult", "CanonicalFinding"]
 
 
@@ -460,6 +466,31 @@ _SCHEMA_SQL = """
         accepted_count INTEGER,
         signal_value DOUBLE,
         ts DOUBLE
+    );
+    CREATE TABLE IF NOT EXISTS target_memory (
+        target_id TEXT PRIMARY KEY,
+        first_seen_ts DOUBLE,
+        last_seen_ts DOUBLE,
+        sprint_count INTEGER,
+        cumulative_finding_count INTEGER,
+        entity_facets_json TEXT,
+        exposure_facets_json TEXT,
+        pivot_facets_json TEXT,
+        confidence_drift_json TEXT,
+        updated_by_sprint_id TEXT,
+        updated_ts DOUBLE
+    );
+    CREATE TABLE IF NOT EXISTS target_memory (
+        target_id TEXT PRIMARY KEY,
+        first_seen_ts DOUBLE NOT NULL,
+        last_seen_ts DOUBLE NOT NULL,
+        sprint_count INTEGER NOT NULL,
+        cumulative_finding_count INTEGER NOT NULL,
+        entity_facets_json TEXT NOT NULL,
+        exposure_facets_json TEXT NOT NULL,
+        pivot_facets_json TEXT NOT NULL,
+        confidence_drift_json TEXT NOT NULL,
+        updated_by_sprint_id TEXT NOT NULL
     );
 """
 
@@ -1325,6 +1356,36 @@ class DuckDBShadowStore:
         except Exception:
             pass  # table already exists or connection not ready
 
+    def ensure_target_memory_schema(self) -> None:
+        """
+        Sprint F204D: Ensure target_memory table exists in DuckDB.
+        Safe to call multiple times — uses CREATE TABLE IF NOT EXISTS.
+        Must be called after _init_connection (connection must exist).
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS target_memory (
+                    target_id TEXT PRIMARY KEY,
+                    first_seen_ts DOUBLE,
+                    last_seen_ts DOUBLE,
+                    sprint_count INTEGER,
+                    cumulative_finding_count INTEGER,
+                    entity_facets_json TEXT,
+                    exposure_facets_json TEXT,
+                    pivot_facets_json TEXT,
+                    confidence_drift_json TEXT,
+                    updated_by_sprint_id TEXT,
+                    updated_ts DOUBLE
+                )
+                """
+            )
+        except Exception:
+            pass  # table already exists or connection not ready
+
     def _sync_insert_finding(
         self,
         finding_id: str,
@@ -1548,6 +1609,28 @@ class DuckDBShadowStore:
             )
         except Exception:
             return None
+
+    # ── Sprint F204D: target_memory sync helpers ───────────────────────────────
+
+    def _sync_upsert_target_memory(self, row: dict) -> None:
+        """Sync method to upsert target memory row. Runs on duckdb_worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO target_memory
+                (target_id, first_seen_ts, last_seen_ts, sprint_count, cumulative_finding_count,
+                 entity_facets_json, exposure_facets_json, pivot_facets_json, confidence_drift_json, updated_by_sprint_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [row["target_id"], row["first_seen_ts"], row["last_seen_ts"], row["sprint_count"],
+                 row["cumulative_finding_count"], row["entity_facets_json"], row["exposure_facets_json"],
+                 row["pivot_facets_json"], row["confidence_drift_json"], row["updated_by_sprint_id"]],
+            )
+        except Exception:
+            pass
 
     # ── Sprint F203G: hypothesis_feedback sync helpers ────────────────────────
 
@@ -2786,6 +2869,119 @@ class DuckDBShadowStore:
         return await loop.run_in_executor(self._executor, _sync)
 
     # ------------------------------------------------------------------
+    # Sprint F204D: target_memory — cross-sprint target state accumulation
+    # ------------------------------------------------------------------
+
+    async def upsert_target_memory(self, memory: TargetMemory) -> bool:
+        """
+        Sprint F204D: Upsert a TargetMemory record into DuckDB.
+
+        Serializes facets as JSON TEXT columns. Uses INSERT OR REPLACE.
+        GHOST_INVARIANT: runs on duckdb executor via run_in_executor.
+        """
+        if not self._initialized or self._closed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_target_memory,
+                memory,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+
+    def _sync_upsert_target_memory(self, memory: TargetMemory) -> bool:
+        """Sync upsert target memory — MUST be called on worker thread."""
+        import orjson
+
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return False
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO target_memory
+                (target_id, first_seen_ts, last_seen_ts, sprint_count,
+                 cumulative_finding_count, entity_facets_json, exposure_facets_json,
+                 pivot_facets_json, confidence_drift_json, updated_by_sprint_id,
+                 updated_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    memory.target_id,
+                    memory.first_seen_ts,
+                    memory.last_seen_ts,
+                    memory.sprint_count,
+                    memory.cumulative_finding_count,
+                    orjson.dumps(memory.entity_facets).decode(),
+                    orjson.dumps(memory.exposure_facets).decode(),
+                    orjson.dumps(memory.pivot_facets).decode(),
+                    orjson.dumps(memory.confidence_drift).decode(),
+                    memory.updated_by_sprint_id,
+                    _time.time(),
+                ],
+            )
+            return True
+        except Exception as _exc:
+            _logger.warning("_sync_upsert_target_memory failed: %s", _exc)
+            return False
+
+    async def read_target_memory(self, target_id: str) -> TargetMemory | None:
+        """
+        Sprint F204D: Read a TargetMemory record by target_id.
+        Returns None if not found. Deserializes JSON TEXT columns.
+        """
+        if not self._initialized or self._closed:
+            return None
+
+        def _sync() -> TargetMemory | None:
+            import orjson
+
+            try:
+                conn = self._file_conn if self._db_path else self._persistent_conn
+                if conn is None:
+                    return None
+                rows = conn.execute(
+                    """
+                    SELECT target_id, first_seen_ts, last_seen_ts, sprint_count,
+                           cumulative_finding_count, entity_facets_json,
+                           exposure_facets_json, pivot_facets_json,
+                           confidence_drift_json, updated_by_sprint_id, updated_ts
+                    FROM target_memory
+                    WHERE target_id = ?
+                    """,
+                    [target_id],
+                ).fetchall()
+                if not rows:
+                    return None
+                r = rows[0]
+                return TargetMemory(
+                    target_id=r[0],
+                    first_seen_ts=r[1],
+                    last_seen_ts=r[2],
+                    sprint_count=r[3],
+                    cumulative_finding_count=r[4],
+                    entity_facets=orjson.loads(r[5]) if r[5] else {},
+                    exposure_facets=orjson.loads(r[6]) if r[6] else {},
+                    pivot_facets=orjson.loads(r[7]) if r[7] else {},
+                    confidence_drift=orjson.loads(r[8]) if r[8] else {},
+                    updated_by_sprint_id=r[9],
+                )
+            except Exception:
+                return None
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(self._executor, _sync)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
     # Sprint 8TA B.4: ghost_global cross-sprint entity accumulation (SQLite-backed)
     # ------------------------------------------------------------------
 
@@ -4007,6 +4203,84 @@ class DuckDBShadowStore:
                 self._sync_get_target_profile,
                 target_id,
             )
+        except Exception:
+            return None
+
+    # ── Sprint F204D: target_memory async API ─────────────────────────────────
+
+    async def async_upsert_target_memory(self, update: TargetMemoryUpdate) -> None:
+        """
+        Sprint F204D: Insert or update target memory from a TargetMemoryUpdate.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Silently fails if store is closed or uninitialized.
+        """
+        if not self._initialized or self._closed:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            import orjson
+            row = {
+                "target_id": update.target_id,
+                "first_seen_ts": update.observed_ts,
+                "last_seen_ts": update.observed_ts,
+                "sprint_count": 1,
+                "cumulative_finding_count": update.finding_count,
+                "entity_facets_json": orjson.dumps(update.entity_facets).decode(),
+                "exposure_facets_json": orjson.dumps(update.exposure_facets).decode(),
+                "pivot_facets_json": orjson.dumps(update.pivot_facets).decode(),
+                "confidence_drift_json": orjson.dumps({}).decode(),
+                "updated_by_sprint_id": update.sprint_id,
+            }
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_target_memory,
+                row,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+    async def async_get_target_memory(self, target_id: str) -> Optional["TargetMemory"]:
+        """
+        Sprint F204D: Get target memory by target_id.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns None if not found or on error.
+        """
+        if not self._initialized or self._closed:
+            return None
+        loop = asyncio.get_running_loop()
+        try:
+            import orjson
+            from hledac.universal.knowledge.target_memory import TargetMemory
+
+            def _sync_get():
+                conn = self._file_conn if self._db_path else self._persistent_conn
+                if conn is None:
+                    return None
+                result = conn.execute(
+                    "SELECT * FROM target_memory WHERE target_id = ?", [target_id]
+                ).fetchone()
+                if result is None:
+                    return None
+                return TargetMemory(
+                    target_id=result[0],
+                    first_seen_ts=result[1],
+                    last_seen_ts=result[2],
+                    sprint_count=result[3],
+                    cumulative_finding_count=result[4],
+                    entity_facets=orjson.loads(result[5]),
+                    exposure_facets=orjson.loads(result[6]),
+                    pivot_facets=orjson.loads(result[7]),
+                    confidence_drift=orjson.loads(result[8]),
+                    updated_by_sprint_id=result[9],
+                )
+
+            return await loop.run_in_executor(self._executor, _sync_get)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             return None
 
