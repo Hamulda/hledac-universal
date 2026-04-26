@@ -29,6 +29,11 @@ import msgspec
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.patterns.pattern_matcher import match_text
+from hledac.universal.transport.circuit_breaker import (
+    get_breaker,
+    CircuitBreaker,
+    CircuitDecision,
+)
 from hledac.universal.utils.concurrency import (
     FETCH_SEMAPHORE,
     get_clearnet_semaphore,
@@ -705,6 +710,32 @@ async def async_fetch_public_text(
             failure_stage="validation",
         )
 
+    # --- F204B: Domain circuit breaker check (fail-soft) ---
+    _circuit_breaker_domain: str = ""
+    _circuit_breaker: "CircuitBreaker" | None = None
+    try:
+        parsed_url = urllib.parse.urlparse(url)
+        _circuit_breaker_domain = parsed_url.netloc
+        if _circuit_breaker_domain:
+            _circuit_breaker = get_breaker(_circuit_breaker_domain)
+            decision = _circuit_breaker.check_circuit()
+            if not decision.allowed:
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                return FetchResult(
+                    url=url,
+                    final_url=url,
+                    status_code=0,
+                    content_type="",
+                    text=None,
+                    fetched_bytes=0,
+                    declared_length=-1,
+                    elapsed_ms=elapsed_ms,
+                    error=f"circuit_breaker_open:{decision.state}:{decision.reason}",
+                    failure_stage="circuit_breaker",
+                )
+    except Exception as e:
+        logger.debug(f"Circuit breaker check failed (non-fatal): {e}")
+
     # --- Size cap enforcement ---
     if max_bytes > MAX_BYTES_HARD:
         max_bytes = MAX_BYTES_HARD
@@ -873,30 +904,31 @@ async def async_fetch_public_text(
                         raw_content_type = content_type.split(";")[0].strip().lower()
 
                         # --- Retryable status → wait and retry once ---
-                        if _is_retryable_status(last_status_code):
-                            last_error = _build_retry_error(last_status_code, retry_after)
-                            if attempt < MAX_RETRIES:
-                                retry_after = _extract_retry_after(resp.headers)
-                                backoff = _compute_backoff_seconds(retry_after, attempt)
-                                await asyncio.sleep(backoff)
-                                continue
-                            # Exhausted retries — return with error prefix
-                            elapsed_ms = (time.monotonic() - t0) * 1000
-                            redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                            return FetchResult(
-                                url=url,
-                                final_url=final_url,
-                                status_code=last_status_code,
-                                content_type=content_type,
-                                text=None,
-                                fetched_bytes=0,
-                                declared_length=-1,
-                                elapsed_ms=elapsed_ms,
-                                error=last_error,
-                                redirected=redirected,
-                                redirect_target=redirect_target,
-                                failure_stage="http",
-                            )
+                        if _circuit_breaker and _is_retryable_status(last_status_code):
+                            _circuit_breaker.record_failure(failure_kind=str(last_status_code))
+                        last_error = _build_retry_error(last_status_code, retry_after)
+                        if attempt < MAX_RETRIES:
+                            retry_after = _extract_retry_after(resp.headers)
+                            backoff = _compute_backoff_seconds(retry_after, attempt)
+                            await asyncio.sleep(backoff)
+                            continue
+                        # Exhausted retries — return with error prefix
+                        elapsed_ms = (time.monotonic() - t0) * 1000
+                        redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                        return FetchResult(
+                            url=url,
+                            final_url=final_url,
+                            status_code=last_status_code,
+                            content_type=content_type,
+                            text=None,
+                            fetched_bytes=0,
+                            declared_length=-1,
+                            elapsed_ms=elapsed_ms,
+                            error=last_error,
+                            redirected=redirected,
+                            redirect_target=redirect_target,
+                            failure_stage="http",
+                        )
 
                         # --- Content-type gate with XML-ish body recovery (Feed ingress hardening F164A) ---
                         xml_recovered = False
@@ -1022,6 +1054,8 @@ async def async_fetch_public_text(
                             logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
 
                         elapsed_ms = (time.monotonic() - t0) * 1000
+                        if _circuit_breaker and last_status_code >= 200 and last_status_code < 300:
+                            _circuit_breaker.record_success()
                         redirected, redirect_target = _derive_redirect_fields(url, final_url)
                         return FetchResult(
                             url=url,
@@ -1043,6 +1077,8 @@ async def async_fetch_public_text(
 
         except asyncio.TimeoutError:
             elapsed_ms = (time.monotonic() - t0) * 1000
+            if _circuit_breaker:
+                _circuit_breaker.record_failure(is_timeout=True, failure_kind="timeout")
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -1061,6 +1097,8 @@ async def async_fetch_public_text(
             raise
         except Exception as exc:
             elapsed_ms = (time.monotonic() - t0) * 1000
+            if _circuit_breaker:
+                _circuit_breaker.record_failure(failure_kind="fetch_error")
             err_str = f"fetch_error;{type(exc).__name__};{exc}"
             failure_stage, network_error_kind = _derive_failure_stage_and_network_kind(err_str)
             # body_read_error=True only when body stream was actually entered and failed.

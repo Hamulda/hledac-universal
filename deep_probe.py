@@ -30,6 +30,8 @@ import aiohttp
 import json
 import numpy as np
 
+from hledac.universal.transport.circuit_breaker import get_breaker, CircuitBreaker, CircuitDecision
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -496,6 +498,20 @@ class WaybackCDXClient:
         if not self.session:
             raise RuntimeError("Client not initialized")
 
+        # F204B: Check circuit breaker before HTTP request (fail-soft)
+        parsed = urlparse(url)
+        domain = parsed.netloc or url
+        breaker: CircuitBreaker | None = None
+        decision: CircuitDecision | None = None
+        try:
+            breaker = get_breaker(domain)
+            decision = breaker.check_circuit()
+            if not decision.allowed:
+                logger.debug(f"Circuit breaker open for {domain}: {decision.state}")
+                return []
+        except Exception as e:
+            logger.debug(f"Circuit breaker check failed (non-fatal): {e}")
+
         params = {
             'url': url,
             'output': 'json',
@@ -505,13 +521,24 @@ class WaybackCDXClient:
 
         try:
             async with self.session.get(self.base_url, params=params) as response:
+                if breaker and response.status == 200:
+                    breaker.record_success()
+                elif breaker and response.status >= 400:
+                    breaker.record_failure(failure_kind=f"wayback_{response.status}")
                 if response.status == 200:
                     data = await response.json()
                     if len(data) > 1:  # First row is headers
                         headers = data[0]
                         return [dict(zip(headers, row)) for row in data[1:]]
                 return []
+        except asyncio.TimeoutError:
+            if breaker:
+                breaker.record_failure(is_timeout=True, failure_kind="wayback_timeout")
+            logger.error(f"Wayback CDX query timed out for {url}")
+            return []
         except Exception as e:
+            if breaker:
+                breaker.record_failure(failure_kind="wayback_error")
             logger.error(f"Wayback CDX query failed: {e}")
             return []
 

@@ -1,5 +1,4 @@
-"""
-runtime/opsec_policy.py — OPSEC Transport Policy Engine
+"""runtime/opsec_policy.py — OPSEC Transport Policy Engine
 
 Sprint F202H — Advisory policy layer for transport posture.
 
@@ -248,6 +247,27 @@ def get_stealth_capability_flags(has_model_context: bool) -> dict[str, bool]:
 
 
 # ---------------------------------------------------------------------------
+# F204B: Circuit state hint — read-side diagnostics
+# ---------------------------------------------------------------------------
+
+def get_circuit_state_hint(domain: str) -> str:
+    """
+    Return circuit state hint for a domain.
+
+    F204B: Read-side circuit state query for transport diagnostics.
+
+    Args:
+        domain: Target domain (without port)
+
+    Returns:
+        "closed" | "half_open" | "open" | "unknown"
+    """
+    from hledac.universal.transport.circuit_breaker import get_all_breaker_states
+    states = get_all_breaker_states()
+    return states.get(domain, "unknown")
+
+
+# ---------------------------------------------------------------------------
 # GATHER helper — standard pattern
 # ---------------------------------------------------------------------------
 
@@ -277,4 +297,5 @@ __all__ = [
     "release_renderer_slot",
     "get_renderer_active_count",
     "get_stealth_capability_flags",
+    "get_circuit_state_hint",
 ]
