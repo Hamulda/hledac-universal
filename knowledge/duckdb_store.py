@@ -70,6 +70,20 @@ import psutil
 import msgspec
 from typing import Any, Dict, List, Optional, TypedDict
 
+# Sprint F202K: TargetProfileSummary import with inline fallback
+try:
+    from hledac.universal.knowledge.sprint_diff_engine import TargetProfileSummary
+except ImportError:
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class TargetProfileSummary:
+        target_id: str = ""
+        first_seen: float = 0.0
+        last_seen: float = 0.0
+        cumulative_finding_count: int = 0
+        entity_summary_json: str = "{}"
+
 __all__ = ["DuckDBShadowStore", "ActivationResult", "ReplayResult", "CanonicalFinding"]
 
 
@@ -430,6 +444,23 @@ _SCHEMA_SQL = """
         ts           DOUBLE NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_episodes_ts ON research_episodes(ts DESC);
+    CREATE TABLE IF NOT EXISTS target_profiles (
+        target_id TEXT PRIMARY KEY,
+        first_seen DOUBLE,
+        last_seen DOUBLE,
+        cumulative_finding_count INTEGER,
+        entity_summary_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS hypothesis_feedback (
+        id TEXT PRIMARY KEY,
+        target_id TEXT,
+        pivot_type TEXT,
+        ioc_type TEXT,
+        produced_count INTEGER,
+        accepted_count INTEGER,
+        signal_value DOUBLE,
+        ts DOUBLE
+    );
 """
 
 # Sprint 8R: Module-level reusable encoder singleton for CanonicalFinding serialization
@@ -1270,6 +1301,30 @@ class DuckDBShadowStore:
             pass
         conn.close()
 
+    def ensure_target_profiles_schema(self) -> None:
+        """
+        Sprint F202K: Ensure target_profiles table exists in DuckDB.
+        Safe to call multiple times — uses CREATE TABLE IF NOT EXISTS.
+        Must be called after _init_connection (connection must exist).
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS target_profiles (
+                    target_id TEXT PRIMARY KEY,
+                    first_seen DOUBLE,
+                    last_seen DOUBLE,
+                    cumulative_finding_count INTEGER,
+                    entity_summary_json TEXT
+                )
+                """
+            )
+        except Exception:
+            pass  # table already exists or connection not ready
+
     def _sync_insert_finding(
         self,
         finding_id: str,
@@ -1442,6 +1497,213 @@ class DuckDBShadowStore:
             ]
         except Exception:
             return []
+
+    # ── Sprint F202K: target_profiles sync helpers ───────────────────────────
+
+    def _sync_upsert_target_profile(self, profile: TargetProfileSummary) -> None:
+        """Sync upsert — MUST be called on the worker thread. Uses persistent connection."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO target_profiles
+                (target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    profile.target_id,
+                    profile.first_seen,
+                    profile.last_seen,
+                    profile.cumulative_finding_count,
+                    profile.entity_summary_json,
+                ],
+            )
+        except Exception:
+            pass
+
+    def _sync_get_target_profile(self, target_id: str) -> TargetProfileSummary | None:
+        """Sync get — MUST be called on the worker thread. Returns None if not found."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return None
+            result = conn.execute(
+                """
+                SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json
+                FROM target_profiles
+                WHERE target_id = ?
+                """,
+                [target_id],
+            ).fetchone()
+            if result is None:
+                return None
+            return TargetProfileSummary(
+                target_id=result[0],
+                first_seen=result[1],
+                last_seen=result[2],
+                cumulative_finding_count=result[3],
+                entity_summary_json=result[4],
+            )
+        except Exception:
+            return None
+
+    # ── Sprint F203G: hypothesis_feedback sync helpers ────────────────────────
+
+    def _sync_record_hypothesis_feedback(self, record: Any) -> bool:
+        """
+        Sprint F203G: Insert a single hypothesis_feedback record.
+
+        Thread-safe: MUST be called on the duckdb_worker thread.
+        Silently fails if store is closed or uninitialized.
+
+        Returns True if inserted, False otherwise.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return False
+            conn.execute(
+                """
+                INSERT INTO hypothesis_feedback
+                (id, target_id, pivot_type, ioc_type, produced_count, accepted_count, signal_value, ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    record.id,
+                    record.target_id,
+                    record.pivot_type,
+                    record.ioc_type,
+                    record.produced_count,
+                    record.accepted_count,
+                    record.signal_value,
+                    record.ts,
+                ],
+            )
+            return True
+        except Exception:
+            return False
+
+    def _sync_get_hypothesis_feedback(
+        self,
+        target_id: str | None,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Sprint F203G: Fetch hypothesis_feedback records ordered by ts DESC.
+
+        Thread-safe: MUST be called on the duckdb_worker thread.
+
+        Args:
+            target_id: If provided, filter by target_id. If None, returns all.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of dicts with keys: id, target_id, pivot_type, ioc_type,
+            produced_count, accepted_count, signal_value, ts.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            if target_id:
+                result = conn.execute(
+                    """
+                    SELECT id, target_id, pivot_type, ioc_type,
+                           produced_count, accepted_count, signal_value, ts
+                    FROM hypothesis_feedback
+                    WHERE target_id = ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    [target_id, limit],
+                ).fetchall()
+            else:
+                result = conn.execute(
+                    """
+                    SELECT id, target_id, pivot_type, ioc_type,
+                           produced_count, accepted_count, signal_value, ts
+                    FROM hypothesis_feedback
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    [limit],
+                ).fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "target_id": r[1],
+                    "pivot_type": r[2],
+                    "ioc_type": r[3],
+                    "produced_count": r[4],
+                    "accepted_count": r[5],
+                    "signal_value": r[6],
+                    "ts": r[7],
+                }
+                for r in result
+            ]
+        except Exception:
+            return []
+
+    def _sync_get_previous_findings_for_target(
+        self, target_id: str, before_sprint_id: str | None, limit: int
+    ) -> list[dict]:
+        """
+        Sync query — MUST be called on the worker thread.
+        Returns raw dict rows from canonical_findings filtered by target_id metadata.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            # Try to filter by target_id in payload_text JSON, or fall back to all findings
+            # Sprint F202K: canonical_findings may have target_id in payload_text JSON
+            if before_sprint_id:
+                result = conn.execute(
+                    """
+                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text
+                    FROM canonical_findings
+                    WHERE payload_text LIKE ?
+                    AND sprint_id < ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    [f'%"{target_id}"%', before_sprint_id, limit],
+                ).fetchall()
+            else:
+                result = conn.execute(
+                    """
+                    SELECT finding_id, query, source_type, confidence, ts, provenance_json, payload_text
+                    FROM canonical_findings
+                    WHERE payload_text LIKE ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    [f'%"{target_id}"%', limit],
+                ).fetchall()
+            return [
+                {
+                    "finding_id": row[0],
+                    "query": row[1],
+                    "source_type": row[2],
+                    "confidence": row[3],
+                    "ts": row[4],
+                    "provenance_json": row[5],
+                    "payload_text": row[6],
+                }
+                for row in result
+            ]
+        except Exception:
+            # Fall back: try querying shadow_findings if canonical_findings fails
+            try:
+                conn = self._file_conn if self._db_path else self._persistent_conn
+                if conn is None:
+                    return []
+                # shadow_findings doesn't have sprint_id or payload_text — return empty for target filter
+                return []
+            except Exception:
+                return []
 
     # ── Sprint 8RC: sync helpers ─────────────────────────────────────────────
 
@@ -1896,6 +2158,9 @@ class DuckDBShadowStore:
                 replay_timeout_s=replay_timeout_s,
             )
             self._startup_replay_done = True
+
+        # Sprint F202K: Ensure target_profiles schema exists
+        self.ensure_target_profiles_schema()
 
         self._startup_ready.set()
         return True
@@ -3704,6 +3969,192 @@ class DuckDBShadowStore:
                 continue
 
         return findings
+
+    # ── Sprint F202K: target_profiles async API ───────────────────────────────
+
+    async def async_upsert_target_profile(self, profile: TargetProfileSummary) -> None:
+        """
+        Sprint F202K: Insert or update a target profile.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Silently fails if store is closed or uninitialized.
+        """
+        if not self._initialized or self._closed:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_upsert_target_profile,
+                profile,
+            )
+        except Exception:
+            pass
+
+    async def async_get_target_profile(self, target_id: str) -> TargetProfileSummary | None:
+        """
+        Sprint F202K: Get a target profile by target_id.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns None if not found or on error.
+        """
+        if not self._initialized or self._closed:
+            return None
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_get_target_profile,
+                target_id,
+            )
+        except Exception:
+            return None
+
+    async def async_get_previous_findings_for_target(
+        self,
+        target_id: str,
+        before_sprint_id: str | None = None,
+        limit: int = 1000,
+    ) -> list[CanonicalFinding]:
+        """
+        Sprint F202K: Get previous findings for a target, optionally before a specific sprint.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Returns canonical findings ordered by ts DESC.
+
+        Args:
+            target_id: The target identifier to filter findings by.
+            before_sprint_id: Optional sprint ID to filter findings before this sprint.
+            limit: Maximum number of findings to return (default 1000).
+
+        Returns:
+            List[CanonicalFinding] — ordered by ts descending, most recent first.
+            Returns empty list if store is closed, uninitialized, or query fails.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor,
+                self._sync_get_previous_findings_for_target,
+                target_id,
+                before_sprint_id,
+                limit,
+            )
+        except Exception:
+            return []
+
+        findings: list[CanonicalFinding] = []
+        for row in rows:
+            try:
+                provenance: tuple[str, ...] = ()
+                raw_prov = row.get("provenance_json") or row.get("provenance")
+                if raw_prov:
+                    if isinstance(raw_prov, str):
+                        try:
+                            decoded = msgspec.json.decode(raw_prov.encode())
+                            if isinstance(decoded, list):
+                                provenance = tuple(str(v) for v in decoded)
+                        except Exception:
+                            provenance = ()
+                    elif isinstance(raw_prov, list):
+                        provenance = tuple(str(v) for v in raw_prov)
+
+                finding = CanonicalFinding(
+                    finding_id=str(row.get("finding_id", row.get("id", ""))),
+                    query=str(row.get("query", "")),
+                    source_type=str(row.get("source_type", "")),
+                    confidence=float(row.get("confidence", 0.0)),
+                    ts=float(row.get("ts", 0.0)),
+                    provenance=provenance,
+                    payload_text=row.get("payload_text"),
+                )
+                findings.append(finding)
+            except Exception:
+                continue
+        return findings
+
+    # ── Sprint F203G: hypothesis_feedback async API ───────────────────────────
+
+    async def async_record_hypothesis_feedback(
+        self,
+        record: Any,
+    ) -> bool:
+        """
+        Sprint F203G: Record a single hypothesis_feedback entry.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Silently fails if store is closed or uninitialized.
+
+        Args:
+            record: HypothesisFeedbackRecord (frozen dataclass) with fields:
+                id, target_id, pivot_type, ioc_type, produced_count,
+                accepted_count, signal_value, ts.
+
+        Returns:
+            True if recorded, False otherwise.
+        """
+        if not self._initialized or self._closed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_record_hypothesis_feedback,
+                record,
+            )
+        except Exception:
+            return False
+
+    async def async_get_hypothesis_feedback(
+        self,
+        target_id: str | None = None,
+        limit: int = 1000,
+    ) -> list[Any]:
+        """
+        Sprint F203G: Fetch aggregated hypothesis_feedback records.
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+
+        Args:
+            target_id: If provided, filter by target_id. If None, returns all.
+            limit: Maximum records to return (default 1000).
+
+        Returns:
+            List of HypothesisFeedbackRecord instances ordered by ts DESC.
+            Returns empty list if store is closed or uninitialized.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            rows: list[dict] = await loop.run_in_executor(
+                self._executor,
+                self._sync_get_hypothesis_feedback,
+                target_id,
+                limit,
+            )
+        except Exception:
+            return []
+
+        from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackRecord
+        records: list[Any] = []
+        for row in rows:
+            try:
+                records.append(HypothesisFeedbackRecord(
+                    id=str(row["id"]),
+                    target_id=str(row["target_id"]),
+                    pivot_type=str(row["pivot_type"]),
+                    ioc_type=str(row["ioc_type"]),
+                    produced_count=int(row["produced_count"] or 0),
+                    accepted_count=int(row["accepted_count"] or 0),
+                    signal_value=float(row["signal_value"] or 0.0),
+                    ts=float(row["ts"] or 0.0),
+                ))
+            except Exception:
+                continue
+        return records
 
     def _finding_id_of(self, f: CanonicalFinding | dict) -> str:
         """Extract finding_id from CanonicalFinding or dict, safely."""

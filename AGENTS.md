@@ -8,3 +8,5 @@
 ## Evidence discipline
 - Before edits: rg/fd/read for context.
 - After edits: ruff + show diff (diff -u | delta).
+
+@RTK.md

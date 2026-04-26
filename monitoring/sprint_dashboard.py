@@ -258,4 +258,11 @@ class SprintDashboard:
         except Exception:
             pass  # Governor state is optional dashboard info
 
+        # ── Row 8: Kill chain tagging (F203C) ────────────────────────────────
+        if result is not None and result.kill_chain_tags_produced > 0:
+            table.add_row(Text.assemble(
+                ("kill-chain: ", "magenta"),
+                str(result.kill_chain_tags_produced),
+            ))
+
         return table

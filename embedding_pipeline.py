@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 
 import numpy as np
 import psutil
@@ -416,3 +416,82 @@ def unload_embedding_model() -> bool:
 def get_embedding_dimension() -> int:
     """Return the MRL embedding dimension (256)."""
     return _EMBEDDING_DIM
+
+
+# ---------------------------------------------------------------------------
+# F203I: Streaming batch API (non-breaking, additive)
+# ---------------------------------------------------------------------------
+
+async def generate_embeddings_streaming(
+    texts: list[str],
+    batch_size: int = _BATCH_SIZE,
+) -> AsyncIterator[tuple[list[str], np.ndarray]]:
+    """
+    F203I: Streaming batch embedder — yields (ids, embeddings) per batch.
+
+    Yields incrementally instead of materializing all embeddings at once,
+    reducing peak RSS on M1 8GB during embedding phases.
+
+    This is a NON-BREAKING additive API — existing sync callers of
+    generate_embeddings() are unaffected.
+
+    Args:
+        texts: List of text strings to embed.
+        batch_size: Max batch size (capped at _BATCH_SIZE=16).
+
+    Yields:
+        tuple[list[str], np.ndarray]: batch of ids (positional indices) and
+            their embeddings shape=(batch_size, 256) float32.
+
+    Fail-open: any error yields nothing.
+    """
+    if not texts:
+        return
+
+    batch_size = min(batch_size, _BATCH_SIZE)
+
+    # Memory guard check
+    if not _check_memory_guard():
+        logger.warning("[EMBED:streaming] Skipped due to memory pressure")
+        return
+
+    # Load model once, use for all batches
+    model_loaded = False
+    try:
+        if not _get_embedder().is_loaded:
+            if not load_embedding_model():
+                # Fall back: materialize all at once
+                loop = asyncio.get_running_loop()
+                embs = await loop.run_in_executor(
+                    None, generate_embeddings, texts, batch_size
+                )
+                ids = [str(i) for i in range(len(texts))]
+                if embs.shape[0] > 0:
+                    yield (ids, embs)
+                return
+            model_loaded = True
+
+        # Chunk and yield
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i:i + batch_size]
+            chunk_ids = [str(i + j) for j in range(len(chunk))]
+
+            loop = asyncio.get_running_loop()
+            try:
+                embs = await loop.run_in_executor(
+                    None, _generate_embeddings_chunk, chunk, batch_size
+                )
+                if embs is not None and embs.shape[0] == len(chunk):
+                    yield (chunk_ids, embs)
+            except Exception as e:
+                logger.debug(f"[EMBED:streaming] batch error at offset {i}: {e}")
+                continue
+
+    finally:
+        if model_loaded:
+            unload_embedding_model()
+
+
+def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
+    """Sync helper for a single chunk — runs in thread executor."""
+    return generate_embeddings(texts, batch_size=batch_size)

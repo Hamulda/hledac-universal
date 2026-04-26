@@ -245,6 +245,37 @@ class _ANNIndex:
         except Exception:
             return None
 
+    def prewarm(self, top_k: int = 128) -> None:
+        """
+        F203I: Pre-warm the ANN index for faster first-query latency.
+
+        Ensures index is initialized and pre-loads data via a dummy search.
+        Reduces cold-start latency for RAG/dedup queries after embedding phase.
+
+        Fail-soft: returns None on any error.
+
+        Args:
+            top_k: Number of entries to warm (default 128).
+        """
+        if self._boot_error is not None:
+            return None
+
+        if not self._check_memory_guard():
+            return None
+
+        if not self.init():
+            return None
+
+        try:
+            import numpy as np
+
+            # Dummy search to warm up the index
+            dummy = np.zeros(self._embed_dim, dtype=np.float32)
+            self.ann_search(dummy, top_k=min(top_k, 5))
+        except Exception as e:
+            logger.debug(f"[ANN] prewarm failed: {e}")
+            return None
+
     def close(self) -> None:
         """Close database connection."""
         with self._lock:

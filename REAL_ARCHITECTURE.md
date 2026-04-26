@@ -1,4 +1,35 @@
-# Hledač — Real Architecture (aktualizováno 2026-04-24, F201B)
+# Hledač — Real Architecture (aktualizováno 2026-04-26, F203I)
+
+## F203I — Streaming Embedding Pipeline & LanceDB Pre-warm (2026-04-26)
+
+**Cíl:** Snížit peak RSS embedding fáze a zrychlit cold-start dedup/RAG dotazy na M1 8GB.
+
+**Komponenty:**
+
+| Soubor | Role |
+|--------|------|
+| `intelligence/streaming_embedder.py` | `StreamingEmbedder` — chunked async batches, MAX_EMBEDDING_BATCH=16, MAX_TEXT_BYTES_PER_FINDING=4096 |
+| `embedding_pipeline.py` | `generate_embeddings_streaming()` — non-breaking additive API, yields (ids, embeddings) per batch |
+| `knowledge/vector_store.py` | `add_vectors_streaming()` — async chunked insert, yields between chunks |
+| `knowledge/ann_index.py` | `prewarm(top_k=128)` — fail-soft ANN index pre-warm pro faster cold-start |
+| `runtime/sprint_scheduler.py` | `_run_embedding_sidecar` — používá `StreamingEmbedder` pokud dostupný |
+
+**Bounds:**
+- `MAX_EMBEDDING_BATCH=16` — batch size ceiling
+- `MAX_TEXT_BYTES_PER_FINDING=4096` — text truncation before embed
+- `FETCH_SEMAPHORE=3` while model loaded (via F202H concurrency adapter)
+
+**Guardrails:**
+- Model lifecycle via `brain.model_lifecycle.get_model_lifecycle_status()` only
+- RAM guard: skip if RSS > 85% high_water via `core.resource_governor.sample_uma_status()`
+- Never blocks event loop — all MLX ops in `run_in_executor`
+
+**Benchmark (`benchmarks/m1_embedding_streaming.py --hermetic`):**
+- Hermetic mode: synthetic data, no real MLX
+- Target: ≥30% peak RSS reduction vs sync path
+- Exit code 0 if target met, 1 if not
+
+**Definition of Done:** ✓ pytest tests/probe_f203i/ -q (20/20 pass), smoke_runner OK, benchmark target met
 
 ## F200C Async Batch Public Pipeline (2026-04-23)
 
@@ -699,6 +730,67 @@ DeepProbe findings now flow through the canonical persist path:
 
 ---
 
+## F203J: Quantization Selector & Adaptive Inference Budget (2026-04-26)
+
+**Přidáno** — model load quantization and inference budget advisory based on UMA snapshot. Model load is no longer binary; governor selects quantization tier and token/latency budget.
+
+**QuantizationSelector** (`brain/quantization_selector.py`):
+- Advisory layer selecting quantization and inference budget based on UMA snapshot
+- `InferenceBudget` dataclass: `max_tokens`, `max_latency_ms`, `quantization`, `reason`
+- `QuantizationDecision` dataclass: full decision record with `free_uma_gib`, `allowed`
+- Policy (always-on, fail-soft):
+  - `Q4_K_M` — default for CRITICAL/EMERGENCY, or when free < 1.5 GiB
+  - `Q5_K_M` — when free >= 1.5 GiB (WARN or OK)
+  - `Q8_0` — only when OK + free >= 2.5 GiB + explicitly safe (no swap, no io_only)
+- `free_uma_hint()` helper returns free UMA GiB from snapshot
+
+**Model lifecycle integration** (`brain/model_lifecycle.py`):
+- `_selected_quantization` module variable tracks active quantization tier
+- `get_selected_quantization()` — read-only status surface
+- `set_selected_quantization()` — internal setter (called by QuantizationSelector)
+
+**ModelManager integration** (`brain/model_manager.py`):
+- `_load_model_async()` for HERMES: consults QuantizationSelector before load
+- Calls `sample_uma_status()` → `QuantizationSelector.select()` → `InferenceBudget`
+- If budget `max_tokens=0` (governor denied), raises RuntimeError and skips load
+- Sets selected quantization via `set_selected_quantization()`
+- Governor denies = `allow_model_load=False` in GovernorDecision
+
+**Governor extension** (`runtime/resource_governor.py`):
+- `GovernorDecision.free_uma_gib` — free UMA GiB hint for QuantizationSelector
+- `GovernorSnapshot.free_uma_gib` — snapshot field for dashboard
+- `evaluate()` computes and returns `free_uma_gib` from `uma.system_available_gib`
+- `snapshot()` reads live `free_uma_gib` from `sample_uma_status()`
+
+**Sprint Scheduler integration** (`runtime/sprint_scheduler.py`):
+- `_prewarm_hermes_for_sprint()`: advisory QuantizationSelector check before load
+- Logs selected budget: quantization, max_tokens, max_latency_ms, reason
+- Actual load authority stays in ModelManager (which calls QuantizationSelector)
+
+**Key invariants**:
+- Model lifecycle authority stays in brain modules (F203J-1)
+- Governor denies → model load skipped (F203J-2)
+- No operation > 1.5GB RSS except governed model load (F203J-3)
+- Fallback `Q4_K_M` on any error (F203J-4)
+- No automatic model download in tests (F203J-5)
+- JS renderer blocked under model load — via F202H transport policy
+
+**Quantization policy table**:
+
+| UMA state | Free UMA GiB | io_only | swap | Selected quantization | max_tokens | max_latency_ms |
+|-----------|-------------|---------|------|----------------------|------------|----------------|
+| CRITICAL  | any         | any     | any  | Q4_K_M               | 512        | 30000          |
+| EMERGENCY | any         | any     | any  | Q4_K_M               | 512        | 30000          |
+| WARN      | < 1.5       | any     | any  | Q4_K_M               | 512        | 30000          |
+| WARN      | >= 1.5      | any     | any  | Q5_K_M               | 1024       | 45000          |
+| OK        | < 1.5       | any     | any  | Q4_K_M               | 512        | 30000          |
+| OK        | >= 1.5, < 2.5 | any  | any  | Q5_K_M               | 1024       | 45000          |
+| OK        | >= 2.5      | False   | False| Q8_0                 | 2048       | 60000          |
+
+**Tests**: `tests/probe_f203j/test_quantization_selector.py` — 20 probe tests (F203J-1 through F203J-20)
+
+---
+
 ## F202F: Local Graph/RAG Analyst Workbench (2026-04-24)
 
 **Přidáno** — analyst read-side facade for local questions over findings, graph, and vectors. Works without LLM (extractive fallback) and without external network calls.
@@ -827,6 +919,68 @@ DeepProbe findings now flow through the canonical persist path:
 - Planner failure never blocks export or sprint (fail-soft)
 - Model load/unload only via brain.model_lifecycle (future: _score_with_model async stub exists)
 - No model + JS renderer concurrently (advisory only, no rendering)
+
+---
+
+## F203G: Hypothesis Feedback Loop & Dead-End Pruning (2026-04-26)
+
+**Přidáno** — PivotPlanner learns from historical yield of pivot types per target, penalizing low-yield types to reduce blind pivot branching.
+
+**Schema** (`knowledge/duckdb_store.py`):
+```sql
+CREATE TABLE IF NOT EXISTS hypothesis_feedback (
+    id TEXT PRIMARY KEY,
+    target_id TEXT,
+    pivot_type TEXT,
+    ioc_type TEXT,
+    produced_count INTEGER,
+    accepted_count INTEGER,
+    signal_value DOUBLE,
+    ts DOUBLE
+);
+```
+
+**New modules**:
+- `runtime/hypothesis_feedback.py` — `HypothesisFeedbackRecord`, `HypothesisFeedbackSummary`, `HypothesisFeedbackAdapter`
+- `DuckDBShadowStore.async_record_hypothesis_feedback()` / `async_get_hypothesis_feedback()`
+
+**Bounds** (F203G-1 through F203G-3):
+- `MAX_FEEDBACK_RECORDS = 10000` — hard cap on stored feedback records
+- `MAX_PRUNED_TYPES = 20` — max pivot types that can be penalized
+- No hard ban: penalty only after `consecutive_zero_yield >= 3` (soft penalty, multiplier min 0.1)
+
+**Feedback flow**:
+1. `SprintScheduler.record_hypothesis_feedback()` records outcomes via `duckdb.async_record_hypothesis_feedback()`
+2. `HypothesisFeedbackAdapter.async_get_summary()` aggregates records into per-(pivot_type, ioc_type) summaries
+3. `_run_pivot_planner_advisory()` reads summary from duckdb and passes to `PivotPlanner.plan_pivots(feedback_summary=...)`
+4. `_get_feedback_penalty()` applies penalty multiplier to each pivot's `expected_value`
+
+**Penalty rules**:
+- `avg_signal >= 0.3` → multiplier = 1.0 (no penalty)
+- `consecutive_zero_yield >= 3` → multiplier = max(0.1, 0.5 - (zeros - 3) * 0.1)
+- `avg_signal < 0.1` with no zeros → multiplier = 0.7
+
+**Tests**: `tests/probe_f203g/test_hypothesis_feedback_loop.py` — 17 tests:
+- F203G-1: MAX_FEEDBACK_RECORDS=10000 bound
+- F203G-2: MAX_PRUNED_TYPES=20 bound
+- F203G-3: HypothesisFeedbackRecord frozen dataclass
+- F203G-4: HypothesisFeedbackSummary frozen dataclass
+- F203G-5: Adapter in-memory mode (no store → no-op)
+- F203G-6: Penalty multiplier no-penalty (avg_signal >= 0.3)
+- F203G-7: Penalty multiplier consecutive zero (>= 3 → applied)
+- F203G-8: Penalty minimum is 0.1
+- F203G-9: Mild low-signal penalty (0.7)
+- F203G-10: Unknown type → multiplier=1.0
+- F203G-11: Adapter _aggregate groups by (pivot_type, ioc_type)
+- F203G-12: DuckDB schema has hypothesis_feedback table
+- F203G-13: async_record_hypothesis_feedback method exists
+- F203G-14: async_get_hypothesis_feedback method exists
+- F203G-15: plan_pivots accepts feedback_summary parameter
+- F203G-16: plan_pivots penalizes low-yield pivot type
+- F203G-17: plan_pivots no penalty for unknown type
+
+**Dependencies**: F202G (PivotPlanner), F203A (target_id per sprint)
+**Dependents**: Benefits F203G-adjacent sprint planning
 
 ---
 
@@ -1259,5 +1413,55 @@ Methods: `ensure_target_profiles_schema()`, `async_upsert_target_profile()`, `as
 - Fail-soft throughout: all errors caught, never crash sprint
 - Frozen dataclass for KillChainTag — immutable
 - No live_feed_pipeline tuple expansion
+
+## F203E: CTI STIX 2.1 Export (2026-04-26)
+
+**Phase 3 seam — threat-intel bundle export from findings and sidecar data.**
+
+**Role**: Upgrades the diagnostic STIX exporter (Sprint 8BJ) to a real CTI exporter producing STIX 2.1 indicator, identity, observed-data, relationship, note, and report objects from findings, identity candidates, attribution scores, kill-chain tags, and evidence chains.
+
+**Dependencies**: F202A (evidence envelope), F202B (identity stitching), F202C (exposure correlator), F202D (leak sentinel), F203B (attribution scoring), F203C (kill-chain tagging), F203D (evidence chains).
+
+**Module**: `export/stix_exporter.py`
+
+**Public API**:
+```python
+def render_cti_stix_bundle(
+    findings: list[CanonicalFinding | dict],
+    identity_candidates: list[dict] | None = None,
+    attribution_scores: dict | None = None,
+    killchain_tags: dict | None = None,
+    evidence_chains: list[dict] | None = None,
+    max_objects: int = 500,
+) -> dict[str, Any]
+```
+
+**STIX object mapping**:
+| Input | STIX Object |
+|-------|-------------|
+| Finding (ip/domain/url/hash) | `indicator` with STIX pattern |
+| Finding (non-pattern IOC) | `observed-data` |
+| IdentityCandidate | `identity` |
+| AttributionScore | `note` (explainable confidence) |
+| KillChainTag | `labels` on indicator + `note` per finding |
+| EvidenceChain | `observed-data` + `relationship` |
+| All CTI | `report` wrapping all objects |
+
+**STIX objects produced**: indicator, identity, observed-data, relationship, note, report.
+
+**Bounds**:
+- `MAX_STIX_OBJECTS=500` — streaming-ish object construction
+- Deterministic UUID5 from stable namespace+content (same content → same ID)
+- No fake IOC objects when findings list is empty
+- No network, no model
+
+**Guardrails**:
+- Empty findings → no indicator objects (only Ghost Prime identity + report)
+- JSON only (no binary)
+- No network access, no MLX/model load
+
+**Tests**: `tests/probe_f203e/test_stix_cti_exporter.py` — 41 probe tests (F203E-1 through F203E-15).
+
+**Integration**: `render_cti_stix_bundle_to_path()` available for optional STIX artifact export in sprint_exporter.
 
 ## Architectural verdict

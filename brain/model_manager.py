@@ -22,6 +22,7 @@ from enum import Enum, auto
 
 from hledac.universal import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
+from hledac.universal.brain.quantization_selector import QuantizationSelector
 
 # Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
 # DO NOT add top-level `import mlx.core as mx` here.
@@ -647,6 +648,29 @@ class ModelManager:
             # Sprint F150H: Hard fail-fast memory admission gate
             # F182B FIX: Must run BEFORE factory() — prevents OOM on heavy model load
             self._check_memory_admission()
+
+            # F203J: QuantizationSelector — consult before Hermes load
+            # Advisory only: determines quantization tier and inference budget
+            # Governor denies are checked here; model_lifecycle tracks selected quantization
+            if model_type == ModelType.HERMES:
+                try:
+                    from hledac.universal.core.resource_governor import sample_uma_status
+                    uma = sample_uma_status()
+                    selector = QuantizationSelector()
+                    budget = selector.select(uma, requested_model="hermes")
+                    if budget.max_tokens == 0 and budget.max_latency_ms == 0:
+                        raise RuntimeError(
+                            f"[F203J] QuantizationSelector denied Hermes load: {budget.reason}"
+                        )
+                    # F203J: Track selected quantization in model_lifecycle (read-only status)
+                    from hledac.universal.brain.model_lifecycle import set_selected_quantization
+                    set_selected_quantization(budget.quantization)
+                    logger.info(
+                        f"[F203J] Hermes quantization selected: {budget.quantization} "
+                        f"(tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, reason={budget.reason})"
+                    )
+                except Exception as e:
+                    logger.debug("[F203J] QuantizationSelector error (using defaults): %s", e)
 
             # P19: RSS-based memory pressure check before load
             rss_before_load = _check_rss_before_load(model_key)

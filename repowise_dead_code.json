@@ -1,0 +1,980 @@
+repowise dead-code — /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
+2026-04-24 18:06:15 [info     ] FileTraverser initialised      extra_exclude_patterns=0 max_file_size_kb=500 repo_root=/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal submodules_skipped=0
+2026-04-24 18:06:15 [debug    ] Skipping oversized file        path=.repowise/wiki.db size_kb=49544
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=legacy/autonomous_orchestrator.py size_kb=1330
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/test_autonomous_orchestrator.py size_kb=868
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bj/all_python_files.json size_kb=1043
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bk/model_data_hits.json size_kb=1944
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bm/import_graph.json size_kb=4855
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bm/test_impact_map.json size_kb=573
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bo/boundary_audit.json size_kb=14869
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bp/provenance_map.json size_kb=858
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bq/import_usage.json size_kb=4855
+2026-04-24 18:06:16 [debug    ] Skipping oversized file        path=tests/probe_8bq/test_guardrail_map.json size_kb=873
+2026-04-24 18:06:16 [debug    ] Compiled query                 language=python
+2026-04-24 18:06:23 [info     ] Heritage edges resolved        total=66
+2026-04-24 18:06:23 [info     ] Call edges resolved            total=12751
+2026-04-24 18:06:24 [info     ] Graph built                    edge_types={'defines': 18591, 'imports': 1840, 'calls': 12751, 'has_method': 12170, 'extends': 66} edges=45418 file_nodes=1663 symbol_nodes=18591
+2026-04-24 18:06:56 [info     ] Git indexing complete          duration=32.5s files=2175 hotspots=543 stable=0
+[
+  {
+    "kind": "unreachable_file",
+    "file_path": "ARCHITECTURE_MAP.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "behavior_simulator.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "orchestrator_integration.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 160,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "research_context.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 420,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "run_comprehensive_tests.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 340,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "smoke_runner.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "benchmarks/benchmark_pipeline.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 50,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "benchmarks/benchmark_sprint_probe.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 100,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "benchmarks/research_effectiveness.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 150,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "brain/research_flow_decider.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 120,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "context_optimization/active_learning.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "coordinators/archive_coordinator.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 130,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "coordinators/claims_coordinator.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 130,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "coordinators/graph_coordinator.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 140,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "intelligence/dark_web_intelligence.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 350,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "intelligence/network_intelligence.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 50,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "knowledge/search_index.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 50,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "network/favicon_hasher.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "network/js_bundle_extractor.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "network/js_source_map_extractor.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "network/tor_manager.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 60,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "orchestrator/request_router.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 110,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "runtime/telemetry.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 220,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "scripts/pre_commit_guard.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "security/deep_research_security.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 200,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "security/self_healing.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 450,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "security/automation/threat-intelligence-automation.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 370,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/PHASE_GATES.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/diagnose_p95_latency.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/diagnose_p95_offline.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/e2e_autonomous_loop.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 170,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8vk_shadow_parity.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 930,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/run_3x60s_series.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/run_sprint_5a_r3_benchmark.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/run_sprint_5d_benchmark.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint4c_after_benchmark.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint4c_before_benchmark.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint4d_truth_audit.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5r_20s.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5r_quick_diag.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5r_shadow_baseline.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5r_ts_active.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5u_300s_preview.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5v_30min_validation.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint5v_60s_smoke.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6a_10s_smoke.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6a_300s_calibration.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6c_300s.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6c_preflight.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6c_profile.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6d_diagnostics.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6d_smoke.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/sprint6e_300s.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/decision_log/build_decision_log.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_3b/probe_3b.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 300,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bc/phase1_ft_probe.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 60,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bd/phase1_ft_probe_314.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 70,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bg/probe_compat_313t.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 40,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bg/probe_imports_313t.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bg/.venv_313t/bin/pip",
+    "symbol_name": null,
+    "confidence": 0.7,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": true,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bg/.venv_313t/bin/pip3",
+    "symbol_name": null,
+    "confidence": 0.7,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": true,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bg/.venv_313t/bin/pip3.13",
+    "symbol_name": null,
+    "confidence": 0.7,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": true,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bg/.venv_313t/bin/wheel",
+    "symbol_name": null,
+    "confidence": 0.7,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": true,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8bs/detect_blockers.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 50,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8c1/analyze_trace_8c1.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_8c3/analyze_trace_8c3.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_bench_g/run_m1_inference_mlx_baseline.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 90,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_f190f/probe_f190f_web_academic_hygiene.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 260,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tests/probe_f191f/run_bytecode_tests.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 190,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/api_doc_generator.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 280,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/audit_flags.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/checkpoint.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 20,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/content_extractor.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 60,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/document_metadata_extractor.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 200,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/ftp_explorer.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 100,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/metadata_dedup.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 130,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/regex_cache.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 90,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/reputation.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 40,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/scoring.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 40,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/smart_deduplicator.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 60,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/temporal.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 60,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/vision_analyzer.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 30,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "tools/vlm_analyzer.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 60,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "transport/i2p_transport.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 170,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "utils/config.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "utils/find_files.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 10,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "utils/optimize_imports.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 40,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "utils/simple_bottleneck_profiler.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 140,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "unreachable_file",
+    "file_path": "utils/worker_pool.py",
+    "symbol_name": null,
+    "confidence": 0.4,
+    "reason": "File has no importers (in_degree=0)",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": "Vojtech Hamada"
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": ".claude",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package '.claude' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": ".codebase-memory",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package '.codebase-memory' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": ".full-review",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package '.full-review' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": ".pi",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package '.pi' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": ".repowise",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package '.repowise' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": "benchmark_results",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package 'benchmark_results' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 0,
+    "primary_owner": null
+  },
+  {
+    "kind": "zombie_package",
+    "file_path": "infrastructure",
+    "symbol_name": null,
+    "confidence": 0.5,
+    "reason": "Package 'infrastructure' has no importers from other packages",
+    "safe_to_delete": false,
+    "lines": 300,
+    "primary_owner": null
+  }
+]

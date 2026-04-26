@@ -18,6 +18,7 @@ Data contracts:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -174,6 +175,38 @@ class VectorStore:
         except Exception as e:
             logger.error(f"[VECTOR] Failed to add vectors: {e}")
             raise
+
+    # F203I: Streaming batch add
+    async def add_vectors_streaming(
+        self,
+        ids: list[str],
+        vectors: np.ndarray,
+        index_type: str = "text",
+        batch_size: int = 16,
+    ) -> None:
+        """
+        F203I: Streaming batch add — yields control between chunks.
+
+        Breaks large vector inserts into smaller batches, yielding to the event
+        loop between chunks to reduce M1 8GB peak RSS during embedding phases.
+
+        Args:
+            ids: List of string IDs.
+            vectors: numpy ndarray shape (N, dim).
+            index_type: "text" or "image".
+            batch_size: Max chunk size (capped at 16 for M1 safety).
+
+        Fail-open: any error is logged but does not raise.
+        """
+        total = len(ids)
+        for i in range(0, total, batch_size):
+            chunk_ids = ids[i:i + batch_size]
+            chunk_vecs = vectors[i:i + batch_size]
+            try:
+                self.add_vectors(chunk_ids, chunk_vecs, index_type)
+            except Exception as e:
+                logger.warning(f"[VECTOR] add_vectors_streaming chunk error at {i}: {e}")
+            await asyncio.sleep(0)  # yield to event loop
 
     def query(
         self,

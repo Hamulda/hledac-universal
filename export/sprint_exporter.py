@@ -372,6 +372,61 @@ async def export_sprint(
     except Exception:
         pass
 
+    # Sprint F203A: attach sprint diff findings to JSON report
+    # Read findings with source_type="sprint_diff" from duckdb_store
+    sprint_diff_findings: list[dict] = []
+    try:
+        if hasattr(store, "async_query_recent_findings"):
+            all_findings = await store.async_query_recent_findings(limit=100)
+            sprint_diff_findings = [
+                dict(f) if hasattr(f, "keys") else f
+                for f in all_findings
+                if (f.get("source_type") == "sprint_diff" if isinstance(f, dict) else False)
+            ]
+    except Exception:
+        pass
+
+    # Sprint F203C: attach kill chain findings to JSON report
+    # Read findings with source_type="killchain_tag" from duckdb_store
+    kill_chain_findings: list[dict] = []
+    try:
+        if hasattr(store, "async_query_recent_findings"):
+            all_findings = await store.async_query_recent_findings(limit=100)
+            kill_chain_findings = [
+                dict(f) if hasattr(f, "keys") else f
+                for f in all_findings
+                if (f.get("source_type") == "killchain_tag" if isinstance(f, dict) else False)
+            ]
+    except Exception:
+        pass
+
+    # Sprint F203D: attach top-5 evidence chains from global builder
+    evidence_chains: list = []
+    try:
+        from hledac.universal.knowledge.evidence_chain import get_all_chains
+        all_chains = get_all_chains()
+        # Sort by depth, take top 5
+        all_chains.sort(key=lambda c: len(c.steps), reverse=True)
+        evidence_chains = [
+            {
+                "root_finding_id": c.root_finding_id,
+                "steps": [
+                    {
+                        "step_type": s.step_type,
+                        "input_ids": s.input_ids,
+                        "output_id": s.output_id,
+                        "confidence": s.confidence,
+                        "reason": s.reason,
+                    }
+                    for s in c.steps
+                ],
+                "conclusion": c.conclusion,
+            }
+            for c in all_chains[:5]
+        ]
+    except Exception:
+        pass
+
     return {
         "report_json": str(report_path) if report_path else "",
         "seeds_json": str(seeds_path),
@@ -389,6 +444,12 @@ async def export_sprint(
         "graph_enriched_findings": graph_context_annotations,
         # Sprint F202A §4: evidence envelope fields (findings with audit metadata)
         "envelope_findings": envelope_findings,
+        # Sprint F203A: sprint diff findings (new/disappeared/changed IOCs across sprints)
+        "sprint_diff_findings": sprint_diff_findings,
+        # Sprint F203C: kill chain tagged findings (ATT&CK mapped)
+        "kill_chain_findings": kill_chain_findings,
+        # Sprint F203D: top-5 evidence chains
+        "evidence_chains": evidence_chains,
     }
 
 

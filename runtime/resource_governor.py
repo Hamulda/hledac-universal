@@ -55,6 +55,8 @@ class GovernorDecision:
     model_loaded: bool
     renderer_denied_count: int = 0
     model_denied_count: int = 0
+    # F203J: Free UMA GiB hint for QuantizationSelector
+    free_uma_gib: float = 0.0
 
 
 @dataclass
@@ -68,6 +70,8 @@ class GovernorSnapshot:
     model_denied_count: int
     system_used_gib: float
     io_only: bool
+    # F203J: Free UMA GiB hint for QuantizationSelector
+    free_uma_gib: float = 0.0
 
 
 class M1ResourceGovernor:
@@ -92,6 +96,86 @@ class M1ResourceGovernor:
         self._uma_state = "ok"
 
     async def evaluate(self) -> GovernorDecision:
+        """
+        Evaluate governor decisions for the current cycle.
+
+        Returns GovernorDecision with:
+        - fetch_limit: new FETCH_SEMAPHORE limit
+        - allow_renderer: True if JS renderer may be used
+        - allow_model_load: True if model load is permitted
+        - branch_concurrency: recommended branch parallelism
+        - reason: human-readable decision rationale
+        - free_uma_gib: available UMA GiB for QuantizationSelector
+
+        Fails soft: returns safe defaults on any error.
+        """
+        async with self._lock:
+            free_uma_gib = 0.0
+            try:
+                uma = sample_uma_status()
+                self._uma_state = uma.state
+                system_used_gib = uma.system_used_gib
+                # F203J: Extract free UMA GiB for QuantizationSelector
+                free_uma_gib = uma.system_available_gib
+            except Exception as exc:
+                logger.debug("[Governor] sample_uma_status failed: %s", exc)
+                self._uma_state = "ok"
+                system_used_gib = 0.0
+
+            # Get model lifecycle status via canonical read-only API
+            try:
+                model_status = self._get_model_status()
+                self._model_loaded = model_status.get("loaded", False)
+            except Exception as exc:
+                logger.debug("[Governor] get_model_lifecycle_status failed: %s", exc)
+                self._model_loaded = False
+
+            # Decision logic
+            fetch_limit = DEFAULT_FETCH_LIMIT
+            allow_renderer = True
+            allow_model_load = True
+            branch_concurrency = 4
+
+            # CRITICAL/EMERGENCY memory → force low concurrency
+            if self._uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+                fetch_limit = MODEL_LOADED_FETCH_LIMIT
+                allow_renderer = False
+                allow_model_load = False
+                branch_concurrency = 1
+                reason = f"UMA {self._uma_state}: safe mode"
+            # Model loaded → cap fetch concurrency
+            elif self._model_loaded:
+                fetch_limit = MODEL_LOADED_FETCH_LIMIT
+                allow_renderer = False
+                allow_model_load = False  # don't stack loads
+                branch_concurrency = 2
+                reason = "model_loaded: reduced concurrency"
+            # WARN memory → reduced concurrency
+            elif self._uma_state == UMA_STATE_WARN:
+                fetch_limit = max(3, DEFAULT_FETCH_LIMIT // 2)
+                allow_renderer = True
+                allow_model_load = True
+                branch_concurrency = 3
+                reason = "UMA warn: reduced concurrency"
+            else:
+                fetch_limit = DEFAULT_FETCH_LIMIT
+                allow_renderer = True
+                allow_model_load = True
+                branch_concurrency = 4
+                reason = "normal: full concurrency"
+
+            return GovernorDecision(
+                fetch_limit=fetch_limit,
+                allow_renderer=allow_renderer,
+                allow_model_load=allow_model_load,
+                branch_concurrency=branch_concurrency,
+                reason=reason,
+                uma_state=self._uma_state,
+                model_loaded=self._model_loaded,
+                renderer_denied_count=self._renderer_denied_count,
+                model_denied_count=self._model_denied_count,
+                free_uma_gib=free_uma_gib,
+            )
         """
         Evaluate governor decisions for the current cycle.
 
@@ -179,6 +263,13 @@ class M1ResourceGovernor:
 
     def snapshot(self) -> GovernorSnapshot:
         """Current state snapshot for dashboard rendering."""
+        # F203J: Get free_uma_gib from live sample for snapshot
+        free_uma_gib = 0.0
+        try:
+            uma = sample_uma_status()
+            free_uma_gib = uma.system_available_gib
+        except Exception:
+            pass
         return GovernorSnapshot(
             uma_state=self._uma_state,
             model_loaded=self._model_loaded,
@@ -188,6 +279,7 @@ class M1ResourceGovernor:
             model_denied_count=self._model_denied_count,
             system_used_gib=0.0,
             io_only=False,
+            free_uma_gib=free_uma_gib,
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:

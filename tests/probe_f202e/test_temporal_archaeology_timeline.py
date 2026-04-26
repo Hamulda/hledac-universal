@@ -445,12 +445,36 @@ class TestFailSoft:
 class TestNoModelLoad:
     """F202E-12: Pure Python timestamp processing, no model load."""
 
-    def test_timeline_synthesizer_imports_pure_python(self):
-        """TimelineSynthesizer uses only pure Python modules."""
-        import sys
-        # Should not import torch, tensorflow, etc.
-        for mod in ["torch", "tensorflow", "transformers", "mlx"]:
-            assert mod not in sys.modules or mod == "mlx"  # mlx is allowed
+    def test_timeline_synthesizer_source_contains_no_heavy_deps(self):
+        """TimelineSynthesizer source file contains only pure Python imports.
+
+        This is a hermetic check that avoids sys.modules pollution when
+        multiple sprints run in the same process.
+        """
+        import os
+
+        # Resolve timeline_synthesizer source file path
+        # tests/probe_f202e/test_temporal_archaeology_timeline.py
+        #                     .. (to tests) .. (to universal) . (universal/)
+        ts_path = os.path.join(
+            os.path.dirname(__file__),
+            "..", "..",
+            "intelligence", "timeline_synthesizer.py"
+        )
+        with open(ts_path) as f:
+            source = f.read()
+
+        # Verify source doesn't import heavy ML dependencies
+        heavy_deps = ["torch", "tensorflow", "transformers", "cv2", "PIL"]
+        for dep in heavy_deps:
+            import_patterns = [
+                f"import {dep}",
+                f"from {dep} import",
+            ]
+            for pattern in import_patterns:
+                assert pattern not in source, (
+                    f"timeline_synthesizer.py source contains '{pattern}'"
+                )
 
     def test_timestamp_to_float_conversion(self):
         """_to_timestamp handles various formats."""

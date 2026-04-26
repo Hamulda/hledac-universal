@@ -39,6 +39,14 @@ __all__ = [
     "MAX_PIVOTS",
 ]
 
+# Optional import for F203G feedback — no hard dependency
+try:
+    from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackSummary
+    _HAS_HYPOTHESIS_FEEDBACK = True
+except ImportError:
+    HypothesisFeedbackSummary = None
+    _HAS_HYPOTHESIS_FEEDBACK = False
+
 logger = logging.getLogger(__name__)
 
 # Bounded: max 20 pivots per sprint
@@ -360,6 +368,7 @@ class PivotPlanner:
         findings: list,
         graph_stats: Optional[dict] = None,
         max_pivots: int = MAX_PIVOTS,
+        feedback_summary: Optional[dict] = None,
     ) -> list[Pivot]:
         """
         Generate bounded pivots from accepted findings.
@@ -368,6 +377,9 @@ class PivotPlanner:
             findings: List of CanonicalFinding (or dict-like) objects
             graph_stats: Optional graph statistics for scoring
             max_pivots: Maximum number of pivots to generate (default MAX_PIVOTS=20)
+            feedback_summary: Optional dict mapping (pivot_type, ioc_type) to
+                           HypothesisFeedbackSummary for scoring penalties (F203G).
+                           If None or empty, no penalty is applied.
 
         Returns:
             List of Pivot objects, sorted by priority (highest first).
@@ -399,7 +411,8 @@ class PivotPlanner:
 
                 # Generate pivots based on IOC type and finding characteristics
                 new_pivots = self._generate_pivots_for_ioc(
-                    ioc_value, ioc_type, base_score, finding, envelope, graph_stats
+                    ioc_value, ioc_type, base_score, finding, envelope, graph_stats,
+                    feedback_summary=feedback_summary,
                 )
                 pivots.extend(new_pivots)
 
@@ -431,6 +444,7 @@ class PivotPlanner:
         finding: Any,
         envelope: Optional[dict],
         graph_stats: dict,
+        feedback_summary: Optional[dict] = None,
     ) -> list[Pivot]:
         """Generate pivots for a single IOC."""
         pivots = []
@@ -440,6 +454,8 @@ class PivotPlanner:
         if ioc_type == "domain" or self._looks_like_domain(ioc_value):
             domain = ioc_value if ioc_type == "domain" else ioc_value
             score = _score_pivot_domain(domain, base_score, envelope, graph_stats)
+            penalty = self._get_feedback_penalty(PivotType.DOMAIN, "domain", feedback_summary)
+            score = score * penalty
             pivots.append(Pivot(
                 priority=-score,
                 pivot_type=PivotType.DOMAIN,
@@ -453,6 +469,8 @@ class PivotPlanner:
 
             # Archive pivot for domain
             archive_score = _score_pivot_archive(domain, base_score)
+            archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, "domain", feedback_summary)
+            archive_score = archive_score * archive_penalty
             pivots.append(Pivot(
                 priority=-archive_score,
                 pivot_type=PivotType.ARCHIVE,
@@ -468,6 +486,8 @@ class PivotPlanner:
         elif ioc_type == "ip":
             # Domain resolution pivot
             score = base_score * 0.7
+            penalty = self._get_feedback_penalty(PivotType.DOMAIN, "ip", feedback_summary)
+            score = score * penalty
             pivots.append(Pivot(
                 priority=-score,
                 pivot_type=PivotType.DOMAIN,
@@ -481,6 +501,8 @@ class PivotPlanner:
 
             # Graph pivot for IP
             graph_score = _score_pivot_graph(ioc_value, ioc_type, base_score, graph_stats)
+            graph_penalty = self._get_feedback_penalty(PivotType.GRAPH, "ip", feedback_summary)
+            graph_score = graph_score * graph_penalty
             pivots.append(Pivot(
                 priority=-graph_score,
                 pivot_type=PivotType.GRAPH,
@@ -496,6 +518,8 @@ class PivotPlanner:
         elif ioc_type in ("md5", "sha1", "sha256"):
             # VirusTotal/MalwareBazaar pivot
             score = base_score * 0.7
+            penalty = self._get_feedback_penalty(PivotType.GRAPH, ioc_type, feedback_summary)
+            score = score * penalty
             pivots.append(Pivot(
                 priority=-score,
                 pivot_type=PivotType.GRAPH,
@@ -511,6 +535,8 @@ class PivotPlanner:
         elif ioc_type == "email":
             # Breach/leak pivot
             leak_score = _score_pivot_leak(ioc_value, base_score)
+            leak_penalty = self._get_feedback_penalty(PivotType.LEAK, "email", feedback_summary)
+            leak_score = leak_score * leak_penalty
             pivots.append(Pivot(
                 priority=-leak_score,
                 pivot_type=PivotType.LEAK,
@@ -524,6 +550,8 @@ class PivotPlanner:
 
             # Identity pivot for email
             identity_score = _score_pivot_identity(ioc_value, ioc_type, base_score)
+            identity_penalty = self._get_feedback_penalty(PivotType.IDENTITY, "email", feedback_summary)
+            identity_score = identity_score * identity_penalty
             pivots.append(Pivot(
                 priority=-identity_score,
                 pivot_type=PivotType.IDENTITY,
@@ -541,6 +569,8 @@ class PivotPlanner:
             domain = self._extract_domain_from_url(ioc_value)
             if domain:
                 score = base_score * 0.6
+                penalty = self._get_feedback_penalty(PivotType.DOMAIN, "domain", feedback_summary)
+                score = score * penalty
                 pivots.append(Pivot(
                     priority=-score,
                     pivot_type=PivotType.DOMAIN,
@@ -554,6 +584,8 @@ class PivotPlanner:
 
             # Archive pivot for URL
             archive_score = _score_pivot_archive(ioc_value, base_score * 0.5)
+            archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, "url", feedback_summary)
+            archive_score = archive_score * archive_penalty
             pivots.append(Pivot(
                 priority=-archive_score,
                 pivot_type=PivotType.ARCHIVE,
@@ -566,6 +598,27 @@ class PivotPlanner:
             ))
 
         return pivots
+
+    def _get_feedback_penalty(
+        self,
+        pivot_type: str,
+        ioc_type: str,
+        feedback_summary: Optional[dict],
+    ) -> float:
+        """
+        F203G: Get penalty multiplier for a pivot type + ioc type combination.
+
+        Returns 1.0 (no penalty) if no feedback exists or feedback module unavailable.
+        """
+        if not feedback_summary:
+            return 1.0
+        key = (pivot_type, ioc_type)
+        if key not in feedback_summary:
+            return 1.0
+        summary = feedback_summary[key]
+        if hasattr(summary, "penalty_multiplier"):
+            return float(summary.penalty_multiplier)
+        return 1.0
 
     def _deduplicate_pivots(self, pivots: list[Pivot]) -> list[Pivot]:
         """Deduplicate pivots by (pivot_type, ioc_type, ioc_value), keeping highest score per type."""

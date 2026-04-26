@@ -34,6 +34,9 @@ __all__ = [
     "render_stix_bundle",
     "render_stix_bundle_json",
     "render_stix_bundle_to_path",
+    "render_cti_stix_bundle",
+    "render_cti_stix_bundle_json",
+    "render_cti_stix_bundle_to_path",
 ]
 
 # ---------------------------------------------------------------------------
@@ -284,6 +287,611 @@ def _build_root_cause_object(data: dict[str, Any], created: str) -> dict[str, An
         }, sort_keys=True),
         "object_refs": ["identity--ghost-prime"],
     }
+
+
+# ---------------------------------------------------------------------------
+# F203E: CTI STIX 2.1 Export
+# ---------------------------------------------------------------------------
+# Sprint F203E — CTI STIX 2.1 Export Upgrade
+# Upgrades diagnostic exporter to real threat-intel export:
+#   - findings → indicator / observed-data objects
+#   - identity_candidates → identity objects
+#   - attribution_scores → note objects (explainable confidence)
+#   - killchain_tags → kill-chain labels + note objects
+#   - evidence_chains → observed-data + relationship objects
+#   - report object wrapping all CTI
+#
+# Bounds:
+#   MAX_STIX_OBJECTS=500 — streaming-ish object construction
+#   deterministic UUID5 from stable namespace+content
+#
+# Guardrails:
+#   No network / No model
+#   No fake IOC objects for empty findings
+#   JSON only
+# ---------------------------------------------------------------------------
+
+MAX_STIX_OBJECTS: int = 500
+
+# UUID5 namespace for deterministic CTI IDs (STIX namespace URL as per spec)
+# Using NAMESPACE_URL so same content always generates same UUID5
+_STIX_NS = uuid.NAMESPACE_URL
+
+
+def _make_stix_id(stix_type: str, *parts: str) -> str:
+    """
+    Deterministic UUID5 for STIX object IDs.
+    Uses uuid.NAMESPACE_URL + stix_type + parts so same content → same ID.
+    """
+    canonical = f"{_STIX_NS}/{stix_type}/{'/'.join(str(p) for p in parts)}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, canonical))
+
+
+# IOC type → STIX pattern template (None = not an indicator type)
+_IOC_PATTERN_MAP: dict[str, str | None] = {
+    "ip": "[ipv4-addr:value = '{value}']",
+    "ipv6": "[ipv6-addr:value = '{value}']",
+    "domain": "[domain-name:value = '{value}']",
+    "url": "[url:value = '{value}']",
+    "email": "[email-addr:value = '{value}']",
+    "hash_md5": "[file:hashes.'MD5' = '{value}']",
+    "hash_sha1": "[file:hashes.'SHA-1' = '{value}']",
+    "hash_sha256": "[file:hashes.'SHA-256' = '{value}']",
+    "cve": None,  # Maps to Vulnerability, not indicator
+    "file_path": "[file:name = '{value}']",
+    "registry": None,  # Not a standard STIX pattern type
+}
+
+
+def _ioc_to_indicator(
+    finding: dict[str, Any],
+    created: str,
+    killchain_tags: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Convert a finding dict to a STIX indicator.
+    Returns None if the IOC type is not mappable.
+    """
+    ioc_type = _safe_str(finding.get("ioc_type", "")).lower()
+    ioc_value = _safe_str(finding.get("ioc_value", ""))
+    if not ioc_value:
+        return None
+
+    pattern_tpl = _IOC_PATTERN_MAP.get(ioc_type)
+    if pattern_tpl is None:
+        return None
+
+    finding_id = _safe_str(finding.get("finding_id", ""))
+    pattern = str(pattern_tpl).replace("{value}", ioc_value)
+    confidence = int((float(finding.get("confidence", 0.5) or 0.5)) * 100)
+
+    # Kill-chain labels
+    labels: list[str] = []
+    if killchain_tags:
+        for tag in killchain_tags:
+            if isinstance(tag, dict):
+                phase = _safe_str(tag.get("phase", ""))
+                tech = _safe_str(tag.get("technique_id", ""))
+                if tech:
+                    labels.append(f"attack:{tech}")
+                if phase:
+                    labels.append(f"phase:{phase}")
+
+    indicator_id = _make_stix_id("indicator", ioc_type, ioc_value[:64])
+
+    result: dict[str, Any] = {
+        "type": "indicator",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"indicator--{indicator_id}",
+        "created": created,
+        "modified": created,
+        "name": f"{ioc_type.upper()}: {ioc_value[:64]}",
+        "pattern": pattern,
+        "pattern_type": "stix",
+        "valid_from": created,
+        "confidence": confidence,
+    }
+    if labels:
+        result["labels"] = labels[:5]  # cap labels
+
+    # Description with finding metadata
+    desc_parts = [f"source_type={_safe_str(finding.get('source_type', ''))}"]
+    if finding_id:
+        desc_parts.append(f"finding_id={finding_id}")
+    result["description"] = "; ".join(desc_parts)
+
+    return result
+
+
+def _finding_to_observed_data(
+    finding: dict[str, Any],
+    created: str,
+) -> dict[str, Any]:
+    """Convert a finding to STIX observed-data (for non-pattern IOCs)."""
+    ioc_type = _safe_str(finding.get("ioc_type", "")).lower()
+    ioc_value = _safe_str(finding.get("ioc_value", ""))
+    finding_id = _safe_str(finding.get("finding_id", ""))
+
+    objects: list[dict[str, Any]] = []
+    obj_id = _make_stix_id("observed-data", ioc_type, ioc_value[:64])
+
+    if ioc_type == "domain":
+        objects.append({
+            "type": "domain-name",
+            "spec_version": _STIX_SPEC_VERSION,
+            "id": f"domain-name--{obj_id}",
+            "value": ioc_value,
+        })
+    elif ioc_type == "ip":
+        objects.append({
+            "type": "ipv4-addr",
+            "spec_version": _STIX_SPEC_VERSION,
+            "id": f"ipv4-addr--{obj_id}",
+            "value": ioc_value,
+        })
+    elif ioc_type == "url":
+        objects.append({
+            "type": "url",
+            "spec_version": _STIX_SPEC_VERSION,
+            "id": f"url--{obj_id}",
+            "value": ioc_value,
+        })
+    elif ioc_type in ("hash_md5", "hash_sha1", "hash_sha256"):
+        hash_name = ioc_type.replace("hash_", "").upper()
+        objects.append({
+            "type": "file",
+            "spec_version": _STIX_SPEC_VERSION,
+            "id": f"file--{obj_id}",
+            "hashes": {hash_name: ioc_value},
+        })
+
+    return {
+        "type": "observed-data",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"observed-data--{_make_stix_id('observed-data', finding_id[:64] if finding_id else ioc_value[:64])}",
+        "created": created,
+        "modified": created,
+        "objects": objects,
+    }
+
+
+def _build_identity_object(
+    candidate: dict[str, Any],
+    created: str,
+) -> dict[str, Any]:
+    """Build a STIX identity from an identity_candidate dict."""
+    candidate_id = _safe_str(candidate.get("candidate_id", ""))
+    primary_name = _safe_str(candidate.get("primary_name", "Unknown"))
+    emails = candidate.get("emails", [])
+    usernames = candidate.get("usernames", [])
+    platforms = candidate.get("platforms", [])
+    confidence = float(candidate.get("confidence", 0.0) or 0.0)
+
+    identity_id = _make_stix_id("identity", primary_name, candidate_id)
+
+    desc_parts = [f"confidence={confidence:.2f}"]
+    if emails:
+        desc_parts.append(f"emails={', '.join(str(e) for e in emails[:3])}")
+    if usernames:
+        desc_parts.append(f"usernames={', '.join(str(u) for u in usernames[:5])}")
+    if platforms:
+        desc_parts.append(f"platforms={', '.join(str(p) for p in platforms)}")
+    if candidate_id:
+        desc_parts.append(f"candidate_id={candidate_id}")
+
+    return {
+        "type": "identity",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"identity--{identity_id}",
+        "created": created,
+        "modified": created,
+        "name": primary_name,
+        "description": " | ".join(desc_parts),
+        "identity_class": "individual",
+    }
+
+
+def _build_attribution_note(
+    candidate_id: str,
+    score: dict[str, Any],
+    identity_id: str,
+    created: str,
+) -> dict[str, Any]:
+    """Build a STIX note explaining attribution confidence for an identity."""
+    confidence = float(score.get("confidence", 0.0) or 0.0)
+    factors = score.get("factors", [])
+    evidence_ids = score.get("evidence_ids", [])
+
+    factor_summary = []
+    for f in factors[:5]:
+        if isinstance(f, dict):
+            ft = _safe_str(f.get("factor_type", ""))
+            ws = f.get("weighted_score", 0.0)
+            factor_summary.append(f"{ft}={ws:.2f}")
+
+    abstract = f"Attribution confidence={confidence:.2f} for identity {candidate_id}"
+    if factor_summary:
+        abstract += f" | factors: {'; '.join(factor_summary)}"
+
+    return {
+        "type": "note",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"note--{_make_stix_id('attribution-note', candidate_id)}",
+        "created": created,
+        "modified": created,
+        "abstract": abstract[:2000],
+        "content": json.dumps({
+            "candidate_id": candidate_id,
+            "confidence": round(confidence, 4),
+            "factor_count": len(factors),
+            "evidence_ids": list(evidence_ids)[:20],
+        }, sort_keys=True),
+        "object_refs": [f"identity--{identity_id}"],
+    }
+
+
+def _build_killchain_note(
+    finding_id: str,
+    tags: list[dict[str, Any]],
+    indicator_id: str | None,
+    created: str,
+) -> dict[str, Any]:
+    """Build a note summarizing kill-chain tags for a finding."""
+    techs = []
+    for t in tags:
+        if isinstance(t, dict):
+            techs.append({
+                "technique_id": _safe_str(t.get("technique_id", "")),
+                "tactic": _safe_str(t.get("tactic", "")),
+                "phase": _safe_str(t.get("phase", "")),
+                "confidence": float(t.get("confidence", 0.0) or 0.0),
+            })
+
+    ref_str = f"indicator--{indicator_id}" if indicator_id else finding_id
+
+    return {
+        "type": "note",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"note--{_make_stix_id('killchain-note', finding_id)}",
+        "created": created,
+        "modified": created,
+        "abstract": f"Kill-chain tags for {finding_id}: {len(tags)} technique(s)",
+        "content": json.dumps({
+            "finding_id": finding_id,
+            "tags": techs,
+        }, sort_keys=True),
+        "object_refs": [ref_str],
+    }
+
+
+def _build_evidence_chain_object(
+    chain: dict[str, Any],
+    created: str,
+) -> dict[str, Any]:
+    """
+    Build a STIX observed-data from an evidence chain.
+    Chain is serialized as custom content in the observed-data object.
+    """
+    root_id = _safe_str(chain.get("root_finding_id", ""))
+    steps = chain.get("steps", [])
+    conclusion = _safe_str(chain.get("conclusion") or "")
+
+    chain_id = _make_stix_id("chain", root_id)
+    serialized_steps = []
+    for s in steps:
+        if isinstance(s, dict):
+            serialized_steps.append({
+                "step_type": _safe_str(s.get("step_type", "")),
+                "input_ids": s.get("input_ids", []),
+                "output_id": _safe_str(s.get("output_id", "")),
+                "confidence": float(s.get("confidence", 0.0) or 0.0),
+                "reason": _safe_str(s.get("reason", "")),
+            })
+
+    return {
+        "type": "observed-data",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"observed-data--{chain_id}",
+        "created": created,
+        "modified": created,
+        "description": f"Evidence chain: root={root_id} | depth={len(steps)}",
+        "content": json.dumps({
+            "root_finding_id": root_id,
+            "conclusion": conclusion,
+            "steps": serialized_steps,
+            "depth": len(serialized_steps),
+        }, sort_keys=True),
+    }
+
+
+def _build_cti_report(
+    objects: list[dict[str, Any]],
+    name: str,
+    finding_count: int,
+    identity_count: int,
+    chain_count: int,
+    created: str,
+) -> dict[str, Any]:
+    """Build a STIX report object wrapping all CTI objects."""
+    report_id = _make_stix_id("cti-report", name, str(finding_count))
+
+    # Collect all object refs
+    object_refs = [obj["id"] for obj in objects if obj.get("id")]
+
+    published = created
+
+    return {
+        "type": "report",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"report--{report_id}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": (
+            f"Ghost Prime CTI report: {finding_count} finding(s), "
+            f"{identity_count} identity/identities, {chain_count} evidence chain(s)"
+        ),
+        "published": published,
+        "object_refs": object_refs[:MAX_STIX_OBJECTS],
+        "report_types": ["threat-report", "indicator"],
+    }
+
+
+def _cti_bundle_id(name: str) -> str:
+    """Generate a deterministic bundle ID from report name."""
+    return f"bundle--{_make_stix_id('cti-bundle', name)}"
+
+
+def render_cti_stix_bundle(
+    findings: list[Any],
+    identity_candidates: list[dict[str, Any]] | None = None,
+    attribution_scores: dict[str, Any] | None = None,
+    killchain_tags: dict[str, Any] | None = None,
+    evidence_chains: list[dict[str, Any]] | None = None,
+    max_objects: int = MAX_STIX_OBJECTS,
+) -> dict[str, Any]:
+    """
+    Render CTI findings + sidecar data as a STIX 2.1 threat-intel bundle.
+
+    Produces real STIX indicator / identity / observed-data / relationship / note / report
+    objects from Ghost Prime findings and derived intelligence.
+
+    Guardrails:
+      - No fake IOCs when findings list is empty
+      - No network access
+      - No model load
+      - Bounded to MAX_STIX_OBJECTS
+
+    Parameters
+    ----------
+    findings : list[CanonicalFinding | dict]
+        List of canonical findings with ioc_type, ioc_value, confidence, finding_id.
+    identity_candidates : list[dict] | None
+        F202B identity stitching candidates (IdentityCandidate dicts).
+    attribution_scores : dict | None
+        F203B attribution scores keyed by candidate_id.
+        Value is AttributionScore.to_dict() output.
+    killchain_tags : dict | None
+        F203C kill-chain tags keyed by finding_id.
+        Value is list of KillChainTag.to_dict() output.
+    evidence_chains : list[dict] | None
+        F203D evidence chains (EvidenceChain serialized dicts).
+    max_objects : int
+        Cap on total STIX objects (default MAX_STIX_OBJECTS=500).
+
+    Returns
+    -------
+    dict
+        STIX 2.1 bundle dict with type, id, spec_version, and objects.
+    """
+    if identity_candidates is None:
+        identity_candidates = []
+    if attribution_scores is None:
+        attribution_scores = {}
+    if killchain_tags is None:
+        killchain_tags = {}
+    if evidence_chains is None:
+        evidence_chains = []
+
+    created = _utc_now()
+    objects: list[dict[str, Any]] = []
+
+    # Ghost Prime identity (report author)
+    objects.append(_build_diagnostic_identity())
+
+    # ── Findings → indicators + observed-data ─────────────────────────────────
+    finding_ids_seen: set[str] = set()
+    indicator_refs: list[str] = []
+    observed_refs: list[str] = []
+
+    for finding_raw in findings:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(finding_raw, dict):
+            finding_raw = dict(finding_raw) if hasattr(finding_raw, "__dict__") else {}
+        finding = finding_raw
+
+        fid = _safe_str(finding.get("finding_id", ""))
+        finding_ids_seen.add(fid)
+
+        # Kill-chain tags for this finding
+        finding_kc_tags = killchain_tags.get(fid) if fid else None
+
+        # Try indicator first
+        ind = _ioc_to_indicator(finding, created, finding_kc_tags)
+        if ind is not None:
+            objects.append(ind)
+            indicator_refs.append(ind["id"])
+        else:
+            # Fall back to observed-data
+            obs = _finding_to_observed_data(finding, created)
+            if obs and obs.get("objects"):
+                objects.append(obs)
+                observed_refs.append(obs["id"])
+
+        # Kill-chain note per finding (if tags present)
+        if finding_kc_tags:
+            note = _build_killchain_note(fid, finding_kc_tags, indicator_refs[-1] if indicator_refs else None, created)
+            if note and len(objects) < max_objects:
+                objects.append(note)
+
+    # ── Identity candidates → identity objects ───────────────────────────────
+    identity_refs: list[str] = []
+    for cand in identity_candidates:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(cand, dict):
+            cand = dict(cand) if hasattr(cand, "__dict__") else {}
+        identity_obj = _build_identity_object(cand, created)
+        objects.append(identity_obj)
+        identity_refs.append(identity_obj["id"])
+
+        # Attribution note for this identity
+        cand_id = _safe_str(cand.get("candidate_id", ""))
+        if cand_id in attribution_scores and len(objects) < max_objects:
+            score = attribution_scores[cand_id]
+            if isinstance(score, dict):
+                note = _build_attribution_note(
+                    cand_id,
+                    score,
+                    _make_stix_id("identity", _safe_str(cand.get("primary_name", "")), cand_id),
+                    created,
+                )
+                objects.append(note)
+
+    # ── Evidence chains → observed-data ───────────────────────────────────────
+    chain_refs: list[str] = []
+    for chain in evidence_chains:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(chain, dict):
+            chain = dict(chain) if hasattr(chain, "__dict__") else {}
+        chain_obj = _build_evidence_chain_object(chain, created)
+        objects.append(chain_obj)
+        chain_refs.append(chain_obj["id"])
+
+    # ── Relationship objects ──────────────────────────────────────────────────
+    # Link indicators to identity objects via "based-on" relationships
+    for ind_id in indicator_refs:
+        if len(objects) >= max_objects:
+            break
+        for ident_id in identity_refs[:3]:  # limit relationships
+            rel_id = _make_stix_id("relationship", ind_id, ident_id)
+            objects.append({
+                "type": "relationship",
+                "spec_version": _STIX_SPEC_VERSION,
+                "id": f"relationship--{rel_id}",
+                "created": created,
+                "modified": created,
+                "source_ref": ind_id,
+                "target_ref": f"identity--{ident_id}",
+                "relationship_type": "derived-from",
+            })
+
+    # ── Report object ────────────────────────────────────────────────────────
+    report_name = f"Ghost Prime CTI {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    report = _build_cti_report(
+        objects=objects,
+        name=report_name,
+        finding_count=len(finding_ids_seen),
+        identity_count=len(identity_refs),
+        chain_count=len(chain_refs),
+        created=created,
+    )
+    if len(objects) < max_objects:
+        objects.append(report)
+
+    bundle: dict[str, Any] = {
+        "type": _BUNDLE_TYPE,
+        "id": _cti_bundle_id(report_name),
+        "spec_version": _STIX_SPEC_VERSION,
+        "created": created,
+        "modified": created,
+        "objects": objects,
+    }
+    return bundle
+
+
+def render_cti_stix_bundle_json(
+    findings: list[Any],
+    identity_candidates: list[dict[str, Any]] | None = None,
+    attribution_scores: dict[str, Any] | None = None,
+    killchain_tags: dict[str, Any] | None = None,
+    evidence_chains: list[dict[str, Any]] | None = None,
+    max_objects: int = MAX_STIX_OBJECTS,
+) -> str:
+    """
+    Render CTI findings as a deterministic STIX bundle JSON string.
+
+    Returns
+    -------
+    str
+        JSON string with sorted keys for determinism.
+    """
+    bundle = render_cti_stix_bundle(
+        findings=findings,
+        identity_candidates=identity_candidates,
+        attribution_scores=attribution_scores,
+        killchain_tags=killchain_tags,
+        evidence_chains=evidence_chains,
+        max_objects=max_objects,
+    )
+    return json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False)
+
+
+def render_cti_stix_bundle_to_path(
+    findings: list[Any],
+    identity_candidates: list[dict[str, Any]] | None = None,
+    attribution_scores: dict[str, Any] | None = None,
+    killchain_tags: dict[str, Any] | None = None,
+    evidence_chains: list[dict[str, Any]] | None = None,
+    max_objects: int = MAX_STIX_OBJECTS,
+    path: Union[str, Path, None] = None,
+) -> Path:
+    """
+    Render CTI findings as a STIX bundle and write to ``path``.
+
+    If ``path`` is None:
+      1. ``GHOST_EXPORT_DIR`` env var
+      2. ``paths.RAMDISK_ROOT / "cti"``
+      3. ``/tmp/ghost_cti_exports``
+
+    Filename is deterministic: ``ghost_cti_{sprint_id}_{timestamp}.stix.json``.
+
+    Returns the Path of the written file.
+    """
+    content = render_cti_stix_bundle_json(
+        findings=findings,
+        identity_candidates=identity_candidates,
+        attribution_scores=attribution_scores,
+        killchain_tags=killchain_tags,
+        evidence_chains=evidence_chains,
+        max_objects=max_objects,
+    )
+
+    if path is None:
+        export_dir_env = os.environ.get("GHOST_EXPORT_DIR")
+        if export_dir_env:
+            base = Path(export_dir_env)
+        else:
+            try:
+                from hledac.universal.paths import RAMDISK_ROOT
+                base = RAMDISK_ROOT / "cti"
+            except Exception:
+                import tempfile
+                base = Path(tempfile.gettempdir()) / "ghost_cti_exports"
+    else:
+        base = Path(path).parent
+
+    filename = Path(path).name if path else None
+    if not filename:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"ghost_cti_{timestamp}.stix.json"
+
+    out_path = base / filename
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(content, encoding="utf-8")
+    return out_path
 
 
 # ---------------------------------------------------------------------------

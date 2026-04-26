@@ -232,6 +232,11 @@ _lifecycle_state: dict = {
     "last_error": None,
 }
 
+# F203J: Selected quantization — read-only status for QuantizationSelector integration.
+# Written by QuantizationSelector when a model is selected for loading.
+# NOT a load authority — model lifecycle authority stays in brain modules.
+_selected_quantization: str = "q4_k_m"
+
 # Sprint 8Y: Store the actual model object reference so we can call unload()
 # on it when switching models.
 # F162F FIX: Now uses weakref to avoid preventing GC — model is released
@@ -254,6 +259,30 @@ def _set_current_model_ref(model: Any) -> None:
         _weak_model_ref = None
     else:
         _weak_model_ref = weakref.ref(model)
+
+
+def get_selected_quantization() -> str:
+    """
+    F203J: Return the currently selected quantization string.
+
+    Read-only status surface — set by QuantizationSelector when model
+    is selected for loading. Used by governor and scheduler to understand
+    the active quantization tier.
+
+    Returns:
+        Quantization string: "q4_k_m" | "q5_k_m" | "q8_0" (default: "q4_k_m")
+    """
+    return _selected_quantization
+
+
+def set_selected_quantization(quantization: str) -> None:
+    """
+    F203J: Set the selected quantization (internal, called by QuantizationSelector).
+
+    This is NOT a load authority — it only tracks what the selector chose.
+    """
+    global _selected_quantization
+    _selected_quantization = quantization
 
 
 def get_model_lifecycle_status() -> dict:

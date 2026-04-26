@@ -359,6 +359,8 @@ class SprintSchedulerResult:
     sprint_diff_findings_produced: int = 0
     # Sprint F203C: Kill chain tagging sidecar
     kill_chain_tags_produced: int = 0
+    # Sprint F203F: Wayback diff sidecar
+    wayback_diff_findings_produced: int = 0
     # Sprint F203D: Evidence chain tracker
     chain_steps_recorded: int = 0
 
@@ -830,6 +832,55 @@ class SprintScheduler:
         # Udržuj pouze posledních 20 epizod
         if len(history) > 20:
             self._pivot_rewards[task_type] = history[-20:]
+
+    # ── Sprint F203G: Hypothesis Feedback ─────────────────────────────────
+
+    async def record_hypothesis_feedback(
+        self,
+        pivot_type: str,
+        ioc_type: str,
+        produced_count: int,
+        accepted_count: int,
+        signal_value: float,
+    ) -> None:
+        """
+        F203G: Record hypothesis feedback to DuckDB for future pivot planning.
+
+        Persists a HypothesisFeedbackRecord to the duckdb_store for aggregation
+        and use by PivotPlanner to penalize low-yield pivot types.
+
+        Silently fails if duckdb_store is unavailable.
+
+        Args:
+            pivot_type: domain/identity/leak/archive/graph
+            ioc_type: The IOC type operated on
+            produced_count: Number of findings produced by this pivot
+            accepted_count: Number of findings accepted (stored)
+            signal_value: reward signal [0.0, 1.0]
+        """
+        store = getattr(self, "_duckdb_store", None)
+        if store is None:
+            return
+        try:
+            from hledac.universal.runtime.hypothesis_feedback import (
+                HypothesisFeedbackRecord,
+            )
+            import uuid
+            import time as _time
+
+            record = HypothesisFeedbackRecord(
+                id=str(uuid.uuid4()),
+                target_id=getattr(self, "sprint_id", "") or "default",
+                pivot_type=pivot_type,
+                ioc_type=ioc_type,
+                produced_count=produced_count,
+                accepted_count=accepted_count,
+                signal_value=signal_value,
+                ts=_time.time(),
+            )
+            await store.async_record_hypothesis_feedback(record)
+        except Exception:
+            pass  # Fail-safe: feedback recording must never crash sprint
 
     def _get_adaptive_priority(
         self, task_type: str, base_priority: float = 0.5
@@ -1616,6 +1667,14 @@ class SprintScheduler:
                     )
                     # Sprint F203C: Kill chain tagging sidecar (fail-soft, non-blocking)
                     await self._run_kill_chain_tagging_sidecar(
+                        accepted_findings, store, query
+                    )
+                    # Sprint F203F: Wayback diff sidecar (fail-soft, non-blocking)
+                    await self._run_wayback_diff_sidecar(
+                        accepted_findings, store, query
+                    )
+                    # Sprint F203I: Streaming embedding sidecar (fail-soft, non-blocking)
+                    await self._run_embedding_sidecar(
                         accepted_findings, store, query
                     )
         except Exception as exc:
@@ -2415,6 +2474,169 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: kill chain sidecar must never crash sprint
 
+    # ── F203I: Streaming Embedding Sidecar ─────────────────────────────────
+
+    async def _run_embedding_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F203I: Run streaming embedding on accepted findings for ANN indexing.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Uses StreamingEmbedder to embed findings in small batches, reducing peak
+        RSS on M1 8GB. Indexed embeddings go to LanceDB ANN for fast dedup.
+
+        Guardrails:
+        - Model lifecycle via brain.model_lifecycle.get_model_lifecycle_status()
+        - FETCH_SEMAPHORE=3 while model loaded
+        - RAM guard blocks at >85% high_water / is_critical / is_emergency
+        - prewarm() called after bulk embedding for faster dedup queries
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored.
+            store: DuckDBShadowStore instance for async_ingest_findings_batch.
+            query: Original sprint query.
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.streaming_embedder import StreamingEmbedder
+
+            embedder = StreamingEmbedder()
+
+            # Collect embeddable findings (those with payload_text)
+            embeddable = []
+            for f in findings:
+                text = getattr(f, "payload_text", None) or getattr(f, "query", "") or ""
+                if len(text) >= 16:  # Skip very short texts
+                    embeddable.append(f)
+
+            if not embeddable:
+                return
+
+            # Stream embeddings in batches
+            async for ids, embeddings in embedder.embed_findings(embeddable, batch_size=16):
+                if ids and embeddings is not None and embeddings.shape[0] > 0:
+                    try:
+                        # Add to LanceDB ANN index
+                        from hledac.universal.knowledge.ann_index import get_ann_index
+
+                        ann = get_ann_index()
+                        for idx, finding_id in enumerate(ids):
+                            emb = embeddings[idx]
+                            if emb.shape[0] == 256:
+                                import hashlib
+
+                                key = hashlib.blake2b(finding_id.encode(), digest_size=32).hexdigest()
+                                text_hash = hashlib.sha256(finding_id.encode()).hexdigest()
+                                ann.upsert(key, emb, text_hash)
+
+                        # Optional: also add to VectorStore for RAG
+                        try:
+                            from hledac.universal.knowledge.vector_store import get_vector_store
+
+                            vs = get_vector_store()
+                            await vs.add_vectors_streaming(ids, embeddings, index_type="text", batch_size=16)
+                        except Exception:
+                            pass  # Non-critical: ANN is primary
+                    except Exception:
+                        pass  # Fail-soft: indexing must not crash sprint
+
+            # Prewarm ANN after bulk embedding for faster dedup queries
+            try:
+                from hledac.universal.knowledge.ann_index import get_ann_index
+
+                ann = get_ann_index()
+                ann.prewarm(top_k=128)
+            except Exception:
+                pass  # Non-critical
+
+        except Exception:
+            pass  # Fail-soft: embedding sidecar must never crash sprint
+
+    # ── F203F: Wayback Diff Sidecar ─────────────────────────────────────────
+
+    async def _run_wayback_diff_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F203F: Mine Wayback CDX for domain/URL changes.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Extracts domains and URLs from accepted findings, queries Wayback CDX,
+        detects changes (added/changed), and ingests diff findings via
+        async_ingest_findings_batch.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (for derived finding query field)
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.wayback_diff_miner import (
+                WaybackDiffMiner,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependency
+
+        try:
+            # Extract domains/URLs from findings
+            targets: list[str] = []
+            for f in findings:
+                ioc_value = getattr(f, "ioc_value", "") or ""
+                ioc_type = getattr(f, "ioc_type", "") or ""
+                if ioc_type in ("domain", "url") and ioc_value:
+                    targets.append(ioc_value)
+                elif hasattr(f, "url"):
+                    url = getattr(f, "url", "") or ""
+                    if url:
+                        targets.append(url)
+
+            if not targets:
+                return
+
+            # Mine Wayback for changes
+            miner = WaybackDiffMiner()
+            try:
+                result = await miner.mine(targets)
+            finally:
+                await miner.close()
+
+            if not result.change_events:
+                return
+
+            # Convert to CanonicalFinding and ingest
+            findings_out = result.to_findings(query=query, sprint_id=self.sprint_id or "")
+            if not findings_out:
+                return
+
+            try:
+                results = await store.async_ingest_findings_batch(findings_out)
+                stored = sum(
+                    1 for r in results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                self._result.wayback_diff_findings_produced = stored
+            except Exception:
+                pass  # Fail-soft
+
+        except Exception:
+            pass  # Fail-soft: wayback diff sidecar must never crash sprint
+
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
     async def _run_pivot_planner_advisory(self) -> None:
@@ -2454,8 +2676,34 @@ class SprintScheduler:
             except Exception:
                 pass  # Fail-soft: graph stats are optional
 
+            # F203G: Get feedback summary from duckdb_store for scoring penalties
+            feedback_summary = None
+            store = getattr(self, "_duckdb_store", None)
+            if store is not None:
+                try:
+                    from hledac.universal.runtime.hypothesis_feedback import (
+                        HypothesisFeedbackAdapter,
+                    )
+                    adapter = HypothesisFeedbackAdapter(
+                        duckdb_store=store,
+                        target_id=getattr(self, "sprint_id", "") or "default",
+                    )
+                    # Synchronous wrapper since we are in a sync context
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    feedback_summary = loop.run_until_complete(
+                        adapter.async_get_summary()
+                    )
+                    loop.close()
+                except Exception:
+                    feedback_summary = None  # Fail-safe
+
             # Plan pivots (synchronous, fail-soft)
-            pivots = planner.plan_pivots(findings, graph_stats=graph_stats)
+            pivots = planner.plan_pivots(
+                findings,
+                graph_stats=graph_stats,
+                feedback_summary=feedback_summary,
+            )
             self._planned_pivots = pivots
             log.debug(f"[F202G] Planned {len(pivots)} pivots from {len(findings)} findings")
 
@@ -2845,6 +3093,9 @@ class SprintScheduler:
 
         Bounded lifecycle: loaded once at BOOT/WARMUP, released at TEARDOWN.
         Fail-soft: memory pressure on load skips ToT, does not abort sprint.
+
+        F203J: Quantization budget respected via QuantizationSelector advisory
+        in ModelManager._load_model_async. Budget is logged here for visibility.
         """
         # P12 prewarm: RSS headroom check for aggressive mode
         # Hard headroom rule: if RSS > 4GB before prewarm, skip Hermes fail-soft
@@ -2861,8 +3112,24 @@ class SprintScheduler:
                 self._memory_manager = None
                 return
 
+        # F203J: Advisory budget check before prewarm — QuantizationSelector
+        # result is logged for visibility; actual load authority stays in ModelManager
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal.brain.quantization_selector import QuantizationSelector
+            uma = sample_uma_status()
+            selector = QuantizationSelector()
+            budget = selector.select(uma, requested_model="hermes")
+            log.debug(
+                f"[F203J] Hermes prewarm budget: quant={budget.quantization}, "
+                f"tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, "
+                f"reason={budget.reason}"
+            )
+        except Exception as e:
+            log.debug("[F203J] QuantizationSelector prewarm advisory error: %s", e)
+
         # Shared load path via ModelManager (canonical lifecycle owner)
-        # ModelManager enforces M1 8GB memory admission
+        # ModelManager enforces M1 8GB memory admission + F203J QuantizationSelector
         await self._load_hermes_for_sprint()
 
     async def _load_hermes_for_sprint(self) -> None:

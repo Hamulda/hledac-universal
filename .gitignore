@@ -68,3 +68,11 @@ tests/probe_*/runtime/.venv*/
 
 # Test artifacts
 tests/test_pattern_matcher.py
+
+# Tool artifacts
+.claude/
+.codebase-memory/
+.full-review/
+.mcp.json
+.repowise/
+.rtk/
