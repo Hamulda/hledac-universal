@@ -23,11 +23,13 @@ STIX-compatible and pass basic shape validation.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Mapping, Union, cast
 
 __all__ = [
@@ -37,6 +39,8 @@ __all__ = [
     "render_cti_stix_bundle",
     "render_cti_stix_bundle_json",
     "render_cti_stix_bundle_to_path",
+    "collect_cti_export_inputs",
+    "CTIExportInputs",
 ]
 
 # ---------------------------------------------------------------------------
@@ -75,6 +79,103 @@ _FALLBACK_RECOMMENDATION: dict[str, str] = {
 
 # Canonical root-cause strings for export (machine-readable keys)
 _CANONICAL_ROOT_CAUSES = frozenset(_ROOT_CAUSE_LABELS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Sprint F204F: CTI Export Inputs dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CTIExportInputs:
+    """Frozen inputs for production CTI STIX export (F204F)."""
+    findings: tuple[Any, ...]
+    identity_candidates: tuple[dict[str, Any], ...]
+    attribution_scores: dict[str, Any]
+    killchain_tags: dict[str, Any]
+    evidence_chains: tuple[dict[str, Any], ...]
+    sprint_id: str
+
+
+async def collect_cti_export_inputs(
+    report: dict[str, Any],
+    store: Any,
+) -> CTIExportInputs:
+    """
+    Sprint F204F: Collect all inputs needed for production CTI STIX export.
+
+    Reads findings via ``store.async_query_recent_findings()`` bounded by
+    MAX_EXPORT_FINDINGS=300. Identity candidates, attribution scores,
+    killchain tags, and evidence chains are read from the report dict.
+
+    Parameters
+    ----------
+    report : dict
+        Diagnostic report dict from _build_diagnostic_report().
+        Expected keys: identity_candidates, attribution_scores,
+        killchain_tags, evidence_chains.
+    store : DuckDB store
+        Must expose async_query_recent_findings().
+
+    Returns
+    -------
+    CTIExportInputs (frozen dataclass)
+
+    GHOST_INVARIANTS:
+    - asyncio.gather with return_exceptions=True
+    - _check_gathered() called after gather
+    - Fail-soft: missing sidecar data → empty defaults
+    - RAM guard: MAX_EXPORT_FINDINGS=300
+    - Model lifecycle not used
+    """
+    from hledac.universal.utils.async_helpers import _check_gathered
+
+    sprint_id = report.get("run_id", "unknown")
+
+    # Gather findings and identity candidates concurrently
+    findings_result: Any = None
+    identity_candidates: tuple[dict[str, Any], ...] = ()
+
+    async def _fetch_findings() -> Any:
+        try:
+            if hasattr(store, "async_query_recent_findings"):
+                rows = await store.async_query_recent_findings(limit=MAX_EXPORT_FINDINGS)
+                return list(rows) if rows else []
+        except Exception:
+            pass
+        return []
+
+    async def _get_identity_candidates() -> tuple[dict[str, Any], ...]:
+        cands = report.get("identity_candidates") or []
+        return tuple(cands) if isinstance(cands, (list, tuple)) else ()
+
+    results = await asyncio.gather(
+        _fetch_findings(),
+        _get_identity_candidates(),
+        return_exceptions=True,
+    )
+    _check_gathered(results, "collect_cti_export_inputs")
+
+    findings_result = results[0] if results[0] is not None else []
+    identity_candidates = results[1] if isinstance(results[1], tuple) else ()
+
+    # Attribution scores — from report
+    attribution_scores = report.get("attribution_scores") or {}
+
+    # Killchain tags — from report
+    killchain_tags = report.get("killchain_tags") or {}
+
+    # Evidence chains — bounded by MAX_EXPORT_CHAINS=20
+    evidence_chains_raw = report.get("evidence_chains") or []
+    evidence_chains = tuple(evidence_chains_raw[:MAX_EXPORT_CHAINS])
+
+    return CTIExportInputs(
+        findings=tuple(findings_result) if findings_result else (),
+        identity_candidates=identity_candidates,
+        attribution_scores=attribution_scores,
+        killchain_tags=killchain_tags,
+        evidence_chains=evidence_chains,
+        sprint_id=sprint_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +413,9 @@ def _build_root_cause_object(data: dict[str, Any], created: str) -> dict[str, An
 # ---------------------------------------------------------------------------
 
 MAX_STIX_OBJECTS: int = 500
+MAX_EXPORT_FINDINGS: int = 300
+MAX_EXPORT_CHAINS: int = 20
+MAX_EXPORT_BYTES: int = 5_000_000
 
 # UUID5 namespace for deterministic CTI IDs (STIX namespace URL as per spec)
 # Using NAMESPACE_URL so same content always generates same UUID5

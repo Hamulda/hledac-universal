@@ -269,7 +269,95 @@ def render_sprint_markdown(
         if chain_section:
             parts.append(chain_section)
 
+    # Sprint F204E: render analyst brief section
+    analyst_brief = scorecard.get("analyst_brief")
+    if analyst_brief:
+        brief_section = _render_analyst_brief_section(analyst_brief)
+        if brief_section:
+            parts.append(brief_section)
+
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F204E: Analyst Brief rendering
+# ---------------------------------------------------------------------------
+
+def _render_analyst_brief_section(analyst_brief: dict) -> str:
+    """
+    Render analyst brief as a markdown section.
+
+    The brief is a model-free sprint teardown summary with:
+    - headline, key findings, evidence chains, next actions, open questions.
+
+    Args:
+        analyst_brief: dict with keys: sprint_id, target_id, headline,
+            key_findings, evidence_chain_ids, next_actions, open_questions,
+            confidence, generated_ts
+
+    Returns:
+        Markdown string or empty string if no data.
+    """
+    if not analyst_brief:
+        return ""
+
+    headline = analyst_brief.get("headline", "")
+    key_findings = analyst_brief.get("key_findings", []) or []
+    evidence_chain_ids = analyst_brief.get("evidence_chain_ids", []) or []
+    next_actions = analyst_brief.get("next_actions", []) or []
+    open_questions = analyst_brief.get("open_questions", []) or []
+    confidence = analyst_brief.get("confidence", 0.0)
+    sprint_id = analyst_brief.get("sprint_id", "")
+    generated_ts = analyst_brief.get("generated_ts", 0.0)
+
+    # Format timestamp
+    try:
+        from datetime import datetime
+        ts_str = datetime.utcfromtimestamp(generated_ts).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"
+    except Exception:
+        ts_str = str(generated_ts) if generated_ts else "unknown"
+
+    lines = [
+        "",
+        "## Analyst Brief",
+        "",
+        f"**Sprint:** `{sprint_id}`  ",
+        f"**Generated:** {ts_str}  ",
+        f"**Confidence:** {confidence:.2f}",
+        "",
+        f"_{headline}_" if headline else "",
+        "",
+    ]
+
+    if key_findings:
+        lines.append("### Key Findings")
+        lines.append("")
+        for i, f in enumerate(key_findings[:20], 1):  # bounded display
+            lines.append(f"{i}. {f}")
+        lines.append("")
+
+    if evidence_chain_ids:
+        lines.append("### Evidence Chains")
+        lines.append("")
+        for cid in evidence_chain_ids[:5]:  # bounded
+            lines.append(f"- `{cid}`")
+        lines.append("")
+
+    if next_actions:
+        lines.append("### Next Actions")
+        lines.append("")
+        for i, action in enumerate(next_actions[:10], 1):  # bounded
+            lines.append(f"{i}. {action}")
+        lines.append("")
+
+    if open_questions:
+        lines.append("### Open Questions")
+        lines.append("")
+        for q in open_questions[:5]:  # bounded
+            lines.append(f"- {q}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

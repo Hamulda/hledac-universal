@@ -39,6 +39,12 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
     "sprint_diff",
 })
 
+# F204J: Import constants from resource_governor
+try:
+    from hledac.universal.runtime.resource_governor import SIDECAR_DEFAULT_ESTIMATE_MB
+except ImportError:
+    SIDECAR_DEFAULT_ESTIMATE_MB = 128
+
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
@@ -100,21 +106,21 @@ class FindingSidecarBus:
 
     # ── RAM Guard ─────────────────────────────────────────────────────────────
 
-    def _is_heavy_blocked(self, name: str) -> bool:
-        """Return True if a heavy sidecar should be skipped due to RAM pressure."""
+    def _is_heavy_blocked(self, name: str) -> tuple[bool, str]:
+        """
+        Return (blocked, reason) if a heavy sidecar should be skipped due to RAM pressure.
+
+        F204J: Now uses governor.sidecar_admission() for consistent admission checks.
+        """
         if name not in _HEAVY_SIDECARS:
-            return False
+            return (False, "")
         if self._governor is None:
-            return False
+            return (False, "")
         try:
-            snapshot = self._governor.sample_uma_status()
-            return bool(
-                snapshot.is_critical
-                or snapshot.is_emergency
-                or snapshot.high_water >= 0.85
-            )
+            admission = self._governor.sidecar_admission(name, SIDECAR_DEFAULT_ESTIMATE_MB)
+            return (not admission.allowed, admission.reason)
         except Exception:
-            return False  # Fail-soft: allow heavy sidecars if governor errors
+            return (False, "")  # Fail-soft: allow heavy sidecars if governor errors
 
     # ── Core: Run All Sidecars ────────────────────────────────────────────────
 
@@ -152,17 +158,17 @@ class FindingSidecarBus:
         # ── Build coroutine tasks for all registered runners ─────────────────
         async def _run_one(name: str, runner: SidecarRunner) -> SidecarRunResult:
             t0 = _time.monotonic()
-            skipped = ""
 
-            # RAM guard check
-            if self._is_heavy_blocked(name):
+            # RAM guard check using governor.sidecar_admission()
+            blocked, reason = self._is_heavy_blocked(name)
+            if blocked:
                 elapsed_ms = (_time.monotonic() - t0) * 1000
                 return SidecarRunResult(
                     sidecar_name=name,
                     attempted=False,
                     produced_count=0,
                     stored_count=0,
-                    skipped_reason="ram_governor_critical",
+                    skipped_reason=reason or "ram_governor_critical",
                     elapsed_ms=elapsed_ms,
                 )
 
@@ -642,6 +648,85 @@ async def _embedding_runner(
         pass  # Fail-soft
 
 
+async def _passive_fingerprint_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """F204G passive service fingerprinting — deterministic, no active scan."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.intelligence.passive_fingerprint import (
+            create_passive_fingerprint_adapter,
+        )
+    except Exception:
+        return
+
+    try:
+        adapter = create_passive_fingerprint_adapter()
+        derived_findings = adapter.correlate(findings, query)
+        if not derived_findings:
+            return
+
+        results = await store.async_ingest_findings_batch(derived_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+    except Exception:
+        pass  # Fail-soft
+
+
+async def _rir_correlator_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """F204H RIR/ASN/WHOIS bulk correlator — bounded IP/domain attribution."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.intelligence.rir_correlator import (
+            create_rir_correlator_adapter,
+        )
+    except Exception:
+        return
+
+    try:
+        adapter = create_rir_correlator_adapter()
+        derived_findings = adapter.correlate(findings, query)
+        if not derived_findings:
+            return
+
+        results = await store.async_ingest_findings_batch(derived_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+    except Exception:
+        pass  # Fail-soft
+
+
+async def _social_identity_surface_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """F204I: Social identity surface miner — extract usernames/profiles from findings."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.intelligence.social_identity_miner import (
+            create_social_identity_miner_adapter,
+        )
+    except Exception:
+        return
+
+    try:
+        miner = create_social_identity_miner_adapter()
+        result = await miner.mine(findings, store, query)
+        return result.scanned_count
+    except Exception:
+        pass  # Fail-soft
+
+
 # ── Default Registry ───────────────────────────────────────────────────────────
 # Ordered list of (name, runner) pairs — bus registers these by default.
 DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
@@ -653,7 +738,10 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
     ("sprint_diff", _sprint_diff_runner),
     ("kill_chain_tagging", _kill_chain_tagging_runner),
     ("wayback_diff", _wayback_diff_runner),
+    ("passive_fingerprint", _passive_fingerprint_runner),
+    ("rir_correlator", _rir_correlator_runner),
     ("embedding", _embedding_runner),
+    ("social_identity_surface", _social_identity_surface_runner),
 ]
 
 

@@ -1099,6 +1099,8 @@ async def run_sprint(
                 synthesis_outcome_payload=None,  # synthesis_runner not exposed on lifecycle/scheduler
                 # Sprint F153: Top-level sprint verdict propagated to export
                 sprint_verdict=intel.get("sprint_verdict"),
+                # Sprint F204E: Analyst brief from sprint teardown
+                analyst_brief=scheduler.get_analyst_brief(),
             )
 
             # Sprint F155: Log enrichment level

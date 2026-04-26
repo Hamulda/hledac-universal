@@ -48,6 +48,7 @@ SIGNAL_TYPE_CT_CERT = "ct_cert"
 SIGNAL_TYPE_OPEN_BUCKET = "open_bucket"
 SIGNAL_TYPE_JARM = "jarm_fp"
 SIGNAL_TYPE_PASSIVE_DNS = "passive_dns"
+SIGNAL_TYPE_PASSIVE_FINGERPRINT = "passive_fingerprint"
 
 # ── Correlation Types ──────────────────────────────────────────────────────────
 
@@ -318,6 +319,28 @@ def extract_signals(findings: list["CanonicalFinding"]) -> list[AssetSignal]:
                     asset_key=asset_key,
                     confidence=confidence,
                     metadata={"domain": domain, "ip": ip, "record_type": data.get("record_type", "A")},
+                    finding_id=fid,
+                ))
+
+        elif src == "passive_fingerprint":
+            # passive_fingerprint findings have service_name and product in payload
+            service_name = data.get("service_name", "")
+            product = data.get("product", "")
+            version = data.get("version", "")
+            facets = data.get("facets", {})
+            if service_name:
+                # Use the finding's ioc_value as asset_key if available, else use service_name
+                asset_key = getattr(finding, "ioc_value", "") or service_name
+                signals.append(AssetSignal(
+                    signal_type=SIGNAL_TYPE_PASSIVE_FINGERPRINT,
+                    asset_key=asset_key,
+                    confidence=confidence,
+                    metadata={
+                        "service_name": service_name,
+                        "product": product,
+                        "version": version,
+                        "facets": facets,
+                    },
                     finding_id=fid,
                 ))
 

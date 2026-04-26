@@ -1631,6 +1631,8 @@ class ExportHandoff:
     synthesis_outcome_payload: Optional[Dict[str, Any]] = None
     # Sprint F153: Top-level sprint verdict — posture, confidence, next action
     sprint_verdict: Optional[Dict[str, Any]] = None
+    # Sprint F204E: Analyst brief — model-free sprint summary at teardown
+    analyst_brief: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_windup(

@@ -33,7 +33,13 @@ DEFAULT_FACTOR_WEIGHTS = {
     "temporal_overlap": 0.20,
     "shared_infrastructure": 0.20,
     "pgp_key_correlation": 0.15,
+    "social_profile_overlap": 0.15,
+    "bio_link_overlap": 0.10,
 }
+
+# Social identity factor bounds
+SOCIAL_FACTOR_MIN_OVERLAP: int = 1
+SOCIAL_FACTOR_MAX_FACTOR_SCORE: float = 0.80
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
@@ -366,6 +372,109 @@ class AttributionConfidenceScorer:
             )
         return None
 
+    def _social_profile_overlap_score(
+        self,
+        left: IdentityCandidate,
+        right: IdentityCandidate,
+    ) -> Optional[AttributionFactor]:
+        """
+        Assess social profile overlap between two identity candidates.
+
+        Compares usernames/platforms from social identity facets (source_type=
+        'social_identity_surface') across candidates. Overlap on GitHub, Twitter,
+        LinkedIn, etc. adds attribution confidence.
+        """
+        if not left.usernames or not right.usernames:
+            return None
+
+        # Build platform-username sets for each candidate
+        def make_profile_set(usernames: tuple[str, ...], platforms: tuple[str, ...]) -> set[str]:
+            """Build 'platform:username' profile strings."""
+            result = set()
+            for i, username in enumerate(usernames):
+                platform = platforms[i] if i < len(platforms) else "unknown"
+                result.add(f"{platform}:{username.lower()}")
+            return result
+
+        left_profiles = make_profile_set(left.usernames, left.platforms)
+        right_profiles = make_profile_set(right.usernames, right.platforms)
+
+        overlap = left_profiles & right_profiles
+        if len(overlap) >= SOCIAL_FACTOR_MIN_OVERLAP:
+            raw = min(1.0, len(overlap) / SOCIAL_FACTOR_MAX_FACTOR_SCORE)
+            return AttributionFactor(
+                factor_id=f"social_profile_{len(overlap)}",
+                factor_type="social_profile_overlap",
+                raw_score=raw,
+                weighted_score=raw * self._weights.get("social_profile_overlap", 0.15),
+                evidence=tuple(overlap),
+                metadata={
+                    "left_profile_count": len(left_profiles),
+                    "right_profile_count": len(right_profiles),
+                    "overlap_count": len(overlap),
+                },
+            )
+        return None
+
+    def _bio_link_overlap_score(
+        self,
+        left: IdentityCandidate,
+        right: IdentityCandidate,
+    ) -> Optional[AttributionFactor]:
+        """
+        Assess bio link (domain/email) overlap between candidates.
+
+        Candidates with social identity facets often have linked_domains and
+        linked_emails in their evidence. Overlapping domains/emails increase
+        attribution confidence.
+        """
+        if not left.emails or not right.emails:
+            return None
+
+        # Extract domains from emails
+        left_domains: set[str] = set()
+        right_domains: set[str] = set()
+        for e in left.emails:
+            domain = self._extract_email_domain(e)
+            if domain:
+                left_domains.add(domain)
+        for e in right.emails:
+            domain = self._extract_email_domain(e)
+            if domain:
+                right_domains.add(domain)
+
+        # Also check evidence strings for domain mentions
+        def extract_domains_from_evidence(evidence: list[str]) -> set[str]:
+            domain_set = set()
+            domain_re = re.compile(r'[a-zA-Z0-9-]+\.[a-zA-Z]{2,}')
+            for e in evidence:
+                for m in domain_re.finditer(e):
+                    domain_set.add(m.group(0).lower())
+            return domain_set
+
+        left_domains.update(extract_domains_from_evidence(left.evidence))
+        right_domains.update(extract_domains_from_evidence(right.evidence))
+
+        if not left_domains or not right_domains:
+            return None
+
+        overlap = left_domains & right_domains
+        if len(overlap) >= SOCIAL_FACTOR_MIN_OVERLAP:
+            raw = min(1.0, len(overlap) / SOCIAL_FACTOR_MAX_FACTOR_SCORE)
+            return AttributionFactor(
+                factor_id=f"bio_link_{len(overlap)}",
+                factor_type="bio_link_overlap",
+                raw_score=raw,
+                weighted_score=raw * self._weights.get("bio_link_overlap", 0.10),
+                evidence=tuple(overlap),
+                metadata={
+                    "left_domain_count": len(left_domains),
+                    "right_domain_count": len(right_domains),
+                    "overlap_count": len(overlap),
+                },
+            )
+        return None
+
     # ── Main Scoring Methods ───────────────────────────────────────────────────
 
     def score_pair(
@@ -412,6 +521,8 @@ class AttributionConfidenceScorer:
                 self._temporal_overlap_score,
                 self._shared_infrastructure_score,
                 self._pgp_key_correlation_score,
+                self._social_profile_overlap_score,
+                self._bio_link_overlap_score,
             ]
 
             for method in factor_methods:

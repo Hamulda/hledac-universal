@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -67,8 +68,10 @@ class Pivot:
     """
     A single investigation pivot derived from findings.
 
+
     Fields:
         priority: Order key (negative = higher priority first)
+        pivot_id: Stable unique identifier for this pivot.
         pivot_type: One of domain/identity/leak/archive/graph
         ioc_value: The IOC value to pivot on
         ioc_type: Type of IOC (ip, domain, hash, email, url, etc.)
@@ -78,6 +81,7 @@ class Pivot:
         evidence_pointers: List of source finding_ids
     """
     priority: float = field(compare=True)
+    pivot_id: str = field(compare=False, default="")
     pivot_type: str = field(compare=False, default="domain")
     ioc_value: str = field(compare=False, default="")
     ioc_type: str = field(compare=False, default="unknown")
@@ -458,6 +462,7 @@ class PivotPlanner:
             score = score * penalty
             pivots.append(Pivot(
                 priority=-score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.DOMAIN,
                 ioc_value=domain,
                 ioc_type="domain",
@@ -473,6 +478,7 @@ class PivotPlanner:
             archive_score = archive_score * archive_penalty
             pivots.append(Pivot(
                 priority=-archive_score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.ARCHIVE,
                 ioc_value=domain,
                 ioc_type="domain",
@@ -490,6 +496,7 @@ class PivotPlanner:
             score = score * penalty
             pivots.append(Pivot(
                 priority=-score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.DOMAIN,
                 ioc_value=ioc_value,
                 ioc_type="ip",
@@ -505,6 +512,7 @@ class PivotPlanner:
             graph_score = graph_score * graph_penalty
             pivots.append(Pivot(
                 priority=-graph_score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.GRAPH,
                 ioc_value=ioc_value,
                 ioc_type="ip",
@@ -522,6 +530,7 @@ class PivotPlanner:
             score = score * penalty
             pivots.append(Pivot(
                 priority=-score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.GRAPH,
                 ioc_value=ioc_value,
                 ioc_type=ioc_type,
@@ -539,6 +548,7 @@ class PivotPlanner:
             leak_score = leak_score * leak_penalty
             pivots.append(Pivot(
                 priority=-leak_score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.LEAK,
                 ioc_value=ioc_value,
                 ioc_type="email",
@@ -554,6 +564,7 @@ class PivotPlanner:
             identity_score = identity_score * identity_penalty
             pivots.append(Pivot(
                 priority=-identity_score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.IDENTITY,
                 ioc_value=ioc_value,
                 ioc_type="email",
@@ -573,6 +584,7 @@ class PivotPlanner:
                 score = score * penalty
                 pivots.append(Pivot(
                     priority=-score,
+                    pivot_id=str(uuid.uuid4()),
                     pivot_type=PivotType.DOMAIN,
                     ioc_value=domain,
                     ioc_type="domain",
@@ -588,6 +600,7 @@ class PivotPlanner:
             archive_score = archive_score * archive_penalty
             pivots.append(Pivot(
                 priority=-archive_score,
+                pivot_id=str(uuid.uuid4()),
                 pivot_type=PivotType.ARCHIVE,
                 ioc_value=ioc_value,
                 ioc_type="url",

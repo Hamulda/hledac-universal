@@ -264,6 +264,9 @@ async def export_sprint(
         # Sprint F150I §3: Attach product_value_summary to JSON report (derived output)
         if isinstance(sanitized_obj, dict):
             sanitized_obj["product_value_summary"] = pvs
+            # Sprint F204E: Attach analyst brief to JSON report
+            if eh.analyst_brief:
+                sanitized_obj["analyst_brief"] = _make_serializable(eh.analyst_brief)
         elif isinstance(sanitized_obj, list):
             # Edge case: truncated JSON is a list — wrap in dict with pvs
             sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs}
@@ -933,6 +936,12 @@ def _build_product_value_summary(
         # F193B: Archive + academic discovery contribution surfaces
         "commoncrawl_archive_augmented": (eh.canonical_run_summary.get("cc_archive_injected", 0) if eh.canonical_run_summary else None) or scorecard.get("cc_archive_injected", 0),
         "academic_discovery_contribution": (eh.canonical_run_summary.get("academic_findings_count", 0) if eh.canonical_run_summary else None) or scorecard.get("academic_findings_count", 0),
+        # Sprint F204F: Production CTI scorecard enrichment fields
+        "attribution": eh.canonical_run_summary.get("attribution") if eh.canonical_run_summary else None,
+        "wayback_diff": eh.canonical_run_summary.get("wayback_diff") if eh.canonical_run_summary else None,
+        "embedding": eh.canonical_run_summary.get("embedding") if eh.canonical_run_summary else None,
+        "hypothesis_feedback": eh.canonical_run_summary.get("hypothesis_feedback") if eh.canonical_run_summary else None,
+        "circuit_state": eh.canonical_run_summary.get("circuit_state") if eh.canonical_run_summary else scorecard.get("circuit_state"),
         # DERIVED — computed from facts (prefix _ = classification, not raw fact)
         "_signal_quality_classification": _signal_quality,
     }

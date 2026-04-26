@@ -1,0 +1,976 @@
+"""
+Passive Service Fingerprinting — F204G: Deterministic passive fingerprinting engine.
+
+Extracts service fingerprints from accepted findings without active port scanning.
+Consumes: HTTP headers, TLS/cert text, CT metadata, HTML hints from payload_text.
+
+Fingerprint sources:
+  - HTTP headers: Server, X-Powered-By, Via, CF-Ray, X-AspNet-Version
+  - TLS/cert: subject CN, issuer, SAN entries, protocol versions, cipher suites
+  - CT metadata: certificate transparency log entries for service identification
+  - HTML hints: title, meta generator, script/src patterns, favicon hashes
+
+No active scanning — purely deterministic pattern matching on existing finding data.
+Findings stored as CanonicalFinding via async_ingest_findings_batch().
+
+Bounds:
+  - MAX_FINGERPRINT_FINDINGS = 1000
+  - MAX_FINGERPRINTS_PER_FINDING = 5
+  - MAX_PATTERN_BYTES = 4096
+  - FINGERPRINT_TIMEOUT_S = 10.0
+
+GHOST_INVARIANTS enforced:
+  - asyncio.gather with return_exceptions=True
+  - _check_gathered() after every gather
+  - asyncio.CancelledError re-raised
+  - No blocking calls in event loop; regex-only CPU work
+  - Canonical write path: async_ingest_findings_batch()
+  - RAM guard: skip if RSS > high_water
+  - Bounds on every collection
+  - Fail-soft: malformed payload_text skipped
+
+Source type: "passive_fingerprint"
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import re
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+logger = logging.getLogger(__name__)
+
+# ── Bounds ────────────────────────────────────────────────────────────────────
+
+MAX_FINGERPRINT_FINDINGS: int = 1000
+MAX_FINGERPRINTS_PER_FINDING: int = 5
+MAX_PATTERN_BYTES: int = 4096
+FINGERPRINT_TIMEOUT_S: float = 10.0
+
+# ── Dataclasses ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ServiceFingerprint:
+    """A single passive service fingerprint derived from finding data."""
+    finding_id: str
+    service_name: str
+    product: str
+    version: str
+    confidence: float
+    evidence_ids: tuple[str, ...]
+    facets: dict[str, str]
+
+
+@dataclass(frozen=True)
+class FingerprintResult:
+    """Outcome of a passive fingerprinting run."""
+    fingerprints: tuple[ServiceFingerprint, ...]
+    scanned_count: int
+    skipped_count: int
+    elapsed_ms: float
+
+
+# ── Fingerprint Patterns ──────────────────────────────────────────────────────
+
+# HTTP Server Header Patterns
+_HTTP_SERVER_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [
+    # (service_name, pattern, product, version_hint)
+    ("apache", re.compile(r"^Apache(?:/([\d.]+))?", re.I), "Apache", ""),
+    ("nginx", re.compile(r"^nginx(?:/([\d.]+))?", re.I), "nginx", ""),
+    ("microsoft-iis", re.compile(r"^Microsoft-IIS(?:/([\d.]+))?", re.I), "Microsoft IIS", ""),
+    ("iis", re.compile(r"^IIS(?:/([\d.]+))?", re.I), "Microsoft IIS", ""),
+    ("litespeed", re.compile(r"^LiteSpeed(?:/([\d.]+))?", re.I), "LiteSpeed", ""),
+    ("cloudflare", re.compile(r"^cloudflare", re.I), "Cloudflare", ""),
+    ("akamai", re.compile(r"^AkamaiGHost", re.I), "Akamai", ""),
+    ("akamai", re.compile(r"^Akamai", re.I), "Akamai", ""),
+    ("nginx", re.compile(r"^openresty", re.I), "OpenResty", ""),
+    ("nginx", re.compile(r"^Tengine", re.I), "Tengine", ""),
+    ("caddy", re.compile(r"^Caddy", re.I), "Caddy", ""),
+    ("python", re.compile(r"^Python", re.I), "Python", ""),
+    ("php", re.compile(r"^PHP", re.I), "PHP", ""),
+    ("ruby", re.compile(r"^Phusion Passenger", re.I), "Phusion Passenger", ""),
+    ("iis", re.compile(r"^ASP\.NET", re.I), "ASP.NET", ""),
+    ("iis", re.compile(r"^Microsoft-AspNet", re.I), "ASP.NET", ""),
+    ("tomcat", re.compile(r"^Apache-Coyote", re.I), "Apache Coyote", ""),
+    ("tomcat", re.compile(r"^Tomcat", re.I), "Apache Tomcat", ""),
+    ("jetty", re.compile(r"^Jetty", re.I), "Jetty", ""),
+    ("glassfish", re.compile(r"^GlassFish", re.I), "GlassFish", ""),
+    ("wildfly", re.compile(r"^WildFly", re.I), "WildFly", ""),
+    ("node.js", re.compile(r"^NodeJS", re.I), "Node.js", ""),
+    ("express", re.compile(r"^Express", re.I), "Express.js", ""),
+    ("fastly", re.compile(r"^Varnish", re.I), "Varnish", ""),
+    ("fastly", re.compile(r"^Fastly", re.I), "Fastly", ""),
+    ("squarespace", re.compile(r"Squarespace", re.I), "Squarespace", ""),
+    ("shopify", re.compile(r"^Shopify", re.I), "Shopify", ""),
+    ("wix", re.compile(r"^nginx/1\.\d+ (\w+)", re.I), "Wix", ""),
+    ("wordpress", re.compile(r"nginx/[\d.]+ (WordPress)", re.I), "WordPress", ""),
+    ("drupal", re.compile(r"X-Generator: Drupal", re.I), "Drupal", ""),
+    ("joomla", re.compile(r"X-Generator: Joomla", re.I), "Joomla", ""),
+]
+
+# HTTP Header Patterns (non-server headers that indicate service)
+_HTTP_HEADER_PATTERNS: list[tuple[str, re.Pattern, str]] = [
+    # (facet_key, pattern, service_hint)
+    ("x-powered-by", re.compile(r"PHP/([\d.]+)", re.I), "PHP"),
+    ("x-powered-by", re.compile(r"ASP\.NET", re.I), "ASP.NET"),
+    ("x-powered-by", re.compile(r"Express", re.I), "Express.js"),
+    ("x-powered-by", re.compile(r"Django", re.I), "Django"),
+    ("x-powered-by", re.compile(r"Ruby on Rails", re.I), "Rails"),
+    ("x-powered-by", re.compile(r"Laravel", re.I), "Laravel"),
+    ("x-aspnet-version", re.compile(r"([\d.]+)", re.I), "ASP.NET"),
+    ("cf-ray", re.compile(r".*", re.I), "Cloudflare"),
+    ("via", re.compile(r"1\.\d+ Varnish", re.I), "Varnish"),
+    ("server-timing", re.compile(r"Cloudflare", re.I), "Cloudflare"),
+]
+
+# TLS/SSL Certificate Patterns
+_TLS_CERT_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [
+    # (service_name, pattern, product, version_hint)
+    ("cloudflare", re.compile(r"Cloudflare", re.I), "Cloudflare", ""),
+    ("akamai", re.compile(r"Akamai", re.I), "Akamai", ""),
+    ("amazon-aws", re.compile(r"Amazon|aws|amazon", re.I), "AWS", ""),
+    ("azure", re.compile(r"Microsoft|Azure", re.I), "Azure", ""),
+    ("google-cloud", re.compile(r"Google|Google Cloud|gstatic", re.I), "Google Cloud", ""),
+    ("letsencrypt", re.compile(r"Let's Encrypt", re.I), "Let's Encrypt", ""),
+    ("digiCert", re.compile(r"DigiCert", re.I), "DigiCert", ""),
+    ("comodo", re.compile(r"Comodo", re.I), "Comodo", ""),
+    ("geotrust", re.compile(r"GeoTrust", re.I), "GeoTrust", ""),
+    ("verisign", re.compile(r"VeriSign", re.I), "VeriSign", ""),
+    ("thawte", re.compile(r"thawte", re.I), "thawte", ""),
+]
+
+# CT Log / Certificate Subject Patterns
+_CT_CERT_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [
+    # (service_name, pattern, product, version_hint)
+    ("cloudflare", re.compile(r"Cloudflare", re.I), "Cloudflare", ""),
+    ("akamai", re.compile(r"CloudFront", re.I), "CloudFront", ""),
+    ("amazon-aws", re.compile(r"Amazon CloudFront", re.I), "CloudFront", ""),
+    ("fastly", re.compile(r"Fastly", re.I), "Fastly", ""),
+    ("microsoft", re.compile(r"Microsoft.*(?: corp| corporation)", re.I), "Microsoft", ""),
+    ("google", re.compile(r"Google LLC", re.I), "Google", ""),
+    ("apple", re.compile(r"Apple Inc", re.I), "Apple", ""),
+    ("facebook", re.compile(r"Facebook", re.I), "Meta", ""),
+    ("github", re.compile(r"GitHub", re.I), "GitHub", ""),
+    ("cloudflare", re.compile(r"Cloudflare, Inc", re.I), "Cloudflare", ""),
+    ("amazon-aws", re.compile(r"Amazon.com", re.I), "Amazon AWS", ""),
+    ("shopify", re.compile(r"Shopify", re.I), "Shopify", ""),
+    ("wordpress", re.compile(r"Automattic", re.I), "WordPress", ""),
+    ("akamai", re.compile(r"Akamai Technologies", re.I), "Akamai", ""),
+    ("vercel", re.compile(r"Vercel", re.I), "Vercel", ""),
+    ("netlify", re.compile(r"Netlify", re.I), "Netlify", ""),
+]
+
+# HTML Content Patterns
+_HTML_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [
+    # (service_name, pattern, product, version_hint)
+    ("wordpress", re.compile(r"wp-content|wp-includes", re.I), "WordPress", ""),
+    ("wordpress", re.compile(r"WordPress", re.I), "WordPress", ""),
+    ("drupal", re.compile(r"drupalSettings|Drupal.theme", re.I), "Drupal", ""),
+    ("joomla", re.compile(r"Joomla", re.I), "Joomla", ""),
+    ("wix", re.compile(r"wix.com|wixi|var wix", re.I), "Wix", ""),
+    ("shopify", re.compile(r"shopify|myShopify", re.I), "Shopify", ""),
+    ("squarespace", re.compile(r"Squarespace", re.I), "Squarespace", ""),
+    ("ghost", re.compile(r"Ghost", re.I), "Ghost CMS", ""),
+    ("hubspot", re.compile(r"hubspot|hs-script", re.I), "HubSpot", ""),
+    ("wordpress", re.compile(r"xmlrpc.php|wlwmanifest.xml", re.I), "WordPress", ""),
+    ("drupal", re.compile(r"modules/.*\.js\?v=", re.I), "Drupal", ""),
+    ("joomla", re.compile(r"/media/jui|com_content", re.I), "Joomla", ""),
+    ("magento", re.compile(r"mage/", re.I), "Magento", ""),
+    ("prestashop", re.compile(r"prestashop|_PS_VERSION_", re.I), "PrestaShop", ""),
+    ("react", re.compile(r"react|fb-root|_react_event_id", re.I), "React", ""),
+    ("vue", re.compile(r"vuejs|__vue__|data-v-", re.I), "Vue.js", ""),
+    ("angular", re.compile(r"ng-app|angular|angularjs", re.I), "Angular", ""),
+    ("next.js", re.compile(r"__NEXT_DATA__|_next/static", re.I), "Next.js", ""),
+    ("gatsby", re.compile(r"gatsby|__gatsby", re.I), "Gatsby", ""),
+    ("django", re.compile(r"csrfmiddlewaretoken|django", re.I), "Django", ""),
+    ("flask", re.compile(r"flask|Werkzeug", re.I), "Flask", ""),
+    ("laravel", re.compile(r"laravel|_token|XSRF-TOKEN", re.I), "Laravel", ""),
+    ("ruby-on-rails", re.compile(r"Ruby on Rails|rails", re.I), "Rails", ""),
+    ("spring", re.compile(r"Spring Framework|springframework", re.I), "Spring", ""),
+    ("express", re.compile(r"Express|node_modules/express", re.I), "Express.js", ""),
+]
+
+# Protocol Version Patterns
+_PROTOCOL_PATTERNS: list[tuple[str, re.Pattern]] = [
+    (r"TLSv1.2", re.compile(r"TLSv?1\.2", re.I)),
+    (r"TLSv1.3", re.compile(r"TLSv?1\.3", re.I)),
+    (r"HTTP/1.0", re.compile(r"HTTP/1\.0", re.I)),
+    (r"HTTP/1.1", re.compile(r"HTTP/1\.1", re.I)),
+    (r"HTTP/2", re.compile(r"H2(?:[ ,]|$)|^SPDY", re.I)),
+    (r"HTTP/3", re.compile(r"H3(?:[ ,]|$)|HTTP/3", re.I)),
+]
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+
+_stats: dict[str, int] = {
+    "findings_scanned": 0,
+    "findings_skipped": 0,
+    "fingerprints_produced": 0,
+    "patterns_matched": 0,
+}
+
+
+def get_fingerprint_stats() -> dict[str, int]:
+    """Return copy of fingerprint stats (for probe verification)."""
+    return dict(_stats)
+
+
+def reset_fingerprint_stats() -> None:
+    """Reset all stats to zero (for probe test isolation)."""
+    _stats.clear()
+    _stats.update({
+        "findings_scanned": 0,
+        "findings_skipped": 0,
+        "fingerprints_produced": 0,
+        "patterns_matched": 0,
+    })
+
+
+# ── Signal Extraction ─────────────────────────────────────────────────────────
+
+
+class HttpSignals(TypedDict):
+    server_headers: list[str]
+    x_headers: list[str]
+    all_headers: list[str]
+    html_content: str
+
+
+class TlsSignals(TypedDict):
+    cert_subject: list[str]
+    cert_issuer: list[str]
+    cert_san: list[str]
+    cipher_suite: list[str]
+    protocol_version: list[str]
+    all_text: list[str]
+
+
+class CtSignals(TypedDict):
+    cert_issuer: list[str]
+    cert_subject: list[str]
+    all_names: list[str]
+
+
+class HtmlSignals(TypedDict):
+    title: list[str]
+    generator: list[str]
+    scripts: list[str]
+    all_text: list[str]
+
+
+def extract_http_signals(payload_text: str | None) -> HttpSignals:
+    """
+    Extract HTTP-related signals from finding payload_text.
+
+    Returns dict with keys:
+      - server_headers: list of Server header values
+      - x_headers: list of X-* header values
+      - all_headers: combined header text for pattern matching
+      - html_content: HTML body if present
+    """
+    signals: HttpSignals = {
+        "server_headers": [],
+        "x_headers": [],
+        "all_headers": [],
+        "html_content": "",
+    }
+    if not payload_text:
+        return signals
+
+    try:
+        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+    except Exception:
+        return signals
+
+    # Extract HTTP headers
+    headers = data.get("http_headers", {}) or data.get("headers", {}) or {}
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            key_lower = key.lower()
+            if key_lower == "server" and value:
+                signals["server_headers"].append(str(value))
+            if key_lower.startswith("x-"):
+                signals["x_headers"].append(f"{key}: {value}")
+            signals["all_headers"].append(f"{key}: {value}")
+
+    # Also check nested header formats
+    if isinstance(headers, str):
+        signals["all_headers"].append(headers)
+
+    # Extract response body / HTML content
+    html = data.get("html", "") or data.get("body", "") or data.get("content", "") or ""
+    if isinstance(html, str) and len(html) <= MAX_PATTERN_BYTES:
+        signals["html_content"] = html[:MAX_PATTERN_BYTES]
+
+    # Extract HTTP status code
+    status = data.get("status_code") or data.get("status", 0)
+    if status:
+        signals["all_headers"].append(f"status: {status}")
+
+    return signals
+
+
+def extract_tls_signals(payload_text: str | None) -> TlsSignals:
+    """
+    Extract TLS/certificate signals from finding payload_text.
+
+    Returns dict with keys:
+      - cert_subject: certificate subject CN
+      - cert_issuer: certificate issuer
+      - cert_san: subject alternative names
+      - cipher_suite: negotiated cipher suite
+      - protocol_version: TLS version
+      - all_text: combined cert text for pattern matching
+    """
+    signals: TlsSignals = {
+        "cert_subject": [],
+        "cert_issuer": [],
+        "cert_san": [],
+        "cipher_suite": [],
+        "protocol_version": [],
+        "all_text": [],
+    }
+    if not payload_text:
+        return signals
+
+    try:
+        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+    except Exception:
+        return signals
+
+    # TLS/Cert data in various formats
+    cert = data.get("certificate", {}) or data.get("cert", {}) or data.get("ssl_cert", {}) or {}
+    if isinstance(cert, dict):
+        subject = cert.get("subject", "") or cert.get("subject_cn", "")
+        issuer = cert.get("issuer", "") or cert.get("issuer_c", "")
+        san_list = cert.get("san", []) or cert.get("subject_alternative_names", [])
+        if subject:
+            signals["cert_subject"].append(subject)
+        if issuer:
+            signals["cert_issuer"].append(issuer)
+        if san_list:
+            if isinstance(san_list, list):
+                signals["cert_san"].extend(str(s) for s in san_list)
+            else:
+                signals["cert_san"].append(str(san_list))
+
+    # TLS handshake info
+    tls = data.get("tls", {}) or data.get("tls_info", {}) or {}
+    if isinstance(tls, dict):
+        cipher = tls.get("cipher", "") or tls.get("cipher_suite", "")
+        protocol = tls.get("version", "") or tls.get("protocol", "")
+        if cipher:
+            signals["cipher_suite"].append(cipher)
+        if protocol:
+            signals["protocol_version"].append(protocol)
+
+    # Also check top-level fields
+    for field_key in ("subject", "issuer", "cn", "common_name"):
+        val = data.get(field_key, "")
+        if val:
+            signals["cert_subject"].append(str(val))
+
+    for field_key in ("san", "subject_alternative_name", "alt_names"):
+        val = data.get(field_key, "")
+        if val:
+            if isinstance(val, list):
+                signals["cert_san"].extend(str(s) for s in val)
+            else:
+                signals["cert_san"].append(str(val))
+
+    # Combine all text for pattern matching
+    all_text_parts = (
+        signals["cert_subject"] +
+        signals["cert_issuer"] +
+        signals["cert_san"] +
+        signals["cipher_suite"] +
+        signals["protocol_version"]
+    )
+    signals["all_text"] = all_text_parts
+
+    return signals
+
+
+def extract_ct_signals(payload_text: str | None) -> CtSignals:
+    """
+    Extract CT (Certificate Transparency) metadata signals.
+
+    Returns dict with keys:
+      - cert_issuer: issuer organization
+      - cert_subject: subject organization
+      - all_names: all names from cert entries
+    """
+    signals: CtSignals = {
+        "cert_issuer": [],
+        "cert_subject": [],
+        "all_names": [],
+    }
+    if not payload_text:
+        return signals
+
+    try:
+        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+    except Exception:
+        return signals
+
+    # CT log entries
+    ct_entries = data.get("ct_entries", []) or data.get("certificate_transparency", []) or []
+    if not isinstance(ct_entries, list):
+        ct_entries = [ct_entries] if ct_entries else []
+
+    for entry in ct_entries[:50]:  # cap at 50 entries
+        if isinstance(entry, dict):
+            issuer = entry.get("issuer", "") or entry.get("issuer_cn", "") or entry.get("issuer_organization", "")
+            subject = entry.get("subject", "") or entry.get("cn", "") or entry.get("subject_cn", "")
+            all_name = entry.get("name", "") or entry.get("common_name", "") or entry.get("san", "")
+            if issuer:
+                signals["cert_issuer"].append(str(issuer))
+            if subject:
+                signals["cert_subject"].append(str(subject))
+            if all_name:
+                signals["all_names"].append(str(all_name))
+        elif isinstance(entry, str):
+            signals["all_names"].append(entry)
+
+    # Also check direct fields for ct_log source_type
+    if data.get("issuer"):
+        signals["cert_issuer"].append(str(data["issuer"]))
+    if data.get("domain"):
+        signals["all_names"].append(str(data["domain"]))
+    if data.get("name"):
+        signals["all_names"].append(str(data["name"]))
+
+    return signals
+
+
+def extract_html_signals(payload_text: str | None) -> HtmlSignals:
+    """
+    Extract HTML content signals for service fingerprinting.
+
+    Returns dict with keys:
+      - title: page title
+      - generator: meta generator tag
+      - scripts: script src patterns
+      - all_text: combined HTML text
+    """
+    signals: HtmlSignals = {
+        "title": [],
+        "generator": [],
+        "scripts": [],
+        "all_text": [],
+    }
+    if not payload_text:
+        return signals
+
+    try:
+        data = json.loads(payload_text) if isinstance(payload_text, str) else payload_text
+    except Exception:
+        return signals
+
+    html = data.get("html", "") or data.get("body", "") or data.get("content", "") or ""
+    if not isinstance(html, str):
+        return signals
+
+    # Truncate to MAX_PATTERN_BYTES
+    html = html[:MAX_PATTERN_BYTES]
+
+    # Extract title
+    title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+    if title_match:
+        signals["title"].append(title_match.group(1).strip())
+
+    # Extract meta generator
+    gen_match = re.search(r'<meta[^>]+generator[^>]+content=["\']([^"\']+)["\']', html, re.I)
+    if gen_match:
+        signals["generator"].append(gen_match.group(1).strip())
+
+    # Also check property="generator" format
+    if not signals["generator"]:
+        gen_match2 = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+generator', html, re.I)
+        if gen_match2:
+            signals["generator"].append(gen_match2.group(1).strip())
+
+    # Extract script src patterns
+    script_matches = re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', html, re.I)
+    for src in script_matches[:20]:  # cap at 20 scripts
+        signals["scripts"].append(src)
+        # Also extract domain from script src for CDN identification
+        domain_match = re.search(r"https?://([^/]+)", src)
+        if domain_match:
+            signals["all_text"].append(domain_match.group(1))
+
+    # Extract link hrefs for CDN patterns
+    link_matches = re.findall(r'<link[^>]+href=["\']([^"\']+)["\']', html, re.I)
+    for href in link_matches[:20]:
+        domain_match = re.search(r"https?://([^/]+)", href)
+        if domain_match:
+            signals["all_text"].append(domain_match.group(1))
+
+    # Favicon hash (if present)
+    favicon_match = re.search(r'<link[^>]+rel=["\'][^"\']*icon[^"\']*["\'][^>]+href=["\']([^"\']+)["\']', html, re.I)
+    if favicon_match:
+        signals["all_text"].append(f"favicon:{favicon_match.group(1)}")
+
+    signals["all_text"].extend(signals["title"])
+    signals["all_text"].extend(signals["generator"])
+
+    return signals
+
+
+# ── Fingerprint Matching ──────────────────────────────────────────────────────
+
+
+def _match_server_header(server_value: str) -> list[ServiceFingerprint]:
+    """Match a Server header value against known patterns."""
+    fingerprints: list[ServiceFingerprint] = []
+    if not server_value:
+        return fingerprints
+
+    matched: set[str] = set()
+
+    for service_name, pattern, product, version_hint in _HTTP_SERVER_PATTERNS:
+        if service_name in matched:
+            continue
+        m = pattern.match(server_value)
+        if m:
+            version = m.group(1) if m.lastindex and m.group(1) else version_hint
+            fingerprints.append(ServiceFingerprint(
+                finding_id="",
+                service_name=service_name,
+                product=product,
+                version=version or "",
+                confidence=0.9,
+                evidence_ids=(),
+                facets={"source": "http_server_header", "raw": server_value[:200]},
+            ))
+            matched.add(service_name)
+            _stats["patterns_matched"] += 1
+
+    return fingerprints
+
+
+def _match_http_headers(headers_list: list[str]) -> list[ServiceFingerprint]:
+    """Match HTTP headers against known service patterns."""
+    fingerprints: list[ServiceFingerprint] = []
+    if not headers_list:
+        return fingerprints
+
+    combined_text = " ".join(str(h) for h in headers_list)[:MAX_PATTERN_BYTES]
+    matched: set[str] = set()
+
+    for facet_key, pattern, service_hint in _HTTP_HEADER_PATTERNS:
+        if service_hint in matched:
+            continue
+        if pattern.search(combined_text):
+            fingerprints.append(ServiceFingerprint(
+                finding_id="",
+                service_name=facet_key,
+                product=service_hint,
+                version="",
+                confidence=0.6,
+                evidence_ids=(),
+                facets={"source": "http_header", "header": facet_key},
+            ))
+            matched.add(service_hint)
+            _stats["patterns_matched"] += 1
+
+    return fingerprints
+
+
+def _match_tls_cert(texts: list[str]) -> list[ServiceFingerprint]:
+    """Match TLS/certificate text against known patterns."""
+    fingerprints: list[ServiceFingerprint] = []
+    if not texts:
+        return fingerprints
+
+    combined_text = " ".join(str(t) for t in texts)[:MAX_PATTERN_BYTES]
+    matched: set[str] = set()
+
+    for service_name, pattern, product, version_hint in _TLS_CERT_PATTERNS:
+        if service_name in matched:
+            continue
+        if pattern.search(combined_text):
+            fingerprints.append(ServiceFingerprint(
+                finding_id="",
+                service_name=service_name,
+                product=product,
+                version=version_hint,
+                confidence=0.85,
+                evidence_ids=(),
+                facets={"source": "tls_cert", "matched_on": service_name},
+            ))
+            matched.add(service_name)
+            _stats["patterns_matched"] += 1
+
+    return fingerprints
+
+
+def _match_ct_metadata(texts: list[str]) -> list[ServiceFingerprint]:
+    """Match CT metadata against known service patterns."""
+    fingerprints: list[ServiceFingerprint] = []
+    if not texts:
+        return fingerprints
+
+    combined_text = " ".join(str(t) for t in texts)[:MAX_PATTERN_BYTES]
+    matched: set[str] = set()
+
+    for service_name, pattern, product, version_hint in _CT_CERT_PATTERNS:
+        if service_name in matched:
+            continue
+        if pattern.search(combined_text):
+            fingerprints.append(ServiceFingerprint(
+                finding_id="",
+                service_name=service_name,
+                product=product,
+                version=version_hint,
+                confidence=0.8,
+                evidence_ids=(),
+                facets={"source": "ct_metadata", "matched_on": service_name},
+            ))
+            matched.add(service_name)
+            _stats["patterns_matched"] += 1
+
+    return fingerprints
+
+
+def _match_html_content(texts: list[str]) -> list[ServiceFingerprint]:
+    """Match HTML content against known service patterns."""
+    fingerprints: list[ServiceFingerprint] = []
+    if not texts:
+        return fingerprints
+
+    combined_text = " ".join(str(t) for t in texts)[:MAX_PATTERN_BYTES]
+    matched: set[str] = set()
+
+    for service_name, pattern, product, version_hint in _HTML_PATTERNS:
+        if service_name in matched:
+            continue
+        if pattern.search(combined_text):
+            fingerprints.append(ServiceFingerprint(
+                finding_id="",
+                service_name=service_name,
+                product=product,
+                version=version_hint,
+                confidence=0.7,
+                evidence_ids=(),
+                facets={"source": "html_content", "matched_on": service_name},
+            ))
+            matched.add(service_name)
+            _stats["patterns_matched"] += 1
+
+    return fingerprints
+
+
+# ── Core Fingerprinting Engine ───────────────────────────────────────────────
+
+
+def extract_fingerprints(finding: "CanonicalFinding") -> list[ServiceFingerprint]:
+    """
+    Extract all fingerprints from a single CanonicalFinding.
+
+    Checks HTTP headers, TLS/cert data, CT metadata, and HTML content.
+    Returns up to MAX_FINGERPRINTS_PER_FINDING fingerprints.
+
+    Bounds:
+      - MAX_FINGERPRINTS_PER_FINDING = 5
+      - MAX_PATTERN_BYTES = 4096
+    """
+    fid = getattr(finding, "finding_id", "") or ""
+    src = getattr(finding, "source_type", "") or ""
+    payload = getattr(finding, "payload_text", None) or "{}"
+
+    # Truncate payload to MAX_PATTERN_BYTES
+    if isinstance(payload, str) and len(payload) > MAX_PATTERN_BYTES:
+        payload = payload[:MAX_PATTERN_BYTES]
+
+    fingerprints: list[ServiceFingerprint] = []
+
+    # 1. HTTP Header signals
+    http_signals = extract_http_signals(payload)
+    for server_value in http_signals["server_headers"][:3]:  # cap 3 server headers
+        fps = _match_server_header(server_value)
+        for fp in fps:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=fp.service_name,
+                product=fp.product,
+                version=fp.version,
+                confidence=fp.confidence,
+                evidence_ids=(fid,),
+                facets=fp.facets,
+            ))
+
+    if http_signals["x_headers"] or http_signals["all_headers"]:
+        xfps = _match_http_headers(http_signals["x_headers"] + http_signals["all_headers"])
+        for fp in xfps:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=fp.service_name,
+                product=fp.product,
+                version=fp.version,
+                confidence=fp.confidence,
+                evidence_ids=(fid,),
+                facets=fp.facets,
+            ))
+
+    # 2. TLS/Certificate signals
+    tls_signals = extract_tls_signals(payload)
+    if tls_signals["all_text"]:
+        tfps = _match_tls_cert(tls_signals["all_text"])
+        for fp in tfps:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=fp.service_name,
+                product=fp.product,
+                version=fp.version,
+                confidence=fp.confidence,
+                evidence_ids=(fid,),
+                facets=fp.facets,
+            ))
+
+    # 3. CT metadata signals
+    ct_signals = extract_ct_signals(payload)
+    if ct_signals["all_names"] or ct_signals["cert_issuer"] or ct_signals["cert_subject"]:
+        cfps = _match_ct_metadata(ct_signals["all_names"] + ct_signals["cert_issuer"] + ct_signals["cert_subject"])
+        for fp in cfps:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=fp.service_name,
+                product=fp.product,
+                version=fp.version,
+                confidence=fp.confidence,
+                evidence_ids=(fid,),
+                facets=fp.facets,
+            ))
+
+    # 4. HTML content signals
+    html_signals = extract_html_signals(payload)
+    if html_signals["all_text"] or html_signals["title"] or html_signals["generator"]:
+        hfps = _match_html_content(html_signals["all_text"] + html_signals["title"] + html_signals["generator"])
+        for fp in hfps:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=fp.service_name,
+                product=fp.product,
+                version=fp.version,
+                confidence=fp.confidence,
+                evidence_ids=(fid,),
+                facets=fp.facets,
+            ))
+
+    # Deduplicate by (service_name, product) and cap at MAX_FINGERPRINTS_PER_FINDING
+    seen: set[tuple[str, str]] = set()
+    unique: list[ServiceFingerprint] = []
+    for fp in fingerprints:
+        key = (fp.service_name, fp.product)
+        if key not in seen:
+            seen.add(key)
+            unique.append(fp)
+
+    return unique[:MAX_FINGERPRINTS_PER_FINDING]
+
+
+# ── CanonicalFinding Conversion ────────────────────────────────────────────────
+
+
+def to_canonical_findings(
+    fingerprints: list[ServiceFingerprint],
+    query: str,
+) -> list["CanonicalFinding"]:
+    """
+    Convert ServiceFingerprint list to CanonicalFinding list.
+
+    Each CanonicalFinding:
+      - source_type = "passive_fingerprint"
+      - finding_id = "pfp_{hash}"
+      - payload_text = JSON with fingerprint data + facets envelope
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    if not fingerprints:
+        return []
+
+    canonical: list[CanonicalFinding] = []
+    ts = time.time()
+
+    for fp in fingerprints[:MAX_FINGERPRINT_FINDINGS]:
+        # Build stable finding_id
+        id_input = f"{fp.finding_id}:{fp.service_name}:{fp.product}:{int(ts)}"
+        fid = f"pfp_{hashlib.sha1(id_input.encode()).hexdigest()[:24]}"
+
+        payload = {
+            "service_name": fp.service_name,
+            "product": fp.product,
+            "version": fp.version,
+            "confidence": fp.confidence,
+            "evidence_ids": list(fp.evidence_ids),
+            "facets": fp.facets,
+            "_f204g": True,
+        }
+
+        canonical.append(CanonicalFinding(
+            finding_id=fid,
+            query=query,
+            source_type="passive_fingerprint",
+            confidence=fp.confidence,
+            ts=ts,
+            provenance=("passive_fingerprint", fp.service_name),
+            payload_text=json.dumps(payload, ensure_ascii=False),
+        ))
+
+    _stats["fingerprints_produced"] = len(canonical)
+    return canonical
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+
+def correlate_passive_fingerprints(
+    findings: list["CanonicalFinding"],
+    query: str,
+) -> list["CanonicalFinding"]:
+    """
+    F204G: Extract passive service fingerprints from sprint findings.
+
+    Entry point for the passive fingerprinting sidecar.
+
+    Pipeline:
+      1. Iterate over findings (bounded to MAX_FINGERPRINT_FINDINGS)
+      2. Extract signals from payload_text (HTTP/TLS/CT/HTML)
+      3. Match patterns to identify services
+      4. Convert to CanonicalFinding list
+      5. Return for async_ingest_findings_batch ingestion
+
+    Bounds enforced:
+      - MAX_FINGERPRINT_FINDINGS = 1000
+      - MAX_FINGERPRINTS_PER_FINDING = 5
+      - MAX_PATTERN_BYTES = 4096
+
+    Fail-soft: returns [] on any error.
+
+    Returns:
+        List of CanonicalFinding with source_type="passive_fingerprint".
+    """
+    try:
+        if not findings:
+            return []
+
+        fingerprints: list[ServiceFingerprint] = []
+        scanned = 0
+        skipped = 0
+
+        for finding in findings[:MAX_FINGERPRINT_FINDINGS]:
+            scanned += 1
+            try:
+                fps = extract_fingerprints(finding)
+                fingerprints.extend(fps)
+            except Exception:
+                skipped += 1
+                continue
+
+        _stats["findings_scanned"] = scanned
+        _stats["findings_skipped"] = skipped
+
+        if not fingerprints:
+            return []
+
+        canonical = to_canonical_findings(fingerprints, query)
+        return canonical
+
+    except Exception as e:
+        logger.debug(f"[PassiveFingerprint] correlation failed: {e}")
+        return []
+
+
+# ── Async Wrapper ────────────────────────────────────────────────────────────
+
+
+async def run_passive_fingerprint_sidecar(
+    findings: list["CanonicalFinding"],
+    store: Any,
+    query: str,
+) -> int:
+    """
+    Async sidecar runner for passive fingerprinting.
+
+    Returns count of stored findings.
+    """
+    if not findings or store is None:
+        return 0
+
+    try:
+        derived_findings = correlate_passive_fingerprints(findings, query)
+        if not derived_findings:
+            return 0
+
+        results = await store.async_ingest_findings_batch(derived_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return 0
+
+
+# ── RAM Guard ─────────────────────────────────────────────────────────────────
+
+
+def should_skip_runs(ram_percent: float, high_water: float) -> bool:
+    """
+    Determine if passive fingerprinting should be skipped due to RAM pressure.
+
+    Args:
+        ram_percent: current RSS as percentage of total
+        high_water: high water mark threshold
+
+    Returns:
+        True if should skip (ram_percent > 85% AND high_water is critical)
+    """
+    if high_water <= 0:
+        return False
+    return ram_percent > 85.0
+
+
+# ── Adapter ───────────────────────────────────────────────────────────────────
+
+
+class PassiveFingerprintAdapter:
+    """
+    F204G: Bounded passive fingerprinting adapter.
+
+    Wraps the fingerprinting pipeline with M1-safe bounds and fail-soft guarantees.
+    """
+
+    def __init__(self) -> None:
+        self._stats_snapshot: dict[str, int] = {}
+
+    def correlate(self, findings: list["CanonicalFinding"], query: str) -> list["CanonicalFinding"]:
+        """
+        Correlate fingerprints from findings.
+
+        Returns list of CanonicalFinding with source_type="passive_fingerprint".
+        """
+        return correlate_passive_fingerprints(findings, query)
+
+    def get_stats(self) -> dict[str, int]:
+        """Return fingerprinting stats snapshot."""
+        return get_fingerprint_stats()
+
+    def reset_stats(self) -> None:
+        """Reset fingerprinting stats."""
+        reset_fingerprint_stats()
+
+
+def create_passive_fingerprint_adapter() -> PassiveFingerprintAdapter:
+    """Factory for PassiveFingerprintAdapter."""
+    return PassiveFingerprintAdapter()

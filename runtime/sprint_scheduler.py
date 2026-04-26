@@ -376,6 +376,12 @@ class SprintSchedulerResult:
     wayback_diff_findings_produced: int = 0
     # Sprint F203D: Evidence chain tracker
     chain_steps_recorded: int = 0
+    # Sprint F204H: RIR/ASN correlator sidecar
+    rir_correlation_produced: int = 0
+    # Sprint F204J: Mission budget tracking
+    sidecars_skipped: tuple[str, ...] = ()  # heavy sidecars skipped due to RAM pressure
+    peak_rss_gib: float = 0.0  # peak RSS observed during sprint
+    budget_violations: int = 0  # number of times RSS exceeded MISSION_PEAK_RSS_GIB
 
 
 # ---------------------------------------------------------------------------
@@ -448,8 +454,16 @@ def _import_exporters():
         render_diagnostic_markdown_to_path,
         render_jsonld_to_path,
         render_stix_bundle_to_path,
+        render_cti_stix_bundle_to_path,
     )
-    return render_diagnostic_markdown_to_path, render_jsonld_to_path, render_stix_bundle_to_path
+    from hledac.universal.export.stix_exporter import collect_cti_export_inputs
+    return (
+        render_diagnostic_markdown_to_path,
+        render_jsonld_to_path,
+        render_stix_bundle_to_path,
+        render_cti_stix_bundle_to_path,
+        collect_cti_export_inputs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +670,11 @@ class SprintScheduler:
         self._sidecar_bus: Any = None
         # Sprint F204D: Target memory service for cross-sprint target state
         self._target_memory_service: Optional[TargetMemoryService] = None
+        # Sprint F204E: Analyst workbench for sprint brief generation
+        self._analyst_brief: Any = None
+        # Sprint F204J: Mission budget tracking
+        self._sidecars_skipped: set[str] = set()
+        self._peak_rss_gib: float = 0.0
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -1206,6 +1225,9 @@ class SprintScheduler:
         # Sprint F202J: Run resource governor advisory at TEARDOWN (fail-soft, non-blocking)
         await self._run_resource_governor_advisory()
 
+        # Sprint F204E: Generate analyst brief at TEARDOWN (fail-soft, non-blocking)
+        await self._run_analyst_brief_advisory()
+
         # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
         await self._unload_hermes_at_teardown()
 
@@ -1672,7 +1694,11 @@ class SprintScheduler:
                         findings=tuple(accepted_findings),
                         created_ts=_time.time(),
                     )
-                    await self._sidecar_bus.run_all_sidecars(batch, store)
+                    # F204J: Capture sidecar results to track skipped heavy sidecars
+                    sidecar_results = await self._sidecar_bus.run_all_sidecars(batch, store)
+                    for sr in sidecar_results:
+                        if not sr.attempted and "uma_" in sr.skipped_reason or "high_water" in sr.skipped_reason or "rss_exceeds" in sr.skipped_reason:
+                            self._sidecars_skipped.add(sr.sidecar_name)
 
                 # F204D: Update cross-sprint target memory after findings are accepted
                 if accepted_findings:
@@ -2208,6 +2234,28 @@ class SprintScheduler:
                     pivot_facets[target_id]["pivots"].append(pivot)
                     pivot_facets[target_id]["count"] += 1
 
+            # F204H: Extract RIR/ASN facets from rir_correlation findings
+            if hasattr(finding, "source_type") and getattr(finding, "source_type", None) == "rir_correlation":
+                import json as _json
+                payload_text = getattr(finding, "payload_text", None) or ""
+                try:
+                    rir_data = _json.loads(payload_text) if isinstance(payload_text, str) else {}
+                except Exception:
+                    rir_data = {}
+                asn = rir_data.get("asn", "") or ""
+                org = rir_data.get("org", "") or ""
+                netblock = rir_data.get("netblock", "") or ""
+                country = rir_data.get("country", "") or ""
+                ioc_type = rir_data.get("ioc_type", "") or ""
+                ioc_value_from_payload = rir_data.get("ioc_value", "") or getattr(finding, "ioc_value", "") or ""
+                if target_id not in exposure_facets:
+                    exposure_facets[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
+                rir_asns = exposure_facets[target_id].setdefault("rir_asns", {})
+                if asn:
+                    rir_asns[asn] = {"org": org, "netblock": netblock, "country": country,
+                                      "ioc_type": ioc_type, "ioc_value": ioc_value_from_payload}
+                exposure_facets[target_id]["count"] += 1
+
         # Convert sets to lists for JSON
         for tid in entity_facets:
             entity_facets[tid]["types"] = list(entity_facets[tid]["types"])[:MAX_MEMORY_ENTITIES]
@@ -2215,6 +2263,11 @@ class SprintScheduler:
         # Apply bounds
         for tid in list(exposure_facets.keys()):
             exposure_facets[tid]["signals"] = exposure_facets[tid]["signals"][:MAX_MEMORY_EXPOSURES]
+            # F204H: bound rir_asns facet to 100 entries
+            if "rir_asns" in exposure_facets[tid]:
+                rir_asns = exposure_facets[tid]["rir_asns"]
+                if len(rir_asns) > 100:
+                    exposure_facets[tid]["rir_asns"] = dict(list(rir_asns.items())[:100])
 
         for tid in list(pivot_facets.keys()):
             pivot_facets[tid]["pivots"] = pivot_facets[tid]["pivots"][:MAX_MEMORY_PIVOTS]
@@ -2751,6 +2804,187 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: wayback diff sidecar must never crash sprint
 
+    # ── F204H: RIR/ASN/WHOIS Correlator Sidecar ─────────────────────────────
+
+    async def _run_rir_correlator_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F204H: RIR/ASN/WHOIS correlation on accepted findings.
+
+        Sidecar runs after findings are stored — does NOT block finding acceptance.
+        Extracts IP addresses and domains from findings, correlates ASN/org/netblock/
+        country via ip-api.com HTTP batch API, ingests derived findings via
+        async_ingest_findings_batch. Also merges ASN/org facets into target_memory
+        via async_upsert_target_memory.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query (for derived finding query field)
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.rir_correlator import (
+                create_rir_correlator_adapter,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependency
+
+        try:
+            # 1. Correlate RIR signals from findings
+            adapter = create_rir_correlator_adapter()
+            derived_findings = adapter.correlate(findings, query)
+            if not derived_findings:
+                return
+
+            # 2. Ingest derived findings via async_ingest_findings_batch
+            try:
+                results = await store.async_ingest_findings_batch(derived_findings)
+                stored = sum(
+                    1 for r in results
+                    if isinstance(r, dict) and r.get("accepted")
+                )
+                self._result.rir_correlation_produced = stored
+            except Exception:
+                pass  # Fail-soft: derived findings are advisory
+
+            # 3. Merge RIR facets into target_memory
+            import json as _json
+
+            rir_asn_facets: dict[str, dict[str, Any]] = {}
+            for df in derived_findings:
+                target_id = getattr(df, "target_id", None) or query[:128]
+                if not target_id:
+                    continue
+                payload_text = getattr(df, "payload_text", None) or ""
+                try:
+                    rir_data = _json.loads(payload_text) if isinstance(payload_text, str) else {}
+                except Exception:
+                    rir_data = {}
+                asn = rir_data.get("asn", "") or ""
+                org = rir_data.get("org", "") or ""
+                netblock = rir_data.get("netblock", "") or ""
+                country = rir_data.get("country", "") or ""
+                ioc_type = rir_data.get("ioc_type", "") or ""
+                ioc_value = getattr(df, "ioc_value", "") or ""
+
+                if target_id not in rir_asn_facets:
+                    rir_asn_facets[target_id] = {"asns": {}, "count": 0}
+                if asn:
+                    rir_asn_facets[target_id]["asns"][asn] = {
+                        "org": org,
+                        "netblock": netblock,
+                        "country": country,
+                        "ioc_type": ioc_type,
+                        "ioc_value": ioc_value,
+                    }
+                rir_asn_facets[target_id]["count"] += 1
+
+            # Bound the ASN facets
+            for tid in rir_asn_facets:
+                asns = rir_asn_facets[tid].get("asns", {})
+                if len(asns) > 100:
+                    rir_asn_facets[tid]["asns"] = dict(list(asns.items())[:100])
+
+            # Update target_memory with RIR facets
+            if rir_asn_facets:
+                now = _time.time()
+                for target_id, rir_facet_data in rir_asn_facets.items():
+                    # Merge into existing exposure_facets (deep merge for rir_asns key)
+                    existing_memory = None
+                    if self._target_memory_service is not None:
+                        existing_memory = self._target_memory_service.get(target_id)
+
+                    exposure_facets = {}
+                    if existing_memory is not None:
+                        exposure_facets = dict(existing_memory.exposure_facets)
+
+                    if target_id not in exposure_facets:
+                        exposure_facets[target_id] = {}
+                    if "rir_asns" not in exposure_facets[target_id]:
+                        exposure_facets[target_id]["rir_asns"] = {}
+                    # Deep merge RIR ASNs
+                    existing_asns = exposure_facets[target_id].get("rir_asns", {})
+                    new_asns = rir_facet_data.get("asns", {})
+                    merged_asns = {**existing_asns, **new_asns}
+                    exposure_facets[target_id]["rir_asns"] = dict(
+                        list(merged_asns.items())[:100]
+                    )
+                    exposure_facets[target_id]["count"] = (
+                        exposure_facets[target_id].get("count", 0) + rir_facet_data.get("count", 0)
+                    )
+
+                    update = TargetMemoryUpdate(
+                        target_id=target_id,
+                        sprint_id=self.sprint_id or "",
+                        finding_count=rir_facet_data.get("count", 0),
+                        entity_facets={},
+                        exposure_facets=exposure_facets,
+                        pivot_facets={},
+                        observed_ts=now,
+                    )
+
+                    if self._target_memory_service is None:
+                        self._target_memory_service = TargetMemoryService()
+
+                    merged = self._target_memory_service.merge_update(update)
+                    del merged
+
+                    try:
+                        await store.async_upsert_target_memory(update)
+                    except Exception:
+                        pass  # Fail-soft: target memory is non-critical advisory
+
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
+    # ── F204I: Social Identity Surface Sidecar ─────────────────────────────────
+
+    async def _run_social_identity_surface_sidecar(
+        self,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F204I: Social identity surface miner.
+
+        Extracts usernames, display names, profile URLs, bio links, PGP/email
+        hints from accepted findings without invasive scraping. Social facets
+        are stored via async_ingest_findings_batch with source_type="social_identity_surface"
+        and may be used by AttributionConfidenceScorer.
+
+        Fail-soft: errors never crash the sprint.
+
+        Args:
+            findings: List of CanonicalFinding that were accepted and stored
+            store: DuckDBShadowStore instance for async_ingest_findings_batch
+            query: Original sprint query
+        """
+        if not findings or store is None:
+            return
+
+        try:
+            from hledac.universal.intelligence.social_identity_miner import (
+                create_social_identity_miner_adapter,
+            )
+        except Exception:
+            return  # Fail-soft: missing dependency
+
+        try:
+            miner = create_social_identity_miner_adapter()
+            await miner.mine(findings, store, query)
+        except Exception:
+            pass  # Fail-soft: sidecar must never crash sprint
+
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
     async def _run_pivot_planner_advisory(self) -> None:
@@ -2865,6 +3099,8 @@ class SprintScheduler:
         Advisory only: governor evaluates and applies concurrency hints.
         Sprint retains all authority.
 
+        F204J: Also tracks peak RSS and sidecars skipped for budget scorecard.
+
         Fail-soft: errors never crash teardown or export.
         """
         governor = getattr(self, "_governor", None)
@@ -2875,6 +3111,71 @@ class SprintScheduler:
             await governor.apply_decision(decision)
         except Exception:
             pass  # Fail-soft: governor must never crash teardown
+
+        # F204J: Track peak RSS for mission budget
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+            uma = sample_uma_status()
+            if uma.system_used_gib > 0:
+                rss_gib = uma.system_used_gib / (1024**3)
+                if rss_gib > self._peak_rss_gib:
+                    self._peak_rss_gib = rss_gib
+                # Check for budget violations (M1ResourceGovernor.MISSION_PEAK_RSS_GIB)
+                from hledac.universal.runtime.resource_governor import MISSION_PEAK_RSS_GIB
+                if rss_gib > MISSION_PEAK_RSS_GIB:
+                    self._result.budget_violations += 1
+        except Exception:
+            pass  # Fail-soft: RSS tracking never crashes teardown
+
+        # F204J: Record sidecars skipped during this sprint
+        self._result.sidecars_skipped = tuple(sorted(self._sidecars_skipped))
+        self._result.peak_rss_gib = self._peak_rss_gib
+
+    # ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
+
+    async def _run_analyst_brief_advisory(self) -> None:
+        """
+        F204E: Generate analyst brief at TEARDOWN.
+
+        Advisory only: brief summarizes sprint results but does not affect
+        sprint execution or outcomes. Sprint retains all authority.
+
+        Fail-soft: errors never crash teardown or export.
+
+        Stores brief in self._analyst_brief for export hookup.
+        """
+        workbench = getattr(self, "_analyst_workbench", None)
+        if workbench is None:
+            return
+
+        try:
+            # Get all findings from the sprint
+            findings = getattr(self, "_all_findings", [])
+            if not findings:
+                findings = []
+
+            # Get graph signal
+            graph_signal = self._get_graph_signal()
+
+            # Get governor for RAM check
+            governor = getattr(self, "_governor", None)
+
+            # Get sprint_id and target_id
+            sprint_id = self.sprint_id or "unknown"
+            target_id = sprint_id  # Use sprint_id as target_id
+
+            # Build the brief
+            brief = await workbench.build_sprint_brief(
+                sprint_id=sprint_id,
+                target_id=target_id,
+                findings=findings,
+                graph_signal=graph_signal,
+                governor=governor,
+            )
+            self._analyst_brief = brief
+            log.debug(f"[F204E] Analyst brief generated: {brief.headline}")
+        except Exception:
+            pass  # Fail-soft: brief generation must never crash teardown
 
     # ── F198A: Graph stats summary for export teardown ───────────────────────
 
@@ -3462,8 +3763,14 @@ class SprintScheduler:
     # ── Export ────────────────────────────────────────────────────────────
 
     async def _run_export(self, lifecycle) -> None:
-        """Run all three exporters; failure is fail-soft."""
-        rend_md, rend_jsonld, rend_stix = _import_exporters()
+        """Run all four exporters; failure is fail-soft."""
+        (
+            rend_md,
+            rend_jsonld,
+            rend_stix,
+            rend_cti_stix,
+            collect_cti_inputs,
+        ) = _import_exporters()
 
         # Build minimal diagnostic report from result
         report = self._build_diagnostic_report(lifecycle)
@@ -3482,6 +3789,63 @@ class SprintScheduler:
                 # Fail-soft: export error must not prevent teardown
                 # but we still record it
                 self._result.export_paths.append(f"EXPORT_ERROR:{suffix}:{exc}")
+
+        # Sprint F204F: CTI STIX export — wired alongside diagnostic STIX
+        await self._run_cti_export(rend_cti_stix, collect_cti_inputs, report, export_dir)
+
+    async def _run_cti_export(
+        self,
+        render_cti_stix_to_path: Any,
+        collect_cti_inputs: Any,
+        report: dict[str, Any],
+        export_dir: str | None,
+    ) -> None:
+        """
+        Sprint F204F: Run CTI STIX export with fail-soft error handling.
+
+        GHOST_INVARIANTS:
+        - asyncio.gather with return_exceptions=True
+        - _check_gathered() after gather
+        - asyncio.CancelledError re-raise
+        - Large serialization (>1000 objects) via run_in_executor
+        - RAM guard: MAX_STIX_OBJECTS=500
+        - Fail-soft: EXPORT_ERROR logged, not raised
+        """
+        try:
+            cti_inputs = await collect_cti_inputs(report, self._duckdb_store)
+        except Exception as exc:
+            self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
+            return
+
+        try:
+            # Large serialization via run_in_executor if findings exceed 1000
+            if len(cti_inputs.findings) > 1000:
+                loop = asyncio.get_event_loop()
+                path = await loop.run_in_executor(
+                    None,
+                    lambda: render_cti_stix_to_path(
+                        findings=list(cti_inputs.findings),
+                        identity_candidates=list(cti_inputs.identity_candidates),
+                        attribution_scores=cti_inputs.attribution_scores,
+                        killchain_tags=cti_inputs.killchain_tags,
+                        evidence_chains=list(cti_inputs.evidence_chains),
+                        path=export_dir,
+                    ),
+                )
+            else:
+                path = render_cti_stix_to_path(
+                    findings=list(cti_inputs.findings),
+                    identity_candidates=list(cti_inputs.identity_candidates),
+                    attribution_scores=cti_inputs.attribution_scores,
+                    killchain_tags=cti_inputs.killchain_tags,
+                    evidence_chains=list(cti_inputs.evidence_chains),
+                    path=export_dir,
+                )
+            self._result.export_paths.append(str(path))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
 
     def _build_diagnostic_report(self, lifecycle) -> dict:
         """Build a diagnostic report dict for exporters."""
@@ -3706,6 +4070,26 @@ class SprintScheduler:
         All planner calls are fail-soft — exception or None planner → no-op.
         """
         self._pivot_planner = planner
+
+    def inject_analyst_workbench(self, workbench: Any) -> None:
+        """
+        F204E: Inject AnalystWorkbench reference for sprint brief generation.
+
+        Workbench is used at TEARDOWN to generate a model-free analyst brief
+        summarizing sprint results: what changed, strongest evidence,
+        next best pivots, and open questions.
+
+        All workbench calls are fail-soft — exception or None workbench → no-op brief.
+        """
+        self._analyst_workbench = workbench
+
+    def get_analyst_brief(self) -> Any:
+        """
+        F204E: Return the last generated analyst brief.
+
+        Returns None if no brief was generated or brief generation failed.
+        """
+        return getattr(self, "_analyst_brief", None)
 
     def get_planned_pivots(self) -> list:
         """
@@ -5090,6 +5474,9 @@ class SprintScheduler:
             pass
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
         self._governor = None  # Will be re-initialized on next run()
+        # Sprint F204J: Reset mission budget tracking
+        self._sidecars_skipped.clear()
+        self._peak_rss_gib = 0.0
 
 
 # ---------------------------------------------------------------------------

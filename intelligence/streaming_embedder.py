@@ -242,22 +242,29 @@ class StreamingEmbedder:
         findings: list["CanonicalFinding"],
         batch_size: int,
     ) -> AsyncIterator[tuple[list[str], np.ndarray]]:
-        """Fallback path using embedding_pipeline.generate_embeddings directly."""
-        texts: list[str] = []
-        ids: list[str] = []
+        """
+        F204J: Fallback path also chunks to avoid materializing entire sprint.
 
-        for f in findings:
-            text = self._extract_text(f)
-            texts.append(text)
-            ids.append(f.finding_id)
+        Even when the embedding model cannot be loaded, we chunk the fallback
+        path to stay within M1 memory bounds.
+        """
+        # Chunk the fallback just like the normal path
+        for i in range(0, len(findings), batch_size):
+            chunk = findings[i:i + batch_size]
+            texts: list[str] = []
+            ids: list[str] = []
 
-        # Materialize all at once in executor (fallback, not streaming)
-        loop = asyncio.get_running_loop()
-        embeddings = await loop.run_in_executor(
-            None, _sync_embed_batch, texts, len(texts)
-        )
-        if embeddings.shape[0] > 0:
-            yield (ids, embeddings)
+            for f in chunk:
+                text = self._extract_text(f)
+                texts.append(text)
+                ids.append(f.finding_id)
+
+            loop = asyncio.get_running_loop()
+            embeddings = await loop.run_in_executor(
+                None, _sync_embed_batch, texts, len(texts)
+            )
+            if embeddings.shape[0] > 0 and len(ids) == embeddings.shape[0]:
+                yield (ids, embeddings)
 
     # -------------------------------------------------------------------------
     # Text extraction

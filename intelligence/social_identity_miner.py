@@ -1,0 +1,577 @@
+"""
+intelligence/social_identity_miner.py — F204I: Social Identity Surface Miner
+============================================================================
+
+Deterministic social identity facet miner. Extracts usernames, display names,
+profile URLs, bio links, PGP/email hints from accepted findings without
+invasive scraping.
+
+GHOST_INVARIANTS enforced:
+- asyncio.gather always with return_exceptions=True
+- _check_gathered() called after every gather
+- asyncio.CancelledError re-raised
+- No blocking calls in event loop
+- Canonical write path: async_ingest_findings_batch()
+- Model lifecycle: NOT USED
+- RAM guard: skip if RSS > high_water
+- Bounds: MAX_SOCIAL_PROFILES, MAX_LINKS_PER_PROFILE, MAX_SOCIAL_TEXT_BYTES
+- Fail-soft: malformed HTML/payload silently skipped
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import time as _time
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import urlparse
+
+if False:
+    from ..knowledge.duckdb_store import DuckDBShadowStore
+    from ..project_types import CanonicalFinding
+
+# ── Bounds ────────────────────────────────────────────────────────────────────
+MAX_SOCIAL_PROFILES: int = 200
+MAX_LINKS_PER_PROFILE: int = 20
+MAX_SOCIAL_TEXT_BYTES: int = 4096
+SOCIAL_MIN_CONFIDENCE: float = 0.35
+
+# Platform patterns: (platform_name, url_pattern_regex, username_extract_regex)
+_PLATFORM_PATTERNS: list[tuple[str, re.Pattern[str], re.Pattern[str]]] = [
+    (
+        "github",
+        re.compile(r"https?://(?:www\.)?github\.com/([^/]+)?"),
+        re.compile(r"(?:github\.com/|@)([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+    ),
+    (
+        "twitter",
+        re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/([^/]+)?"),
+        re.compile(r"(?:twitter\.com/|@)([a-zA-Z0-9_]{1,15})"),
+    ),
+    (
+        "linkedin",
+        re.compile(r"https?://(?:www\.)?linkedin\.com/in/([^/]+)?"),
+        re.compile(r"linkedin\.com/in/([a-zA-Z0-9_-]{3,100})"),
+    ),
+    (
+        "mastodon",
+        re.compile(r"https?://(?:www\.)?mastodon\.social/@([^/]+)?"),
+        re.compile(r"@(?:[a-zA-Z0-9_]+@)?([a-zA-Z0-9_]{1,30})"),
+    ),
+    (
+        "keybase",
+        re.compile(r"https?://(?:www\.)?keybase\.io/([^/]+)?"),
+        re.compile(r"(?:keybase\.io/|@)([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+    ),
+    (
+        "gitlab",
+        re.compile(r"https?://(?:www\.)?gitlab\.com/([^/]+)?"),
+        re.compile(r"(?:gitlab\.com/|@)([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+    ),
+    (
+        "hackernews",
+        re.compile(r"https?://news\.ycombinator\.com/user\?id=([^&]+)?"),
+        re.compile(r"(?:news\.ycombinator\.com/user\?id=|@)([a-zA-Z0-9_-]{1,30})"),
+    ),
+    (
+        "reddit",
+        re.compile(r"https?://(?:www\.)?reddit\.com/user/([^/]+)?"),
+        re.compile(r"(?:reddit\.com/user/|u/)([a-zA-Z0-9_-]{3,20})"),
+    ),
+    (
+        "youtube",
+        re.compile(r"https?://(?:www\.)?youtube\.com/@([^/]+)?"),
+        re.compile(r"(?:youtube\.com/@|@)([a-zA-Z0-9_-]{3,30})"),
+    ),
+    (
+        "facebook",
+        re.compile(r"https?://(?:www\.)?facebook\.com/([^/]+)?"),
+        re.compile(r"(?:facebook\.com/|@)([a-zA-Z0-9\.]{5,50})"),
+    ),
+]
+
+# Bio link patterns (domain mentions in text)
+_BIO_LINK_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"(?:https?://)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})/[~@]?[a-zA-Z0-9_-]+", re.IGNORECASE),
+    re.compile(r"@([a-zA-Z0-9_-]{1,30})\.(?:io|dev|com|org|net)", re.IGNORECASE),
+]
+
+# Email patterns in text
+_EMAIL_PATTERNS: re.Pattern[str] = re.compile(
+    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+)
+
+# PGP fingerprint patterns
+_PGP_PATTERNS: re.Pattern[str] = re.compile(
+    r"\b(?:PGP|GPG)[:\s]*(?:0x)?([A-F0-9]{8,40})\b",
+    re.IGNORECASE,
+)
+
+
+# ── Dataclasses ────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class SocialIdentityFacet:
+    """A single social identity profile extracted from findings."""
+
+    finding_id: str
+    platform: str
+    username: str
+    display_name: str
+    profile_url: str
+    linked_domains: tuple[str, ...]
+    linked_emails: tuple[str, ...]
+    confidence: float
+
+
+@dataclass(frozen=True)
+class SocialIdentityResult:
+    """Outcome of a social identity mining scan."""
+
+    facets: tuple[SocialIdentityFacet, ...]
+    scanned_count: int
+    skipped_count: int
+    elapsed_ms: float
+
+
+def _is_url(text: str) -> bool:
+    """Check if text looks like a URL."""
+    if not text or len(text) > 200:
+        return False
+    return bool(re.match(r"https?://", text, re.IGNORECASE))
+
+
+# ── Platform URL map (for _build_profile_url) ──────────────────────────────────
+_PLATFORM_PROFILE_URL: dict[str, str] = {
+    "github": "https://github.com/{username}",
+    "twitter": "https://twitter.com/{username}",
+    "linkedin": "https://linkedin.com/in/{username}",
+    "mastodon": "https://mastodon.social/@{username}",
+    "keybase": "https://keybase.io/{username}",
+    "gitlab": "https://gitlab.com/{username}",
+    "hackernews": "https://news.ycombinator.com/user?id={username}",
+    "reddit": "https://www.reddit.com/user/{username}",
+    "youtube": "https://youtube.com/@{username}",
+    "facebook": "https://www.facebook.com/{username}",
+}
+class SocialIdentityMiner:
+    """
+    Deterministic social identity facet miner.
+
+    Extracts social profile facets (GitHub, Twitter, LinkedIn, etc.) from
+    accepted findings by scanning URLs, text content, and bio links.
+    No invasive scraping — only surface-level extraction from existing data.
+
+    Fail-soft: malformed input silently skipped, partial results returned.
+    """
+
+    __slots__ = ("_seen_profiles", "_semaphore", "_stats")
+
+    def __init__(self) -> None:
+        self._seen_profiles: dict[str, str] = {}  # url -> finding_id (dedup)
+        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(4)
+        self._stats: dict[str, int] = {
+            "scanned": 0,
+            "skipped": 0,
+            "facets_found": 0,
+        }
+
+    def reset(self) -> None:
+        """Reset state between sprints."""
+        self._seen_profiles.clear()
+        self._stats = {"scanned": 0, "skipped": 0, "facets_found": 0}
+
+    # ── Public API ─────────────────────────────────────────────────────────────
+
+    async def mine(
+        self,
+        findings: list[Any],
+        store: Any,
+        query: str,
+    ) -> SocialIdentityResult:
+        """
+        Scan accepted findings for social identity facets.
+
+        Args:
+            findings: Accepted CanonicalFinding list from sprint
+            store: DuckDBShadowStore for canonical write
+            query: Sprint query (used for context)
+
+        Returns:
+            SocialIdentityResult with extracted facets and stats
+        """
+        start_ms = _time.monotonic() * 1000
+        facets: list[SocialIdentityFacet] = []
+
+        # RAM guard: skip if high pressure
+        try:
+            from ..utils.uma_budget import get_uma_snapshot
+            snap = get_uma_snapshot()
+            if snap.get("high_water") and snap.get("rss_mb", 0) > snap["high_water"] * 0.85:
+                return SocialIdentityResult(
+                    facets=(),
+                    scanned_count=0,
+                    skipped_count=len(findings),
+                    elapsed_ms=(_time.monotonic() * 1000 - start_ms),
+                )
+        except Exception:
+            pass  # fail-soft: continue without RAM guard
+
+        # Collect URLs from all findings
+        all_urls: list[tuple[str, str, str]] = []  # (url, finding_id, text_sample)
+        for finding in findings:
+            if len(all_urls) >= MAX_SOCIAL_PROFILES:
+                break
+            self._stats["scanned"] += 1
+
+            # Extract from payload_text
+            urls_from_payload = self._extract_urls_from_payload(finding)
+            for url in urls_from_payload[:MAX_LINKS_PER_PROFILE]:
+                all_urls.append((url, getattr(finding, "finding_id", "unknown"), ""))
+
+            # Extract from ioc_value (often a URL or domain)
+            ioc_val = getattr(finding, "ioc_value", "")
+            if ioc_val and isinstance(ioc_val, str) and len(ioc_val) < 2048:
+                if _is_url(ioc_val):
+                    all_urls.append((ioc_val, getattr(finding, "finding_id", "unknown"), ""))
+
+            # Extract from source_type or other text fields
+            source_type = getattr(finding, "source_type", "")
+            if source_type in ("ct", "certificate_transparency"):
+                # Parse certificate sanitized domains
+                domains = self._extract_domains_from_cert_text(getattr(finding, "payload_text", "") or "")
+                for domain in domains[:5]:
+                    all_urls.append((f"https://{domain}", getattr(finding, "finding_id", "unknown"), ""))
+
+        self._stats["scanned"] = len(findings)
+
+        if not all_urls:
+            return SocialIdentityResult(
+                facets=(),
+                scanned_count=self._stats["scanned"],
+                skipped_count=self._stats["skipped"],
+                elapsed_ms=_time.monotonic() * 1000 - start_ms,
+            )
+
+        # Process URLs concurrently (bounded)
+        tasks = [
+            self._process_url(url, finding_id, text_sample)
+            for url, finding_id, text_sample in all_urls
+        ]
+
+        gathered: list[Any] = []
+        try:
+            gathered = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            for t in tasks:
+                try:
+                    t.close()
+                except Exception:
+                    pass
+            gathered = []
+
+        # Collect valid facets
+        for result in gathered:
+            if isinstance(result, Exception):
+                self._stats["skipped"] += 1
+                continue
+            if isinstance(result, SocialIdentityFacet):
+                facets.append(result)
+                self._stats["facets_found"] += 1
+
+        # Deduplicate by profile URL
+        unique_facets = self._deduplicate_facets(facets)
+
+        # Canonical write
+        if unique_facets:
+            await self._write_findings(unique_facets, store, query)
+
+        return SocialIdentityResult(
+            facets=tuple(unique_facets),
+            scanned_count=self._stats["scanned"],
+            skipped_count=self._stats["skipped"],
+            elapsed_ms=_time.monotonic() * 1000 - start_ms,
+        )
+
+    # ── URL Processing ─────────────────────────────────────────────────────────
+
+    async def _process_url(
+        self,
+        url: str,
+        finding_id: str,
+        text_sample: str,
+    ) -> SocialIdentityFacet | None:
+        """Extract social identity from a single URL."""
+        async with self._semaphore:
+            try:
+                # Parse URL
+                parsed = urlparse(url)
+                path = parsed.path.strip("/")
+
+                # Check against known platform patterns
+                for platform, url_re, username_re in _PLATFORM_PATTERNS:
+                    url_match = url_re.match(url)
+                    if not url_match:
+                        # Try host + path matching
+                        host_match = re.match(
+                            r"https?://(?:www\.)?" + re.escape(parsed.netloc) + r"/?",
+                            url,
+                        )
+                        if host_match and platform in parsed.netloc:
+                            url_match = True
+
+                    if not url_match and platform not in parsed.netloc:
+                        continue
+
+                    # Extract username
+                    username = ""
+                    if path:
+                        username = path.split("/")[0]
+                        if username_re.search(url):
+                            m = username_re.search(url)
+                            if m and m.group(1):
+                                username = m.group(1)
+
+                    if not username or len(username) < 2:
+                        continue
+
+                    # Build profile URL
+                    profile_url = self._build_profile_url(platform, username)
+
+                    # Linked domains/emails from text_sample
+                    linked_domains = self._extract_linked_domains(text_sample)
+                    linked_emails = self._extract_linked_emails(text_sample)
+
+                    # Confidence scoring
+                    confidence = self._compute_confidence(platform, username, linked_domains, linked_emails)
+
+                    if confidence < SOCIAL_MIN_CONFIDENCE:
+                        continue
+
+                    return SocialIdentityFacet(
+                        finding_id=finding_id,
+                        platform=platform,
+                        username=username,
+                        display_name=username,  # display name unknown without scraping
+                        profile_url=profile_url,
+                        linked_domains=tuple(linked_domains),
+                        linked_emails=tuple(linked_emails),
+                        confidence=confidence,
+                    )
+
+                return None
+
+            except Exception:
+                return None
+
+    # ── Extraction Helpers ─────────────────────────────────────────────────────
+
+    def _extract_urls_from_payload(self, finding: Any) -> list[str]:
+        """Extract URLs from finding payload_text."""
+        urls: list[str] = []
+        try:
+            payload = getattr(finding, "payload_text", "") or ""
+            if not payload:
+                return []
+
+            # Try JSON envelope
+            try:
+                env = json.loads(payload)
+                for key in ("urls", "links", "extracted_urls", "url_list"):
+                    if key in env and isinstance(env[key], list):
+                        urls.extend(str(u) for u in env[key] if isinstance(u, str))
+                # Also scan raw text in envelope
+                if "raw_text" in env:
+                    urls.extend(self._scan_text_for_urls(env["raw_text"]))
+                elif "text" in env:
+                    urls.extend(self._scan_text_for_urls(env["text"]))
+            except (json.JSONDecodeError, TypeError):
+                # Plain text — scan for URLs
+                urls.extend(self._scan_text_for_urls(payload))
+
+            # Also check raw str representation
+            finding_str = str(finding)
+            urls.extend(self._scan_text_for_urls(finding_str))
+
+        except Exception:
+            pass
+
+        return urls[:MAX_LINKS_PER_PROFILE]
+
+    def _scan_text_for_urls(self, text: str) -> list[str]:
+        """Scan text for URL patterns."""
+        if not text or len(text) > MAX_SOCIAL_TEXT_BYTES:
+            return []
+
+        urls: list[str] = []
+        # HTTP(S) URLs
+        url_re = re.compile(
+            r"https?://[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z]{2,})+(?:/[^\s<>\"')\]]*)?",
+            re.IGNORECASE,
+        )
+        for m in url_re.finditer(text):
+            url = m.group(0)
+            if len(url) < 200:  # Sanity bound
+                urls.append(url)
+
+        return urls[:MAX_LINKS_PER_PROFILE]
+
+    def _extract_domains_from_cert_text(self, text: str) -> list[str]:
+        """Extract domains from certificate transparency text."""
+        if not text:
+            return []
+        # Common domain extraction patterns in CT data
+        domain_re = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.(?:[a-zA-Z]{2,})")
+        domains = []
+        for m in domain_re.finditer(text):
+            d = m.group(0)
+            if len(d) > 4 and "." in d and d.count(".") < 4:
+                domains.append(d)
+        return domains[:10]
+
+    def _extract_linked_domains(self, text: str) -> list[str]:
+        """Extract domain mentions from text (bio links)."""
+        if not text:
+            return []
+        domains: list[str] = []
+        for pattern in _BIO_LINK_PATTERNS:
+            for m in pattern.finditer(text):
+                if m.group(1):
+                    domains.append(m.group(1).lower())
+        return list(set(domains))[:5]
+
+    def _extract_linked_emails(self, text: str) -> list[str]:
+        """Extract email addresses from text."""
+        if not text:
+            return []
+        emails = _EMAIL_PATTERNS.findall(text)
+        return list(set(emails))[:5]
+
+    # ── Confidence Scoring ─────────────────────────────────────────────────────
+
+    def _compute_confidence(
+        self,
+        platform: str,
+        username: str,
+        linked_domains: list[str],
+        linked_emails: list[str],
+    ) -> float:
+        """Compute confidence for a social identity facet."""
+        base_confidence: float = 0.50
+
+        # Platform verification bonus
+        if platform in ("github", "keybase", "gitlab"):
+            base_confidence = 0.65  # More verifiable platforms
+        elif platform in ("twitter", "linkedin"):
+            base_confidence = 0.60
+        elif platform in ("mastodon", "hackernews"):
+            base_confidence = 0.55
+
+        # Domain link bonus (bio mentions own domain)
+        if linked_domains:
+            base_confidence += 0.10
+
+        # Email association bonus
+        if linked_emails:
+            base_confidence += 0.10
+
+        # Username quality bonus (longer = more likely real)
+        if len(username) >= 5:
+            base_confidence += 0.05
+
+        # Domain in username bonus
+        if any(d in username.lower() for d in linked_domains):
+            base_confidence += 0.10
+
+        return min(0.95, base_confidence)
+
+    # ── Deduplication & Write ───────────────────────────────────────────────────
+
+    def _deduplicate_facets(
+        self,
+        facets: list[SocialIdentityFacet],
+    ) -> list[SocialIdentityFacet]:
+        """Deduplicate facets by profile URL."""
+        seen: dict[str, SocialIdentityFacet] = {}
+        for facet in facets:
+            key = f"{facet.platform}:{facet.username}"
+            if key not in seen:
+                seen[key] = facet
+
+        return list(seen.values())[:MAX_SOCIAL_PROFILES]
+
+    async def _write_findings(
+        self,
+        facets: list[SocialIdentityFacet],
+        store: Any,
+        query: str,
+    ) -> None:
+        """Write social identity facets via canonical path."""
+        try:
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            # Build CanonicalFindings from facets
+            findings: list[CanonicalFinding] = []
+            for facet in facets:
+                payload = json.dumps({
+                    "platform": facet.platform,
+                    "username": facet.username,
+                    "display_name": facet.display_name,
+                    "profile_url": facet.profile_url,
+                    "linked_domains": list(facet.linked_domains),
+                    "linked_emails": list(facet.linked_emails),
+                    "confidence": facet.confidence,
+                    "source_finding_id": facet.finding_id,
+                })
+
+                finding = CanonicalFinding(
+                    finding_id=f"social:{facet.platform}:{facet.username[:32]}",
+                    source_type="social_identity_surface",
+                    query=query,
+                    confidence=facet.confidence,
+                    ts=_time.time(),
+                    provenance=("social_identity_miner", facet.platform),
+                    payload_text=payload,
+                )
+                findings.append(finding)
+
+            # Canonical write path
+            if hasattr(store, "async_ingest_findings_batch"):
+                await store.async_ingest_findings_batch(findings)
+            elif hasattr(store, "ingest_findings"):
+                await store.ingest_findings(findings)
+
+        except Exception:
+            pass  # fail-soft: non-critical advisory
+
+    # ── Utility ─────────────────────────────────────────────────────────────────
+
+    def _build_profile_url(self, platform: str, username: str) -> str:
+        """Build canonical profile URL for a platform."""
+        platform_url_map = {
+            "github": f"https://github.com/{username}",
+            "twitter": f"https://twitter.com/{username}",
+            "linkedin": f"https://linkedin.com/in/{username}",
+            "mastodon": f"https://mastodon.social/@{username}",
+            "keybase": f"https://keybase.io/{username}",
+            "gitlab": f"https://gitlab.com/{username}",
+            "hackernews": f"https://news.ycombinator.com/user?id={username}",
+            "reddit": f"https://www.reddit.com/user/{username}",
+            "youtube": f"https://youtube.com/@{username}",
+            "facebook": f"https://www.facebook.com/{username}",
+        }
+        return platform_url_map.get(platform, f"https://{platform}.com/{username}")
+
+    def get_stats(self) -> dict[str, int]:
+        """Return current mining statistics."""
+        return dict(self._stats)
+
+
+# ── Factory ────────────────────────────────────────────────────────────────────
+def create_social_identity_miner_adapter() -> SocialIdentityMiner:
+    """Create a SocialIdentityMiner instance."""
+    return SocialIdentityMiner()

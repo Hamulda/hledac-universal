@@ -47,6 +47,7 @@ from typing import Any, Optional
 __all__ = [
     "AnalystWorkbench",
     "AnalystAnswer",
+    "AnalystBrief",
     "EvidencePointer",
     "RelatedEntity",
     "create_analyst_workbench",
@@ -65,10 +66,46 @@ MAX_RELATED_ENTITIES: int = 10  # Max related entities per answer
 # Evidence envelope max from F202A
 MAX_ENVELOPE_SIZE: int = 4096
 
+# Sprint F204E: Analyst Brief bounds
+MAX_BRIEF_FINDINGS: int = 20  # Max key findings in brief
+MAX_BRIEF_CHAINS: int = 5     # Max evidence chain IDs in brief
+MAX_BRIEF_NEXT_ACTIONS: int = 10  # Max next actions in brief
+
 
 # ============================================================================
 # Result DTOs
 # ============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class AnalystBrief:
+    """
+    Sprint F204E: Analyst brief produced at sprint teardown.
+
+    A model-free summary of sprint results: what changed, strongest evidence,
+    next best pivots, and open questions.
+
+    Fields:
+        sprint_id: Sprint identifier
+        target_id: Research target (query or target_id)
+        headline: One-line sprint summary
+        key_findings: Tuple of key finding strings (max MAX_BRIEF_FINDINGS)
+        evidence_chain_ids: Tuple of evidence chain IDs (max MAX_BRIEF_CHAINS)
+        next_actions: Tuple of suggested next action strings (max MAX_BRIEF_NEXT_ACTIONS)
+        open_questions: Tuple of open question strings
+        confidence: Confidence score [0.0, 1.0]
+        generated_ts: Unix timestamp of generation
+    """
+
+    sprint_id: str
+    target_id: str
+    headline: str
+    key_findings: tuple[str, ...]
+    evidence_chain_ids: tuple[str, ...]
+    next_actions: tuple[str, ...]
+    open_questions: tuple[str, ...]
+    confidence: float
+    generated_ts: float
 @dataclass(frozen=True, slots=True)
 class EvidencePointer:
     """
@@ -771,6 +808,276 @@ class AnalystWorkbench:
             }
         except Exception:
             return None
+
+    # -------------------------------------------------------------------------
+    # F204E: Sprint Brief Generation
+    # -------------------------------------------------------------------------
+
+    async def build_sprint_brief(
+        self,
+        sprint_id: str,
+        target_id: str,
+        findings: list[Any],
+        graph_signal: dict[str, Any],
+        governor: Any = None,
+    ) -> AnalystBrief:
+        """
+        F204E: Build a model-free analyst brief at sprint teardown.
+
+        Generates a summary of sprint results: what changed, strongest evidence,
+        next best pivots, and open questions. Uses extractive analysis only —
+        no model loading required.
+
+        RAM guard: if governor is critical/emergency, generates minimal brief
+        from counts only (no graph queries).
+
+        Bounds:
+          - MAX_BRIEF_FINDINGS = 20
+          - MAX_BRIEF_CHAINS = 5
+          - MAX_BRIEF_NEXT_ACTIONS = 10
+          - MAX_CONTEXT_BYTES = 8192
+
+        Args:
+            sprint_id: Sprint identifier
+            target_id: Research target (query or target_id)
+            findings: List of findings from the sprint
+            graph_signal: Graph signal dict from _get_graph_signal()
+            governor: Optional M1ResourceGovernor for RAM check
+
+        Returns:
+            AnalystBrief with all fields populated or minimal fallback
+        """
+        import time as _time
+
+        ts = _time.time()
+
+        # RAM guard: if governor critical/emergency, generate minimal brief
+        if governor is not None:
+            try:
+                snap = governor.snapshot()
+                uma_state = getattr(snap, "uma_state", "ok") if snap else "ok"
+                if uma_state in ("critical", "emergency"):
+                    finding_count = len(findings)
+                    graph_nodes = graph_signal.get("graph_nodes", 0) if graph_signal else 0
+                    graph_edges = graph_signal.get("graph_edges", 0) if graph_signal else 0
+                    return AnalystBrief(
+                        sprint_id=sprint_id,
+                        target_id=target_id,
+                        headline=f"Sprint {sprint_id}: {finding_count} findings, {graph_nodes} graph nodes (RAM pressure — minimal brief)",
+                        key_findings=(
+                            f"Accepted findings: {finding_count}",
+                            f"Graph nodes: {graph_nodes}",
+                            f"Graph edges: {graph_edges}",
+                        ),
+                        evidence_chain_ids=(),
+                        next_actions=("Continue investigation with reduced scope",),
+                        open_questions=("What caused RAM pressure?",),
+                        confidence=0.3,
+                        generated_ts=ts,
+                    )
+            except Exception:
+                pass  # Fall through to normal path
+
+        # Normal path: extractive analysis from findings + graph
+        try:
+            # Extract key findings from findings (extractive, no model)
+            key_findings_list = self._extract_key_findings(findings)
+            key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
+
+            # Build headline from finding counts
+            finding_count = len(findings)
+            graph_nodes = graph_signal.get("graph_nodes", 0) if graph_signal else 0
+            graph_edges = graph_signal.get("graph_edges", 0) if graph_signal else 0
+            headline = (
+                f"Sprint {sprint_id}: {finding_count} findings, "
+                f"{graph_nodes} graph nodes, {graph_edges} edges"
+            )
+
+            # Extract evidence chain IDs from findings (first MAX_BRIEF_CHAINS)
+            chain_ids: list[str] = []
+            for f in findings[:50]:  # Check first 50 findings for chain IDs
+                fid = getattr(f, "finding_id", None) or f.get("finding_id", "")
+                if fid and "chain" in str(f.get("provenance", "")):
+                    chain_ids.append(str(fid))
+            evidence_chain_ids = tuple(chain_ids[:MAX_BRIEF_CHAINS])
+
+            # Generate next actions from high-confidence findings
+            next_actions = self._derive_next_actions(findings)
+            next_actions_tuple = tuple(next_actions[:MAX_BRIEF_NEXT_ACTIONS])
+
+            # Derive open questions from gaps
+            open_questions = self._derive_open_questions(findings, graph_signal)
+
+            # Confidence based on finding density
+            confidence = 0.7 if finding_count > 10 else 0.5 if finding_count > 0 else 0.3
+
+            return AnalystBrief(
+                sprint_id=sprint_id,
+                target_id=target_id,
+                headline=headline,
+                key_findings=key_findings,
+                evidence_chain_ids=evidence_chain_ids,
+                next_actions=next_actions_tuple,
+                open_questions=open_questions,
+                confidence=confidence,
+                generated_ts=ts,
+            )
+        except Exception:
+            # Fallback: minimal brief on any error
+            return AnalystBrief(
+                sprint_id=sprint_id,
+                target_id=target_id,
+                headline=f"Sprint {sprint_id}: brief generation failed",
+                key_findings=(f"Findings processed: {len(findings)}",),
+                evidence_chain_ids=(),
+                next_actions=("Review findings manually",),
+                open_questions=("Why did brief generation fail?",),
+                confidence=0.1,
+                generated_ts=ts,
+            )
+
+    def _extract_key_findings(self, findings: list[Any]) -> list[str]:
+        """
+        Extract key findings as strings from the findings list.
+
+        Uses extractive pattern: sorts by confidence and takes top items.
+        No model required.
+        """
+        if not findings:
+            return []
+
+        # Sort by confidence (descending)
+        scored: list[tuple[float, str]] = []
+        for f in findings:
+            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            conf = float(conf)
+            # Extract a meaningful string representation
+            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            ioc_value = getattr(f, "ioc_value", None) or f.get("ioc_value", "")
+            query = getattr(f, "query", None) or f.get("query", "") or ""
+            source = getattr(f, "source_type", None) or f.get("source_type", "")
+
+            if ioc_value:
+                text = f"{source}:{ioc_type}={ioc_value} (conf={conf:.2f})"
+            elif query:
+                text = f"{source}: {query[:80]} (conf={conf:.2f})"
+            else:
+                text = f"{source} finding (conf={conf:.2f})"
+
+            scored.append((conf, text))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # De-duplicate similar texts
+        seen: set[str] = set()
+        unique: list[str] = []
+        for conf, text in scored:
+            # Simple dedup: first 60 chars as key
+            key = text[:60].lower()
+            if key not in seen:
+                seen.add(key)
+                unique.append(text)
+
+        return unique
+
+    def _derive_next_actions(self, findings: list[Any]) -> list[str]:
+        """
+        Derive next actions from high-confidence findings.
+
+        Uses source_type and ioc_type patterns to suggest follow-ups.
+        No model required.
+        """
+        actions: list[str] = []
+        seen: set[str] = set()
+
+        # Patterns for next actions based on findings
+        source_iocs: dict[str, dict[str, int]] = {}
+        for f in findings:
+            source = getattr(f, "source_type", None) or f.get("source_type", "unknown")
+            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "unknown")
+            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            if float(conf) < 0.5:
+                continue
+            if source not in source_iocs:
+                source_iocs[source] = {}
+            source_iocs[source][ioc_type] = source_iocs[source].get(ioc_type, 0) + 1
+
+        # Generate actions from patterns
+        for source, iocs in source_iocs.items():
+            for ioc_type, count in sorted(iocs.items(), key=lambda x: x[1], reverse=True)[:2]:
+                if count >= 2:
+                    action = f"Expand {ioc_type} investigation via {source}"
+                    if action not in seen:
+                        seen.add(action)
+                        actions.append(action)
+
+        # Add pivot suggestions based on high-confidence IOCs
+        for f in findings[:20]:
+            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            if float(conf) < 0.7:
+                continue
+            ioc_value = getattr(f, "ioc_value", None) or f.get("ioc_value", "")
+            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            if ioc_value and ioc_type in ("domain", "ipv4", "email"):
+                action = f"Pivot on {ioc_type}:{ioc_value}"
+                if action not in seen:
+                    seen.add(action)
+                    actions.append(action)
+
+        return actions
+
+    def _derive_open_questions(
+        self, findings: list[Any], graph_signal: dict[str, Any]
+    ) -> tuple[str, ...]:
+        """
+        Derive open questions from gaps in findings and graph.
+
+        Checks for common gaps: low finding count, no high-confidence findings,
+        sparse graph, missing IOC types.
+        """
+        questions: list[str] = []
+        seen: set[str] = set()
+
+        finding_count = len(findings)
+        if finding_count == 0:
+            q = "Why did the sprint produce no findings?"
+            if q not in seen:
+                seen.add(q)
+                questions.append(q)
+
+        # Check for missing IOC types
+        ioc_types: set[str] = set()
+        high_conf_count = 0
+        for f in findings:
+            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            conf = getattr(f, "confidence", None) or f.get("confidence", 0.0)
+            if ioc_type:
+                ioc_types.add(ioc_type)
+            if float(conf) >= 0.7:
+                high_conf_count += 1
+
+        if high_conf_count == 0 and finding_count > 0:
+            q = "Why are there no high-confidence findings?"
+            if q not in seen:
+                seen.add(q)
+                questions.append(q)
+
+        # Check graph signal
+        graph_nodes = graph_signal.get("graph_nodes", 0) if graph_signal else 0
+        if graph_nodes == 0 and finding_count > 0:
+            q = "Why are no entities connected in the graph?"
+            if q not in seen:
+                seen.add(q)
+                questions.append(q)
+
+        # Check for domain coverage
+        if "domain" not in ioc_types and finding_count > 5:
+            q = "Why were no domain IOCs extracted?"
+            if q not in seen:
+                seen.add(q)
+                questions.append(q)
+
+        return tuple(questions[:5])  # Max 5 open questions
 
 
 # ============================================================================

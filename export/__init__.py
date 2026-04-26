@@ -17,6 +17,7 @@ from hledac.universal.export.stix_exporter import (
     render_stix_bundle,
     render_stix_bundle_json,
     render_stix_bundle_to_path,
+    render_cti_stix_bundle_to_path,
 )
 from hledac.universal.export.export_manager import (
     ExportManager,
@@ -38,6 +39,7 @@ __all__ = [
     "render_stix_bundle",
     "render_stix_bundle_json",
     "render_stix_bundle_to_path",
+    "render_cti_stix_bundle_to_path",
     # FÁZE P18: Export Manager
     "ExportManager",
     "get_export_manager",

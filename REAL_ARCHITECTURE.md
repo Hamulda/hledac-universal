@@ -1,4 +1,4 @@
-# Hledač — Real Architecture (aktualizováno 2026-04-26, F203I)
+# Hledač — Real Architecture (aktualizováno 2026-04-26, F204G)
 
 ## F203I — Streaming Embedding Pipeline & LanceDB Pre-warm (2026-04-26)
 
@@ -70,6 +70,301 @@ SprintScheduler.run() → teardown phase
 ```
 
 **Definition of Done:** ✓ pytest tests/probe_f204c/ -q (22/22 pass), smoke_runner OK
+
+## F204E — Analyst Briefing Lifecycle (2026-04-26)
+
+**Cíl:** Zapojit AnalystWorkbench do sprint teardownu — každý sprint produkuje model-free analyst brief: headline, key findings, evidence chains, next actions, open questions.
+
+**Componenty:**
+
+| File | Role |
+|------|------|
+| `knowledge/analyst_workbench.py` | `AnalystBrief` dataclass (frozen), `build_sprint_brief()` — model-free extractive analysis |
+| `runtime/sprint_scheduler.py` | `_run_analyst_brief_advisory()` v teardown, `get_analyst_brief()`, `self._analyst_brief` |
+| `export/sprint_exporter.py` | `analyst_brief` sekce v JSON exportu (`sanitized_obj["analyst_brief"]`) |
+| `export/sprint_markdown_reporter.py` | `_render_analyst_brief_section()` — markdown rendering |
+| `core/__main__.py` | `analyst_brief=scheduler.get_analyst_brief()` v ExportHandoff |
+| `__main__.py` | `_analyst_brief_for_markdown` module-var + `_print_scorecard_report` wiring |
+
+**Dataclass — `AnalystBrief` (frozen=True):**
+```
+sprint_id: str
+target_id: str
+headline: str
+key_findings: tuple[str, ...]          # max MAX_BRIEF_FINDINGS=20
+evidence_chain_ids: tuple[str, ...]     # max MAX_BRIEF_CHAINS=5
+next_actions: tuple[str, ...]          # max MAX_BRIEF_NEXT_ACTIONS=10
+open_questions: tuple[str, ...]
+confidence: float                       # 0.0–1.0
+generated_ts: float
+```
+
+**Bounds:**
+- `MAX_BRIEF_FINDINGS = 20`
+- `MAX_BRIEF_CHAINS = 5`
+- `MAX_BRIEF_NEXT_ACTIONS = 10`
+- `MAX_CONTEXT_BYTES = 8192`
+
+**Teardown volání:**
+```
+SprintScheduler.run() → teardown
+  → _run_analyst_brief_advisory()      # F204E: build_sprint_brief() fail-soft
+  → _run_pivot_executor_advisory()      # F204C: execute top pivots
+  → _run_resource_governor_advisory()  # F202J: apply governor hints
+  → _unload_hermes_at_teardown()        # P12: release Hermes engine
+```
+
+**Data flow:**
+1. Teardown calls `workbench.build_sprint_brief(sprint_id, target_id, findings, graph_signal, governor)`
+2. RAM guard: governor critical/emergency → minimal brief from counts only (no graph queries)
+3. Normal path: extractive analysis — `_extract_key_findings()`, `_derive_next_actions()`, `_derive_open_questions()`
+4. Brief stored in `SprintScheduler._analyst_brief`
+5. `core/__main__.run_sprint()` → `ExportHandoff(analyst_brief=scheduler.get_analyst_brief())`
+6. `sprint_exporter.export_sprint()` → JSON: `sanitized_obj["analyst_brief"] = _make_serializable(eh.analyst_brief)`
+7. `__main__._print_scorecard_report` → markdown: `scorecard_data["analyst_brief"]`
+
+**GHOST_INVARIANTS:**
+- `asyncio.gather` with `return_exceptions=True` v teardown phase
+- `_check_gathered()` after every gather
+- `asyncio.CancelledError` re-raised
+- No blocking calls in event loop
+- Canonical write path: `async_ingest_findings_batch()` pro synthetic brief finding
+- Model lifecycle via `brain.model_lifecycle` only — brief generation must NOT load model
+- RAM guard: governor critical/emergency → minimal brief from counts (no graph traversal)
+- Bounds on all collections (MAX_BRIEF_*)
+- Fail-soft: brief generation errors never crash teardown or export
+
+**DuckDB schema:** Žádná nová tabulka. Brief je export artifact; může být uložen jako synthetic finding s `source_type="analyst_brief"` přes `async_ingest_findings_batch()`.
+
+**API zachování:**
+- `AnalystWorkbench.ask()` zůstává read-side API (model-powered)
+- `build_sprint_brief()` je lifecycle-safe advisory (extractive, no model)
+
+**Definition of Done:** ✓ pytest tests/probe_f204e/ -q (21/21 pass), smoke_runner OK
+
+## F204G — Passive Service Fingerprinting (2026-04-26)
+
+**Cíl:** Lokální Shodan/Censys-lite fingerprinting z accepted findings bez aktivního port scanu — deterministický vzor matching z HTTP headers, TLS/cert textu, CT metadata a HTML hints.
+
+**Komponenty:**
+
+| File | Role |
+|------|------|
+| `intelligence/passive_fingerprint.py` | `PassiveFingerprintAdapter` + `ServiceFingerprint`/`FingerprintResult` dataclasses |
+| `runtime/sidecar_bus.py` | `_passive_fingerprint_runner` registered in `DEFAULT_SIDECAR_RUNNERS` |
+| `intelligence/exposure_correlator.py` | `SIGNAL_TYPE_PASSIVE_FINGERPRINT` v `extract_signals()` — passive fingerprint facets jako exposure evidence |
+
+**Fingerprint patterns:**
+- HTTP headers: Server, X-Powered-By, Via, CF-Ray (nginx, Apache, Cloudflare, WordPress, etc.)
+- TLS/cert: subject CN, issuer, SAN entries (Cloudflare, AWS, Azure, Google Cloud, Let's Encrypt)
+- CT metadata: certificate transparency log entries
+- HTML hints: title, meta generator, script/src CDN patterns
+
+**Dataclasses:**
+```
+@ServiceFingerprint (frozen=True)
+  finding_id: str
+  service_name: str
+  product: str
+  version: str
+  confidence: float
+  evidence_ids: tuple[str, ...]
+  facets: dict[str, str]
+
+@FingerprintResult (frozen=True)
+  fingerprints: tuple[ServiceFingerprint, ...]
+  scanned_count: int
+  skipped_count: int
+  elapsed_ms: float
+```
+
+**Bounds:**
+- `MAX_FINGERPRINT_FINDINGS = 1000` — max fingerprints per sprint
+- `MAX_FINGERPRINTS_PER_FINDING = 5` — max fingerprints per finding
+- `MAX_PATTERN_BYTES = 4096` — pattern match truncation
+- `FINGERPRINT_TIMEOUT_S = 10.0` — sidecar timeout
+
+**DuckDB schema:** Žádná nová tabulka. Fingerprints se ukládají jako CanonicalFinding přes `async_ingest_findings_batch()` se `source_type="passive_fingerprint"`.
+
+**Sidecar registration:**
+- `("passive_fingerprint", _passive_fingerprint_runner)` in `DEFAULT_SIDECAR_RUNNERS`
+- Canonical write: `async_ingest_findings_batch(derived_findings)`
+- Fail-soft: malformed payload_text skipped
+
+**Exposure correlator integration:**
+- `SIGNAL_TYPE_PASSIVE_FINGERPRINT = "passive_fingerprint"` constant
+- `extract_signals()` handles `source_type="passive_fingerprint"` findings
+- Passive fingerprint facets dostupné jako exposure evidence v `signal_facets`
+
+**GHOST_INVARIANTS:**
+- `asyncio.gather` with `return_exceptions=True`
+- `_check_gathered()` after every gather
+- `asyncio.CancelledError` re-raised
+- No blocking calls in event loop; regex-only CPU work
+- Canonical write path: `async_ingest_findings_batch()`
+- RAM guard: skip pokud RSS > high_water
+- Bounds on every collection
+- Fail-soft: malformed payload_text přeskočit
+
+**Data flow:**
+1. Accepted findings → FindingSidecarBus
+2. `_passive_fingerprint_runner` extracts HTTP/TLS/CT/HTML signals from payload_text
+3. Pattern matching produces `ServiceFingerprint` objects
+4. Converted to `CanonicalFinding` list via `to_canonical_findings()`
+5. Stored via `async_ingest_findings_batch()` (source_type="passive_fingerprint")
+6. ExposureCorrelator reads passive_fingerprint facets from payload_text for correlation
+
+**Definition of Done:** ✓ pytest tests/probe_f204g/ -q (24/24 pass), smoke_runner OK
+
+## F204H — RIR/ASN/WHOIS Bulk Correlator (2026-04-26)
+
+**Cíl:** Bounded RIR/ASN/WHOIS korelace pro IP/domain findings, aby target memory a attribution měly síťové vlastnictví, ASN, org a netblock facets.
+
+**Komponenty:**
+
+| File | Role |
+|------|------|
+| `intelligence/rir_correlator.py` | `RIRCorrelatorAdapter` + `RIRCorrelation`/`RIRCorrelationResult` dataclasses |
+| `runtime/sidecar_bus.py` | `_rir_correlator_runner` registered in `DEFAULT_SIDECAR_RUNNERS` |
+| `runtime/sprint_scheduler.py` | `_run_rir_correlator_sidecar()` method + `_accumulate_findings_to_graph()` RIR facet extraction |
+| `knowledge/target_memory.py` | RIR facets merged via `TargetMemoryUpdate.exposure_facets` |
+
+**Dataclasses:**
+```
+@RIRCorrelation (frozen=True)
+  ioc_value: str
+  ioc_type: str
+  asn: str
+  org: str
+  netblock: str
+  country: str
+  confidence: float
+  evidence_ids: tuple[str, ...]
+
+@RIRCorrelationResult (frozen=True)
+  correlations: tuple[RIRCorrelation, ...]
+  queried_count: int
+  cache_hits: int
+  elapsed_ms: float
+```
+
+**Bounds:**
+- `MAX_RIR_LOOKUPS = 100` — max unique IP lookups per sprint
+- `MAX_RIR_RESULTS = 200` — max correlation results
+- `RIR_TIMEOUT_S = 5.0` — per-API call timeout
+- `RIR_CONCURRENCY = 3` — max concurrent DNS/WHOIS lookups
+- `MAX_RIR_CACHE_ENTRIES = 1000` — in-memory FIFO cache
+
+**DuckDB schema:** Žádná nová tabulka. Correlations se ukládají přes `async_ingest_findings_batch()` se `source_type="rir_correlation"` a zároveň se agregují do `target_memory` přes `duckdb_store.async_upsert_target_memory()`.
+
+**Sidecar registration:**
+- `("rir_correlator", _rir_correlator_runner)` in `DEFAULT_SIDECAR_RUNNERS`
+- Canonical write: `async_ingest_findings_batch(derived_findings)` + `async_upsert_target_memory()`
+- Fail-soft: every external API call has timeout + graceful fallback
+
+**GHOST_INVARIANTS:**
+- `asyncio.gather` with `return_exceptions=True`
+- `asyncio.CancelledError` re-raised
+- No blocking DNS/whois in event loop; `run_in_executor` for socket ops
+- `asyncio.TimeoutError` caught per-call, never propagated
+- Canonical write path: `async_ingest_findings_batch()`
+- RAM guard: skip if RSS > high_water via governor
+- Bounds on every collection
+- Fail-soft: every external API call timeout + graceful fallback
+
+**Target memory integration:**
+- RIR facets stored in `exposure_facets[target_id]["rir_asns"]` as `{asn: {org, netblock, country, ioc_type, ioc_value}}`
+- Bound: max 100 ASN entries per target
+- Deep merge of RIR facets across sprints
+
+**Data flow:**
+1. Accepted findings → FindingSidecarBus
+2. `_rir_correlator_runner` extracts IP/domain IOCs from findings
+3. DNS resolution for domains via `run_in_executor` (socket.gethostbyname)
+4. ip-api.com batch HTTP lookup for ASN/org/country/netblock
+5. WHOIS lookup (ipwhois) for unresolved domains
+6. `RIRCorrelation` list → `CanonicalFinding` list via `to_canonical_findings()`
+7. Stored via `async_ingest_findings_batch()` (source_type="rir_correlation")
+8. RIR facets merged into `target_memory.exposure_facets["rir_asns"]`
+
+**Definition of Done:** pytest tests/probe_f204h/ -q → 20 passed, smoke_runner OK
+
+## F204I — Social Identity Surface Miner (2026-04-26)
+
+**Cíl:** Rozšířit identity intelligence o pasivní social/web profile facets: usernames, display names, profile URLs, bio links, PGP/email hints a confidence signals bez invazivního scraping chování.
+
+**Komponenty:**
+
+| File | Role |
+|------|------|
+| `intelligence/social_identity_miner.py` | `SocialIdentityMiner` + `SocialIdentityFacet`/`SocialIdentityResult` dataclasses |
+| `runtime/sidecar_bus.py` | `_social_identity_surface_runner` registered in `DEFAULT_SIDECAR_RUNNERS` |
+| `runtime/sprint_scheduler.py` | `_run_social_identity_surface_sidecar()` method |
+| `intelligence/attribution_scorer.py` | `social_profile_overlap` + `bio_link_overlap` factors in `AttributionConfidenceScorer` |
+
+**Dataclasses:**
+```
+@SocialIdentityFacet (frozen=True)
+  finding_id: str
+  platform: str
+  username: str
+  display_name: str
+  profile_url: str
+  linked_domains: tuple[str, ...]
+  linked_emails: tuple[str, ...]
+  confidence: float
+
+@SocialIdentityResult (frozen=True)
+  facets: tuple[SocialIdentityFacet, ...]
+  scanned_count: int
+  skipped_count: int
+  elapsed_ms: float
+```
+
+**Platform patterns:** GitHub, Twitter, LinkedIn, Mastodon, Keybase, GitLab, HackerNews, Reddit, YouTube, Facebook — extracted from URLs in findings' `payload_text` and `ioc_value` fields.
+
+**Bounds:**
+- `MAX_SOCIAL_PROFILES = 200` — max profiles extracted per sprint
+- `MAX_LINKS_PER_PROFILE = 20` — max links scanned per profile
+- `MAX_SOCIAL_TEXT_BYTES = 4096` — max text bytes scanned
+- `SOCIAL_MIN_CONFIDENCE = 0.35` — minimum confidence threshold
+
+**DuckDB schema:** Žádná nová tabulka. Social facets se ukládají přes `async_ingest_findings_batch()` se `source_type="social_identity_surface"` a mohou být použity `AttributionConfidenceScorerem`.
+
+**Sidecar registration:**
+- `("social_identity_surface", _social_identity_surface_runner)` in `DEFAULT_SIDECAR_RUNNERS`
+- Canonical write: `async_ingest_findings_batch()` via `SocialIdentityMiner.mine()`
+- Fail-soft: malformed HTML/payload silently skipped
+
+**Attribution factors (F204I-4):**
+- `social_profile_overlap`: compares platform:username sets between candidates (weight: 0.15)
+- `bio_link_overlap`: compares email domains and evidence-extracted domains (weight: 0.10)
+
+**GHOST_INVARIANTS:**
+- `asyncio.gather` with `return_exceptions=True`
+- `asyncio.CancelledError` re-raised
+- No blocking calls in event loop; URL parsing is non-blocking
+- `asyncio.TimeoutError` caught per-call, never propagated
+- Canonical write path: `async_ingest_findings_batch()`
+- RAM guard: skip if RSS > high_water * 0.85
+- Bounds on every collection
+
+**Data flow:**
+1. Accepted findings → FindingSidecarBus
+2. `_social_identity_surface_runner` calls `SocialIdentityMiner.mine()`
+3. URLs extracted from `payload_text` (JSON envelope + raw text) and `ioc_value`
+4. Platform patterns matched: GitHub, Twitter, LinkedIn, Mastodon, Keybase, etc.
+5. Confidence scored: base platform bonus + domain link bonus + email bonus
+6. Deduplicated by `platform:username` key
+7. Stored via `async_ingest_findings_batch()` (source_type="social_identity_surface")
+8. Attribution scorer uses social_profile_overlap and bio_link_overlap factors
+
+**AttributionConfidenceScorer changes:**
+- Added `social_profile_overlap` factor (weight: 0.15)
+- Added `bio_link_overlap` factor (weight: 0.10)
+- Both factors use `_social_profile_overlap_score()` and `_bio_link_overlap_score()` methods
+
+**Definition of Done:** pytest tests/probe_f204i/ -q → 22 passed, smoke_runner OK
 
 ## F200C Async Batch Public Pipeline (2026-04-23)
 
@@ -831,6 +1126,69 @@ DeepProbe findings now flow through the canonical persist path:
 
 ---
 
+## F204J: Enforced M1 Mission Budget (2026-04-26)
+
+**Přidáno** — enforceable M1 8GB budget across sidecar bus, embedding fallback, renderer/model guards, and benchmark. Peak RSS without model <= 5.5 GiB.
+
+**Constants** (`runtime/resource_governor.py`):
+- `MISSION_PEAK_RSS_GIB = 5.5` — hard ceiling for peak RSS
+- `SIDECAR_DEFAULT_ESTIMATE_MB = 128` — default MB estimate per sidecar
+- `HEAVY_SIDECARS = ("embedding", "wayback_diff", "social_identity", "rir_correlation")`
+- `MAX_BUDGET_EVENTS = 100`
+
+**SidecarAdmission dataclass** (`runtime/resource_governor.py`):
+- `allowed: bool`, `sidecar_name: str`, `reason: str`, `rss_gib: float`, `uma_state: str`, `estimated_mb: int`
+- Returned by `M1ResourceGovernor.sidecar_admission()`
+
+**MissionBudgetSnapshot dataclass** (`runtime/resource_governor.py`):
+- `sprint_id`, `peak_rss_gib`, `peak_uma_used_gib`, `sidecars_skipped`, `model_loaded`, `renderer_allowed`, `fetch_limit`
+
+**M1ResourceGovernor.sidecar_admission()**:
+- Checks if a sidecar can be admitted given current memory state
+- Blocks heavy sidecars when UMA is CRITICAL/EMERGENCY
+- Blocks heavy sidecars when `high_water >= 0.85`
+- Blocks heavy sidecars when `rss_gib > MISSION_PEAK_RSS_GIB - 0.5`
+- Returns `SidecarAdmission` with `allowed` flag and `reason`
+- Fail-soft: returns `allowed=True` if any check fails
+
+**SidecarBus integration** (`runtime/sidecar_bus.py`):
+- `_is_heavy_blocked()` now returns `(blocked: bool, reason: str)` tuple
+- Uses `governor.sidecar_admission()` for consistent admission checks
+- Records skipped reason in `SidecarRunResult.skipped_reason`
+
+**StreamingEmbedder fallback** (`intelligence/streaming_embedder.py`):
+- `_embed_fallback()` now chunks input just like the normal path
+- Never materializes entire sprint in one batch — respects `MAX_EMBEDDING_BATCH=16`
+- Fallback still used when model cannot be loaded
+
+**SprintSchedulerResult budget fields** (`runtime/sprint_scheduler.py`):
+- `sidecars_skipped: tuple[str, ...]` — heavy sidecars skipped due to RAM pressure
+- `peak_rss_gib: float` — peak RSS observed during sprint
+- `budget_violations: int` — count of times RSS exceeded MISSION_PEAK_RSS_GIB
+
+**SprintScheduler budget tracking** (`runtime/sprint_scheduler.py`):
+- `_sidecars_skipped: set[str]` — tracks skipped sidecar names across cycles
+- `_peak_rss_gib: float` — tracks peak RSS across cycles
+- `_run_resource_governor_advisory()` at TEARDOWN: samples RSS, records violations, sets result fields
+- Sidecar results from `run_all_sidecars()` are scanned for skipped heavy sidecars
+
+**Hermetic benchmark** (`benchmarks/m1_phase4_budget.py`):
+- `--hermetic` flag (default True) — no network, no MLX inference
+- Measures: peak RSS, sidecar admission checks, embedding fallback chunking
+- Pass condition: `peak_rss_gib <= 5.5`
+- Writes bounded summary to stdout and optional JSON
+
+**Key invariants**:
+- `MISSION_PEAK_RSS_GIB = 5.5` hard ceiling — not configurable at runtime
+- Model path only through quantization selector and lifecycle (F202J/F203J authority)
+- RAM guard: skip heavy sidecar if RSS > high_water or UMA critical/emergency
+- Each collection has MAX_* constant
+- Fail-soft: budget sampler failure → safe degraded mode, never crashes sprint
+
+**Tests**: `tests/probe_f204j/test_m1_mission_budget.py` — 25 probe tests (F204J-1 through F204J-11)
+
+---
+
 ## F202F: Local Graph/RAG Analyst Workbench (2026-04-24)
 
 **Přidáno** — analyst read-side facade for local questions over findings, graph, and vectors. Works without LLM (extractive fallback) and without external network calls.
@@ -1562,5 +1920,56 @@ def render_cti_stix_bundle(
 **Tests**: `tests/probe_f203e/test_stix_cti_exporter.py` — 41 probe tests (F203E-1 through F203E-15).
 
 **Integration**: `render_cti_stix_bundle_to_path()` available for optional STIX artifact export in sprint_exporter.
+
+## F204F: Production CTI Export Wiring (2026-04-26)
+
+**Phase 3 seam — production CTI STIX 2.1 bundle wired into sprint_scheduler._run_export().**
+
+**Role**: Wires CTI STIX export as a first-class export alongside diagnostic STIX. Produces real CTI STIX 2.1 bundle from CanonicalFindings, identity candidates, attribution scores, kill-chain tags, and evidence chains.
+
+**Dependencies**: F203E (CTI STIX 2.1 bundle renderer), F202A (evidence envelope), F202B (identity stitching), F202C (exposure correlator), F202D (leak sentinel), F203B (attribution scoring), F203C (kill-chain tagging), F203D (evidence chains).
+
+**Module**: `export/stix_exporter.py`, `runtime/sprint_scheduler.py`
+
+**Public API**:
+```python
+@dataclass(frozen=True)
+class CTIExportInputs:
+    findings: tuple[Any, ...]
+    identity_candidates: tuple[dict[str, Any], ...]
+    attribution_scores: dict[str, Any]
+    killchain_tags: dict[str, Any]
+    evidence_chains: tuple[dict[str, Any], ...]
+    sprint_id: str
+
+async def collect_cti_export_inputs(
+    report: dict[str, Any],
+    store: Any,
+) -> CTIExportInputs
+```
+
+**Bounds**:
+- `MAX_STIX_OBJECTS=500` — RAM guard
+- `MAX_EXPORT_FINDINGS=300` — DuckDB query limit
+- `MAX_EXPORT_CHAINS=20` — evidence chains cap
+- `MAX_EXPORT_BYTES=5_000_000` — serialization size
+
+**GHOST_INVARIANTS**:
+- `asyncio.gather(..., return_exceptions=True)` in `collect_cti_export_inputs`
+- `_check_gathered()` after gather
+- `asyncio.CancelledError` re-raise in `_run_cti_export`
+- Large serialization (>1000 objects) via `run_in_executor`
+- Fail-soft: CTI export error → `EXPORT_ERROR:cti_stix:{exc}` in `export_paths`, never raised
+- Canonical write path unchanged; export reads only
+
+**Export flow**:
+```
+core/__main__.py run_sprint()
+  → SprintScheduler.run()
+  → teardown: _run_export()  [diagnostic STIX + CTI STIX]
+  → export_paths: ["*.md", "*.jsonld", "*.stix.json", "ghost_cti_*.stix.json"]
+```
+
+**Tests**: `tests/probe_f204f/test_production_cti_export.py` — 21 probe tests.
 
 ## Architectural verdict

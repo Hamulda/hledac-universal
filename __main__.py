@@ -2356,6 +2356,9 @@ _sprint_frontier_stopped: bool = False
 # Sprint 8TA B.2: Phase timing
 _phase_times: dict[str, float] = {}
 
+# Sprint F204E: Analyst brief for markdown export (set after scheduler.run completes)
+_analyst_brief_for_markdown: "Optional[Dict[str, Any]]" = None
+
 
 def _mark_phase(name: str) -> None:
     """Mark phase start time. Called at the beginning of each phase."""
@@ -2497,6 +2500,10 @@ async def _print_scorecard_report(
         scorecard_data["cb_open_domains"] = get_all_breaker_states()
     except Exception:
         pass
+
+    # Sprint F204E: Attach analyst brief to scorecard for markdown export
+    if _analyst_brief_for_markdown:
+        scorecard_data["analyst_brief"] = _analyst_brief_for_markdown
 
     # Print structured report
     print("\n" + "=" * 60)
@@ -2868,6 +2875,10 @@ async def _run_sprint_mode(
                 )
             except Exception as e:
                 logger.warning("[SPRINT] Windup synthesis failed (non-fatal): %s", e)
+
+        # Sprint F204E: Capture analyst brief for markdown export
+        global _analyst_brief_for_markdown
+        _analyst_brief_for_markdown = scheduler.get_analyst_brief()
 
         # Sprint 8VF §C.3: ANE embedder status log at WINDUP
         try:
