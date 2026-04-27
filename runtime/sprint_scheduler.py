@@ -3004,10 +3004,10 @@ class SprintScheduler:
                         self._target_memory_service = TargetMemoryService()
 
                     merged = self._target_memory_service.merge_update(update)
-                    del merged
 
+                    # Persist via duckdb_store — pass merged TargetMemory (not update)
                     try:
-                        await store.async_upsert_target_memory(update)
+                        await store.async_upsert_target_memory(merged)
                     except Exception:
                         pass  # Fail-soft: target memory is non-critical advisory
 
