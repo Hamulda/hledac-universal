@@ -768,17 +768,26 @@ Viz `legacy/archived/ARCHIVE_MANIFEST.py` — full verdicts + rationale per modu
 
 ## Known test failures
 
+> **F206A establishes green baseline separation.** The historical failure clusters below are pre-existing and tracked as known debt. `run_baseline.py --profile f205-green` runs only the F204/F205 green lanes — these failures are reported (not silenced) for traceability.
+
 ### Collect / inventory
 - `.venv/bin/pytest tests/ --co -q`:
   - `6244 tests collected`
   - `4 skipped`
-  - warnings on unknown marks `slow`, `stress`, `timeout`
+  - warnings on unknown marks `slow`, `stress`, `timeout` → **resolved by F206A `pytest.ini`**
 
-### Aktuální baseline běh
+### Aktuální baseline běh (historical, pre-F206A)
 - `.venv/bin/pytest tests/ -q --maxfail=20 --tb=short`
   - `20 failed, 325 passed, 4 skipped` před stopem na `--maxfail=20`
 
-### Kategorizace prvních reálných failure clusters
+### Green baseline (F206A) — F204 + F205 lanes only
+`run_baseline.py --profile f205-green` scope:
+- F204 lanes: probe_f204a through probe_f204j (10 lanes)
+- F205 lanes: probe_f205b through probe_f205j (9 lanes)
+- smoke_runner.py --smoke
+- Known historical failures are listed in `run_baseline.py KNOWN_FAILURE_PATTERNS` and reported in JSON output
+
+### Kategorizace prvních reálných failure clusters (historical debt)
 
 | Kategorie | Příklady | Reálný problém |
 |---|---|---|
@@ -2129,5 +2138,58 @@ class SidecarDispatcher:
 ```
 
 **Tests**: `tests/probe_f205f/test_sidecar_dispatcher.py` — 14 probe tests covering empty batch, branch parity, CancelledError re-raise, fail-soft, skipped tracking, result_sink write, and reset.
+
+## F206A: Reproducible Baseline Runner + Test Taxonomy (2026-04-27)
+
+**Scope**: Create `run_baseline.py` CLI and `tests/probe_f206a/` lane that establishes reproducible green baseline for F204/F205 probe lanes. Separates green baseline from historical test debt — known failures are reported, never silently hidden.
+
+### Files added
+- `run_baseline.py` — CLI baseline runner
+  - `python run_baseline.py --profile f205-green --json PATH`
+  - Profiles: `f205-green` (F204 + F205 probe lanes, smoke, inventory)
+  - `--collect-only` for inventory without test execution
+  - JSON schema: `profile, commands, passed, failed, known_failures, duration_s, test_inventory`
+- `tests/probe_f206a/` — probe lane for baseline runner
+- `pytest.ini` — minimal markers registration (slow, stress, timeout, unit, integration, smoke, hermetic, probe)
+
+### Probe lanes in green baseline (f205-green profile)
+F204 lanes: probe_f204a through probe_f204j (10 lanes)
+F205 lanes: probe_f205b through probe_f205j (9 lanes)
+Smoke: smoke_runner.py --smoke
+
+### Known failures (reported, not silenced)
+Known failure patterns from pre-F205 historical lanes are listed in `KNOWN_FAILURE_PATTERNS` in `run_baseline.py` and reported in JSON output under `known_failures`. These are NOT hidden — they are explicitly enumerated for traceability.
+
+Historical failures (NOT in green baseline, NOT blocking):
+- `tests/probe_2a/test_sprint_2a.py` — stale `autonomous_orchestrator` expectations
+- `tests/probe_4a/test_lifecycle_4a.py` — stale symbol expectations
+- `tests/probe_1b/test_uma_budget.py`, `tests/probe_6b/test_uma_budget_thresholds.py` — UMA snapshot shape drift
+- `tests/probe_4b/test_fetch_4b.py` — fetch coordinator API drift
+- `tests/probe_6a/test_async_hygiene.py`, `tests/probe_7a/test_sprint_7a.py` — missing `GHOST_INVARIANTS.md`
+- `tests/probe_6b/test_mlx_cache_limits.py`, `tests/probe_7b/test_mlx_init.py` — `_MLX_CACHE_LIMIT` export drift
+
+### GHOST_INVARIANTS reminder
+- `asyncio.gather(..., return_exceptions=True)` + `_check_gathered()` in all gather calls
+- `asyncio.CancelledError` re-raised, never swallowed
+- No blocking calls in event loop (CPU/IO via `run_in_executor`)
+- Canonical write path: `async_ingest_findings_batch()` only
+- RAM guard: skip heavy ops when RSS > high_water
+
+**Tests**: `tests/probe_f206a/test_baseline_runner.py` — 10 probe tests (F206A-1 through F206A-10):
+- F206A-1: valid JSON output
+- F206A-2: required keys present
+- F206A-3: test_inventory.collected_tests is int >= 0
+- F206A-4: --collect-only flag works
+- F206A-5: known_failures is list
+- F206A-6: duration_s is float >= 0
+- F206A-7: commands non-empty
+- F206A-8: profile matches argument
+- F206A-9: failed is non-negative int
+- F206A-10: smoke step included in commands
+
+**Definition of Done:**
+- `pytest tests/probe_f206a/ -q` (10/10 pass)
+- `python smoke_runner.py --smoke` (smoke OK)
+- `python run_baseline.py --profile f205-green --json /tmp/hledac_baseline.json` (JSON valid)
 
 ## Architectural verdict
