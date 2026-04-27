@@ -688,7 +688,7 @@ core/__main__.py runtime truth + report_dict + ExportHandoff
 | `research/` | branch manager, scheduler, prioritizer | nenašel jsem canonical import | 10 test hitů | dormant/alternative scheduler stack |
 | `stealth/` | `StealthManager`, `StealthSession`, host telemetry/token bucket | **ano** via `stealth/stealth_session.py` → `public_fetcher.py` (F195C canonical StealthSession wired); `StealthManager` is secondary owner | 3 test hits | **ACTIVE — canonical stealth surface in fetch path** |
 | `security/` | audit, destruction, deep research security, obfuscation, encryption | canonical export používá `security_coordinator` z coordinators, ne tyto moduly přímo | několik testů | většinou dormant pro sprint path |
-| `text/` | encoding/hash/unicode analyzers | nenašel jsem přímé canonical napojení | hodně test hitů | usable analyzers, dnes mimo sprint |
+| `text/` | encoding/hash/unicode analyzers + TextAnalyzerFacade | **ano — F205G bounded facade** via `text/text_analyzer_facade.py`; max 3 analyzers, MAX_TEXT_ANALYZER_BYTES=4096, MAX_TEXT_ANALYZER_HINTS=10, fail-soft | ano | **ACTIVE — bounded hook do pattern matching seams, zádné external calls, additive only** |
 | `transport/` | Tor/I2P/Nym/circuit breaker/resolver | `core.__main__` importuje `TorTransport`; resolver/testy existují | ano | částečně aktivní |
 | `tools/` | velký toolbox včetně CommonCrawl, content extraction, dark web helpers | CommonCrawl je aktivní, zbytek heterogenní | hodně testů | mix active + dormant |
 | `rl/` | QMIX/replay buffer/state extraction/action constants | **ano** via `sprint_policy_manager.py` | starší testy (test_sprint58a) | sprint_policy_manager is real (reward contract); marl_coordinator deleted F196A |
