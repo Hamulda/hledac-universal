@@ -71,6 +71,9 @@ MAX_BRIEF_FINDINGS: int = 20  # Max key findings in brief
 MAX_BRIEF_CHAINS: int = 5     # Max evidence chain IDs in brief
 MAX_BRIEF_NEXT_ACTIONS: int = 10  # Max next actions in brief
 
+# Sprint F206G: Graph analytics bounds
+MAX_GRAPH_ANALYTICS_BRIEF_FINDINGS: int = 2  # Max graph analytics findings in brief
+
 
 # ============================================================================
 # Result DTOs
@@ -884,6 +887,14 @@ class AnalystWorkbench:
             except Exception:
                 pass  # Fall through to normal path
 
+        # F206G: Read graph analytics summary (bounded, fail-soft)
+        graph_analytics: dict[str, Any] = {}
+        try:
+            from hledac.universal.knowledge.graph_service import graph_analytics_summary
+            graph_analytics = graph_analytics_summary(top_k=MAX_GRAPH_ANALYTICS_BRIEF_FINDINGS + 5)
+        except Exception:
+            graph_analytics = {}
+
         # F205J: Read target memory fail-soft
         target_memory: dict[str, Any] | None = None
         _store = duckdb_store or self._duckdb
@@ -899,6 +910,7 @@ class AnalystWorkbench:
             key_findings_list = self._extract_key_findings(findings)
 
             # F205J: Append target memory facets if available
+            # F206H: Include explainable drift (entity_delta, exposure_delta, pivot_delta)
             if target_memory:
                 mem_sprints = target_memory.get("sprint_count", 0)
                 mem_findings = target_memory.get("cumulative_finding_count", 0)
@@ -915,6 +927,14 @@ class AnalystWorkbench:
                 )
                 key_findings_list.append(mem_finding)
 
+                # F206H: Append concise drift explanation if available
+                drift_reasons = drift.get("drift_reasons", []) if drift else []
+                if drift_reasons:
+                    # Concise: first 3 reasons max
+                    concise = drift_reasons[:3]
+                    drift_exp = f"Drift signals: {', '.join(concise)}"
+                    key_findings_list.append(drift_exp)
+
                 # High-drift open question
                 if drift_ratio > 1.5:
                     open_drift_q = (
@@ -929,6 +949,29 @@ class AnalystWorkbench:
                     open_drift_q = None
             else:
                 open_drift_q = None
+
+            # F206G: Append up to 2 graph analytics findings (bounded)
+            if graph_analytics.get("analytics_available") and graph_analytics.get("top_central_entities"):
+                top_entities = graph_analytics["top_central_entities"]
+                community_count = graph_analytics.get("community_count", 0)
+                # Add top entity finding
+                if top_entities:
+                    top = top_entities[0]
+                    key_findings_list.append(
+                        f"Graph central entity: {top.get('value', '?')} "
+                        f"({top.get('ioc_type', '?')}, degree={top.get('degree', 0)})"
+                    )
+                # Add second entity or community finding
+                if len(top_entities) > 1:
+                    second = top_entities[1]
+                    key_findings_list.append(
+                        f"Graph entity 2: {second.get('value', '?')} "
+                        f"({second.get('ioc_type', '?')}, degree={second.get('degree', 0)})"
+                    )
+                elif community_count > 1:
+                    key_findings_list.append(
+                        f"Graph communities: ~{community_count} detected communities"
+                    )
 
             key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
 

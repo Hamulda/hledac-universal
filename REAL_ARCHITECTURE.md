@@ -1,4 +1,4 @@
-# Hledač — Real Architecture (aktualizováno 2026-04-26, F204G)
+# Hledač — Real Architecture (aktualizováno 2026-04-27, F206H)
 
 ## F203I — Streaming Embedding Pipeline & LanceDB Pre-warm (2026-04-26)
 
@@ -227,6 +227,117 @@ SprintScheduler.run() → teardown
 - `SprintAdvisoryRunner` is a new component, not modifying existing seams
 
 **Definition of Done:** pytest tests/probe_f206d/ -q, pytest tests/probe_f204c/ -q, pytest tests/probe_f204e/ -q, pytest tests/probe_f205j/ -q, smoke_runner OK
+
+## F206E — Windup Scorecard Reporting (2026-04-27)
+
+**Cíl:** Reconciliovat dormant `windup_engine.py` donor s aktivní sprint reporting pipeline bez aktivace `run_windup()` jako runneru. Těžit read-only scorecard prvky z dormant windup bez spouštění druhé windup cesty.
+
+**DORMANT path: `run_windup()` — NIKDY nevolaná v produkci**
+
+**Active path: `_get_windup_scorecard()` helper přidává bounded diagnostic fields do `_build_diagnostic_report()`**
+
+**Componenty:**
+
+| File | Role |
+|------|------|
+| `runtime/windup_engine.py` | **DORMANT (donor)** — `run_windup()` definovaná ale nikdy nevolaná; obsahuje scorecard strukturu jako donor |
+| `runtime/sprint_scheduler.py` | `_get_windup_scorecard()` — read-only extrakce bounded windup fields do aktivního diagnostic reportu |
+
+**`_get_windup_scorecard()` read-only sources:**
+```
+circuit breaker states (transport.circuit_breaker.get_all_breaker_states)
+phase durations (from result timing fields: pre_loop_elapsed_s, entered_active_at_monotonic, first_cycle_started_at_monotonic)
+graph stats (from _get_graph_signal → graph_service)
+peak RSS (from result.peak_rss_gib)
+accepted findings (from result.accepted_findings)
+sidecar findings (from result.*_findings_produced fields)
+branch timeouts (from result.branch_timeout_count)
+budget violations (from result.budget_violations)
+```
+
+**windup_scorecard do diagnostic report:**
+```python
+report["windup_scorecard"] = {
+    "cb_open_domains": {"domain": "open"|"half_open", ...},  # only open/half_open
+    "cb_tracked_count": int,
+    "phase_durations": {"warmup_s": float, "active_s": float},
+    "graph_nodes": int,
+    "graph_edges": int,
+    "graph_pgq_available": bool,
+    "peak_rss_mb": float,
+    "accepted_findings": int,
+    "sidecar_findings": {"identity": int, "exposure": int, ...},
+    "branch_timeouts": int,
+    "budget_violations": int,
+}
+```
+
+**Bounds:**
+- `MAX_WINDUP_SCORECARD_KEYS = 32` — hard limit na počet klíčů
+- Priority keys preserved during pruning: cb_open_domains, phase_durations, graph_*, peak_rss, accepted_findings, sidecar_findings, branch_timeouts, budget_violations
+
+**GHOST_INVARIANTS:**
+- No model load, no MLX imports
+- No GNN inference
+- No asyncio.run() or loop.run_until_complete()
+- Fail-soft: returns {} when all data sources unavailable
+- Bounded collection size
+
+**Updatess:**
+
+- `runtime/windup_engine.py` — **VERDICT: DORMANT (donor/alternate)** — dokumentace potvrzena
+- `runtime/sprint_scheduler.py` — přidán `_get_windup_scorecard()` helper
+- `runtime/sprint_scheduler.py` — `_build_diagnostic_report()` přidává `windup_scorecard` do reportu
+
+**Tests:** `tests/probe_f206e/test_windup_scorecard_reporting.py` — 14 probe tests
+
+**Definition of Done:** pytest tests/probe_f206e/ -q, pytest tests/probe_f205h/ -q, pytest tests/probe_f205e/ -q, smoke_runner OK, python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3
+
+## F206F — DHT/IPFS Promotion Gate (2026-04-27)
+
+**Cíl:** Vytvořit explicitní promotion gate pro DHT/IPFS, aby simulované DHT nebylo zaměňováno za produkční OSINT zdroj. Self-hosted důvěryhodnost stojí na pravdivém označení zdrojů.
+
+**DHT PROMOTION GATE:**
+- `DHT_PROMOTION_STATUS = "simulated_no_persist"` — explicitní status v kademlia_node.py
+- `is_dht_production_ready()` → `False` — gate funkce pro kontrolu readiness
+- DHT crawl vrací data, ale NIKDY nevolá `async_ingest_findings_batch`
+- `KademliaNode._store_dht_results()` je no-op (Sprint F192B)
+
+**IPFS PROMOTION GATE:**
+- `IPFS_PROMOTION_STATUS = "bounded_gateway_fetch"` — explicitní status v ipfs_client.py
+- IPFS fetch má timeout (30s) a size cap (10MB MAX_FILE_SIZE_BYTES)
+- IPFS fetch fails soft — vrací None na všechny chyby
+- Circuit breaker hook je optional a fail-open (try/except obalení)
+- `ipfs_content_to_finding_dict()` používá `source_type="ipfs_fetch"` (ne "ipfs")
+- `scan_ipfs()` používá `source_type="deep_probe_ipfs"` (ne "deep_probe")
+
+**Componenty:**
+
+| File | Role |
+|------|------|
+| `dht/kademlia_node.py` | `DHT_PROMOTION_STATUS`, `is_dht_production_ready()` |
+| `network/ipfs_client.py` | `IPFS_PROMOTION_STATUS`, `source_type="ipfs_fetch"` |
+| `deep_probe.py` | `source_type="deep_probe_ipfs"` pro IPFS findings |
+| `deep_research/probe_runner.py` | DHT findings nejsou persistovány |
+
+**Source type tagging (F206F):**
+| Source | source_type |
+|--------|-------------|
+| IPFS gateway fetch | `ipfs_fetch` |
+| Deep probe IPFS search | `deep_probe_ipfs` |
+| S3 bucket scan | `deep_probe` |
+| Discovery URLs | `deep_probe` |
+
+**GHOST_INVARIANTS:**
+- DHT: žádné `async_ingest_findings_batch` volání
+- IPFS: timeout wrapper kolem všech HTTP operací
+- IPFS: MAX_FILE_SIZE_BYTES hard cap (10MB)
+- Fail-soft: IPFS fetch vrací None na všechny chyby
+- Circuit breaker: optional a fail-open (nesmí blokovat fetch)
+
+**Tests:** `tests/probe_f206f/test_dht_ipfs_promotion_gate.py` — 15 probe tests
+
+**Definition of Done:** pytest tests/probe_f206f/ -q, pytest tests/probe_f197a/ -q, smoke_runner OK
 
 ## F204G — Passive Service Fingerprinting (2026-04-26)
 
@@ -629,6 +740,28 @@ scheduler.inject_prefetch_oracle(oracle)
 **Role distinction maintained**:
 - `graph/quantum_pathfinder.py` → **read-side ML overlay only**; `DuckPGQGraph` is the analytics donor backend; NOT a truth store
 - `knowledge/graph_service.py` → **sprint memory seam** for cross-sprint entity accumulation; backed by `DuckPGQGraph`; fail-safe throughout
+
+## F206G Graph Analytics Activation (2026-04-27)
+
+**Přidáno** — bounded graph analytics signal for analyst brief and sprint report:
+- `knowledge/graph_service.py`: `graph_analytics_summary(top_k=10)` — read-only helper returning top central entities (by degree) and community count from DuckPGQGraph. No persistent writes. Bounds: MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10.
+- `knowledge/analyst_workbench.py`: `build_sprint_brief()` calls `graph_analytics_summary()` and appends up to 2 findings (MAX_GRAPH_ANALYTICS_BRIEF_FINDINGS=2) to key_findings. Fail-soft throughout.
+- `tests/probe_f206g/test_graph_analytics_activation.py`: 9 invariants covering bounds, fail-soft, no-writes, and brief integration.
+
+**Output shape** (`graph_analytics_summary`):
+```
+{
+    "top_central_entities": [{"value": "...", "ioc_type": "...", "degree": N}, ...],
+    "community_count": int,
+    "analytics_available": bool,
+    "skipped_reason": str | None,
+}
+```
+
+**Role distinction maintained**:
+- `DuckPGQGraph` (quantum_pathfinder.py) — analytics donor backend, no new authority created
+- `graph_service.py` — read-only seam, fail-soft wrapper around DuckPGQGraph
+- `analyst_workbench.py` — consumes graph analytics in brief generation (bounded, advisory only)
 
 ## F196A Ghost Verdict (2026-04-23)
 
@@ -1970,6 +2103,56 @@ Methods: `async_upsert_target_memory()`, `async_get_target_memory()`.
 - RAM guard: skip merge under memory pressure (>85% high_water)
 - Fail-soft on corrupt JSON → empty facet, not crash
 - GHOST_INVARIANTS: gather(return_exceptions=True), _check_gathered(), re-raise CancelledError
+
+### F206H: Explainable Target Drift Intelligence (2026-04-27)
+
+**Cíl**: Rozšířit `confidence_drift` JSON o bounded explainable klíče — `entity_delta`, `exposure_delta`, `pivot_delta`, `drift_reasons` — bez změny DuckDB schema.
+
+**Změny** (`knowledge/target_memory.py`):
+- `_compute_confidence_drift()` — nyní vrací navíc `entity_delta`, `exposure_delta`, `pivot_delta`, `drift_reasons`
+- `_compute_facet_delta()` — pure Python deterministická funkce pro výpočet key-level delta mezi existing a update facetami; vrací `added`, `removed`, `stable`, `total_prev`, `total_curr`, `top_added`, `top_removed`
+- `_compute_drift_reasons()` — generuje bounded seznam drift reason stringů založený na drift_ratio a facet deltas
+
+**Nové klíče v `confidence_drift` dict** (žádné schema změny):
+```python
+{
+    "sprints": int,
+    "total_findings": int,
+    "avg_findings_per_sprint": float,
+    "drift_ratio": float,
+    "entity_delta": {  # _compute_facet_delta output
+        "added": int,        # new entity types
+        "removed": int,      # dropped entity types
+        "stable": int,       # types in both
+        "total_prev": int,   # capped to MAX_DRIFT_DELTA_KEYS
+        "total_curr": int,   # capped to MAX_DRIFT_DELTA_KEYS
+        "top_added": list[str],   # up to 5 added keys by score
+        "top_removed": list[str], # up to 5 removed keys by score
+    },
+    "exposure_delta": { /* same structure */ },
+    "pivot_delta": { /* same structure */ },
+    "drift_reasons": list[str],  # bounded to MAX_DRIFT_REASONS
+}
+```
+
+**Drift reasons** (příklady):
+- `finding_rate_high:ratio=X.XX` — drift_ratio > 1.5
+- `finding_rate_low:ratio=X.XX` — drift_ratio < 0.5
+- `entity_new_types:N_added` — >5 new entity types
+- `entity_dropped_types:N_removed` — >3 dropped entity types
+- `entity_expansion:high_churn` — total_curr > 1.5× total_prev
+- `entity_contraction:sharp_decline` — total_curr < 0.5× total_prev
+- `new_entity:<type>` — top added entity types (až 3)
+
+**Bounds** (F206H):
+- `MAX_DRIFT_REASONS = 8` — max drift reason strings
+- `MAX_DRIFT_DELTA_KEYS = 20` — max keys tracked per facet delta
+
+**Brief integration** (`knowledge/analyst_workbench.py`):
+- `build_sprint_brief()` — pokud `drift_reasons` je přítomen, přidává `Drift signals: <reason1>, <reason2>, <reason3>` do key_findings (první 3 důvody, concise)
+- Backwards-compatible: staré memory bez `drift_reasons` fallback na `drift_ratio` — žádné schema změny
+
+**Definice dokončení**: ✓ pytest tests/probe_f206h/ (16/16 pass), pytest tests/probe_f204d/ tests/probe_f205j/ (55/55 pass), smoke_runner OK
 
 ## F203C: Kill Chain Tagger — ATT&CK Mapping (2026-04-25)
 

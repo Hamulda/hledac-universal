@@ -21,6 +21,10 @@ MAX_MEMORY_EXPOSURES = 500
 MAX_MEMORY_PIVOTS = 100
 MAX_MEMORY_JSON_BYTES = 65536
 
+# Sprint F206H: Drift explainability bounds
+MAX_DRIFT_REASONS = 8
+MAX_DRIFT_DELTA_KEYS = 20
+
 _logger = logging.getLogger(__name__)
 
 
@@ -88,31 +92,155 @@ class TargetMemoryService:
                 return {}
         return {}
 
+    def _compute_facet_delta(
+        self,
+        existing: dict[str, Any],
+        update: dict[str, Any],
+        max_keys: int,
+    ) -> dict[str, Any]:
+        """
+        Compute bounded key-level delta between existing and new facets.
+
+        Returns dict with:
+          - added: count of new keys not in existing
+          - removed: count of keys in existing not in update
+          - stable: count of keys in both (any value change is a churn signal)
+          - total_prev: total keys in existing (capped)
+          - total_curr: total keys in update (capped)
+          - top_added: up to 5 added keys by value score (descending)
+          - top_removed: up to 5 removed keys by value score
+        """
+        existing_keys = set(existing.keys())
+        update_keys = set(update.keys())
+        added_keys = update_keys - existing_keys
+        removed_keys = existing_keys - update_keys
+        stable_keys = update_keys & existing_keys
+
+        added_list = sorted(
+            added_keys,
+            key=lambda k: update.get(k, 0),
+            reverse=True,
+        )
+        removed_list = sorted(
+            removed_keys,
+            key=lambda k: existing.get(k, 0),
+            reverse=True,
+        )
+
+        return {
+            "added": len(added_keys),
+            "removed": len(removed_keys),
+            "stable": len(stable_keys),
+            "total_prev": min(len(existing_keys), max_keys),
+            "total_curr": min(len(update_keys), max_keys),
+            "top_added": added_list[:5],
+            "top_removed": removed_list[:5],
+        }
+
+    def _compute_drift_reasons(
+        self,
+        drift_ratio: float,
+        entity_delta: dict[str, Any],
+        exposure_delta: dict[str, Any],
+        pivot_delta: dict[str, Any],
+    ) -> list[str]:
+        """
+        Sprint F206H: Compute deterministic, bounded list of drift reason strings.
+
+        Merge is pure Python, deterministic. Falls back to drift_ratio if
+        existing memory does not have the new delta keys (backwards-compatible).
+        """
+        reasons: list[str] = []
+
+        # Finding rate drift
+        if drift_ratio > 1.5:
+            reasons.append(f"finding_rate_high:ratio={drift_ratio:.2f}")
+        elif 0.0 < drift_ratio < 0.5:
+            reasons.append(f"finding_rate_low:ratio={drift_ratio:.2f}")
+
+        # Entity type shift
+        if entity_delta["added"] > 5:
+            reasons.append(f"entity_new_types:{entity_delta['added']}_added")
+        if entity_delta["removed"] > 3:
+            reasons.append(f"entity_dropped_types:{entity_delta['removed']}_removed")
+        if entity_delta["total_curr"] > entity_delta["total_prev"] * 1.5:
+            reasons.append("entity_expansion:high_churn")
+        elif entity_delta["total_curr"] < entity_delta["total_prev"] * 0.5:
+            reasons.append("entity_contraction:sharp_decline")
+
+        # Exposure type shift
+        if exposure_delta["added"] > 5:
+            reasons.append(f"exposure_new_types:{exposure_delta['added']}_added")
+        if exposure_delta["removed"] > 3:
+            reasons.append(f"exposure_dropped_types:{exposure_delta['removed']}_removed")
+
+        # Pivot type shift
+        if pivot_delta["added"] > 3:
+            reasons.append(f"pivot_new_types:{pivot_delta['added']}_added")
+        if pivot_delta["removed"] > 2:
+            reasons.append(f"pivot_dropped_types:{pivot_delta['removed']}_removed")
+
+        # Top added entity types
+        for key in entity_delta.get("top_added", [])[:3]:
+            reasons.append(f"new_entity:{key}")
+
+        return reasons[:MAX_DRIFT_REASONS]
+
     def _compute_confidence_drift(
         self,
         existing: TargetMemory | None,
         update: TargetMemoryUpdate,
     ) -> dict[str, Any]:
-        """Track finding_count delta vs sprint_count for drift detection."""
+        """
+        Sprint F206H: Track finding_count delta + explainable facet deltas.
+
+        Extends F204D drift_ratio with bounded entity_delta, exposure_delta,
+        pivot_delta, and drift_reasons. Falls back to legacy drift_ratio
+        when existing memory lacks new keys (backwards-compatible).
+        """
         if existing is None:
             return {
                 "sprints": 1,
                 "total_findings": update.finding_count,
                 "avg_findings_per_sprint": update.finding_count,
                 "drift_ratio": 1.0,
+                "entity_delta": {},
+                "exposure_delta": {},
+                "pivot_delta": {},
+                "drift_reasons": [],
             }
+
         prev_sprints = existing.sprint_count
         prev_findings = existing.cumulative_finding_count
         curr_sprints = prev_sprints + 1
         curr_findings = prev_findings + update.finding_count
         avg = curr_findings / curr_sprints
-        # Drift: current sprint's finding_count vs rolling average
         drift_ratio = update.finding_count / avg if avg > 0 else 1.0
+
+        # Compute facet deltas (bounded)
+        entity_delta = self._compute_facet_delta(
+            existing.entity_facets, update.entity_facets, MAX_DRIFT_DELTA_KEYS
+        )
+        exposure_delta = self._compute_facet_delta(
+            existing.exposure_facets, update.exposure_facets, MAX_DRIFT_DELTA_KEYS
+        )
+        pivot_delta = self._compute_facet_delta(
+            existing.pivot_facets, update.pivot_facets, MAX_DRIFT_DELTA_KEYS
+        )
+
+        drift_reasons = self._compute_drift_reasons(
+            drift_ratio, entity_delta, exposure_delta, pivot_delta
+        )
+
         return {
             "sprints": curr_sprints,
             "total_findings": curr_findings,
             "avg_findings_per_sprint": avg,
             "drift_ratio": drift_ratio,
+            "entity_delta": entity_delta,
+            "exposure_delta": exposure_delta,
+            "pivot_delta": pivot_delta,
+            "drift_reasons": drift_reasons,
         }
 
     def merge_update(self, update: TargetMemoryUpdate) -> TargetMemory:
