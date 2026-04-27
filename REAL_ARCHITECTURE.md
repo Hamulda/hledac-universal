@@ -71,31 +71,39 @@ SprintScheduler.run() → teardown phase
 
 **Definition of Done:** ✓ pytest tests/probe_f204c/ -q (22/22 pass), smoke_runner OK
 
-## F204E — Analyst Briefing Lifecycle (2026-04-26)
+## F204E/F205J — Analyst Briefing Lifecycle + Target Memory Brief (2026-04-27)
 
-**Cíl:** Zapojit AnalystWorkbench do sprint teardownu — každý sprint produkuje model-free analyst brief: headline, key findings, evidence chains, next actions, open questions.
+**Cíl:** Zapojit AnalystWorkbench do sprint teardownu — každý sprint produkuje model-free analyst brief: headline, key findings, evidence chains, next actions, open questions. **F205J**: Brief incorporates cross-sprint target memory via `get_target_memory_summary(target_id)`, enabling memory-aware headlines and drift detection.
+
+**F205J změny** (oproti F204E):
+- `build_sprint_brief()` accepts `duckdb_store` param — reads target memory fail-soft
+- Headline includes sprint count from target memory: `"Sprint N (target X, M prior sprints): ..."`
+- Key findings appends `Target memory: N sprints, K cumulative findings, E entities, X exposures, P pivots (drift=R)`
+- Open questions include drift signal when `drift_ratio > 1.5` or coverage gaps after 3+ sprints
+- Scheduler uses `query` as canonical `target_id` (not `sprint_id`) for cross-sprint memory reads
 
 **Componenty:**
 
 | File | Role |
 |------|------|
-| `knowledge/analyst_workbench.py` | `AnalystBrief` dataclass (frozen), `build_sprint_brief()` — model-free extractive analysis |
-| `runtime/sprint_scheduler.py` | `_run_analyst_brief_advisory()` v teardown, `get_analyst_brief()`, `self._analyst_brief` |
+| `knowledge/analyst_workbench.py` | `AnalystBrief` dataclass (frozen), `build_sprint_brief()` — model-free extractive analysis with target memory |
+| `runtime/sprint_scheduler.py` | `_run_analyst_brief_advisory()` v teardown, `get_analyst_brief()`, `self._analyst_brief`; F205J: query→target_id, duckdb_store passed to brief |
 | `export/sprint_exporter.py` | `analyst_brief` sekce v JSON exportu (`sanitized_obj["analyst_brief"]`) |
 | `export/sprint_markdown_reporter.py` | `_render_analyst_brief_section()` — markdown rendering |
 | `core/__main__.py` | `analyst_brief=scheduler.get_analyst_brief()` v ExportHandoff |
 | `__main__.py` | `_analyst_brief_for_markdown` module-var + `_print_scorecard_report` wiring |
+| `benchmarks/e2e_canonical_benchmark.py` | F205J: `target_memory_summary_present`, `analyst_brief_includes_memory` v aggregate |
 
 **Dataclass — `AnalystBrief` (frozen=True):**
 ```
 sprint_id: str
-target_id: str
-headline: str
-key_findings: tuple[str, ...]          # max MAX_BRIEF_FINDINGS=20
-evidence_chain_ids: tuple[str, ...]     # max MAX_BRIEF_CHAINS=5
-next_actions: tuple[str, ...]          # max MAX_BRIEF_NEXT_ACTIONS=10
-open_questions: tuple[str, ...]
-confidence: float                       # 0.0–1.0
+target_id: str                               # F205J: canonical query, not sprint_id
+headline: str                                # F205J: includes prior sprint count from target memory
+key_findings: tuple[str, ...]               # F205J: includes "Target memory:" entry
+evidence_chain_ids: tuple[str, ...]
+next_actions: tuple[str, ...]
+open_questions: tuple[str, ...]             # F205J: includes drift signal if drift_ratio > 1.5
+confidence: float                            # F205J: +0.1 boost when target memory present
 generated_ts: float
 ```
 
@@ -108,20 +116,25 @@ generated_ts: float
 **Teardown volání:**
 ```
 SprintScheduler.run() → teardown
-  → _run_analyst_brief_advisory()      # F204E: build_sprint_brief() fail-soft
+  → _run_analyst_brief_advisory()      # F204E/F205J: build_sprint_brief() fail-soft, query→target_id
   → _run_pivot_executor_advisory()      # F204C: execute top pivots
   → _run_resource_governor_advisory()  # F202J: apply governor hints
   → _unload_hermes_at_teardown()        # P12: release Hermes engine
 ```
 
-**Data flow:**
-1. Teardown calls `workbench.build_sprint_brief(sprint_id, target_id, findings, graph_signal, governor)`
-2. RAM guard: governor critical/emergency → minimal brief from counts only (no graph queries)
-3. Normal path: extractive analysis — `_extract_key_findings()`, `_derive_next_actions()`, `_derive_open_questions()`
-4. Brief stored in `SprintScheduler._analyst_brief`
-5. `core/__main__.run_sprint()` → `ExportHandoff(analyst_brief=scheduler.get_analyst_brief())`
-6. `sprint_exporter.export_sprint()` → JSON: `sanitized_obj["analyst_brief"] = _make_serializable(eh.analyst_brief)`
-7. `__main__._print_scorecard_report` → markdown: `scorecard_data["analyst_brief"]`
+**Data flow (F205J):**
+1. Teardown calls `workbench.build_sprint_brief(sprint_id, target_id, findings, graph_signal, governor, duckdb_store)`
+2. F205J: `get_target_memory_summary(target_id)` called fail-soft — None if duckdb unavailable or target not found
+3. RAM guard: governor critical/emergency → minimal brief from counts only (no graph or memory queries)
+4. Normal path: extractive analysis + target memory enrichment
+   - `_extract_key_findings()` → key findings list
+   - If target_memory: append `"Target memory: N sprints, K findings, E entities, X exposures, P pivots (drift=R)"`
+   - Headline includes `"N prior sprints"` from target memory
+   - Open questions: drift signal if `drift_ratio > 1.5`; coverage gap if 3+ sprints with sparse graph
+5. Brief stored in `SprintScheduler._analyst_brief`
+6. `core/__main__.run_sprint()` → `ExportHandoff(analyst_brief=scheduler.get_analyst_brief())`
+7. `sprint_exporter.export_sprint()` → JSON: `sanitized_obj["analyst_brief"] = _make_serializable(eh.analyst_brief)`
+8. `__main__._print_scorecard_report` → markdown: `scorecard_data["analyst_brief"]`
 
 **GHOST_INVARIANTS:**
 - `asyncio.gather` with `return_exceptions=True` v teardown phase
@@ -133,12 +146,15 @@ SprintScheduler.run() → teardown
 - RAM guard: governor critical/emergency → minimal brief from counts (no graph traversal)
 - Bounds on all collections (MAX_BRIEF_*)
 - Fail-soft: brief generation errors never crash teardown or export
+- F205J: No model load in brief; fail-soft target memory read
 
 **DuckDB schema:** Žádná nová tabulka. Brief je export artifact; může být uložen jako synthetic finding s `source_type="analyst_brief"` přes `async_ingest_findings_batch()`.
 
 **API zachování:**
 - `AnalystWorkbench.ask()` zůstává read-side API (model-powered)
-- `build_sprint_brief()` je lifecycle-safe advisory (extractive, no model)
+- `build_sprint_brief()` je lifecycle-safe advisory (extractive, no model) — F205J adds `duckdb_store` param
+
+**Definition of Done:** pytest tests/probe_f205j/ -q (8/8 pass), python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3, smoke_runner OK
 
 **Definition of Done:** ✓ pytest tests/probe_f204e/ -q (21/21 pass), smoke_runner OK
 

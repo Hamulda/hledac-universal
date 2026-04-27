@@ -678,6 +678,9 @@ class SprintScheduler:
         # Sprint F204J: Mission budget tracking
         self._sidecars_skipped: set[str] = set()
         self._peak_rss_gib: float = 0.0
+        # Sprint F205H: Metrics registry for sprint reporting (fail-soft)
+        self._metrics_registry: Any = None
+        self._metrics_initialized: bool = False
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -1013,6 +1016,10 @@ class SprintScheduler:
         await self._init_forensics()
         # Sprint F195C: Initialize multimodal enricher and LMDB
         await self._init_multimodal()
+        # Sprint F205H: Initialize metrics registry (fail-soft, run_dir from config or default)
+        await self._init_metrics_registry()
+        # F205H: Capture baseline RSS at sprint start (not just at cycle end)
+        self._tick_metrics_on_cycle_end()
 
         # Initial tick to enter ACTIVE
         phase = adapter.tick(now_monotonic)
@@ -1150,6 +1157,9 @@ class SprintScheduler:
                 )
                 self._result.cycles_completed += 1
 
+                # Sprint F205H: Tick metrics at cycle completion (bounded, fail-soft)
+                self._tick_metrics_on_cycle_end()
+
                 # Sprint F195C: Progress callback for dashboard / observability
                 if progress_callback is not None:
                     elapsed_s = _time.monotonic() - self._wall_clock_start
@@ -1247,6 +1257,9 @@ class SprintScheduler:
         if self._bg_tasks:
             await asyncio.gather(*self._bg_tasks, return_exceptions=True)
         self._bg_tasks.clear()
+
+        # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
+        await self._close_metrics_registry()
 
 
         # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
@@ -3203,6 +3216,9 @@ class SprintScheduler:
         """
         F204E: Generate analyst brief at TEARDOWN.
 
+        F205J: Uses canonical target_id (query or duckdb_store lookup)
+        instead of sprint_id, enabling cross-sprint target memory reads.
+
         Advisory only: brief summarizes sprint results but does not affect
         sprint execution or outcomes. Sprint retains all authority.
 
@@ -3210,7 +3226,21 @@ class SprintScheduler:
 
         Stores brief in self._analyst_brief for export hookup.
         """
+        # F204E wired: use injected workbench if available (DI injection path)
         workbench = getattr(self, "_analyst_workbench", None)
+
+        # F205J fix: create workbench on-demand if duckdb_store is available.
+        # This bypasses the broken inject_analyst_workbench() path that was
+        # never called in production. duckdb_store is set during run() so it
+        # IS available at teardown.
+        duckdb_store = getattr(self, "_duckdb_store", None)
+        if workbench is None and duckdb_store is not None:
+            try:
+                from hledac.universal.knowledge.analyst_workbench import AnalystWorkbench
+                workbench = AnalystWorkbench(duckdb_store=duckdb_store)
+            except Exception:
+                workbench = None
+
         if workbench is None:
             return
 
@@ -3226,17 +3256,23 @@ class SprintScheduler:
             # Get governor for RAM check
             governor = getattr(self, "_governor", None)
 
-            # Get sprint_id and target_id
+            # Get sprint_id
             sprint_id = self.sprint_id or "unknown"
-            target_id = sprint_id  # Use sprint_id as target_id
 
-            # Build the brief
+            # F205J: Use canonical target_id — prefer query, fall back to sprint_id
+            # The query is the canonical research target; sprint_id is just an identifier
+            target_id = getattr(self, "query", "") or sprint_id
+            if not target_id:
+                target_id = sprint_id
+
+            # Build the brief (pass duckdb_store for target memory read)
             brief = await workbench.build_sprint_brief(
                 sprint_id=sprint_id,
                 target_id=target_id,
                 findings=findings,
                 graph_signal=graph_signal,
                 governor=governor,
+                duckdb_store=duckdb_store,
             )
             self._analyst_brief = brief
             log.debug(f"[F204E] Analyst brief generated: {brief.headline}")
@@ -3594,6 +3630,98 @@ class SprintScheduler:
                 log.debug("Multimodal LMDB close failed: %s", exc)
             self._multimodal_lmdb_env = None
 
+    # ── Sprint F205H: Metrics Registry ────────────────────────────────────
+
+    async def _init_metrics_registry(self) -> None:
+        """
+        Initialize MetricsRegistry fail-soft using config export_dir or default path.
+
+        No absolute paths outside paths.py. Run dir is derived from export_dir
+        (if set) or ~/.hledac/runs (default fallback). Metrics file lives under
+        run_dir/logs/metrics.jsonl.
+        """
+        try:
+            from hledac.universal.metrics_registry import MetricsRegistry
+
+            # Derive run_dir from config export_dir or use default
+            export_dir = self._config.export_dir
+            if export_dir:
+                run_dir = Path(export_dir)
+            else:
+                run_dir = Path.home() / ".hledac" / "runs"
+            run_dir.mkdir(parents=True, exist_ok=True)
+
+            correlation = {
+                "run_id": self.sprint_id or "default",
+                "branch_id": None,
+                "provider_id": None,
+                "action_id": None,
+            }
+            self._metrics_registry = MetricsRegistry(
+                run_dir=run_dir,
+                run_id=self.sprint_id or "default",
+                correlation=correlation,
+            )
+            self._metrics_initialized = True
+            log.debug(f"[F205H] MetricsRegistry initialized: run_dir={run_dir}")
+        except Exception as exc:
+            self._metrics_registry = None
+            self._metrics_initialized = False
+            log.debug(f"[F205H] MetricsRegistry init failed (non-fatal): {exc}")
+
+    def _tick_metrics_on_cycle_end(self) -> None:
+        """
+        Tick metrics at cycle completion — captures RSS, open FDs.
+
+        Called once per cycle (not in tight loop). Fail-soft: noop if registry
+        not initialized. No model load, no model inference.
+        """
+        if not self._metrics_initialized or self._metrics_registry is None:
+            return
+        try:
+            self._metrics_registry.tick()
+        except Exception:
+            pass
+
+    def _get_metrics_summary(self) -> dict | None:
+        """
+        Get metrics summary for sprint report embedding.
+
+        Returns lightweight state snapshot: counters/gauges count,
+        last_rss_mb, persist_available. Fail-soft: returns None if registry
+        not initialized.
+        """
+        if not self._metrics_initialized or self._metrics_registry is None:
+            return None
+        try:
+            summary = self._metrics_registry.get_summary()
+            return {
+                "counter_count": summary.get("counter_count", 0),
+                "gauge_count": summary.get("gauge_count", 0),
+                "last_rss_mb": summary.get("gauges", {}).get("memory_rss_mb", 0.0),
+                "persist_available": summary.get("persist_available", False),
+                "closed": summary.get("closed", False),
+            }
+        except Exception:
+            return None
+
+    async def _close_metrics_registry(self) -> None:
+        """
+        Close metrics registry at TEARDOWN — force flush prevents tail-loss.
+
+        CancelledError is re-raised per GHOST_INVARIANTS.
+        """
+        if self._metrics_registry is None:
+            return
+        try:
+            self._metrics_registry.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.debug(f"[F205H] MetricsRegistry close failed: {exc}")
+        finally:
+            self._metrics_registry = None
+
     async def _prewarm_hermes_for_sprint(self) -> None:
         """
         P12: Mode-aware Hermes prewarm policy.
@@ -3934,6 +4062,10 @@ class SprintScheduler:
             "entries_per_source": dict(self._entries_per_source),
             "hits_per_source": dict(self._hits_per_source),
         }
+        # Sprint F205H: Append metrics registry summary (read-only, fail-soft)
+        metrics_summary = self._get_metrics_summary()
+        if metrics_summary:
+            report["metrics_registry"] = metrics_summary
         # Sprint F198A: Append cross-sprint graph signal (read-only, non-blocking)
         graph_signal = self._get_graph_signal()
         if graph_signal:

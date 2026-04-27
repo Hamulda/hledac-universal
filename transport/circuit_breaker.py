@@ -29,6 +29,7 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
+import aiohttp
 import asyncio
 import logging
 import time
@@ -277,3 +278,150 @@ async def get_transport_for_domain(domain: str) -> str:
             return "nym"  # fallback when tor CB is open
         return "tor"
     return "clearnet"
+
+
+# =============================================================================
+# External caller helpers — Sprint F205I: circuit breaker coverage
+# These helpers let external modules (ti_feed, duckduckgo, github_secret_scanner)
+# check the shared domain circuit breaker before making HTTP requests.
+# All use the shared _BREAKERS registry — same domain = same breaker state.
+# =============================================================================
+
+def _domain_from_url(url: str) -> str:
+    """Extract netloc domain from a URL string. Handles edge cases."""
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        # Strip tor: prefix from scheme (tor:example.com has no netloc)
+        if not domain and parsed.scheme == "tor":
+            domain = parsed.path
+        # Strip tor-portal prefix from netloc
+        if domain.startswith("tor:"):
+            domain = domain[4:]
+        return domain
+    except Exception:
+        return ""
+
+
+def domain_breaker_check(domain: str) -> CircuitDecision:
+    """
+    Check circuit breaker for a domain.
+
+    Returns CircuitDecision — check decision.allowed before making a request.
+    Fail-soft: if domain is empty, returns allowed=True (skip check).
+    """
+    if not domain:
+        return CircuitDecision(
+            allowed=True,
+            domain=domain,
+            state="unknown",
+            retry_after_s=0.0,
+            reason="empty_domain_skip",
+        )
+    breaker = get_breaker(domain)
+    return breaker.check_circuit()
+
+
+async def checked_aiohttp_get(
+    session: "aiohttp.ClientSession",
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict | None = None,
+    timeout: aiohttp.ClientTimeout,
+    failure_kind: str = "fetch_error",
+) -> tuple[aiohttp.ClientResponse | None, str | None]:
+    """
+    Perform an aiohttp GET with shared domain circuit breaker protection.
+
+    Args:
+        session: active aiohttp.ClientSession to use
+        url: URL to fetch
+        params: query params (optional)
+        headers: extra headers (optional)
+        timeout: aiohttp.ClientTimeout for the request
+        failure_kind: label for the failure kind in breaker records
+
+    Returns:
+        (response, error_str) — one is always None
+        (None, None) if circuit is open (skip)
+        (None, "circuit_breaker_open:...") on open circuit
+        (None, "timeout") on asyncio.TimeoutError
+        (None, "client_error") on aiohttp.ClientError
+        (response, None) on success (2xx/3xx expected by caller)
+    """
+    import aiohttp
+
+    domain = _domain_from_url(url)
+    decision = domain_breaker_check(domain)
+    if not decision.allowed:
+        return None, f"circuit_breaker_open:{decision.reason}"
+
+    try:
+        async with session.get(url, params=params, headers=headers, timeout=timeout) as resp:
+            if 200 <= resp.status < 400:
+                return resp, None
+            # Record failure for 4xx/5xx; return resp so caller can check status
+            get_breaker(domain).record_failure(
+                failure_kind=f"{failure_kind}:{resp.status}"
+            )
+            return resp, None
+    except asyncio.TimeoutError:
+        get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
+        return None, "timeout"
+    except aiohttp.ClientError:
+        get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
+        return None, "client_error"
+    except Exception:
+        get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
+        return None, "unknown_error"
+
+
+async def checked_aiohttp_post(
+    session: "aiohttp.ClientSession",
+    url: str,
+    *,
+    json: dict | None = None,
+    timeout: aiohttp.ClientTimeout,
+    failure_kind: str = "post_error",
+) -> tuple[aiohttp.ClientResponse | None, str | None]:
+    """
+    Perform an aiohttp POST with shared domain circuit breaker protection.
+
+    Args:
+        session: active aiohttp.ClientSession to use
+        url: URL to POST to
+        json: JSON body (optional)
+        timeout: aiohttp.ClientTimeout for the request
+        failure_kind: label for the failure kind in breaker records
+
+    Returns:
+        (response, error_str) — one is always None
+        (None, None) if circuit is open (skip)
+        (response, None) on success
+    """
+    import aiohttp
+
+    domain = _domain_from_url(url)
+    decision = domain_breaker_check(domain)
+    if not decision.allowed:
+        return None, f"circuit_breaker_open:{decision.reason}"
+
+    try:
+        async with session.post(url, json=json, timeout=timeout) as resp:
+            if 200 <= resp.status < 400:
+                return resp, None
+            get_breaker(domain).record_failure(
+                failure_kind=f"{failure_kind}:{resp.status}"
+            )
+            return None, f"http_error:{resp.status}"
+    except asyncio.TimeoutError:
+        get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
+        return None, "timeout"
+    except aiohttp.ClientError:
+        get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
+        return None, "client_error"
+    except Exception:
+        get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
+        return None, "unknown_error"

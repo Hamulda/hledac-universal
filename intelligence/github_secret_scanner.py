@@ -12,11 +12,16 @@ Anti-patterns:
 
 from __future__ import annotations
 
+import aiohttp
 import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from hledac.universal.transport.circuit_breaker import (
+    checked_aiohttp_get,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,30 +86,36 @@ async def _gh_search(
             await asyncio.sleep(_RATELIMIT_S - elapsed)
         _last_request = time.time()
 
-    import aiohttp
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "hledac-osint/1.0",
     }
     params = {"q": q, "per_page": min(max_results, 100), "sort": "indexed"}
 
+    resp, err = await checked_aiohttp_get(
+        session,
+        _GITHUB_SEARCH_API,
+        params=params,
+        headers=headers,
+        timeout=aiohttp.ClientTimeout(total=30),
+        failure_kind="github_search",
+    )
+    if err:
+        logger.debug(f"GitHub search circuit/req error for '{q}': {err}")
+        return []
+    if resp is None:
+        return []
+    if resp.status == 403:
+        logger.warning("GitHub API rate limit hit — backing off 60s")
+        await asyncio.sleep(60)
+        return []
+    if resp.status == 422:
+        return []
+    if resp.status != 200:
+        return []
     try:
-        async with session.get(
-            _GITHUB_SEARCH_API,
-            headers=headers,
-            params=params,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            if resp.status == 403:
-                logger.warning("GitHub API rate limit hit — backing off 60s")
-                await asyncio.sleep(60)
-                return []
-            if resp.status == 422:
-                return []
-            if resp.status != 200:
-                return []
-            data = await resp.json()
-            return data.get("items") or []
+        data = await resp.json()
+        return data.get("items") or []
     except Exception as e:
         logger.debug(f"GitHub search failed for '{q}': {e}")
         return []
@@ -116,16 +127,19 @@ async def _fetch_file_content(
     """Fetch raw file content from GitHub API."""
     if not raw_url:
         return None
-    import aiohttp
+    resp, err = await checked_aiohttp_get(
+        session,
+        raw_url,
+        headers={"Accept": "application/vnd.github.v3.raw"},
+        timeout=aiohttp.ClientTimeout(total=15),
+        failure_kind="github_raw",
+    )
+    if err:
+        return None
+    if resp.status != 200:
+        return None
     try:
-        async with session.get(
-            raw_url,
-            headers={"Accept": "application/vnd.github.v3.raw"},
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as resp:
-            if resp.status != 200:
-                return None
-            return await resp.text()
+        return await resp.text()
     except Exception:
         return None
 

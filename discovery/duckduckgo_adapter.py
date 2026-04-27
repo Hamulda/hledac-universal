@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING
 import aiohttp
 import msgspec
 
+from hledac.universal.transport.circuit_breaker import (
+    checked_aiohttp_get,
+)
+
 if TYPE_CHECKING:
     from duckduckgo_search import DDGS  # noqa: F401
 
@@ -752,26 +756,31 @@ async def _scrape_mojeek(
     results = []
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(
+            resp, err = await checked_aiohttp_get(
+                s,
                 "https://www.mojeek.com/search",
                 params={"q": query},
                 headers={"User-Agent": _UA,
                          "Accept-Language": "en-US,en;q=0.9"},
-                timeout=aiohttp.ClientTimeout(total=12)
-            ) as r:
-                if r.status != 200:
-                    return []
-                soup = BeautifulSoup(await r.text(), "html.parser")
-                for li in soup.select("ul.results-standard li")[:n]:
-                    a = li.select_one("a.ob")
-                    p = li.select_one("p.s")
-                    if a and a.get("href"):
-                        results.append({
-                            "title":   a.get_text(strip=True),
-                            "url":     a["href"],
-                            "snippet": p.get_text(strip=True) if p else "",
-                            "source":  "mojeek_scrape"
-                        })
+                timeout=aiohttp.ClientTimeout(total=12),
+                failure_kind="mojeek",
+            )
+            if err:
+                logger.debug(f"[Mojeek] {err}")
+                return []
+            if resp.status != 200:
+                return []
+            soup = BeautifulSoup(await resp.text(), "html.parser")
+            for li in soup.select("ul.results-standard li")[:n]:
+                a = li.select_one("a.ob")
+                p = li.select_one("p.s")
+                if a and a.get("href"):
+                    results.append({
+                        "title":   a.get_text(strip=True),
+                        "url":     a["href"],
+                        "snippet": p.get_text(strip=True) if p else "",
+                        "source":  "mojeek_scrape"
+                    })
     except Exception as e:
         logger.debug(f"[Mojeek] {e}")
     return results
@@ -813,7 +822,8 @@ async def _search_commoncrawl_cdx(
     results = []
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(
+            resp, err = await checked_aiohttp_get(
+                s,
                 "https://index.commoncrawl.org/CC-MAIN-2024-51-index",
                 params={
                     "url":    url_pattern,
@@ -821,24 +831,28 @@ async def _search_commoncrawl_cdx(
                     "limit":  max_results,
                     "fl":     "url,timestamp,filename,offset,length"
                 },
-                timeout=aiohttp.ClientTimeout(total=25)
-            ) as r:
-                if r.status != 200:
-                    return []
-                for line in (await r.text()).strip().split("\n")[:max_results]:
-                    try:
-                        rec = _json.loads(line)
-                        results.append({
-                            "title":        f"CommonCrawl: {rec.get('url','')}",
-                            "url":          rec.get("url", ""),
-                            "timestamp":    rec.get("timestamp", ""),
-                            "warc_filename":rec.get("filename", ""),
-                            "warc_offset":  rec.get("offset", 0),
-                            "warc_length":  rec.get("length", 0),
-                            "source":       "commoncrawl_cdx"
-                        })
-                    except Exception:
-                        continue
+                timeout=aiohttp.ClientTimeout(total=25),
+                failure_kind="commoncrawl_cdx",
+            )
+            if err:
+                logger.warning(f"[CommonCrawl CDX] {err}")
+                return []
+            if resp.status != 200:
+                return []
+            for line in (await resp.text()).strip().split("\n")[:max_results]:
+                try:
+                    rec = _json.loads(line)
+                    results.append({
+                        "title":        f"CommonCrawl: {rec.get('url','')}",
+                        "url":          rec.get("url", ""),
+                        "timestamp":    rec.get("timestamp", ""),
+                        "warc_filename":rec.get("filename", ""),
+                        "warc_offset":  rec.get("offset", 0),
+                        "warc_length":  rec.get("length", 0),
+                        "source":       "commoncrawl_cdx"
+                    })
+                except Exception:
+                    continue
     except Exception as e:
         logger.warning(f"[CommonCrawl CDX] {e}")
     return results
@@ -880,17 +894,22 @@ async def _query_rdap(target: str) -> dict:
     endpoint = f"{base}/ip/{target}" if is_ip else f"{base}/domain/{target}"
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(
+            resp, err = await checked_aiohttp_get(
+                s,
                 endpoint,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    return {
-                        "target": target,
-                        "rdap":   data,
-                        "source": "rdap_org"
-                    }
+                timeout=aiohttp.ClientTimeout(total=10),
+                failure_kind="rdap",
+            )
+            if err:
+                logger.debug(f"[RDAP] {err}")
+                return {}
+            if resp.status == 200:
+                data = await resp.json()
+                return {
+                    "target": target,
+                    "rdap":   data,
+                    "source": "rdap_org"
+                }
     except Exception as e:
         logger.debug(f"[RDAP] {e}")
     return {}

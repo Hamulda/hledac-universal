@@ -820,6 +820,7 @@ class AnalystWorkbench:
         findings: list[Any],
         graph_signal: dict[str, Any],
         governor: Any = None,
+        duckdb_store: Any = None,
     ) -> AnalystBrief:
         """
         F204E: Build a model-free analyst brief at sprint teardown.
@@ -831,6 +832,10 @@ class AnalystWorkbench:
         RAM guard: if governor is critical/emergency, generates minimal brief
         from counts only (no graph queries).
 
+        F205J: If duckdb_store is available, reads cross-sprint target memory
+        via get_target_memory_summary(target_id) and incorporates it into
+        headline, key_findings, and open_questions.
+
         Bounds:
           - MAX_BRIEF_FINDINGS = 20
           - MAX_BRIEF_CHAINS = 5
@@ -839,10 +844,11 @@ class AnalystWorkbench:
 
         Args:
             sprint_id: Sprint identifier
-            target_id: Research target (query or target_id)
+            target_id: Research target (query or canonical target_id)
             findings: List of findings from the sprint
             graph_signal: Graph signal dict from _get_graph_signal()
             governor: Optional M1ResourceGovernor for RAM check
+            duckdb_store: Optional DuckDBShadowStore for target memory read
 
         Returns:
             AnalystBrief with all fields populated or minimal fallback
@@ -878,20 +884,69 @@ class AnalystWorkbench:
             except Exception:
                 pass  # Fall through to normal path
 
-        # Normal path: extractive analysis from findings + graph
+        # F205J: Read target memory fail-soft
+        target_memory: dict[str, Any] | None = None
+        _store = duckdb_store or self._duckdb
+        if _store and target_id:
+            try:
+                target_memory = await self.get_target_memory_summary(target_id)
+            except Exception:
+                target_memory = None
+
+        # Normal path: extractive analysis from findings + graph + target memory
         try:
             # Extract key findings from findings (extractive, no model)
             key_findings_list = self._extract_key_findings(findings)
+
+            # F205J: Append target memory facets if available
+            if target_memory:
+                mem_sprints = target_memory.get("sprint_count", 0)
+                mem_findings = target_memory.get("cumulative_finding_count", 0)
+                entity_count = len(target_memory.get("entity_facets", {}))
+                exposure_count = len(target_memory.get("exposure_facets", {}))
+                pivot_count = len(target_memory.get("pivot_facets", {}))
+                drift = target_memory.get("confidence_drift", {})
+                drift_ratio = drift.get("drift_ratio", 1.0) if drift else 1.0
+
+                mem_finding = (
+                    f"Target memory: {mem_sprints} sprints, {mem_findings} cumulative findings, "
+                    f"{entity_count} entities, {exposure_count} exposures, {pivot_count} pivots "
+                    f"(drift={drift_ratio:.2f})"
+                )
+                key_findings_list.append(mem_finding)
+
+                # High-drift open question
+                if drift_ratio > 1.5:
+                    open_drift_q = (
+                        f"Finding rate drift detected (ratio={drift_ratio:.2f}): "
+                        f"this sprint yield is {int((drift_ratio - 1) * 100)}% above average"
+                    )
+                elif mem_sprints >= 3 and drift_ratio >= 0.7:
+                    open_drift_q = (
+                        f"Target has {mem_sprints} prior sprints — consider graph expansion"
+                    )
+                else:
+                    open_drift_q = None
+            else:
+                open_drift_q = None
+
             key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
 
-            # Build headline from finding counts
+            # Build headline from finding counts + memory context
             finding_count = len(findings)
             graph_nodes = graph_signal.get("graph_nodes", 0) if graph_signal else 0
             graph_edges = graph_signal.get("graph_edges", 0) if graph_signal else 0
-            headline = (
-                f"Sprint {sprint_id}: {finding_count} findings, "
-                f"{graph_nodes} graph nodes, {graph_edges} edges"
-            )
+            if target_memory:
+                mem_sprints = target_memory.get("sprint_count", 0)
+                headline = (
+                    f"Sprint {sprint_id} (target {target_id}, {mem_sprints} prior sprints): "
+                    f"{finding_count} findings, {graph_nodes} nodes, {graph_edges} edges"
+                )
+            else:
+                headline = (
+                    f"Sprint {sprint_id}: {finding_count} findings, "
+                    f"{graph_nodes} graph nodes, {graph_edges} edges"
+                )
 
             # Extract evidence chain IDs from findings (first MAX_BRIEF_CHAINS)
             chain_ids: list[str] = []
@@ -905,11 +960,17 @@ class AnalystWorkbench:
             next_actions = self._derive_next_actions(findings)
             next_actions_tuple = tuple(next_actions[:MAX_BRIEF_NEXT_ACTIONS])
 
-            # Derive open questions from gaps
-            open_questions = self._derive_open_questions(findings, graph_signal)
+            # Derive open questions from gaps + target memory
+            open_questions = list(self._derive_open_questions(findings, graph_signal))
+            if open_drift_q and len(open_questions) < 5:
+                open_questions.append(open_drift_q)
+            if not target_memory and finding_count > 0:
+                open_questions.append("No prior target memory — consider establishing baseline")
 
-            # Confidence based on finding density
+            # Confidence based on finding density and memory
             confidence = 0.7 if finding_count > 10 else 0.5 if finding_count > 0 else 0.3
+            if target_memory:
+                confidence = min(0.9, confidence + 0.1)  # Memory boost
 
             return AnalystBrief(
                 sprint_id=sprint_id,
@@ -918,7 +979,7 @@ class AnalystWorkbench:
                 key_findings=key_findings,
                 evidence_chain_ids=evidence_chain_ids,
                 next_actions=next_actions_tuple,
-                open_questions=open_questions,
+                open_questions=tuple(open_questions[:5]),
                 confidence=confidence,
                 generated_ts=ts,
             )

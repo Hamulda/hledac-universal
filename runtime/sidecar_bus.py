@@ -3,11 +3,17 @@ runtime/sidecar_bus.py — F204A: Canonical Accepted-Finding Sidecar Bus
 ======================================================================
 
 Unified sidecar orchestrator for all accepted findings from feed/public/CT branches.
-Bounded batch processor: takes SidecarBatch, fans out to all registered sidecar
-runners via asyncio.gather(return_exceptions=True), collects SidecarRunResult records.
+Bounded batch processor: takes SidecarBatch, fans out to registered sidecar
+runners via staged asyncio.gather(return_exceptions=True), collects SidecarRunResult records.
+
+F205B: Explicit staged ordering guarantee — runners execute in 3 stages:
+- Stage 1 (light extraction): leak_sentinel, passive_fingerprint, evidence_triage, temporal_archaeology
+- Stage 2 (correlation): exposure_correlator, identity_stitching, sprint_diff, rir_correlator,
+  social_identity_surface, wayback_diff
+- Stage 3 (derived): kill_chain_tagging, embedding
 
 GHOST_INVARIANTS enforced:
-- asyncio.gather always with return_exceptions=True
+- asyncio.gather always with return_exceptions=True (per stage)
 - _check_gathered() called after every gather
 - asyncio.CancelledError re-raised, never swallowed
 - No blocking calls in event loop; CPU/IO via run_in_executor
@@ -15,11 +21,13 @@ GHOST_INVARIANTS enforced:
 - RAM guard: skip heavy sidecars if governor reports critical/emergency
 - Each collection has MAX_* constant
 - Fail-soft: sidecar error never crashes the sprint
+- Stage N failure does not stop stage N+1
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import time as _time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
@@ -38,6 +46,26 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
     "embedding",
     "sprint_diff",
 })
+
+# F205B: Explicit staged ordering guarantee
+# Stage 1 (light extraction): runs first, no dependencies on other sidecars
+# Stage 2 (correlation): runs after stage 1, depends on signals produced by stage 1
+# Stage 3 (derived): runs last, depends on correlated signals from stage 2
+SIDECAR_STAGES: tuple[tuple[str, ...], ...] = (
+    # Stage 1: light extraction — passive signal collection
+    ("leak_sentinel", "passive_fingerprint", "evidence_triage", "temporal_archaeology"),
+    # Stage 2: correlation — combines signals into exposure/identity/attribution findings
+    (
+        "exposure_correlator",
+        "identity_stitching",
+        "sprint_diff",
+        "rir_correlator",
+        "social_identity_surface",
+        "wayback_diff",
+    ),
+    # Stage 3: derived — kill-chain tagging and embedding (requires correlated signals)
+    ("kill_chain_tagging", "embedding"),
+)
 
 # F204J: Import constants from resource_governor
 try:
@@ -81,14 +109,17 @@ class FindingSidecarBus:
     Unified bounded orchestrator for all accepted-finding sidecars.
 
     All three source branches (feed, public, ct) route their accepted findings
-    through this bus. The bus fans out to registered sidecar runners concurrently,
+    through this bus. The bus fans out to registered sidecar runners in stage order,
     collects per-runner SidecarRunResult records, and returns them.
+
+    Stages execute sequentially (stage 1 → stage 2 → stage 3). Within each stage,
+    runners execute concurrently via asyncio.gather(return_exceptions=True).
 
     RAM guard: heavy sidecars (identity_stitching, embedding, sprint_diff) are
     skipped when M1 governor reports critical or emergency memory pressure.
 
     Fail-soft: individual sidecar errors are captured in SidecarRunResult and do
-    not propagate or crash the sprint.
+    not propagate or crash the sprint. Stage N failure does not stop stage N+1.
     """
 
     def __init__(self, governor: Any = None) -> None:
@@ -122,6 +153,26 @@ class FindingSidecarBus:
         except Exception:
             return (False, "")  # Fail-soft: allow heavy sidecars if governor errors
 
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _check_gathered(self, gathered: list[Any]) -> None:
+        """
+        Verify no unexpected exceptions leaked through gather(return_exceptions=True).
+
+        GHOST_INVARIANT: called after every asyncio.gather with return_exceptions=True.
+        Sidecar errors are already captured as SidecarRunResult — this checks for
+        truly unexpected BaseExceptions that slipped through.
+        """
+        for item in gathered:
+            if isinstance(item, BaseException) and not isinstance(item, SidecarRunResult):
+                # Unexpected exception — log but don't crash (fail-soft)
+                _logger = logging.getLogger("sidecar_bus")
+                _logger.warning(
+                    "Unexpected exception in gather: %s: %s",
+                    type(item).__name__,
+                    item,
+                )
+
     # ── Core: Run All Sidecars ────────────────────────────────────────────────
 
     async def run_all_sidecars(
@@ -130,9 +181,11 @@ class FindingSidecarBus:
         store: "DuckDBShadowStore",
     ) -> list[SidecarRunResult]:
         """
-        Fan out to all registered sidecar runners for the given batch.
+        Fan out to all registered sidecar runners for the given batch, in stage order.
 
-        Runs all runners concurrently via asyncio.gather(return_exceptions=True).
+        Stages run sequentially (stage 1 → stage 2 → stage 3). Within each stage,
+        runners execute concurrently via asyncio.gather(return_exceptions=True).
+
         Returns list of SidecarRunResult (one per runner that was attempted).
 
         Bounds:
@@ -141,9 +194,10 @@ class FindingSidecarBus:
         - per-runner timeout: SIDECAR_TIMEOUT_S
 
         GHOST_INVARIANTS:
-        - gather(return_exceptions=True)
-        - _check_gathered() after gather
+        - gather(return_exceptions=True) within each stage
+        - _check_gathered() after each stage's gather
         - asyncio.CancelledError re-raised
+        - fail-soft: stage N failure does not stop stage N+1
         """
         self._results = []
 
@@ -155,7 +209,7 @@ class FindingSidecarBus:
         if not findings:
             return []
 
-        # ── Build coroutine tasks for all registered runners ─────────────────
+        # ── Per-stage coroutine builder ──────────────────────────────────────
         async def _run_one(name: str, runner: SidecarRunner) -> SidecarRunResult:
             t0 = _time.monotonic()
 
@@ -179,13 +233,12 @@ class FindingSidecarBus:
                 return SidecarRunResult(
                     sidecar_name=name,
                     attempted=True,
-                    produced_count=0,  # Runner updates _result fields directly
+                    produced_count=0,
                     stored_count=0,
                     skipped_reason="",
                     elapsed_ms=elapsed_ms,
                 )
             except asyncio.CancelledError:
-                # Re-raise: cancellation must not be swallowed
                 raise
             except Exception as exc:
                 elapsed_ms = (_time.monotonic() - t0) * 1000
@@ -198,36 +251,69 @@ class FindingSidecarBus:
                     elapsed_ms=elapsed_ms,
                 )
 
-        # ── Execute all runners concurrently ──────────────────────────────────
-        tasks = [
-            asyncio.create_task(_run_one(name, runner))
-            for name, runner in self._runners.items()
-        ]
+        # ── Execute stages sequentially ───────────────────────────────────────
+        all_results: list[SidecarRunResult] = []
+        # Track runners that have been executed in stages
+        runners_executed: set[str] = set()
 
-        results: list[SidecarRunResult] = []
-        try:
-            gathered = await asyncio.gather(*tasks, return_exceptions=True)
-            # _check_gathered — verify no unexpected exceptions leaked
-            for item in gathered:
-                if isinstance(item, BaseException):
-                    # Already logged as SidecarRunResult in _run_one
-                    pass
-                elif isinstance(item, SidecarRunResult):
-                    results.append(item)
-        except asyncio.CancelledError:
-            # Cancel any pending tasks and re-raise
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
-            gathered_cancel = await asyncio.gather(*tasks, return_exceptions=True)
-            raise  # Re-raise CancelledError per invariant
+        for stage_names in SIDECAR_STAGES:
+            # Build tasks only for registered runners in this stage
+            stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
+            for name in stage_names:
+                if name in self._runners:
+                    stage_tasks.append(asyncio.create_task(_run_one(name, self._runners[name])))
+                    runners_executed.add(name)
+
+            if not stage_tasks:
+                continue
+
+            try:
+                gathered = await asyncio.gather(*stage_tasks, return_exceptions=True)
+                self._check_gathered(gathered)
+                for item in gathered:
+                    if isinstance(item, SidecarRunResult):
+                        all_results.append(item)
+                    elif isinstance(item, BaseException):
+                        # Unexpected exception leaked through — already logged in _check_gathered
+                        pass
+            except asyncio.CancelledError:
+                # Cancel pending stage tasks and re-raise
+                for t in stage_tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*stage_tasks, return_exceptions=True)
+                raise
+
+        # ── Execute any remaining registered runners not in a stage ──────────────
+        # This handles custom runners registered at runtime that aren't in SIDECAR_STAGES
+        remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
+        for name, runner in self._runners.items():
+            if name not in runners_executed:
+                remaining_tasks.append(asyncio.create_task(_run_one(name, runner)))
+                runners_executed.add(name)
+
+        if remaining_tasks:
+            try:
+                gathered = await asyncio.gather(*remaining_tasks, return_exceptions=True)
+                self._check_gathered(gathered)
+                for item in gathered:
+                    if isinstance(item, SidecarRunResult):
+                        all_results.append(item)
+                    elif isinstance(item, BaseException):
+                        pass
+            except asyncio.CancelledError:
+                for t in remaining_tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*remaining_tasks, return_exceptions=True)
+                raise
 
         # Cap results at bound
-        if len(results) > MAX_SIDECAR_RESULT_RECORDS:
-            results = results[:MAX_SIDECAR_RESULT_RECORDS]
+        if len(all_results) > MAX_SIDECAR_RESULT_RECORDS:
+            all_results = all_results[:MAX_SIDECAR_RESULT_RECORDS]
 
-        self._results = results
-        return results
+        self._results = all_results
+        return all_results
 
 
 # ── Built-in Sidecar Runners ───────────────────────────────────────────────────
