@@ -717,7 +717,7 @@ core/__main__.py runtime truth + report_dict + ExportHandoff
 | `capabilities.py` | capability truth/router/model lifecycle facade | nepůsobí jako canonical sprint dependency | bez přímé sprint integrace | support/diagnostic layer |
 | `embedding_pipeline.py` | lazy embedding load/generate/embed query/doc + memory guard | **F197C: wired to live_public_pipeline per-finding storage block** | `tests/probe_f197c/` | **active — per-finding embedding sidecar** |
 | `captcha_solver.py` | Apple Vision/CoreML CAPTCHA solver | ne-wired | 3 hitů | niche capability |
-| `behavior_simulator.py` | 54-line ghost feature placeholder | ne-wired | 0 | dead/dormant |
+| `behavior_simulator.py` | ghost feature placeholder → **F205D: archived to legacy/archived/** | ne-wired | 0 | **ARCHIVED** — re-exported from layers.stealth_layer; zero canonical call-sites |
 | `resource_allocator.py` | budget/resource allocator, adaptive concurrency helpers | není canonical owner dependency | 0 | could inform scheduler later |
 | `research_context.py` | canonical context carrier types | typová vrstva, ne active runtime in canonical sprint | 0 | useful shared DTO layer |
 | `autonomous_analyzer.py` | autonomous analyzer profiles/orchestrator | canonical sprint jej nevolá | 0 | legacy/alternative analysis lane |
@@ -726,12 +726,22 @@ core/__main__.py runtime truth + report_dict + ExportHandoff
 
 ## Dead code / Legacy
 
+### Verdicts (Sprint F205D)
+Viz `legacy/archived/ARCHIVE_MANIFEST.py` — full verdicts + rationale per module.
+
+| Module | Verdict | Zdůvodnění |
+|--------|---------|------------|
+| `behavior_simulator.py` | **ARCHIVED** | Zero canonical call-sites; ghost placeholder; canonical impl in `layers.stealth_layer` |
+| `enhanced_research.py` | DORMANT/LEGACY | tool_registry references, legacy/autonomous_orchestrator comments, project_types refs, privacy_enhanced_research active |
+| `orchestrator/` | SECONDARY FACADE | smoke_runner.py + tests import; NOT canonical sprint path |
+| `federated/` | SECONDARY FACADE | legacy/autonomous_orchestrator lazy imports, prefetch_oracle.py, test suite |
+
 ### Jasné legacy nebo secondary surfaces
 - Root `__main__.py` obsahuje velký alternativní/deprecated runtime (`_run_sprint_mode`, `_run_public_passive_once`, warmup scaffolding), ale canonical sprint owner je jen `core.__main__.run_sprint()`.
 - `enhanced_research.py` je 3058-line dormant orchestrator-like monolith bez canonical wiring.
 - `orchestrator/` subtree je secondary facade/orchestration stack, ne canonical sprint path.
 - `federated/federated_coordinator_v2.py` a `federated/model_store_v2.py` se samy označují jako archived.
-- `behavior_simulator.py` je v podstatě ghost placeholder.
+- `behavior_simulator.py` **F205D: archived to legacy/archived/** — ghost placeholder, zero call-sites.
 - `knowledge/atomic_storage.py` a `knowledge/corpus_ingester.py` nesou stub/archival signály.
 
 ### Duplikované nebo zastaralé authority surfaces
@@ -1065,6 +1075,41 @@ DeepProbe findings now flow through the canonical persist path:
 
 ---
 
+## F205E: Hermetic E2E Canonical Benchmark (2026-04-27)
+
+**Přidáno** — `benchmarks/e2e_canonical_benchmark.py` hermetic E2E benchmark for canonical F204/F205 pipeline metrics.
+
+**Metrics measured**:
+- `findings_per_minute` — throughput: `(stored_count / wall_clock_s) * 60`
+- `dedup_ratio` — store acceptance rate: `stored_count / accepted_count`
+- `sidecar_total_ms` — wall-clock bus execution time (all stages)
+- `per_sidecar_ms` — per-runner elapsed_ms from `SidecarRunResult` records
+- `peak_rss_mb` — RSS memory ceiling check vs M1 8GB bound
+- `accepted_count`, `stored_count` — from `MockDuckDBStore` quality gate
+
+**Hermetic mode** (default):
+- Synthetic `CanonicalFinding`-like dicts via `_make_synthetic_finding()`
+- `MockDuckDBStore` simulates quality gate with `SYNTHETIC_ACCEPT_RATE=0.70`
+- `LightRunner` calls `store.async_ingest_findings_batch()` then sleeps `SIDECAR_LIGHT_LOAD_MS=5ms`
+- No network imports, no MLX imports, no model lifecycle
+- `asyncio.gather(return_exceptions=True)` + `_check_gathered()` pattern
+- `FindingSidecarBus` with all SIDECAR_STAGES runners registered
+
+**CLI**: `python benchmarks/e2e_canonical_benchmark.py --hermetic --runs N --output PATH`
+
+**Output schema** (`aggregate` dict):
+- `findings_per_minute`, `dedup_ratio`, `sidecar_total_ms`, `stored_count`, `accepted_count`, `peak_rss_mb`, `memory_ceiling_ok`
+
+**GHOST_INVARIANTS enforced**:
+- No blocking calls in event loop (all I/O via asyncio.sleep)
+- `gather(return_exceptions=True)` + `_check_gathered()` per stage
+- Fail-soft: error runner returns `SidecarRunResult` with `skipped_reason`, not exception
+- Bounded: `HERMETIC_MAX_FINDINGS=200`, mock store tracks dedup via `_seen_ids`
+
+**Tests**: `tests/probe_f205e/test_f205e_canonical_benchmark.py` — 18 probe tests (F205E-1 through F205E-15)
+
+---
+
 ## F203J: Quantization Selector & Adaptive Inference Budget (2026-04-26)
 
 **Přidáno** — model load quantization and inference budget advisory based on UMA snapshot. Model load is no longer binary; governor selects quantization tier and token/latency budget.
@@ -1167,7 +1212,8 @@ DeepProbe findings now flow through the canonical persist path:
 - `budget_violations: int` — count of times RSS exceeded MISSION_PEAK_RSS_GIB
 
 **SprintScheduler budget tracking** (`runtime/sprint_scheduler.py`):
-- `_sidecars_skipped: set[str]` — tracks skipped sidecar names across cycles
+- `SidecarDispatcher` (F205F) tracks skipped sidecar names via `result_sink.sidecars_skipped`
+- `_sidecar_dispatcher: SidecarDispatcher` — extracted dispatch bookkeeping (F205F)
 - `_peak_rss_gib: float` — tracks peak RSS across cycles
 - `_run_resource_governor_advisory()` at TEARDOWN: samples RSS, records violations, sets result fields
 - Sidecar results from `run_all_sidecars()` are scanned for skipped heavy sidecars
@@ -1978,6 +2024,8 @@ core/__main__.py run_sprint()
 
 ### Changes
 - **F204A** (`test_sidecar_bus_all_sources.py`): Updated `DEFAULT_SIDECAR_RUNNERS` count 9→12; added `passive_fingerprint`, `rir_correlator`, `social_identity_surface` to expected names; updated `_is_heavy_blocked` assertions to use `tuple[bool, str]` unpacking; switched mocks from `sample_uma_status` to `sidecar_admission()`.
+- **F205B** (`sidecar_bus.py`): Added `SIDECAR_STAGES` constant defining 3-stage ordering; refactored `run_all_sidecars()` to execute stages sequentially with `gather(return_exceptions=True)` per stage and `_check_gathered()` between stages; `CancelledError` re-raised; fail-soft between stages.
+- **F205F** (`sidecar_dispatcher.py`): Refactor only — extracted sidecar dispatch bookkeeping (batch construction, empty guard, skipped tracking, CancelledError propagation, fail-soft) from `SprintScheduler._dispatch_accepted_findings_sidecars()` into `SidecarDispatcher` class; `SprintScheduler` now delegates to `dispatcher.dispatch()`; `SidecarDispatcher` writes skipped sidecars to `result_sink.sidecars_skipped`; updated F205C tests to use dispatcher wiring.
 - **probe_8ve** (`circuit_breaker.py`): Added `resilient_fetch()` and `get_transport_for_domain()` as TEST-SEAM ONLY shims. These are NOT wired into production fetch path (per SF-6 audit gate).
 
 ### GHOST_INVARIANTS enforced
@@ -1986,5 +2034,84 @@ core/__main__.py run_sprint()
 - Fail-soft: sidecar error captured in `SidecarRunResult.skipped_reason`, never propagated
 - RAM guard: `governor.sidecar_admission()` blocks heavy sidecars at critical/emergency
 - Canonical write path: `async_ingest_findings_batch()` only
+
+## F205B: Explicit Sidecar Ordering Guarantee (2026-04-27)
+
+**Added**: Explicit staged ordering guarantee in `FindingSidecarBus.run_all_sidecars()`.
+
+**SIDECAR_STAGES constant** (`runtime/sidecar_bus.py`):
+```python
+SIDECAR_STAGES: tuple[tuple[str, ...], ...] = (
+    # Stage 1: light extraction — passive signal collection
+    ("leak_sentinel", "passive_fingerprint", "evidence_triage", "temporal_archaeology"),
+    # Stage 2: correlation — combines signals into exposure/identity/attribution findings
+    (
+        "exposure_correlator",
+        "identity_stitching",
+        "sprint_diff",
+        "rir_correlator",
+        "social_identity_surface",
+        "wayback_diff",
+    ),
+    # Stage 3: derived — kill-chain tagging and embedding (requires correlated signals)
+    ("kill_chain_tagging", "embedding"),
+)
+```
+
+**Stage semantics**:
+- **Stage 1 (light extraction)**: Passive signal collection — no dependencies on other sidecars.
+- **Stage 2 (correlation)**: Combines signals produced by stage 1 into exposure/identity/attribution findings.
+- **Stage 3 (derived)**: Kill-chain tagging and embedding — requires correlated signals from stage 2.
+
+**Execution model** (`run_all_sidecars`):
+1. Stages execute sequentially (stage 1 → stage 2 → stage 3)
+2. Within each stage, runners execute concurrently via `asyncio.gather(return_exceptions=True)`
+3. `_check_gathered()` called after each stage's gather
+4. Stage N failure does not stop stage N+1 (fail-soft between stages)
+5. `asyncio.CancelledError` re-raised if task is cancelled externally
+
+**Tests**: `tests/probe_f205b/test_sidecar_ordering.py` — 12 probe tests covering stage order, concurrency, failure isolation, and CancelledError handling.
+
+## F205F: Sidecar Dispatcher Extraction (2026-04-27)
+
+**Refactor only**: Extracted sidecar dispatch bookkeeping from `SprintScheduler._dispatch_accepted_findings_sidecars()` into `SidecarDispatcher` class in `runtime/sidecar_dispatcher.py`.
+
+**SidecarDispatcher responsibilities** (what moved out of scheduler):
+- SidecarBatch construction for the bus
+- Empty findings / None store early return
+- Skipped heavy sidecar tracking (UMA / high_water / rss_exceeds)
+- CancelledError propagation
+- Fail-soft exception handling
+
+**What stays in SprintScheduler**:
+- Owns `_sidecar_bus` (FindingSidecarBus instance)
+- Owns `_sidecar_dispatcher` (SidecarDispatcher wiring)
+- Calls `dispatcher.dispatch()` as single entry point
+- Teardown reads `result_sink.sidecars_skipped` (written by dispatcher)
+
+**SidecarBus responsibilities** (unchanged — stays in `runtime/sidecar_bus.py`):
+- Staged runner execution via `asyncio.gather(return_exceptions=True)`
+- `_check_gathered()` after each stage
+- RAM guard via `governor.sidecar_admission()`
+- All individual sidecar runner implementations
+
+**DispatchOutcome dataclass** (`runtime/sidecar_dispatcher.py`):
+```python
+@dataclass(frozen=True)
+class DispatchOutcome:
+    sprint_id: str
+    source_branch: str
+    sidecars_skipped: tuple[str, ...]
+```
+
+**SidecarDispatcher API** (`runtime/sidecar_dispatcher.py`):
+```python
+class SidecarDispatcher:
+    def __init__(self, bus, governor=None, result_sink=None): ...
+    async def dispatch(source_branch, findings, store, query, sprint_id) -> DispatchOutcome: ...
+    def reset() -> None: ...
+```
+
+**Tests**: `tests/probe_f205f/test_sidecar_dispatcher.py` — 14 probe tests covering empty batch, branch parity, CancelledError re-raise, fail-soft, skipped tracking, result_sink write, and reset.
 
 ## Architectural verdict

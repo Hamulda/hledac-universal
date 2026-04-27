@@ -50,6 +50,9 @@ from hledac.universal.runtime.sidecar_bus import (
     SidecarRunResult,
     create_sidecar_bus,
 )
+from hledac.universal.runtime.sidecar_dispatcher import (
+    SidecarDispatcher,
+)
 from hledac.universal.runtime.shadow_parity import run_shadow_parity
 # Sprint F204D: Target memory integration
 from hledac.universal.knowledge.target_memory import (
@@ -975,6 +978,13 @@ class SprintScheduler:
         # Sprint F204A: Initialize canonical sidecar bus (bounded orchestrator for all accepted-finding sidecars)
         self._sidecar_bus = create_sidecar_bus(governor=self._governor)
 
+        # Sprint F205F: Extracted sidecar dispatch bookkeeping
+        self._sidecar_dispatcher = SidecarDispatcher(
+            bus=self._sidecar_bus,
+            governor=self._governor,
+            result_sink=self._result,
+        )
+
         # Sprint F193A: CT log client can be injected at run() call time
         if ct_log_client is not None:
             self._ct_log_client = ct_log_client
@@ -1398,6 +1408,15 @@ class SprintScheduler:
         for feed_url, result in results:
             self._process_result(feed_url, result)
 
+        # F205C: Feed findings are scoped inside async_run_live_feed_pipeline and not
+        # exposed to the scheduler for sidecar dispatch. Log observable diagnostic.
+        _accepted = sum(getattr(r, "accepted_findings", 0) or 0 for _, r in results)
+        if _accepted:
+            log.debug(
+                "[F205C] Feed accepted findings not in scheduler scope for sidecar dispatch "
+                "(pipeline-internal storage, store=None). accepted=%d", _accepted
+            )
+
         # Sprint 8XE: Run public discovery pipeline in same cycle (canonical parity)
         await self._run_public_discovery_in_cycle(
             query=query,
@@ -1481,6 +1500,14 @@ class SprintScheduler:
             results: list[tuple[str, FeedPipelineRunResult]] = await _asyncio.gather(*tasks, return_exceptions=True)
             for feed_url, result in results:
                 self._process_result(feed_url, result)
+            # F205C: Feed findings accepted but not in scheduler scope for sidecar dispatch.
+            _accepted = sum(getattr(r, "accepted_findings", 0) or 0 for _, r in results)
+            if _accepted:
+                _log = logging.getLogger(__name__)
+                _log.debug(
+                    "[F205C] Aggressive feed accepted findings not in scope for sidecar dispatch. accepted=%d",
+                    _accepted,
+                )
 
         async def _run_public_branch() -> None:
             """Public discovery branch with timeout."""
@@ -1637,6 +1664,52 @@ class SprintScheduler:
             f"accepted={public_result.accepted_findings}"
         )
 
+        # F205C: Public findings are scoped inside async_run_live_public_pipeline and not
+        # exposed to the scheduler. Fall back to diagnostic log.
+        if public_result.accepted_findings > 0 or public_result.stored_findings > 0:
+            log.debug(
+                "[F205C] Public accepted findings not in scheduler scope for sidecar dispatch "
+                "(pipeline-internal storage). accepted=%d stored=%d",
+                public_result.accepted_findings,
+                public_result.stored_findings,
+            )
+
+    # ── F205C/F205F: Unified Sidecar Dispatch ────────────────────────────────
+
+    async def _dispatch_accepted_findings_sidecars(
+        self,
+        source_branch: str,
+        findings: list,
+        store: Any,
+        query: str,
+    ) -> None:
+        """
+        F205C/F205F: Route accepted findings from any branch through FindingSidecarBus.
+
+        Delegates to SidecarDispatcher (F205F extracted bookkeeping). All
+        batch construction, empty guards, skipped heavy sidecar tracking,
+        CancelledError propagation, and fail-soft handling live in the
+        dispatcher.
+
+        Args:
+            source_branch: "feed" | "public" | "ct"
+            findings: List of accepted CanonicalFinding objects
+            store: DuckDBShadowStore instance
+            query: Original sprint query
+        """
+        if self._sidecar_dispatcher is None:
+            return
+        # CancelledError re-raised by dispatcher; all other exceptions fail-soft
+        await self._sidecar_dispatcher.dispatch(
+            source_branch=source_branch,
+            findings=findings,
+            store=store,
+            query=query,
+            sprint_id=self.sprint_id or "",
+        )
+
+    # ── F193A: CT Log Discovery ─────────────────────────────────────────────
+
     async def _run_ct_log_discovery_in_cycle(
         self,
         query: str,
@@ -1686,19 +1759,12 @@ class SprintScheduler:
                 # Sprint F204A: Route all accepted CT findings through FindingSidecarBus
                 accepted_findings = [f for f, r in zip(findings, results)
                                      if isinstance(r, dict) and r.get("accepted")]
-                if accepted_findings and self._sidecar_bus is not None:
-                    batch = SidecarBatch(
-                        sprint_id=self.sprint_id or "",
-                        query=query,
-                        source_branch="ct",
-                        findings=tuple(accepted_findings),
-                        created_ts=_time.time(),
-                    )
-                    # F204J: Capture sidecar results to track skipped heavy sidecars
-                    sidecar_results = await self._sidecar_bus.run_all_sidecars(batch, store)
-                    for sr in sidecar_results:
-                        if not sr.attempted and "uma_" in sr.skipped_reason or "high_water" in sr.skipped_reason or "rss_exceeds" in sr.skipped_reason:
-                            self._sidecars_skipped.add(sr.sidecar_name)
+                await self._dispatch_accepted_findings_sidecars(
+                    source_branch="ct",
+                    findings=accepted_findings,
+                    store=store,
+                    query=query,
+                )
 
                 # F204D: Update cross-sprint target memory after findings are accepted
                 if accepted_findings:
@@ -5474,8 +5540,15 @@ class SprintScheduler:
             pass
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
         self._governor = None  # Will be re-initialized on next run()
-        # Sprint F204J: Reset mission budget tracking
-        self._sidecars_skipped.clear()
+        # Sprint F205F: Reset sidecar dispatcher tracking
+        if self._sidecar_dispatcher is not None:
+            self._sidecar_dispatcher.reset()
+        # Sprint F204J: Mission budget tracking
+        # F205F: sidecars_skipped written by SidecarDispatcher via result_sink.
+        # Fallback if dispatcher was never called.
+        _existing_skipped = getattr(self._result, "sidecars_skipped", None)
+        if _existing_skipped is not None:
+            self._result.sidecars_skipped = _existing_skipped
         self._peak_rss_gib = 0.0
 
 
