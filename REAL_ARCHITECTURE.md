@@ -113,14 +113,18 @@ generated_ts: float
 - `MAX_BRIEF_NEXT_ACTIONS = 10`
 - `MAX_CONTEXT_BYTES = 8192`
 
-**Teardown volání:**
+**Teardown volání (F206D):**
 ```
 SprintScheduler.run() → teardown
-  → _run_analyst_brief_advisory()      # F204E/F205J: build_sprint_brief() fail-soft, query→target_id
-  → _run_pivot_executor_advisory()      # F204C: execute top pivots
-  → _run_resource_governor_advisory()  # F202J: apply governor hints
+  → _run_advisory_runner()              # F206D: SprintAdvisoryRunner.run_all_advisories()
+       1. pivot_planner  → planned_pivots
+       2. pivot_executor → executed_pivots
+       3. resource_governor → governor_recorded
+       4. analyst_brief → brief_generated
   → _unload_hermes_at_teardown()        # P12: release Hermes engine
 ```
+Each step is fail-soft; `CancelledError` propagates to caller.
+Original 4 methods remain as thin delegating wrappers.
 
 **Data flow (F205J):**
 1. Teardown calls `workbench.build_sprint_brief(sprint_id, target_id, findings, graph_signal, governor, duckdb_store)`
@@ -157,6 +161,72 @@ SprintScheduler.run() → teardown
 **Definition of Done:** pytest tests/probe_f205j/ -q (8/8 pass), python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3, smoke_runner OK
 
 **Definition of Done:** ✓ pytest tests/probe_f204e/ -q (21/21 pass), smoke_runner OK
+
+## F206D — SprintAdvisoryRunner Extraction (2026-04-27)
+
+**Cíl:** Extrahovat teardown advisory orchestration z `SprintScheduler` do samostatného `SprintAdvisoryRunner`. Scheduler zůstává owner; runner pouze orchestruje 4 advisory kroky v pevném pořadí.
+
+**Refactor-only, žádná nová funkcionalita.**
+
+**Componenty:**
+
+| File | Role |
+|------|------|
+| `runtime/sprint_advisory_runner.py` | `SprintAdvisoryRunner` — extracted advisory orchestration, `AdvisoryRunOutcome` dataclass |
+| `runtime/sprint_scheduler.py` | `_run_advisory_runner()` → teardown entry point; 4 původní metody → tenké delegující wrappery |
+
+**`AdvisoryRunOutcome` (frozen=True):**
+```
+planned_pivots: int      # 0 if planner skipped/failed
+executed_pivots: int    # 0 if executor skipped/failed
+governor_recorded: bool  # True if governor evaluate+apply succeeded
+brief_generated: bool    # True if analyst brief generated
+error: str | None       # None (fail-soft, no top-level error)
+```
+
+**Runner execution order (explicit, tested):**
+```
+1. pivot_planner   → planned_pivots    (F202G: PivotPlanner.plan_pivots)
+2. pivot_executor  → executed_pivots   (F204C: AutonomousPivotExecutor.execute_top)
+3. resource_governor → governor_recorded (F202J: governor.evaluate + apply_decision)
+4. analyst_brief   → brief_generated   (F204E/F205J: workbench.build_sprint_brief)
+```
+
+**Teardown call chain:**
+```
+SprintScheduler.run() → teardown
+  → _run_advisory_runner()
+       → SprintAdvisoryRunner.run_all_advisories()
+            → _run_pivot_planner_advisory()
+            → _run_pivot_executor_advisory()
+            → _run_resource_governor_advisory()
+            → _run_analyst_brief_advisory()
+  → _unload_hermes_at_teardown()
+```
+
+**Scheduler state mutations (via runner → scheduler access):**
+- `scheduler._planned_pivots` — set by planner step
+- `scheduler._pivot_execution_results` — set by executor step
+- `scheduler._analyst_brief` — set by brief step
+- `scheduler._result.sidecars_skipped` — set by governor step
+- `scheduler._result.peak_rss_gib` — set by governor step
+- `scheduler._result.budget_violations` — incremented by governor step
+
+**GHOST_INVARIANTS:**
+- `asyncio.CancelledError` re-raised — never swallowed
+- Fail-soft: advisory error never stops runner; partial outcome returned
+- No blocking calls in async context
+- Canonical write path only via existing seams (duckdb_store, governor)
+- Model lifecycle via `brain.model_lifecycle` only
+- RAM guard: skip heavy ops when RSS > high_water
+- No new persistent write paths introduced
+
+**Backward compatibility:**
+- Original 4 methods (`_run_pivot_planner_advisory`, etc.) remain as thin delegating wrappers
+- Tests calling these methods directly continue to work
+- `SprintAdvisoryRunner` is a new component, not modifying existing seams
+
+**Definition of Done:** pytest tests/probe_f206d/ -q, pytest tests/probe_f204c/ -q, pytest tests/probe_f204e/ -q, pytest tests/probe_f205j/ -q, smoke_runner OK
 
 ## F204G — Passive Service Fingerprinting (2026-04-26)
 
@@ -2139,6 +2209,51 @@ class SidecarDispatcher:
 
 **Tests**: `tests/probe_f205f/test_sidecar_dispatcher.py` — 14 probe tests covering empty batch, branch parity, CancelledError re-raise, fail-soft, skipped tracking, result_sink write, and reset.
 
+## F206C: Lifecycle Runner Extraction (2026-04-27)
+
+**Refactor only**: Extracted lifecycle orchestration glue from `SprintScheduler.run()` into `SprintLifecycleRunner` class in `runtime/sprint_lifecycle_runner.py`.
+
+**SprintLifecycleRunner responsibilities** (what moved out of scheduler):
+- LifecycleAdapter creation and lifecycle start
+- WARMUP→ACTIVE transition (`ensure_active`)
+- Periodic `tick()` call
+- Wind-down guard (`windup_guard`)
+- Post-sleep windup gate (`post_sleep_gate`)
+- Sleep with lifecycle tick (`sleep_or_abort`)
+- Final phase teardown transitions (`teardown`)
+
+**What stays in SprintScheduler** (canonical owner):
+- Branch execution (`_run_one_cycle`)
+- Sidecar dispatch
+- Advisory evaluation
+- Export execution
+- Dedup/forensics flush (called by runner before windup break)
+- All result bookkeeping
+- `SprintScheduler._lc_adapter` still stored for backward compatibility
+- `SprintScheduler._final_phase()` kept as fallback for direct test calls
+
+**SprintLifecycleRunner API** (`runtime/sprint_lifecycle_runner.py`):
+```python
+class SprintLifecycleRunner:
+    def __init__(self, lifecycle, adapter): ...
+    def setup() -> None: ...
+    def tick(now_monotonic=None) -> SprintPhase: ...
+    def ensure_active(now_monotonic=None) -> None: ...
+    def windup_guard(now_monotonic=None) -> bool: ...
+    def post_sleep_gate(now_monotonic=None) -> bool: ...
+    async def sleep_or_abort(seconds) -> None: ...
+    def teardown() -> None: ...
+    @property def abort_requested() -> bool: ...
+    @property def abort_reason() -> str: ...
+    @property def is_terminal() -> bool: ...
+    @property def current_phase() -> str: ...
+    @property def wall_clock_start() -> float | None: ...
+```
+
+**No new behavior**: Mechanical extraction only. Scheduler remains truth owner for branches, sidecars, advisory, export.
+
+**Tests**: `tests/probe_f206c/` — 14 probe tests covering phase trace equivalence, windup guard, abort, teardown transitions, and current_phase property.
+
 ## F206A: Reproducible Baseline Runner + Test Taxonomy (2026-04-27)
 
 **Scope**: Create `run_baseline.py` CLI and `tests/probe_f206a/` lane that establishes reproducible green baseline for F204/F205 probe lanes. Separates green baseline from historical test debt — known failures are reported, never silently hidden.
@@ -2191,5 +2306,50 @@ Historical failures (NOT in green baseline, NOT blocking):
 - `pytest tests/probe_f206a/ -q` (10/10 pass)
 - `python smoke_runner.py --smoke` (smoke OK)
 - `python run_baseline.py --profile f205-green --json /tmp/hledac_baseline.json` (JSON valid)
+
+## F206B: Shadow Diagnostics Verdicts + Loose Test Migration (2026-04-27)
+
+**Scope**: Audit shadow system modules, classify as ACTIVE/DORMANT/ORPHAN, move loose tests, add verdict tests.
+
+### Verdict classifications
+
+| Module | Verdict | Rationale |
+|--------|---------|-----------|
+| `runtime/shadow_inputs.py` | ACTIVE (diagnostic) | Pure shadow inputs collector — čte facts z canonical modulů, žádné side effects |
+| `runtime/shadow_parity.py` | ACTIVE (diagnostic) | Shadow parity runner — pure function, DIAGNOSTICKÝ artifact, ne truth store |
+| `runtime/shadow_pre_decision.py` | ACTIVE (diagnostic) | Read-only consumer layer — skládá PreDecisionSummary, NIKDY nevolá canonical write path |
+| `runtime/windup_engine.py` | DORMANT (donor) | Definovaná ale NIKDY nevolaná v produkci — donor pro budoucí použití |
+
+### Key constraints enforced
+
+- **DIAGNOSTIC ONLY**: Shadow output (PreDecisionSummary, ParityArtifact) je read-only diagnostic artifact, NOT a truth store
+- **NO canonical write path**: shadow modules NESMÍ volat `async_ingest_findings_batch()` ani tool execution
+- **NO execution authority**: shadow čte pouze — sprint scheduler retainuje veškerou decision authority
+- **Clean separation**: `consume_shadow_pre_decision()` → `evaluate_advisory_gate()` → `_build_shadow_readiness_preview()` jsou všechny read-only
+
+### Files changed
+
+- `runtime/shadow_inputs.py` — added **VERDICT: ACTIVE (diagnostic only)** block
+- `runtime/shadow_parity.py` — added **VERDICT: ACTIVE (diagnostic only)** block
+- `runtime/shadow_pre_decision.py` — added **VERDICT: ACTIVE (diagnostic only)** block
+- `runtime/windup_engine.py` — clarified **VERDICT: DORMANT (donor/alternate)** block
+- `tests/probe_8vk_shadow_parity.py` → `tests/probe_8vk/test_shadow_parity.py` (moved, no semantic change)
+- `tests/probe_f206b/test_shadow_verdicts.py` (new) — 15 probe tests
+
+### Tests added
+
+`tests/probe_f206b/test_shadow_verdicts.py` — 15 probe tests:
+- `TestShadowDiagnosticVerdict` (4 tests): verify verdict blocks in all shadow modules
+- `TestShadowNoCanonicalWritePath` (3 tests): AST scan — žádné volání `async_ingest_findings_batch`
+- `TestShadowNoToolExecution` (3 tests): AST scan — žádné volání tool execution
+- `TestShadowExportReadOnlySeam` (3 tests): `consume_shadow_pre_decision()` a `_build_shadow_readiness_preview()` jsou read-only
+- `TestShadowModuleBoundaries` (2 tests): pure functions, idempotent parity
+
+**Tests**: `pytest tests/probe_f206b/ tests/probe_8vk/ tests/probe_8vl_shadow_pre_decision/ tests/probe_8vm/ -q`
+
+**Definition of Done:**
+- `pytest tests/probe_f206b/ -q` (15/15 pass)
+- `pytest tests/probe_8vk/ tests/probe_8vl_shadow_pre_decision/ tests/probe_8vm/ -q` (existing tests still pass)
+- `python smoke_runner.py --smoke` (smoke OK)
 
 ## Architectural verdict

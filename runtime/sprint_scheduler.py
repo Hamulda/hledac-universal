@@ -53,6 +53,11 @@ from hledac.universal.runtime.sidecar_bus import (
 from hledac.universal.runtime.sidecar_dispatcher import (
     SidecarDispatcher,
 )
+from hledac.universal.runtime.sprint_advisory_runner import (
+    AdvisoryRunOutcome,
+    SprintAdvisoryRunner,
+)
+from hledac.universal.runtime.sprint_lifecycle_runner import SprintLifecycleRunner
 from hledac.universal.runtime.shadow_parity import run_shadow_parity
 # Sprint F204D: Target memory integration
 from hledac.universal.knowledge.target_memory import (
@@ -967,8 +972,10 @@ class SprintScheduler:
         """
         # Sprint 8SA: Lifecycle adapter — bridges runtime/ vs utils/ API
         adapter = _LifecycleAdapter(lifecycle)
-        # Start lifecycle via adapter (runtime: start(), utils: begin_sprint())
-        adapter.start()
+        # Sprint F206C: Lifecycle runner — encapsulates lifecycle orchestration
+        self._runner = SprintLifecycleRunner(lifecycle, adapter)
+        # Start lifecycle via runner (BOOT→WARMUP)
+        self._runner.setup()
         self._reset_result()
 
         # Sprint F202J: Initialize M1 resource governor (lazy, advisory only)
@@ -1022,18 +1029,11 @@ class SprintScheduler:
         self._tick_metrics_on_cycle_end()
 
         # Initial tick to enter ACTIVE
-        phase = adapter.tick(now_monotonic)
+        phase = self._runner.tick(now_monotonic)
 
         # Sprint 8UA: Fix lifecycle WARMUP→ACTIVE transition
-        # start() goes BOOT→WARMUP; tick() does NOT auto-advance to ACTIVE.
-        # Sprint F350D: Use public adapter API instead of private _lc.transition_to() bypass.
-        phase_str = str(phase)
-        if phase_str == "SprintPhase.WARMUP" or phase_str.endswith(".WARMUP"):
-            try:
-                # F184A: Canonical public API via adapter.mark_warmup_done() — no private _lc bypass
-                adapter.mark_warmup_done()
-            except Exception:
-                pass  # Let scheduler handle - will likely be stuck but won't crash
+        # Sprint F206C: Delegated to runner.ensure_active()
+        self._runner.ensure_active(now_monotonic)
 
         # Sprint 8RA: Load persistent dedup at BOOT
         _dedup_t0 = _time.monotonic()
@@ -1087,24 +1087,24 @@ class SprintScheduler:
             self._bg_tasks.add(_t)
             _t.add_done_callback(self._bg_tasks.discard)
 
-            while not adapter.is_terminal():
+            while not self._runner.is_terminal():
                 if self._stop_requested:
                     break
                 # Detect abort requested via lifecycle flag
-                if adapter._abort_requested:
+                if self._runner.abort_requested:
                     self._result.aborted = True
-                    self._result.abort_reason = adapter._abort_reason or "lifecycle_abort"
+                    self._result.abort_reason = self._runner.abort_reason or "lifecycle_abort"
                     # Sprint F195B: write partial on abort so latest state survives
                     await self._maybe_export_partial(lifecycle)
                     break
 
                 # Periodic tick
-                phase = adapter.tick(now_monotonic)
+                phase = self._runner.tick(now_monotonic)
 
                 # ── Wind-down guard ────────────────────────────────────────
-                if adapter.should_enter_windup(now_monotonic):
-                    if phase != adapter._current_phase:
-                        phase = adapter._current_phase
+                # Sprint F206C: Delegated to runner.windup_guard()
+                if self._runner.windup_guard(now_monotonic):
+                    # Phase already advanced via tick(); let scheduler handle pre-windup ops
                     # Sprint 8RA: Flush dedup at WINDUP entry
                     await self._flush_dedup()
                     # Sprint F195C: Flush forensics at WINDUP entry
@@ -1117,7 +1117,7 @@ class SprintScheduler:
 
                 # ── Sprint 8SA: Source scoring re-ordering ───────────────────
                 # Re-prioritize at the start of each ACTIVE cycle using latest graph stats
-                current_phase_str = adapter._current_phase
+                current_phase_str = self._runner.current_phase
                 if current_phase_str == "ACTIVE":
                     ordered_sources = self.prioritize_sources(
                         ordered_sources, _graph_stats
@@ -1189,14 +1189,12 @@ class SprintScheduler:
                     break
 
                 # Sleep between cycles (short interval, not one long sleep)
-                await self._sleep_or_abort(self._config.cycle_sleep_s, adapter)
+                # Sprint F206C: Delegated to runner.sleep_or_abort()
+                await self._runner.sleep_or_abort(self._config.cycle_sleep_s)
 
                 # ── Post-sleep windup gate ──────────────────────────────────
-                # Windup can be triggered during sleep via adapter.tick().
-                # Check immediately after sleep to avoid running another
-                # cycle if lifecycle already entered windup.
-                if adapter.should_enter_windup(now_monotonic):
-                    log.debug("[8BK] Windup requested after sleep — exiting.")
+                # Sprint F206C: Delegated to runner.post_sleep_gate()
+                if self._runner.post_sleep_gate(now_monotonic):
                     # Sprint F195B: write partial on windup so latest state survives
                     await self._maybe_export_partial(lifecycle)
                     break
@@ -1217,17 +1215,17 @@ class SprintScheduler:
                     self._last_ooda = now_mono
 
         except Exception as exc:
-            adapter.request_abort(f"scheduler_exception:{type(exc).__name__}")
+            self._runner.abort(f"scheduler_exception:{type(exc).__name__}")
             self._result.aborted = True
             self._result.abort_reason = f"{type(exc).__name__}"
 
         # ── Teardown / Export ───────────────────────────────────────────────
-        # _final_phase and _run_export need raw lifecycle (mark_export_started, etc.)
-        self._final_phase(lifecycle)
+        # Sprint F206C: Delegated to runner.teardown()
+        self._runner.teardown()
         if self._config.export_enabled:
             await self._run_export(lifecycle)
 
-        self._result.final_phase = adapter._current_phase
+        self._result.final_phase = self._runner.current_phase
 
         # Sprint 8RA: Close persistent dedup at TEARDOWN
         await self._close_dedup()
@@ -1236,17 +1234,8 @@ class SprintScheduler:
         # Sprint F195C: Close multimodal enricher and LMDB at TEARDOWN
         await self._close_multimodal()
 
-        # Sprint F202G: Run pivot planner advisory at TEARDOWN (fail-soft, non-blocking)
-        await self._run_pivot_planner_advisory()
-
-        # Sprint F204C: Execute top pivots via bounded pivot executor (fail-soft, non-blocking)
-        await self._run_pivot_executor_advisory()
-
-        # Sprint F202J: Run resource governor advisory at TEARDOWN (fail-soft, non-blocking)
-        await self._run_resource_governor_advisory()
-
-        # Sprint F204E: Generate analyst brief at TEARDOWN (fail-soft, non-blocking)
-        await self._run_analyst_brief_advisory()
+        # Sprint F206D: Run all advisory steps via extracted runner (fail-soft, non-blocking)
+        await self._run_advisory_runner()
 
         # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
         await self._unload_hermes_at_teardown()
@@ -3064,73 +3053,45 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: sidecar must never crash sprint
 
+    # ── F206D: Run All Advisories via SprintAdvisoryRunner ────────────────────
+
+    async def _run_advisory_runner(self) -> None:
+        """
+        F206D: Run all 4 advisory steps via SprintAdvisoryRunner.
+
+        Canonical teardown entry point for all advisory orchestration.
+        Each step is fail-soft; CancelledError propagates to caller.
+
+        Runner order:
+          1. pivot_planner  → planned_pivots
+          2. pivot_executor → executed_pivots
+          3. resource_governor → governor_recorded
+          4. analyst_brief → brief_generated
+        """
+        runner = SprintAdvisoryRunner(
+            scheduler=self,
+            duckdb_store=getattr(self, "_duckdb_store", None),
+            governor=getattr(self, "_governor", None),
+            analyst_workbench=getattr(self, "_analyst_workbench", None),
+        )
+        await runner.run_all_advisories()
+
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
     async def _run_pivot_planner_advisory(self) -> None:
         """
         F202G: Run pivot planner on accepted findings for advisory ordering.
 
-        Advisory only: scheduler retains all authority. Planner generates
-        pivot suggestions; scheduler may use them as ordering input for future sprints.
-
-        Fail-soft: errors never crash teardown or export.
-
-        Pivots are stored in self._planned_pivots for diagnostics.
+        Delegates to SprintAdvisoryRunner for the actual work.
+        Kept as thin wrapper for backward compatibility.
         """
-        planner = getattr(self, "_pivot_planner", None)
-        if planner is None:
-            return
-
-        try:
-            # Get all accepted findings from the sprint
-            findings = getattr(self, "_all_findings", [])
-            if not findings:
-                return
-
-            # Get graph stats for scoring
-            graph_stats = {}
-            try:
-                from hledac.universal.knowledge import graph_service
-                stats = graph_service.graph_stats()
-                if stats:
-                    graph_stats = {
-                        "nodes": stats.get("nodes", 0),
-                        "edges": stats.get("edges", 0),
-                        "domains": [],  # Would need specific query
-                        "connected_iocs": set(),
-                        "node_degrees": {},
-                    }
-            except Exception:
-                pass  # Fail-soft: graph stats are optional
-
-            # F203G: Get feedback summary from duckdb_store for scoring penalties
-            feedback_summary = None
-            store = getattr(self, "_duckdb_store", None)
-            if store is not None:
-                try:
-                    from hledac.universal.runtime.hypothesis_feedback import (
-                        HypothesisFeedbackAdapter,
-                    )
-                    adapter = HypothesisFeedbackAdapter(
-                        duckdb_store=store,
-                        target_id=getattr(self, "sprint_id", "") or "default",
-                    )
-                    # Get feedback summary asynchronously (no nested event loop)
-                    feedback_summary = await adapter.async_get_summary()
-                except Exception:
-                    feedback_summary = None  # Fail-safe
-
-            # Plan pivots (synchronous, fail-soft)
-            pivots = planner.plan_pivots(
-                findings,
-                graph_stats=graph_stats,
-                feedback_summary=feedback_summary,
-            )
-            self._planned_pivots = pivots
-            log.debug(f"[F202G] Planned {len(pivots)} pivots from {len(findings)} findings")
-
-        except Exception:
-            pass  # Fail-soft: pivot planner must never crash teardown
+        runner = SprintAdvisoryRunner(
+            scheduler=self,
+            duckdb_store=getattr(self, "_duckdb_store", None),
+            governor=getattr(self, "_governor", None),
+            analyst_workbench=getattr(self, "_analyst_workbench", None),
+        )
+        await runner._run_pivot_planner_advisory(AdvisoryRunOutcome())
 
     # ── F204C: Pivot Executor Advisory ──────────────────────────────────────────
 
@@ -3138,35 +3099,16 @@ class SprintScheduler:
         """
         F204C: Execute top pivots from PivotPlanner via AutonomousPivotExecutor.
 
-        Bounded advisory: executor stores derived findings via canonical ingest
-        and records HypothesisFeedback. Scheduler retains all authority.
-
-        Fail-soft: errors never crash teardown or export.
+        Delegates to SprintAdvisoryRunner for the actual work.
+        Kept as thin wrapper for backward compatibility.
         """
-        pivots = getattr(self, "_planned_pivots", None)
-        if not pivots:
-            return
-        store = getattr(self, "_duckdb_store", None)
-        if store is None:
-            return
-        try:
-            from hledac.universal.runtime.hypothesis_feedback import (
-                HypothesisFeedbackAdapter,
-            )
-            feedback_adapter = HypothesisFeedbackAdapter(
-                duckdb_store=store,
-                target_id=getattr(self, "sprint_id", "") or "default",
-            )
-            executor = AutonomousPivotExecutor(
-                duckdb_store=store,
-                resource_governor=getattr(self, "_governor", None),
-                feedback_adapter=feedback_adapter,
-            )
-            results = await executor.execute_top(pivots, [])
-            self._pivot_execution_results = results
-            log.debug(f"[F204C] Executed {len(results)} pivots")
-        except Exception:
-            pass  # Fail-safe: pivot executor must never crash teardown
+        runner = SprintAdvisoryRunner(
+            scheduler=self,
+            duckdb_store=getattr(self, "_duckdb_store", None),
+            governor=getattr(self, "_governor", None),
+            analyst_workbench=getattr(self, "_analyst_workbench", None),
+        )
+        await runner._run_pivot_executor_advisory(AdvisoryRunOutcome())
 
 
     # ── F202J: Resource Governor Advisory ─────────────────────────────────
@@ -3175,40 +3117,16 @@ class SprintScheduler:
         """
         F202J: Apply resource governor decision at TEARDOWN.
 
-        Advisory only: governor evaluates and applies concurrency hints.
-        Sprint retains all authority.
-
-        F204J: Also tracks peak RSS and sidecars skipped for budget scorecard.
-
-        Fail-soft: errors never crash teardown or export.
+        Delegates to SprintAdvisoryRunner for the actual work.
+        Kept as thin wrapper for backward compatibility.
         """
-        governor = getattr(self, "_governor", None)
-        if governor is None:
-            return
-        try:
-            decision = await governor.evaluate()
-            await governor.apply_decision(decision)
-        except Exception:
-            pass  # Fail-soft: governor must never crash teardown
-
-        # F204J: Track peak RSS for mission budget
-        try:
-            from hledac.universal.core.resource_governor import sample_uma_status
-            uma = sample_uma_status()
-            if uma.system_used_gib > 0:
-                rss_gib = uma.system_used_gib / (1024**3)
-                if rss_gib > self._peak_rss_gib:
-                    self._peak_rss_gib = rss_gib
-                # Check for budget violations (M1ResourceGovernor.MISSION_PEAK_RSS_GIB)
-                from hledac.universal.runtime.resource_governor import MISSION_PEAK_RSS_GIB
-                if rss_gib > MISSION_PEAK_RSS_GIB:
-                    self._result.budget_violations += 1
-        except Exception:
-            pass  # Fail-soft: RSS tracking never crashes teardown
-
-        # F204J: Record sidecars skipped during this sprint
-        self._result.sidecars_skipped = tuple(sorted(self._sidecars_skipped))
-        self._result.peak_rss_gib = self._peak_rss_gib
+        runner = SprintAdvisoryRunner(
+            scheduler=self,
+            duckdb_store=getattr(self, "_duckdb_store", None),
+            governor=getattr(self, "_governor", None),
+            analyst_workbench=getattr(self, "_analyst_workbench", None),
+        )
+        await runner._run_resource_governor_advisory(AdvisoryRunOutcome())
 
     # ── F204E: Analyst Brief Advisory ─────────────────────────────────────────
 
@@ -3216,68 +3134,16 @@ class SprintScheduler:
         """
         F204E: Generate analyst brief at TEARDOWN.
 
-        F205J: Uses canonical target_id (query or duckdb_store lookup)
-        instead of sprint_id, enabling cross-sprint target memory reads.
-
-        Advisory only: brief summarizes sprint results but does not affect
-        sprint execution or outcomes. Sprint retains all authority.
-
-        Fail-soft: errors never crash teardown or export.
-
-        Stores brief in self._analyst_brief for export hookup.
+        Delegates to SprintAdvisoryRunner for the actual work.
+        Kept as thin wrapper for backward compatibility.
         """
-        # F204E wired: use injected workbench if available (DI injection path)
-        workbench = getattr(self, "_analyst_workbench", None)
-
-        # F205J fix: create workbench on-demand if duckdb_store is available.
-        # This bypasses the broken inject_analyst_workbench() path that was
-        # never called in production. duckdb_store is set during run() so it
-        # IS available at teardown.
-        duckdb_store = getattr(self, "_duckdb_store", None)
-        if workbench is None and duckdb_store is not None:
-            try:
-                from hledac.universal.knowledge.analyst_workbench import AnalystWorkbench
-                workbench = AnalystWorkbench(duckdb_store=duckdb_store)
-            except Exception:
-                workbench = None
-
-        if workbench is None:
-            return
-
-        try:
-            # Get all findings from the sprint
-            findings = getattr(self, "_all_findings", [])
-            if not findings:
-                findings = []
-
-            # Get graph signal
-            graph_signal = self._get_graph_signal()
-
-            # Get governor for RAM check
-            governor = getattr(self, "_governor", None)
-
-            # Get sprint_id
-            sprint_id = self.sprint_id or "unknown"
-
-            # F205J: Use canonical target_id — prefer query, fall back to sprint_id
-            # The query is the canonical research target; sprint_id is just an identifier
-            target_id = getattr(self, "query", "") or sprint_id
-            if not target_id:
-                target_id = sprint_id
-
-            # Build the brief (pass duckdb_store for target memory read)
-            brief = await workbench.build_sprint_brief(
-                sprint_id=sprint_id,
-                target_id=target_id,
-                findings=findings,
-                graph_signal=graph_signal,
-                governor=governor,
-                duckdb_store=duckdb_store,
-            )
-            self._analyst_brief = brief
-            log.debug(f"[F204E] Analyst brief generated: {brief.headline}")
-        except Exception:
-            pass  # Fail-soft: brief generation must never crash teardown
+        runner = SprintAdvisoryRunner(
+            scheduler=self,
+            duckdb_store=getattr(self, "_duckdb_store", None),
+            governor=getattr(self, "_governor", None),
+            analyst_workbench=getattr(self, "_analyst_workbench", None),
+        )
+        await runner._run_analyst_brief_advisory(AdvisoryRunOutcome())
 
     # ── F198A: Graph stats summary for export teardown ───────────────────────
 
@@ -3889,8 +3755,15 @@ class SprintScheduler:
 
     def _final_phase(self, lifecycle) -> None:
         """Mark teardown on lifecycle."""
+        # Sprint F206C: Delegated to runner.teardown()
+        if hasattr(self, "_runner") and self._runner is not None:
+            self._runner.teardown()
+        else:
+            self._final_phase_fallback(lifecycle)
+
+    def _final_phase_fallback(self, lifecycle) -> None:
+        """Fallback for direct calls to _final_phase (e.g. tests)."""
         try:
-            # Sprint F350D: Use public current_phase property — NOT _current_phase field
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
             phase = lifecycle.current_phase
             if phase == SprintPhase.WINDUP:
