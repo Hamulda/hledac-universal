@@ -97,11 +97,9 @@ class TextAnalyzerFacade:
                     chunk_size=65536,
                 )
                 self._unicode_analyzer = UnicodeAttackAnalyzer(cfg)
-                # Synchronous analyze_text — M1-safe (no asyncio.run in async ctx)
+                # Load confusable mappings synchronously — M1-safe (no asyncio.run)
+                self._unicode_analyzer._load_confusable_mappings()
                 self._unicode_analyzer._initialized = True
-                self._unicode_analyzer._confusable_set = self._unicode_analyzer._confusable_set or frozenset()
-                self._unicode_analyzer._canonical_map = self._unicode_analyzer._canonical_map or {}
-                self._unicode_analyzer._confusable_map = self._unicode_analyzer._confusable_map or {}
         except Exception as e:
             logger.debug(f"[TextAnalyzerFacade] Unicode analyzer unavailable: {e}")
             self._unicode_analyzer = None
