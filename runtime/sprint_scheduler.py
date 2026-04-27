@@ -2358,11 +2358,11 @@ class SprintScheduler:
                 self._target_memory_service = TargetMemoryService()
 
             merged = self._target_memory_service.merge_update(update)
-            del merged  # advisory only — duckdb_store is canonical persistence
 
-            # Persist via duckdb_store
+            # Persist via duckdb_store — F206H FIX: pass merged TargetMemory
+            # (previously passed update which caused silent failure due to type mismatch)
             try:
-                await store.async_upsert_target_memory(update)
+                await store.async_upsert_target_memory(merged)
             except Exception:
                 pass  # Fail-soft: target memory is non-critical advisory
 
@@ -3168,6 +3168,131 @@ class SprintScheduler:
             pass
         return {}
 
+    # Sprint F206E: Windup scorecard — read-only extraction from dormant windup_engine.py donor
+    # MAX bound: no more than 32 scorecard keys regardless of data availability
+    MAX_WINDUP_SCORECARD_KEYS: int = 32
+
+    def _get_windup_scorecard(self) -> dict:
+        """
+        F206E: Extract read-only windup scorecard fields from active pipeline data.
+
+        Reads bounded diagnostic fields from windup_engine.py scorecard WITHOUT
+        activating the dormant run_windup() path. No model load, no GNN import.
+
+        Safe read-only sources:
+        - Circuit breaker states (transport.circuit_breaker)
+        - Phase durations (from result timing fields)
+        - Graph stats (from graph_service, already via _get_graph_signal)
+        - Peak RSS (from result.peak_rss_gib or psutil)
+
+        Fail-soft: returns empty dict on any error.
+
+        GHOST_INVARIANTS:
+        - No asyncio.run() or loop.run_until_complete()
+        - No model/MLX imports on hot path
+        - No GNN inference
+        - Bounded: MAX_WINDUP_SCORECARD_KEYS=32
+        """
+        try:
+            scorecard: dict = {}
+
+            # 1. Circuit breaker open domains (read-only, fail-soft)
+            try:
+                from transport.circuit_breaker import get_all_breaker_states
+                cb_states = get_all_breaker_states()
+                if cb_states:
+                    # Bound: only open/half_open circuits are interesting for diagnostics
+                    open_domains = {
+                        d: s for d, s in cb_states.items()
+                        if s in ("open", "half_open")
+                    }
+                    if open_domains:
+                        scorecard["cb_open_domains"] = open_domains
+                    scorecard["cb_tracked_count"] = len(cb_states)
+            except Exception:
+                pass
+
+            # 2. Phase durations from timing fields already tracked in result
+            phase_durations: dict = {}
+            if self._result.pre_loop_elapsed_s is not None:
+                phase_durations["warmup_s"] = round(self._result.pre_loop_elapsed_s, 2)
+            if (
+                self._result.entered_active_at_monotonic is not None
+                and self._result.first_cycle_started_at_monotonic is not None
+            ):
+                active_dur = round(
+                    self._result.first_cycle_started_at_monotonic
+                    - self._result.entered_active_at_monotonic,
+                    2,
+                )
+                phase_durations["active_s"] = max(0.0, active_dur)
+            # Windup duration not available in active pipeline (run_windup() is dormant)
+            if phase_durations:
+                scorecard["phase_durations"] = phase_durations
+
+            # 3. Graph stats (re-use _get_graph_signal for consistency)
+            graph_signal = self._get_graph_signal()
+            if graph_signal:
+                scorecard["graph_nodes"] = graph_signal.get("graph_nodes", 0)
+                scorecard["graph_edges"] = graph_signal.get("graph_edges", 0)
+                scorecard["graph_pgq_available"] = graph_signal.get("graph_pgq_available", False)
+
+            # 4. Peak RSS from result (set during sprint)
+            if self._result.peak_rss_gib > 0:
+                scorecard["peak_rss_mb"] = round(self._result.peak_rss_gib * 1024, 1)
+
+            # 5. Accepted findings count (from result)
+            if self._result.accepted_findings > 0:
+                scorecard["accepted_findings"] = self._result.accepted_findings
+
+            # 6. Sidecar findings counts (from result — additive sidecar metrics)
+            sidecar_counts: dict = {}
+            if self._result.identity_findings_produced > 0:
+                sidecar_counts["identity"] = self._result.identity_findings_produced
+            if self._result.exposure_findings_produced > 0:
+                sidecar_counts["exposure"] = self._result.exposure_findings_produced
+            if self._result.timeline_findings_produced > 0:
+                sidecar_counts["timeline"] = self._result.timeline_findings_produced
+            if self._result.leak_findings_produced > 0:
+                sidecar_counts["leak"] = self._result.leak_findings_produced
+            if self._result.evidence_triage_findings_count > 0:
+                sidecar_counts["evidence_triage"] = self._result.evidence_triage_findings_count
+            if self._result.forensics_enriched_ct_findings > 0:
+                sidecar_counts["forensics"] = self._result.forensics_enriched_ct_findings
+            if self._result.multimodal_enriched_findings > 0:
+                sidecar_counts["multimodal"] = self._result.multimodal_enriched_findings
+            if sidecar_counts:
+                scorecard["sidecar_findings"] = sidecar_counts
+
+            # 7. Branch timeout tracking (F195B)
+            if self._result.branch_timeout_count > 0:
+                scorecard["branch_timeouts"] = self._result.branch_timeout_count
+
+            # 8. Budget violations (F204J)
+            if self._result.budget_violations > 0:
+                scorecard["budget_violations"] = self._result.budget_violations
+
+            # Bound: enforce MAX_WINDUP_SCORECARD_KEYS
+            if len(scorecard) > self.MAX_WINDUP_SCORECARD_KEYS:
+                # Prune to bound — keep priority fields
+                priority_keys = [
+                    "cb_open_domains", "phase_durations", "graph_nodes",
+                    "graph_edges", "peak_rss_mb", "accepted_findings",
+                    "sidecar_findings", "branch_timeouts", "budget_violations",
+                    "graph_pgq_available", "cb_tracked_count",
+                ]
+                pruned: dict = {}
+                for k in priority_keys:
+                    if k in scorecard:
+                        pruned[k] = scorecard[k]
+                        if len(pruned) >= self.MAX_WINDUP_SCORECARD_KEYS:
+                            break
+                scorecard = pruned
+
+            return scorecard
+        except Exception:
+            return {}
+
     def _build_work_items(
         self, sources: Sequence[str]
     ) -> list[SourceWork]:
@@ -3955,6 +4080,10 @@ class SprintScheduler:
             report["hypothesis_pack_summary"] = intel["hypothesis_pack"]
         if intel.get("branch_value"):
             report["branch_value"] = intel["branch_value"]
+        # Sprint F206E: Append windup scorecard (read-only, from dormant windup_engine donor)
+        windup_scorecard = self._get_windup_scorecard()
+        if windup_scorecard:
+            report["windup_scorecard"] = windup_scorecard
         return report
 
     # ── Sprint 8RC: IOC-aware prioritisation ───────────────────────────────

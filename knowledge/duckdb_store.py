@@ -1610,28 +1610,6 @@ class DuckDBShadowStore:
         except Exception:
             return None
 
-    # ── Sprint F204D: target_memory sync helpers ───────────────────────────────
-
-    def _sync_upsert_target_memory(self, row: dict) -> None:
-        """Sync method to upsert target memory row. Runs on duckdb_worker thread."""
-        try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
-            if conn is None:
-                return
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO target_memory
-                (target_id, first_seen_ts, last_seen_ts, sprint_count, cumulative_finding_count,
-                 entity_facets_json, exposure_facets_json, pivot_facets_json, confidence_drift_json, updated_by_sprint_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [row["target_id"], row["first_seen_ts"], row["last_seen_ts"], row["sprint_count"],
-                 row["cumulative_finding_count"], row["entity_facets_json"], row["exposure_facets_json"],
-                 row["pivot_facets_json"], row["confidence_drift_json"], row["updated_by_sprint_id"]],
-            )
-        except Exception:
-            pass
-
     # ── Sprint F203G: hypothesis_feedback sync helpers ────────────────────────
 
     def _sync_record_hypothesis_feedback(self, record: Any) -> bool:
@@ -4208,34 +4186,26 @@ class DuckDBShadowStore:
 
     # ── Sprint F204D: target_memory async API ─────────────────────────────────
 
-    async def async_upsert_target_memory(self, update: TargetMemoryUpdate) -> None:
+    async def async_upsert_target_memory(self, memory: TargetMemory) -> None:
         """
-        Sprint F204D: Insert or update target memory from a TargetMemoryUpdate.
+        Sprint F204D: Insert or update target memory from a TargetMemory.
 
         Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
         Silently fails if store is closed or uninitialized.
+
+        F206H FIX: Previously accepted TargetMemoryUpdate and silently failed
+        (type mismatch with _sync_upsert_target_memory which expects TargetMemory).
+        Now accepts TargetMemory directly — caller (SprintScheduler) passes
+        the already-merged memory from TargetMemoryService.merge_update().
         """
         if not self._initialized or self._closed:
             return
         loop = asyncio.get_running_loop()
         try:
-            import orjson
-            row = {
-                "target_id": update.target_id,
-                "first_seen_ts": update.observed_ts,
-                "last_seen_ts": update.observed_ts,
-                "sprint_count": 1,
-                "cumulative_finding_count": update.finding_count,
-                "entity_facets_json": orjson.dumps(update.entity_facets).decode(),
-                "exposure_facets_json": orjson.dumps(update.exposure_facets).decode(),
-                "pivot_facets_json": orjson.dumps(update.pivot_facets).decode(),
-                "confidence_drift_json": orjson.dumps({}).decode(),
-                "updated_by_sprint_id": update.sprint_id,
-            }
             await loop.run_in_executor(
                 self._executor,
                 self._sync_upsert_target_memory,
-                row,
+                memory,
             )
         except asyncio.CancelledError:
             raise
