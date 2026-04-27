@@ -5,6 +5,14 @@ IPFS Client — Multi-gateway fetch and search for IPFS content.
 Gateway order: local daemon → Cloudflare → ipfs.io
 10 MB size cap: reject files before download if Content-Length > 10MB.
 
+PROMOTION GATE — F206F
+  IPFS fetch is bounded and can be a safe OSINT source when:
+  - Has explicit timeout (30s default)
+  - Has explicit size cap (10MB MAX_FILE_SIZE_BYTES)
+  - Fails soft: returns None on all failures
+  - Results are tagged with source_type="ipfs_fetch" (not just "ipfs")
+  - Circuit breaker hook is optional and fail-open (skips when unavailable)
+
 Anti-patterns prevented:
   - No blocking socket ops (aiohttp only)
   - No size bypass (Content-Length check before read)
@@ -19,6 +27,12 @@ import aiohttp
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# IPFS PROMOTION GATE — F206F
+# =============================================================================
+# IPFS fetch is a bounded OSINT source with explicit safety guards.
+IPFS_PROMOTION_STATUS: str = "bounded_gateway_fetch"
 
 MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap
 
@@ -189,7 +203,7 @@ def ipfs_content_to_finding_dict(
     return {
         "finding_id": finding_id,
         "query": f"{finding_id_prefix}:{query}",
-        "source_type": "ipfs",
+        "source_type": "ipfs_fetch",  # F206F: explicit tag to distinguish from deep_probe ipfs search
         "confidence": 0.75 if gateway != "ipfs_search" else 0.65,
         "ts": ts,
         "provenance": (cid, gateway, query),
@@ -202,4 +216,5 @@ __all__ = [
     "search_ipfs",
     "ipfs_content_to_finding_dict",
     "MAX_FILE_SIZE_BYTES",
+    "IPFS_PROMOTION_STATUS",
 ]

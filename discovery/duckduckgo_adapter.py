@@ -865,20 +865,24 @@ async def _query_shodan_internetdb(ip: str) -> dict:
     REMOVAL CONDITION: po přechodu všech call-sites na registry/shodan_internetdb_lookup()."""
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(
+            resp, err = await checked_aiohttp_get(
+                s,
                 f"https://internetdb.shodan.io/{ip}",
-                timeout=aiohttp.ClientTimeout(total=8)
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    return {
-                        "ip":        ip,
-                        "ports":     data.get("ports", []),
-                        "cves":      data.get("cves", []),
-                        "hostnames": data.get("hostnames", []),
-                        "tags":      data.get("tags", []),
-                        "source":    "shodan_internetdb"
-                    }
+                timeout=aiohttp.ClientTimeout(total=8),
+                failure_kind="shodan_internetdb",
+            )
+            if err:
+                logger.debug(f"[ShodanInternetDB] {err}")
+                return {}
+            data = await resp.json()
+            return {
+                "ip":        ip,
+                "ports":     data.get("ports", []),
+                "cves":      data.get("cves", []),
+                "hostnames": data.get("hostnames", []),
+                "tags":      data.get("tags", []),
+                "source":    "shodan_internetdb"
+            }
     except Exception as e:
         logger.debug(f"[ShodanInternetDB] {e}")
     return {}

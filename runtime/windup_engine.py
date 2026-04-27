@@ -5,6 +5,8 @@ Extrahováno z __main__.py WINDUP sekce.
 Dedup, GNN inference, ANE semantic dedup, MoE synthesis,
 hypothesis enqueue, DuckPGQ checkpoint, scorecard.
 
+**VERDICT: DORMANT (donor/alternate)** — 2026-04-27, F206B
+
 DORMANT / ALTERNATE PATH (Sprint 8F7)
 ======================================
 run_windup() je DORMANT — definovaná ale NIKDY nevolaná v produkci.

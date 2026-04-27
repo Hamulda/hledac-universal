@@ -292,7 +292,7 @@ class TestScanIpfsReturnType:
 
     @pytest.mark.asyncio
     async def test_scan_ipfs_returns_canonical_findings(self):
-        """invariant_6: scan_ipfs returns list of CanonicalFinding."""
+        """invariant_6: scan_ipfs returns list of CanonicalFinding with source_type='deep_probe_ipfs'."""
         # Mock the API responses
         mock_response = [
             {"title": "Test Doc", "cid": "QmTest123", "size": 100, "source": "test"}
@@ -309,5 +309,5 @@ class TestScanIpfsReturnType:
         assert isinstance(findings, list)
         for f in findings:
             assert isinstance(f, CanonicalFinding)
-            assert f.source_type == "deep_probe"
+            assert f.source_type == "deep_probe_ipfs"  # F206F: explicit IPFS tag
             assert "ipfs" in f.provenance

@@ -34,11 +34,16 @@ import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Final, Optional, Sequence
 
 from hledac.universal.patterns.pattern_matcher import match_text
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
 from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.transport.circuit_breaker import (
+    get_all_breaker_snapshots,
+    get_all_breaker_states,
+    MAX_TRACKED_DOMAINS,
+)
 from hledac.universal.runtime.shadow_inputs import (
     collect_lifecycle_snapshot,
     collect_graph_summary,
@@ -3145,6 +3150,64 @@ class SprintScheduler:
         )
         await runner._run_analyst_brief_advisory(AdvisoryRunOutcome())
 
+    # ── F206I: Source health summary for export teardown ─────────────────────
+
+    # Bounds: no more than 100 source entries regardless of data availability
+    MAX_SOURCE_HEALTH_ENTRIES: Final[int] = 100
+    _POSTURE_ORDER: Final[dict[str, int]] = {
+        "hot": 0, "warm": 1, "lukewarm": 2, "marginal": 3, "cold": 4, "unknown": 5
+    }
+    # F206I: MAX_BREAKER_DOMAINS mirrors MAX_TRACKED_DOMAINS from circuit_breaker
+    MAX_BREAKER_DOMAINS: Final[int] = MAX_TRACKED_DOMAINS
+
+    def _get_source_health_summary(self) -> dict:
+        """
+        F206I: Build a bounded source health summary from per-source economics.
+
+        Reads _source_economics (in-memory, per-sprint) and returns a
+        compact summary dict for the diagnostic report. Non-persisting.
+
+        Bounds:
+        - MAX_SOURCE_HEALTH_ENTRIES=100 (most-healthy first)
+        - Each entry is a small dict with posture and cooldown info
+
+        Fail-soft: returns empty dict on any error.
+
+        GHOST_INVARIANTS:
+        - No asyncio.gather / _check_gathered (sync method)
+        - No asyncio.run() or loop.run_until_complete()
+        - No model/MLX imports
+        - No canonical write path (read-only)
+        """
+        try:
+            if not self._source_economics:
+                return {}
+            # Sort: hot > warm > lukewarm > marginal > cold > unknown
+            sorted_sources = sorted(
+                self._source_economics.values(),
+                key=lambda e: (
+                    self._POSTURE_ORDER.get(e.recent_health_posture, 5),
+                    -e.last_signal_cycle,
+                ),
+            )
+            entries = []
+            for econ in sorted_sources[: self.MAX_SOURCE_HEALTH_ENTRIES]:
+                entries.append({
+                    "source": econ.source,
+                    "posture": econ.recent_health_posture,
+                    "last_signal_cycle": econ.last_signal_cycle,
+                    "silent_streak": econ.silent_streak,
+                    "in_cooldown": econ.cooldown_until_cycle is not None,
+                })
+            total_tracked = len(self._source_economics)
+            return {
+                "entries": entries,
+                "total_tracked": total_tracked,
+                "max_entries": self.MAX_SOURCE_HEALTH_ENTRIES,
+            }
+        except Exception:
+            return {}
+
     # ── F198A: Graph stats summary for export teardown ───────────────────────
 
     def _get_graph_signal(self) -> dict:
@@ -3198,7 +3261,7 @@ class SprintScheduler:
 
             # 1. Circuit breaker open domains (read-only, fail-soft)
             try:
-                from transport.circuit_breaker import get_all_breaker_states
+                # Uses module-level import from hledac.universal.transport.circuit_breaker
                 cb_states = get_all_breaker_states()
                 if cb_states:
                     # Bound: only open/half_open circuits are interesting for diagnostics
@@ -3290,6 +3353,54 @@ class SprintScheduler:
                 scorecard = pruned
 
             return scorecard
+        except Exception:
+            return {}
+
+    # ── F206I: Circuit breaker coverage summary ───────────────────────────────
+
+    def _get_circuit_breaker_summary(self) -> dict:
+        """
+        F206I: Build a bounded circuit breaker state summary for the diagnostic report.
+
+        Reads the shared domain circuit breaker registry (get_all_breaker_snapshots)
+        and returns a compact summary. Non-persisting, in-memory only.
+
+        Bounds:
+        - MAX_TRACKED_DOMAINS=500 (from circuit_breaker module)
+        - MAX_BREAKER_DOMAINS=500 (local alias)
+        - Each snapshot is a small dict: domain, state, failure_count, retry_after_s
+
+        Fail-soft: returns empty dict on any error.
+
+        GHOST_INVARIANTS:
+        - No asyncio.gather / _check_gathered (sync method)
+        - No asyncio.run() or loop.run_until_complete()
+        - No canonical write path (read-only)
+        - Circuit breaker itself does not persist
+        """
+        try:
+            snapshots = get_all_breaker_snapshots()
+            if not snapshots:
+                return {"total_tracked": 0, "open_count": 0, "half_open_count": 0}
+            open_count = sum(1 for s in snapshots if s.state == "open")
+            half_open_count = sum(1 for s in snapshots if s.state == "half_open")
+            # Bound: include all closed + open + half_open in summary (up to MAX_BREAKER_DOMAINS)
+            entries = []
+            for snap in snapshots[: self.MAX_BREAKER_DOMAINS]:
+                entries.append({
+                    "domain": snap.domain,
+                    "state": snap.state,
+                    "failure_count": snap.failure_count,
+                    "last_failure_kind": snap.last_failure_kind,
+                    "recovery_timeout_s": round(snap.recovery_timeout_s, 1),
+                })
+            return {
+                "total_tracked": len(snapshots),
+                "open_count": open_count,
+                "half_open_count": half_open_count,
+                "entries": entries,
+                "max_entries": self.MAX_BREAKER_DOMAINS,
+            }
         except Exception:
             return {}
 
@@ -4084,6 +4195,14 @@ class SprintScheduler:
         windup_scorecard = self._get_windup_scorecard()
         if windup_scorecard:
             report["windup_scorecard"] = windup_scorecard
+        # Sprint F206I: Append source health summary (read-only, from per-sprint economics)
+        source_health = self._get_source_health_summary()
+        if source_health:
+            report["source_health_summary"] = source_health
+        # Sprint F206I: Append circuit breaker coverage summary (read-only, from transport registry)
+        circuit_state = self._get_circuit_breaker_summary()
+        if circuit_state:
+            report["circuit_breaker_state"] = circuit_state
         return report
 
     # ── Sprint 8RC: IOC-aware prioritisation ───────────────────────────────

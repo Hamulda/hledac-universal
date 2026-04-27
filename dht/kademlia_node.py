@@ -43,6 +43,34 @@ DŮLEŽITÉ: Tento modul je paper-compliant Kademlia implementation,
 ALE bez reálného síťového transportu je to pouze local DHT simulation.
 """
 
+# =============================================================================
+# DHT PROMOTION GATE — F206F
+# =============================================================================
+# Explicit promotion status for DHT module.
+# DHT crawl returns data but MUST NEVER call async_ingest_findings_batch.
+# This gate prevents simulated DHT from being confused with production OSINT.
+DHT_PROMOTION_STATUS: str = "simulated_no_persist"
+
+
+def is_dht_production_ready() -> bool:
+    """
+    Returns False — DHT is SIMULATED and must not persist findings.
+
+    F206F: This gate exists to prevent accidental promotion of simulated
+    DHT results to production OSINT sources. DHT crawl results are
+    returned for potential future enrichment but are never written to
+    DuckDB via async_ingest_findings_batch.
+
+    Returns:
+        False always — DHT is not production-ready for persistence.
+    """
+    return False
+
+
+# =============================================================================
+# END DHT PROMOTION GATE
+# =============================================================================
+
 import asyncio
 import hashlib
 import logging

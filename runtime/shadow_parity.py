@@ -2,6 +2,19 @@
 Sprint F3.5: Shadow Scheduler Parity — Fact Parity Only
 ========================================================
 
+**VERDICT: ACTIVE (diagnostic only)** — 2026-04-27, F206B
+
+Tento modul je ACTIVE diagnostic — shadow parity runner čte facts a porovnává je.
+NIKdy nevolá canonical write path, tool execution, ani network execution.
+
+STRICT BOUNDARIES:
+- Shadow mode NIKDY nevolá tools execution
+- Shadow mode NIKDY nevytváří findings writes
+- Shadow mode NIKDY nevolá network execution
+- Shadow mode NIKDY neprodukuje side effects
+- Shadow mode NIKDY nezapisuje parity data do produkčních ledgerů
+- Parity artifact je DIAGNOSTICKÝ výstup, ne nový truth store
+
 První skutečný F3.5 krok: FACT PARITY ONLY.
 
 Tento modul implementuje shadow parity režim pro scheduler.

@@ -2,6 +2,12 @@
 Sprint F3.6: Shadow Pre-Decision Consumer Layer
 ================================================
 
+**VERDICT: ACTIVE (diagnostic only)** — 2026-04-27, F206B
+
+Tento modul je ACTIVE diagnostic — read-only consumer layer, která čte ParityArtifact
+a skládá pre-decision summary. NIKDY nevolá canonical write path, tool execution,
+ani network execution.
+
 Shadow-only, read-only vrstva která čte ParityArtifact (z shadow_parity.py)
 a skládá z něj pre-decision summary — interpretaci faktů pro scheduler decision,
 aniž by sahala do core decision loopu.

@@ -894,27 +894,21 @@ async def search_ahmia(
     base = AHMIA_ONION if use_onion else AHMIA_CLEARNET
     html = ""
     try:
-        if use_onion:
-            # Tor transport not available — use direct aiohttp session
-            # (transport.tor_transport is a sibling module outside universal/)
-            try:
-                async with aiohttp.ClientSession() as s:
-                    async with s.get(
-                        f"{base}?q={query}",
-                        headers={"User-Agent": "Mozilla/5.0"},
-                        timeout=aiohttp.ClientTimeout(total=15)
-                    ) as r:
-                        html = await r.text() if r.status == 200 else ""
-            except Exception as e:
-                logger.debug(f"[Ahmia] Tor fetch failed, falling back to clearnet: {e}")
-        else:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(
-                    base, params={"q": query},
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as r:
-                    html = await r.text() if r.status == 200 else ""
+        async with aiohttp.ClientSession() as s:
+            url = f"{base}?q={query}" if use_onion else base
+            params = None if use_onion else {"q": query}
+            resp, err = await checked_aiohttp_get(
+                s,
+                url,
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=aiohttp.ClientTimeout(total=15),
+                failure_kind="ahmia_onion" if use_onion else "ahmia_clearnet",
+            )
+            if err:
+                logger.debug(f"[Ahmia] fetch failed: {err}")
+                return []
+            html = await resp.text()
         if not html:
             return []
         soup = BeautifulSoup(html, "html.parser")
@@ -952,17 +946,21 @@ async def query_rdap(target: str) -> dict:
     )
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(
+            resp, err = await checked_aiohttp_get(
+                s,
                 endpoint,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    return {
-                        "target": target,
-                        "rdap":   data,
-                        "source": "rdap_org"
-                    }
+                timeout=aiohttp.ClientTimeout(total=10),
+                failure_kind="rdap",
+            )
+            if err:
+                logger.debug(f"[RDAP] {err}")
+                return {}
+            data = await resp.json()
+            return {
+                "target": target,
+                "rdap":   data,
+                "source": "rdap_org"
+            }
     except Exception as e:
         logger.debug(f"[RDAP] {e}")
     return {}
@@ -1823,26 +1821,31 @@ async def fetch_malwarebazaar_recent(tag: str | None = None,
         payload = {"query": "get_taginfo", "tag": tag, "limit": max_items}
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(
+            resp, err = await checked_aiohttp_post(
+                s,
                 "https://mb-api.abuse.ch/api/v1/",
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=20),
-            ) as r:
-                data = await r.json()
-                return [
-                    {
-                        "sha256":         e.get("sha256_hash", ""),
-                        "malware_family": e.get("signature", ""),
-                        "file_type":      e.get("file_type", ""),
-                        "first_seen":     e.get("first_seen", ""),
-                        "tags":           e.get("tags", []),
-                        "ioc":            e.get("sha256_hash", ""),
-                        "ioc_type":       "sha256",
-                        "title":          f"MalwareBazaar: {e.get('signature','?')}",
-                        "source":         "malwarebazaar",
-                    }
-                    for e in data.get("data", [])[:max_items]
-                ]
+                failure_kind="malwarebazaar_recent",
+            )
+            if err:
+                logger.debug(f"[MalwareBazaar] {err}")
+                return []
+            data = await resp.json()
+            return [
+                {
+                    "sha256":         e.get("sha256_hash", ""),
+                    "malware_family": e.get("signature", ""),
+                    "file_type":      e.get("file_type", ""),
+                    "first_seen":     e.get("first_seen", ""),
+                    "tags":           e.get("tags", []),
+                    "ioc":            e.get("sha256_hash", ""),
+                    "ioc_type":       "sha256",
+                    "title":          f"MalwareBazaar: {e.get('signature','?')}",
+                    "source":         "malwarebazaar",
+                }
+                for e in data.get("data", [])[:max_items]
+            ]
     except Exception as e:
         logger.debug(f"[MalwareBazaar] {e}")
     return []
@@ -1856,14 +1859,19 @@ async def _handle_malwarebazaar_search(task, scheduler):
     if len(ioc) == 64 and all(c in "0123456789abcdefABCDEF" for c in ioc):
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.post(
+                resp, err = await checked_aiohttp_post(
+                    s,
                     "https://mb-api.abuse.ch/api/v1/",
                     json={"query": "get_info", "hash": ioc},
                     timeout=aiohttp.ClientTimeout(total=15),
-                ) as r:
-                    data = await r.json()
-                    if data.get("data"):
-                        await scheduler._buffer_ioc_pivot("sha256", ioc, 0.85)
+                    failure_kind="malwarebazaar_info",
+                )
+                if err:
+                    logger.debug(f"[MalwareBazaar hash] {err}")
+                    return
+                data = await resp.json()
+                if data.get("data"):
+                    await scheduler._buffer_ioc_pivot("sha256", ioc, 0.85)
         except Exception as e:
             logger.debug(f"[MalwareBazaar hash] {e}")
     else:

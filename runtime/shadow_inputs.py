@@ -2,6 +2,19 @@
 Sprint 8VK: Shadow Scheduler Inputs Scaffold
 ============================================
 
+**VERDICT: ACTIVE (diagnostic only)** — 2026-04-27, F206B
+
+Tento modul je ACTIVE diagnostic —纯粹的shadow inputs pro čtení faktů.
+NESAHÁ na runtime behavior, canonical write path, ani tool execution.
+
+Shadow mode čte facts z canonical modulů (sprint_lifecycle, duckdb_store, model_manager).
+PreDecisionSummary z těchto inputů je DIAGNOSTICKÝ artifact, NENÍ nový truth store.
+Canonical facts zůstávají vlastněny svými canonical moduly:
+  - lifecycle_snapshot → runtime/sprint_lifecycle.py
+  - graph_summary → knowledge/duckdb_store.py
+  - model/control_facts → types.py (AnalyzerResult)
+  - export_handoff → export/COMPAT_HANDOFF.py
+
 Parity-ready scaffold pro sběr shadow inputs pro budoucí shadow scheduler.
 NESAHÁ na runtime behavior — pouze scaffolding a pure functions.
 

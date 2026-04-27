@@ -13,6 +13,7 @@ P4: Tor + stealth layer integration:
 """
 from __future__ import annotations
 
+import atexit
 import asyncio
 import logging
 import random
@@ -22,8 +23,6 @@ import urllib.parse
 from typing import Final, Optional
 
 import psutil
-
-import httpx
 
 import msgspec
 
@@ -62,78 +61,6 @@ _i2p_session: Optional["aiohttp.ClientSession"] = None
 
 # P7: Camoufox singleton lock — max 1 instance across entire fetcher
 _CAMOUFOX_LOCK: "asyncio.Lock" = asyncio.Lock()
-
-# ---------------------------------------------------------------------------
-# F191B: httpx timeout hierarchy — separate clearnet vs Tor paths
-# ---------------------------------------------------------------------------
-# httpx gives us HTTP/2 multiplexing and better connection pooling than aiohttp
-# httpx is used ONLY for clearnet (non-Tor, non-I2P) fetches.
-# Tor/I2P retain aiohttp + aiohttp_socks (cannot change — task constraint).
-
-_CLEARNET_HTTX_CLIENT: Optional[httpx.AsyncClient] = None
-_CLEARNET_HTTX_LOCK: "asyncio.Lock" = asyncio.Lock()
-
-# Timeout hierarchy: httpx.Timeout(connect, read, write, pool)
-# clearnet: fast — connect 3s, read 8s, write 3s, pool 2s
-CLEARNET_TIMEOUT: Final[httpx.Timeout] = httpx.Timeout(
-    connect=3.0,
-    read=8.0,
-    write=3.0,
-    pool=2.0,
-)
-# Tor: slow by design — circuit setup takes time
-TOR_HTTX_TIMEOUT: Final[httpx.Timeout] = httpx.Timeout(
-    connect=10.0,
-    read=20.0,
-    write=5.0,
-    pool=5.0,
-)
-
-
-def _http2_available() -> bool:
-    """Check if h2 (HTTP/2) package is available."""
-    try:
-        import h2
-        return True
-    except ImportError:
-        return False
-
-
-async def _get_clearnet_httpx_client() -> httpx.AsyncClient:
-    """
-    Get or create the shared httpx.AsyncClient for clearnet fetches (lazy singleton).
-
-    Connection pool: max_connections=50, max_keepalive_connections=20.
-    HTTP/2 multiplexing enabled if h2 package available (major perf win).
-    Falls back to HTTP/1.1 gracefully if h2 not installed.
-    """
-    global _CLEARNET_HTTX_CLIENT
-    async with _CLEARNET_HTTX_LOCK:
-        if _CLEARNET_HTTX_CLIENT is None or _CLEARNET_HTTX_CLIENT.is_closed:
-            use_http2 = _http2_available()
-            _CLEARNET_HTTX_CLIENT = httpx.AsyncClient(
-                timeout=CLEARNET_TIMEOUT,
-                limits=httpx.Limits(
-                    max_connections=50,
-                    max_keepalive_connections=20,
-                    keepalive_expiry=30.0,
-                ),
-                http2=use_http2,
-                follow_redirects=True,
-                headers={"User-Agent": DEFAULT_UA},
-            )
-            logger.debug(f"[CLEARNET_HTTX] httpx.AsyncClient created (HTTP/2={use_http2}, pool=50)")
-        return _CLEARNET_HTTX_CLIENT
-
-
-async def _close_clearnet_httpx_client() -> None:
-    """Close the shared httpx clearnet client (idempotent)."""
-    global _CLEARNET_HTTX_CLIENT
-    async with _CLEARNET_HTTX_LOCK:
-        if _CLEARNET_HTTX_CLIENT is not None and not _CLEARNET_HTTX_CLIENT.is_closed:
-            await _CLEARNET_HTTX_CLIENT.aclose()
-            _CLEARNET_HTTX_CLIENT = None
-            logger.debug("[CLEARNET_HTTX] httpx.AsyncClient closed")
 
 # ---------------------------------------------------------------------------
 # Public API — single entry point
@@ -524,6 +451,17 @@ async def _close_tor_session() -> None:
         _tor_session = None
 
 
+def _close_tor_session_sync() -> None:
+    """Sync wrapper for Tor session cleanup via atexit."""
+    global _tor_session
+    if _tor_session is not None and not _tor_session.closed:
+        try:
+            _tor_session.close()
+        except Exception:
+            pass
+        _tor_session = None
+
+
 async def _close_i2p_session() -> None:
     """
     P10: Close the I2P session (for cleanup).
@@ -532,6 +470,21 @@ async def _close_i2p_session() -> None:
     if _i2p_session is not None and not _i2p_session.closed:
         await _i2p_session.close()
         _i2p_session = None
+
+
+def _close_i2p_session_sync() -> None:
+    """Sync wrapper for I2P session cleanup via atexit."""
+    global _i2p_session
+    if _i2p_session is not None and not _i2p_session.closed:
+        try:
+            _i2p_session.close()
+        except Exception:
+            pass
+        _i2p_session = None
+
+
+atexit.register(_close_tor_session_sync)
+atexit.register(_close_i2p_session_sync)
 
 
 # ---------------------------------------------------------------------------
