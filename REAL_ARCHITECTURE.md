@@ -1,4 +1,4 @@
-# Hledač — Real Architecture (aktualizováno 2026-04-27, F206H)
+# Hledač — Real Architecture (aktualizováno 2026-04-27, F206I)
 
 ## F203I — Streaming Embedding Pipeline & LanceDB Pre-warm (2026-04-26)
 
@@ -762,6 +762,34 @@ scheduler.inject_prefetch_oracle(oracle)
 - `DuckPGQGraph` (quantum_pathfinder.py) — analytics donor backend, no new authority created
 - `graph_service.py` — read-only seam, fail-soft wrapper around DuckPGQGraph
 - `analyst_workbench.py` — consumes graph analytics in brief generation (bounded, advisory only)
+
+## F206I — Source Health Summary + Circuit Breaker Coverage (2026-04-27)
+
+**Přidáno** — bounded source health and circuit breaker coverage wired into diagnostic report:
+- `runtime/sprint_scheduler.py`:
+  - `_get_source_health_summary()` — reads `_source_economics` (per-sprint, in-memory), returns bounded summary (MAX_SOURCE_HEALTH_ENTRIES=100, hot-first ordering)
+  - `_get_circuit_breaker_summary()` — reads `get_all_breaker_snapshots()` from `transport.circuit_breaker`, returns total_tracked/open_count/half_open_count/entries (MAX_BREAKER_DOMAINS=500)
+  - Both wired into `_build_diagnostic_report()` as `source_health_summary` and `circuit_breaker_state` keys
+  - Module-level imports: `get_all_breaker_snapshots`, `get_all_breaker_states`, `MAX_TRACKED_DOMAINS`
+- `discovery/ti_feed_adapter.py`: `fetch_malwarebazaar_recent()`, `_handle_malwarebazaar_search()`, `query_rdap()`, and `search_ahmia()` now use `checked_aiohttp_post/get()` — all external domains protected by circuit breaker
+- `discovery/duckduckgo_adapter.py`: `_query_shodan_internetdb()` now uses `checked_aiohttp_get()` — shodan internetdb domain protected by circuit breaker
+- `tests/probe_f206i/test_source_health_circuit_coverage.py`: 18 invariants covering source health bounds, circuit breaker summary structure, wiring in report, external caller coverage
+
+**Bounds**:
+- `MAX_SOURCE_HEALTH_ENTRIES=100` — per-sprint source economics summary
+- `MAX_TRACKED_DOMAINS=500` — circuit breaker domain registry (from circuit_breaker.py, unchanged)
+- Fail-soft: `source_health_summary` and `circuit_breaker_state` return `{}` on any error
+
+**Existing external callers already CB-protected**:
+- `ti_feed_adapter`: urlhaus, threatfox, feodotracker, circl_pdns, crtsh, shodan_internetdb, pastebin, gist (all via `checked_aiohttp_get/post`)
+- `duckduckgo_adapter`: mojeek, commoncrawl_cdx, rdap (via `checked_aiohttp_get`)
+- `github_secret_scanner`: github search + raw fetch (via `checked_aiohttp_get`)
+- `public_fetcher`: own `get_breaker().check_circuit()` + `record_success/failure` in fetch path
+
+**GHOST_INVARIANTS reminder**:
+- Both new methods are sync (no `asyncio.gather` needed)
+- Fail-soft: empty dict on error, never raise
+- No canonical write path touched (read-only, diagnostic)
 
 ## F196A Ghost Verdict (2026-04-23)
 
@@ -2534,5 +2562,276 @@ Historical failures (NOT in green baseline, NOT blocking):
 - `pytest tests/probe_f206b/ -q` (15/15 pass)
 - `pytest tests/probe_8vk/ tests/probe_8vl_shadow_pre_decision/ tests/probe_8vm/ -q` (existing tests still pass)
 - `python smoke_runner.py --smoke` (smoke OK)
+
+## F206D: Advisory Runner Extraction (2026-04-27)
+
+**Refactor only**: Extracted advisory evaluation from `SprintScheduler._run_teardown_advisories()` into `SprintAdvisoryRunner` class in `runtime/sprint_advisory_runner.py`.
+
+**SprintAdvisoryRunner responsibilities** (what moved out of scheduler):
+- Sequential advisory step execution: planner → executor → governor → brief
+- `AdvisoryRunOutcome` dataclass construction
+- Planner step: `PivotPlanner.plan_pivots()` → `_planned_pivots`
+- Executor step: `SprintAdvisoryRunner._run_advisory_executor()` → `_executed_advisories`
+- Governor step: records skipped sidecars, peak RSS from result
+- Brief step: `AnalystWorkbench.build_sprint_brief()` → `_analyst_brief`
+- Fail-soft per step; `CancelledError` re-raised
+
+**What stays in SprintScheduler** (canonical owner):
+- AdvisoryRunner instantiation and `run_all_advisories()` call in teardown
+- `inject_analyst_workbench()` for on-demand workbench creation from `self._duckdb_store`
+- `_planned_pivots`, `_analyst_brief`, `_governor_recorded` state access
+
+**SprintAdvisoryRunner API** (`runtime/sprint_advisory_runner.py`):
+```python
+class SprintAdvisoryRunner:
+    def __init__(self, scheduler, duckdb_store, graph_service): ...
+    async def run_all_advisories(sprint_id, query) -> AdvisoryRunOutcome: ...
+
+@dataclass(frozen=True)
+class AdvisoryRunOutcome:
+    planned_pivots: int
+    executed_pivots: int
+    governor_recorded: bool
+    brief_generated: bool
+    error: str | None
+```
+
+**Advisory step order** (`run_all_advisories`):
+1. `_run_pivot_planner_advisory()` → `planned_pivots`
+2. `_run_advisory_executor()` → `executed_pivots`
+3. `_run_governor_advisory()` → `governor_recorded`
+4. `_run_analyst_brief_advisory()` → `brief_generated`
+
+Each step is fail-soft; partial outcomes are returned. `asyncio.CancelledError` propagates.
+
+**Tests**: `tests/probe_f206d/test_advisory_runner.py` — tests for AdvisoryRunOutcome frozen dataclass, runner construction, sequential step execution, fail-soft per step, CancelledError propagation, governor RSS tracking, and brief generation with query as target_id.
+
+## F206E: Windup Scorecard Reporting (2026-04-27)
+
+**Scope**: Active diagnostic report includes bounded windup scorecard fields extracted read-only from dormant `windup_engine.py` donor — WITHOUT activating the dormant `run_windup()` path.
+
+**Module**: `runtime/sprint_scheduler.py` — `_get_windup_scorecard()` method
+
+**WindupScorecard fields** (bounded by `MAX_WINDUP_SCORECARD_KEYS=32`):
+| Field | Source |
+|-------|--------|
+| `cb_open_domains` | `get_all_breaker_states()` — domains in open/half_open |
+| `cb_tracked_count` | Total circuits tracked |
+| `phase_durations.warmup_s` | `result.pre_loop_elapsed_s` |
+| `phase_durations.active_s` | `entered_active_at_monotonic` → `first_cycle_started_at_monotonic` |
+| `graph_nodes`, `graph_edges`, `graph_pgq_available` | `_get_graph_signal()` |
+| `peak_rss_mb` | `result.peak_rss_gib * 1024` |
+| `accepted_findings` | `result.accepted_findings` |
+| `sidecar_findings` | Aggregated from `identity/exposure/timeline/leak/evidence_triage/forensics/multimodal` counts |
+| `branch_timeouts` | `result.branch_timeout_count` when > 0 |
+| `budget_violations` | `result.budget_violations` when > 0 |
+
+**Key constraints**:
+- NO model load or GNN imports in `_get_windup_scorecard()`
+- NO call to `run_windup()` — dormant path stays dormant
+- Fail-soft: returns `{}` when all data sources unavailable
+- Priority key pruning when `len(scorecard) > MAX_WINDUP_SCORECARD_KEYS`
+
+**Tests**: `tests/probe_f206e/test_windup_scorecard_reporting.py` — 14 probe tests (F206E-1 through F206E-14) covering fail-soft, circuit breaker state, phase durations, graph stats, memory, findings, sidecar aggregation, branch timeouts, budget violations, no model load, and dormant path enforcement.
+
+## F206F: DHT/IPFS Promotion Gate (2026-04-27)
+
+**Scope**: Explicit promotion gate status for DHT and IPFS modules — both are bounded/experimental, NOT production-ready for full autonomous operation.
+
+**DHT promotion status** (`dht/kademlia_node.py`):
+- `DHT_PROMOTION_STATUS = "simulated_no_persist"` — DHT simulation active, no real persistence
+- `is_dht_production_ready()` → `False`
+
+**IPFS promotion status** (`network/ipfs_client.py`):
+- `IPFS_PROMOTION_STATUS = "bounded_gateway_fetch"` — bounded gateway fetch only
+- `fetch_ipfs(timeout=30, ...)` with default 30s timeout
+- `MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024` (10MB cap)
+- `fetch_ipfs` fails soft — returns `None` on error
+- `ipfs_content_to_finding_dict` uses `source_type="ipfs_fetch"`
+- `deep_probe.scan_ipfs` uses `source_type="deep_probe_ipfs"`
+
+**Circuit breaker integration**:
+- Circuit breaker hook in IPFS is optional and fail-open
+- IPFS errors do NOT trip the circuit breaker
+
+**Tests**: `tests/probe_f206f/test_dht_ipfs_promotion_gate.py` — 10 probe tests (F206F-1 through F206F-10) covering DHT/IPFS promotion status, fetch timeout, size cap, fail-soft behavior, source_type tagging, and circuit breaker fail-open.
+
+## F206G: Graph Analytics Activation (2026-04-27)
+
+**Scope**: Bounded graph analytics signal activated for analyst brief and sprint report — WITHOUT creating a new graph authority.
+
+**Module**: `knowledge/graph_service.py` — `graph_analytics_summary()` function
+
+**`graph_analytics_summary()` API**:
+```python
+def graph_analytics_summary(top_k: int = 10) -> dict:
+    # Returns:
+    #   top_central_entities: list of {value, ioc_type, degree}
+    #   community_count: int
+    #   analytics_available: bool
+    #   skipped_reason: str | None
+```
+
+**Bounds**:
+- `MAX_GRAPH_ANALYTICS_TOP_K = 10` — top_k cap
+- `MAX_GRAPH_ANALYTICS_NODES = 500` — node query LIMIT
+- Read-only: no `checkpoint()`, no INSERT/UPDATE/DELETE
+
+**`build_sprint_brief` integration**:
+- Calls `graph_analytics_summary()` for graph signal
+- Includes at most 2 graph analytics findings in brief key_findings
+- Fail-soft: returns empty signal when graph unavailable
+- Community count used as second finding when only 1 top entity
+
+**Key constraint**: `graph_analytics_summary()` is read-only — no persistent writes to the graph store.
+
+**Tests**: `tests/probe_f206g/test_graph_analytics_activation.py` — 9 probe tests (F206G-1 through F206G-9) covering required structure, empty when unavailable, fail-soft, top_k bounded, MAX_GRAPH_ANALYTICS_NODES respected, no persistent writes, brief integration (up to 2 findings, excludes when unavailable, fail-soft).
+
+## F206H: Target Drift Intelligence (2026-04-27)
+
+**Scope**: Explainable target drift intelligence — confidence_drift now includes entity/exposure/pivot delta keys and drift_reasons list, not just drift_ratio.
+
+**Module**: `knowledge/target_memory.py` — `TargetMemoryService.merge_update()`
+
+**New `confidence_drift` keys** (present after first merge):
+| Key | Description |
+|-----|-------------|
+| `entity_delta` | `{added, removed, stable, total_prev, total_curr, top_added, top_removed}` |
+| `exposure_delta` | Same structure for exposure facets |
+| `pivot_delta` | Same structure for pivot facets |
+| `drift_reasons` | List[str] — bounded explanations for drift |
+
+**`_compute_facet_delta` structure**:
+```python
+{
+    "added": int,        # new types not in prior memory
+    "removed": int,      # types dropped since prior memory
+    "stable": int,      # types present in both
+    "total_prev": int,   # total types in prior memory
+    "total_curr": int,  # total types in current memory
+    "top_added": list,   # new types sorted by score
+    "top_removed": list, # dropped types sorted by score
+}
+```
+
+**Bounds**:
+- `MAX_DRIFT_REASONS = 8` — drift_reasons list cap
+- `MAX_DRIFT_DELTA_KEYS = 20` — entity_delta.total_curr cap
+- Legacy fallback: old memory without delta keys uses `drift_ratio` as-is
+
+**`build_sprint_brief` integration**:
+- Drift explanation from `drift_reasons` appears in brief key_findings
+- Legacy memory without delta keys falls back to `drift_ratio` headline
+
+**Tests**: `tests/probe_f206h/test_target_drift_intelligence.py` — 13 probe tests (F206H-1 through F206H-13) covering confidence_drift keys, facet_delta structure, added/removed entity counting, bounds enforcement, first-sprint legacy keys, brief drift explanation, and backwards compatibility.
+
+## F206I: Baseline Regression Extension (2026-04-27)
+
+**Scope**: Extend the reproducible baseline runner to include F206A–H probe lanes in the regression profile and add known-failure cluster tracking.
+
+**Files changed**:
+- `run_baseline.py` — added `f206-regression` profile including F206A–F206I probe lanes
+- `KNOWN_FAILURE_PATTERNS` updated to include F204/F205/F206 specific failure markers
+
+**Probe lanes in f206-regression profile**:
+F204 lanes: probe_f204a through probe_f204j (10 lanes)
+F205 lanes: probe_f205b through probe_f205j (9 lanes)
+F206 lanes: probe_f206a through probe_f206i (9 lanes)
+
+**Known failure cluster report**:
+- Pre-F204 historical failures reported separately (not silenced)
+- Smoke failures (AdaptiveSemaphore) reported under known_failures
+- Benchmark matrix reports per-lane pass/fail with failure clustering
+
+**Tests**: `tests/probe_f206i/test_baseline_runner.py` — probes for the f206-regression profile, including inventory collection, JSON schema validation, known-failure reporting, and per-lane pass/fail aggregation.
+
+## F206J: Architecture Seal (2026-04-27)
+
+**Scope**: Seal F206 series — document active/dormant/orphan verdicts, scheduler decomposition, benchmark matrix, and known failure clusters. No new functionality.
+
+### Active / Dormant / Orphan verdicts after F206
+
+| Module | Verdict | Rationale |
+|--------|---------|-----------|
+| `runtime/shadow_inputs.py` | ACTIVE (diagnostic) | Pure shadow inputs collector — reads facts from canonical modules, no side effects |
+| `runtime/shadow_parity.py` | ACTIVE (diagnostic) | Shadow parity runner — pure function, DIAGNOSTIC artifact, NOT truth store |
+| `runtime/shadow_pre_decision.py` | ACTIVE (diagnostic) | Read-only consumer — builds PreDecisionSummary, NEVER calls canonical write path |
+| `runtime/windup_engine.py` | DORMANT (donor) | Defined but NEVER called in production — donor for future use |
+| `runtime/sprint_lifecycle_runner.py` | ACTIVE (canonical) | Extracted lifecycle orchestration — WARMUP→ACTIVE→WINDUP→TEARDOWN |
+| `runtime/sprint_advisory_runner.py` | ACTIVE (canonical) | Extracted advisory runner — planner→executor→governor→brief sequence |
+| `runtime/sidecar_dispatcher.py` | ACTIVE (canonical) | Extracted sidecar dispatch — batch construction, skipped tracking |
+| `runtime/sidecar_bus.py` | ACTIVE (canonical) | Staged runner execution — gather+_check_gathered per stage |
+| `dht/kademlia_node.py` | DORMANT (experimental) | `DHT_PROMOTION_STATUS = "simulated_no_persist"` — not production |
+| `network/ipfs_client.py` | DORMANT (experimental) | `IPFS_PROMOTION_STATUS = "bounded_gateway_fetch"` — bounded gateway only |
+| `knowledge/graph_service.py` | ACTIVE (canonical) | Graph analytics for analyst brief — DuckPGQ-backed, read-only |
+| `knowledge/target_memory.py` | ACTIVE (canonical) | Target memory with drift intelligence — delta keys + drift_reasons |
+
+### Scheduler decomposition
+
+The canonical sprint scheduler is decomposed into three extracted runners plus the scheduler itself:
+
+```
+SprintScheduler.run()
+├── SprintLifecycleRunner          # lifecycle orchestration
+│   ├── setup() → WARMUP
+│   ├── ensure_active() → ACTIVE
+│   ├── tick() periodic
+│   ├── sleep_or_abort()
+│   ├── windup_guard / post_sleep_gate
+│   └── teardown() → WINDUP→TEARDOWN
+├── _run_one_cycle()               # canonical: branch execution (stays in scheduler)
+├── SidecarDispatcher.dispatch()    # sidecar batch dispatch
+│   └── FindingSidecarBus.run_all_sidecars()
+│       ├── Stage 1 (light): leak_sentinel, passive_fingerprint, evidence_triage, temporal_archaeology
+│       ├── Stage 2 (correlation): exposure_correlator, identity_stitching, sprint_diff, rir_correlator, social_identity_surface, wayback_diff
+│       └── Stage 3 (derived): kill_chain_tagging, embedding
+└── SprintAdvisoryRunner.run_all_advisories()
+    ├── _run_pivot_planner_advisory()
+    ├── _run_advisory_executor()
+    ├── _run_governor_advisory()
+    └── _run_analyst_brief_advisory()
+```
+
+### Benchmark matrix
+
+| Metric | F204 Baseline | F205 Extension | F206 Seal |
+|--------|--------------|---------------|-----------|
+| Probe lanes | F204a–j (10) | F205b–j (9) | F206a–i (9) |
+| Total probes | ~200 | ~180 | ~150 |
+| Canonical write path | async_ingest_findings_batch | async_ingest_findings_batch | async_ingest_findings_batch |
+| Lifecycle | SprintLifecycleManager | SprintLifecycleManager | SprintLifecycleRunner extracted |
+| Sidecar bus | FindingSidecarBus staged | 3-stage ordering guaranteed | SidecarDispatcher extracted |
+| Advisory | inline in teardown | inline in teardown | SprintAdvisoryRunner extracted |
+| Shadow system | ACTIVE diagnostic | ACTIVE diagnostic | ACTIVE diagnostic |
+| Graph analytics | read via DuckPGQ | read via DuckPGQ | graph_analytics_summary activated |
+| Target drift | drift_ratio only | drift_ratio only | delta keys + drift_reasons |
+| DHT/IPFS | — | — | DORMANT experimental gates |
+| Windup scorecard | — | — | _get_windup_scorecard (read-only) |
+
+### Known failure clusters
+
+| Cluster | Files | Status |
+|---------|-------|--------|
+| AdaptiveSemaphore smoke | smoke_runner.py | Pre-existing — AdaptiveSemaphore.__init__ no `initial_value` |
+| Historical probe lanes | probe_2a, probe_4a, probe_6a–7a | Stale symbol/API expectations |
+| UMA snapshot shape | probe_1b, probe_6b | Shape drift since F195 |
+| Fetch coordinator API | probe_4b | API drift |
+
+### GHOST_INVARIANTS enforced across F206
+
+- `asyncio.gather(..., return_exceptions=True)` + `_check_gathered()` in all gather calls
+- `asyncio.CancelledError` re-raised, never swallowed
+- No blocking calls in event loop (CPU/IO via `run_in_executor`)
+- Canonical write path: `async_ingest_findings_batch()` only
+- RAM guard: skip heavy ops when RSS > high_water
+- Fail-soft: sidecar/advisory error never crashes sprint
+
+**Tests**: `tests/probe_f206j/test_f206_architecture_seal.py` — architecture seal probe tests
+
+**Definition of Done:**
+- `pytest tests/probe_f206j/ -q`
+- `python run_baseline.py --profile f206-regression --json /tmp/f206_regression.json`
+- `python smoke_runner.py --smoke`
+- `python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3`
 
 ## Architectural verdict

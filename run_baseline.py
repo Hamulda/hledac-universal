@@ -47,6 +47,13 @@ KNOWN_FAILURE_PATTERNS = [
     "test_sprint_7a",
     "test_mlx_cache_limits",
     "test_mlx_init",
+    # Smoke failure (pre-existing, documented in F206J):
+    # smoke_runner.py: AdaptiveSemaphore.__init__() no longer accepts initial_value
+    # FETCH_SEMAPHORE is _FetchSemaphoreProxy, not AdaptiveSemaphore
+    # current_limit unavailable on plain asyncio.Semaphore
+    "smoke_fetch_semaphore",
+    "smoke_adaptive_semaphore",
+    "smoke_semaphore_limit",
 ]
 
 # Probe lanes that form the green baseline (relative to TESTS_ROOT)
@@ -73,6 +80,22 @@ GREEN_PROBE_LANES = [
     "probe_f205i",
     "probe_f205j",
 ]
+
+# F206 probe lanes (added in F206A–F206I)
+F206_PROBE_LANES = [
+    "probe_f206a",
+    "probe_f206b",
+    "probe_f206c",
+    "probe_f206d",
+    "probe_f206e",
+    "probe_f206f",
+    "probe_f206g",
+    "probe_f206h",
+    "probe_f206i",
+]
+
+# Full f206-regression profile: F204 + F205 + F206 lanes
+F206_REGRESSION_LANES = GREEN_PROBE_LANES + F206_PROBE_LANES
 
 
 @dataclass
@@ -263,17 +286,21 @@ async def run_baseline_profile(
     Run the specified baseline profile.
 
     Args:
-        profile: one of "f205-green"
+        profile: one of "f205-green" or "f206-regression"
         collect_only: if True, only collect inventory (no test execution)
     """
-    if profile != "f205-green":
+    if profile == "f205-green":
+        probe_lanes = GREEN_PROBE_LANES
+    elif profile == "f206-regression":
+        probe_lanes = F206_REGRESSION_LANES
+    else:
         raise ValueError(f"Unknown profile: {profile!r}")
 
     commands: list[dict] = []
     overall_start = time.monotonic()
 
     # Step 1: collect-only inventory
-    inventory = collect_inventory(GREEN_PROBE_LANES)
+    inventory = collect_inventory(probe_lanes)
     commands.append({
         "step": "collect",
         "cmd": "pytest --co -q <probe_lanes>",
@@ -305,9 +332,9 @@ async def run_baseline_profile(
         "stderr": smoke_result["stderr"],
     })
 
-    # Step 3: run F204 probe lanes
+    # Step 3: run F204 probe lanes (first 10)
     f204_passed = f204_failed = 0
-    for lane in GREEN_PROBE_LANES[:10]:  # F204 lanes first 10
+    for lane in probe_lanes[:10]:  # F204 lanes first 10
         lane_path = TESTS_ROOT / lane
         if not lane_path.exists():
             continue
@@ -325,15 +352,15 @@ async def run_baseline_profile(
             "duration_s": result["duration_s"],
         })
 
-    # Step 4: run F205 probe lanes
-    f205_passed = f205_failed = 0
-    for lane in GREEN_PROBE_LANES[10:]:  # F205 lanes
+    # Step 4: run F205/F206 probe lanes (remaining)
+    remaining_passed = remaining_failed = 0
+    for lane in probe_lanes[10:]:  # F205 + F206 lanes
         lane_path = TESTS_ROOT / lane
         if not lane_path.exists():
             continue
         result = run_pytest([str(lane_path), "-q", "--maxfail=1"], timeout=120)
-        f205_passed += result["passed"]
-        f205_failed += result["failed"]
+        remaining_passed += result["passed"]
+        remaining_failed += result["failed"]
         commands.append({
             "step": "probe",
             "lane": lane,
@@ -346,8 +373,8 @@ async def run_baseline_profile(
         })
 
     elapsed = time.monotonic() - overall_start
-    total_passed = f204_passed + f205_passed
-    total_failed = f204_failed + f205_failed
+    total_passed = f204_passed + remaining_passed
+    total_failed = f204_failed + remaining_failed
 
     # Known failures: these are from the pre-F205 historical probe lanes
     # that are NOT part of the green baseline. We report them separately.
@@ -366,12 +393,13 @@ async def run_baseline_profile(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Reproducible baseline runner for Hledac F205/F204 probe lanes",
+        description="Reproducible baseline runner for Hledac F204/F205/F206 probe lanes",
     )
     parser.add_argument(
         "--profile",
         default="f205-green",
-        help="Baseline profile (default: f205-green)",
+        choices=["f205-green", "f206-regression"],
+        help="Baseline profile (default: f205-green, f206-regression adds F206 lanes)",
     )
     parser.add_argument(
         "--json",

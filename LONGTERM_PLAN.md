@@ -2046,6 +2046,81 @@ Commit message formát: "feat: sprint F202I — add multimodal evidence triage"
 
 ---
 
+## [DONE] F206A–F206J — F206 Seal Phase (2026-04-27)
+
+**Audit 2026-04-27**: F206 series sealed — no new functionality. Architecture documented, verdicts classified, regression matrix established.
+
+### F206 sub-phases
+
+| Phase | Name | Key Change |
+|-------|------|-----------|
+| F206A | Reproducible Baseline Runner | `run_baseline.py` CLI, `f205-green` profile, known-failure reporting |
+| F206B | Shadow Diagnostics Verdicts | ACTIVE/DORMANT verdicts on shadow modules, AST scan for no canonical write path |
+| F206C | Lifecycle Runner Extraction | `SprintLifecycleRunner` extracted from `SprintScheduler.run()` |
+| F206D | Advisory Runner Extraction | `SprintAdvisoryRunner` extracted from teardown |
+| F206E | Windup Scorecard Reporting | `_get_windup_scorecard()` read-only from dormant `windup_engine.py` donor |
+| F206F | DHT/IPFS Promotion Gate | Explicit `DHT_PROMOTION_STATUS` and `IPFS_PROMOTION_STATUS` gates |
+| F206G | Graph Analytics Activation | `graph_analytics_summary()` bounded, fail-soft, read-only for brief |
+| F206H | Target Drift Intelligence | `confidence_drift` gets delta keys + `drift_reasons` |
+| F206I | Baseline Regression Extension | `f206-regression` profile includes F204/F205/F206 lanes |
+| F206J | Architecture Seal | This document, `REAL_ARCHITECTURE.md` update, seal tests |
+
+### Verdicts after F206
+
+| Module | Verdict | Notes |
+|--------|---------|-------|
+| `runtime/shadow_inputs.py` | ACTIVE (diagnostic) | Pure read-only shadow inputs |
+| `runtime/shadow_parity.py` | ACTIVE (diagnostic) | Pure function diagnostic |
+| `runtime/shadow_pre_decision.py` | ACTIVE (diagnostic) | Read-only consumer, no canonical write |
+| `runtime/windup_engine.py` | DORMANT (donor) | Defined but never called in production |
+| `runtime/sprint_lifecycle_runner.py` | ACTIVE (canonical) | Lifecycle orchestration extracted |
+| `runtime/sprint_advisory_runner.py` | ACTIVE (canonical) | Advisory runner extracted |
+| `dht/kademlia_node.py` | DORMANT (experimental) | `simulated_no_persist` gate |
+| `network/ipfs_client.py` | DORMANT (experimental) | `bounded_gateway_fetch` gate |
+| `knowledge/graph_service.py` | ACTIVE (canonical) | Graph analytics for brief, read-only |
+| `knowledge/target_memory.py` | ACTIVE (canonical) | Drift intelligence with delta keys |
+
+### Scheduler decomposition (F206C + F206D)
+
+```
+SprintScheduler.run()
+├── SprintLifecycleRunner     # lifecycle: WARMUP→ACTIVE→WINDUP→TEARDOWN
+├── _run_one_cycle()         # canonical branch execution
+├── SidecarDispatcher         # sidecar batch dispatch (F205F)
+│   └── FindingSidecarBus     # 3-stage staged execution (F205B)
+└── SprintAdvisoryRunner     # planner→executor→governor→brief (F206D)
+```
+
+### Known failure clusters
+
+| Cluster | Files | Status |
+|---------|-------|--------|
+| AdaptiveSemaphore smoke | smoke_runner.py | Pre-existing, documented |
+| Historical probe lanes | probe_2a, probe_4a, probe_6a–7a | Stale expectations |
+| UMA snapshot shape | probe_1b, probe_6b | Shape drift since F195 |
+
+### Probe lanes total (after F206)
+
+- F204: 10 lanes (f204a–j)
+- F205: 9 lanes (f205b–j)
+- F206: 9 lanes (f206a–i)
+- Total in f206-regression: 28 lanes
+
+### Probe testy
+
+- `tests/probe_f206a/test_baseline_runner.py` — 10 tests
+- `tests/probe_f206b/test_shadow_verdicts.py` — 15 tests
+- `tests/probe_f206c/test_lifecycle_runner_refactor.py` — phase trace, windup guard, abort
+- `tests/probe_f206d/test_advisory_runner.py` — AdvisoryRunOutcome, sequential execution, fail-soft
+- `tests/probe_f206e/test_windup_scorecard_reporting.py` — 14 tests, windup_scorecard fields
+- `tests/probe_f206f/test_dht_ipfs_promotion_gate.py` — 10 tests, promotion gates
+- `tests/probe_f206g/test_graph_analytics_activation.py` — 9 tests, graph analytics
+- `tests/probe_f206h/test_target_drift_intelligence.py` — 13 tests, drift intelligence
+- `tests/probe_f206i/test_baseline_runner.py` — f206-regression probes
+- `tests/probe_f206j/test_f206_architecture_seal.py` — architecture seal tests
+
+---
+
 ## Exit Criteria For The Whole Roadmap
 
 - Ghost authority surfaces are removed or truly wired. **DONE for source files as of 2026-04-24; F201C probe lane is green.**
