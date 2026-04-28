@@ -272,5 +272,85 @@ class TestSprint85WildcardSuppression:
         assert 'subdomains_suppressed_by_wildcard' in handler_content
 
 
+class TestEmergencyPurgeSecurity:
+    """Test emergency_purge security invariants (P0-5)."""
+
+    def test_emergency_purge_no_audit_deletion(self):
+        """P0-5: emergency_purge must NOT delete audit logs (compliance requirement)."""
+        import inspect
+        from hledac.universal.security.deep_research_security import DeepResearchSecurity
+
+        source_file = inspect.getsourcefile(DeepResearchSecurity)
+        if source_file is None:
+            pytest.skip("Source file not found")
+
+        with open(source_file, 'r') as f:
+            content = f.read()
+
+        # Find emergency_purge method
+        method_start = content.find('async def emergency_purge')
+        if method_start < 0:
+            pytest.skip("emergency_purge not found")
+
+        # Extract method body (rough extraction to next method)
+        method_end = content.find('\n    def ', method_start + 1)
+        method_content = content[method_start:method_end]
+
+        # Must contain the compliance NOTE about audit preservation
+        assert 'Audit logs are NEVER deleted' in method_content, \
+            "emergency_purge must document audit log preservation policy"
+
+        # Must NOT contain actual audit deletion code
+        # Exclude comments from this check
+        lines = method_content.split('\n')
+        code_lines = [l for l in lines if not l.strip().startswith('#') and not l.strip().startswith('"""')]
+        code_only = '\n'.join(code_lines)
+
+        # Check for suspicious patterns like audit.delete
+        assert 'self.audit.delete' not in code_only, \
+            "emergency_purge must NOT call self.audit.delete (compliance violation)"
+
+    def test_emergency_purge_calls_session_cleanup(self):
+        """P0-5: emergency_purge must call emergency_cleanup on all sessions."""
+        import inspect
+        from hledac.universal.security.deep_research_security import DeepResearchSecurity
+
+        source_file = inspect.getsourcefile(DeepResearchSecurity)
+        if source_file is None:
+            pytest.skip("Source file not found")
+
+        with open(source_file, 'r') as f:
+            content = f.read()
+
+        # Find emergency_purge method
+        method_start = content.find('async def emergency_purge')
+        if method_start < 0:
+            pytest.skip("emergency_purge not found")
+
+        method_end = content.find('\n    def ', method_start + 1)
+        method_content = content[method_start:method_end]
+
+        # Must iterate over sessions and call emergency_cleanup
+        assert 'for session in' in method_content
+        assert 'emergency_cleanup()' in method_content
+
+    @pytest.mark.asyncio
+    async def test_emergency_purge_returns_stats(self):
+        """P0-5: emergency_purge must return cleanup statistics."""
+        from hledac.universal.security.deep_research_security import (
+            DeepResearchSecurity,
+            DeepSecurityConfig,
+        )
+
+        security = DeepResearchSecurity(config=DeepSecurityConfig())
+        results = await security.emergency_purge()
+
+        # Must return dict with expected keys
+        assert isinstance(results, dict)
+        assert 'sessions_terminated' in results
+        assert 'files_destroyed' in results
+        assert 'memory_wiped' in results
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

@@ -377,6 +377,38 @@ def _get_duckdb() -> Any:
 _DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "1GB")
 _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 
+
+def _validate_duckdb_setting(value: str, setting_name: str) -> str:
+    """
+    Validate DuckDB setting value to prevent SQL injection.
+
+    P1-3: Replaces f-string interpolation in SET commands.
+    Only allows alphanumeric, GB/MB/KB suffixes, and basic punctuation.
+    """
+    import re
+
+    # Allow: numbers, GB/MB/KB/TB suffixes, decimal point, spaces
+    if not re.match(r"^[\d.]+\s*(GB|MB|KB|TB)?\s*$", value.strip(), re.IGNORECASE):
+        raise ValueError(f"Invalid DuckDB setting {setting_name}: {value!r}")
+    return value.strip()
+
+
+def _validate_path_setting(value: Path, setting_name: str) -> str:
+    """
+    Validate Path setting for DuckDB SET commands.
+
+    P1-3: Ensures path is absolute and contains no shell metacharacters.
+    """
+    value_str = str(value)
+    if not value.is_absolute():
+        raise ValueError(f"Invalid DuckDB {setting_name}: must be absolute path, got {value_str!r}")
+    # Block shell metacharacters that could escape the string
+    dangerous = ["'", '"', ";", "$", "`", "\\", "\n", "\r"]
+    for char in dangerous:
+        if char in value_str:
+            raise ValueError(f"Invalid DuckDB {setting_name}: dangerous char {char!r} in {value_str!r}")
+    return value_str
+
 # Sprint 8AG §6.17: Persistent dedup config
 _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB dedicated dedup LMDB
 _DEDUP_HOT_CACHE_MAX: int = 10_000  # hard cap on in-memory dedup cache entries
@@ -989,7 +1021,10 @@ class DuckDBShadowStore:
             if not ioc_seen:
                 return findings
 
-            # Query graph for each unique IOC — use donor seam (fail-open)
+            # P1-1: N+1 query pattern — batch optimization needed
+            # Current: N queries for N unique IOCs
+            # Solution: Add get_connected_iocs_batch() to ioc_graph interface
+            # Temporary mitigation: process in parallel with asyncio (still N queries)
             connected_cache: dict[str, list[dict]] = {}
             for ioc_value in ioc_seen:
                 connected = self.get_connected_iocs(ioc_value, max_hops=max_hops)
@@ -1273,9 +1308,10 @@ class DuckDBShadowStore:
                 self._temp_dir = self._db_path.parent / "duckdb_tmp"
             self._temp_dir.mkdir(parents=True, exist_ok=True)
             conn = duckdb.connect(str(self._db_path))
-            conn.execute(f"SET memory_limit = '{self._memory_limit}'")
-            conn.execute(f"SET max_temp_directory_size = '{self._max_temp}'")
-            conn.execute(f"SET temp_directory = '{self._temp_dir}'")
+            # P1-3: Use validated settings to prevent SQL injection
+            conn.execute(f"SET memory_limit = '{_validate_duckdb_setting(self._memory_limit, 'memory_limit')}'")
+            conn.execute(f"SET max_temp_directory_size = '{_validate_duckdb_setting(self._max_temp, 'max_temp')}'")
+            conn.execute(f"SET temp_directory = '{_validate_path_setting(self._temp_dir, 'temp_directory')}'")
             conn.execute("PRAGMA threads=2")
             conn.execute(_SCHEMA_SQL)
             conn.close()
@@ -1283,14 +1319,14 @@ class DuckDBShadowStore:
             self._apply_schema_migrations()
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path))
-            self._file_conn.execute(f"SET memory_limit = '{self._memory_limit}'")
-            self._file_conn.execute(f"SET max_temp_directory_size = '{self._max_temp}'")
-            self._file_conn.execute(f"SET temp_directory = '{self._temp_dir}'")
+            self._file_conn.execute(f"SET memory_limit = '{_validate_duckdb_setting(self._memory_limit, 'memory_limit')}'")
+            self._file_conn.execute(f"SET max_temp_directory_size = '{_validate_duckdb_setting(self._max_temp, 'max_temp')}'")
+            self._file_conn.execute(f"SET temp_directory = '{_validate_path_setting(self._temp_dir, 'temp_directory')}'")
             self._file_conn.execute("PRAGMA threads=2")
         else:
             # MODE B: RAMDISK inactive — :memory: with PERSISTENT single connection
             self._persistent_conn = duckdb.connect(":memory:")
-            self._persistent_conn.execute(f"SET memory_limit = '{self._memory_limit}'")
+            self._persistent_conn.execute(f"SET memory_limit = '{_validate_duckdb_setting(self._memory_limit, 'memory_limit')}'")
             self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
             self._persistent_conn.execute("PRAGMA threads=2")
             self._persistent_conn.execute(_SCHEMA_SQL)

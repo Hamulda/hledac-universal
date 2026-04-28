@@ -152,7 +152,7 @@ async def async_get_httpx_client() -> "httpx.AsyncClient":
                 limits=limits,
                 http2=http2,
                 timeout=timeout,
-                follow_redirects=True,
+                follow_redirects=False,  # P1-5: Manual redirect handling with SSRF validation
                 # No cookies — stateless API calls
                 cookies=None,
                 # Trust environment for proxy detection (honors HTTP_PROXY etc.)

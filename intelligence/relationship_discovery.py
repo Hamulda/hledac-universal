@@ -661,8 +661,13 @@ class RelationshipDiscoveryEngine:
 
         if IGRAPH_AVAILABLE:
             try:
-                self._igraph_graph = ig.Graph.Load(path)
-                return True
+                if is_safe_path:
+                    self._igraph_graph = ig.Graph.Load(path)
+                    return True
+                else:
+                    logger.warning(
+                        f"[F196B] igraph load rejected for path outside graphs dir: {path}"
+                    )
             except Exception:
                 pass
         if NETWORKX_AVAILABLE:

@@ -303,7 +303,38 @@ class SprintSchedulerConfig:
 
 @dataclass
 class SprintSchedulerResult:
-    """Outcome of one sprint run."""
+    """
+    Outcome of one sprint run.
+
+    Attributes:
+        cycles_started: Number of fetch cycles initiated.
+        cycles_completed: Number of fetch cycles that completed all phases.
+        unique_entry_hashes_seen: Count of deduplicated entries processed.
+        duplicate_entry_hashes_skipped: Count of duplicate entries filtered.
+        total_pattern_hits: Sum of pattern matches across all sources.
+        accepted_findings: Findings that passed quality gate.
+        entries_per_source: Breakdown of entries by source (source_name -> count).
+        hits_per_source: Pattern hits per source (source_name -> count).
+        final_phase: Last phase reached (BOOT, GATHER, JUDGMENT, EXPORT, TEARDOWN).
+        export_paths: List of paths where sprint results were exported.
+        aborted: True if sprint was aborted early.
+        abort_reason: Human-readable reason for abortion.
+        stop_requested: True when stop_on_first_accepted triggered acceptance.
+        public_discovered: Public pipeline discoveries (F8XE).
+        public_fetched: Public pipeline successful fetches.
+        public_matched_patterns: Public pipeline pattern matches.
+        public_accepted_findings: Public pipeline accepted findings.
+        public_stored_findings: Public pipeline stored findings.
+        public_error: Public pipeline error message.
+        ct_log_discovered: CT log discoveries (F193A).
+        ct_log_stored: CT log stored findings.
+        ct_log_accepted_findings: CT log accepted findings (F194A).
+        ct_log_error: CT log error message.
+        entered_active_at_monotonic: Timestamp when ACTIVE phase first entered.
+        pre_loop_elapsed_s: Wall-clock seconds from run() to loop guard entry.
+        first_cycle_started_at_monotonic: Timestamp of first cycles_started increment.
+        pre_active_starved: True when gap between entered_active and first_cycle_started > 30s.
+    """
     cycles_started: int = 0
     cycles_completed: int = 0
     unique_entry_hashes_seen: int = 0

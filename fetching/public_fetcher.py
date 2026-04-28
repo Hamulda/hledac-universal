@@ -37,6 +37,8 @@ from hledac.universal.transport.httpx_transport import (
     should_use_httpx_h2,
     fetch_via_httpx_h2,
 )
+from hledac.universal.transport.curl_cffi_transport import should_use_curl_cffi
+from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi
 from hledac.universal.utils.concurrency import (
     FETCH_SEMAPHORE,
     get_clearnet_semaphore,
@@ -864,6 +866,63 @@ async def async_fetch_public_text(
         except Exception as e:
             logger.warning(f"Stealth session unavailable, proceeding without: {e}")
 
+    # --- F206M: curl_cffi stealth lane — explicit use_stealth escalation on clearnet ---
+    # Respects should_use_curl_cffi guards: darknet/JS/Freenet are protected.
+    # Falls back to aiohttp hot-path on any curl_cffi failure (including CancelledError re-raised).
+    _curl_fallback_reason: str | None = None
+    _use_curl, _curl_reason = should_use_curl_cffi(url, use_stealth=use_stealth, use_js=use_js)
+    if _use_curl:
+        try:
+            _curl_result = await fetch_via_curl_cffi(
+                url=url,
+                headers=None,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+                profile="chrome110",
+            )
+            # Build FetchResult from curl_cffi dict — mirrors httpx_h2 success path
+            _curl_text: str | None
+            _curl_bytes = _curl_result.get("content", b"")
+            _curl_decode_replaced = False
+            _curl_decode_replacement_count = 0
+            _curl_error = _curl_result.get("error", None)
+            if _curl_bytes:
+                _curl_text, _curl_decode_replaced, _curl_decode_replacement_count = _try_decode(_curl_bytes)
+            else:
+                _curl_text = None
+
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            _curl_final_url = _curl_result.get("final_url", url)
+            _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)
+            return FetchResult(
+                url=url,
+                final_url=_curl_final_url,
+                status_code=_curl_result.get("status_code", 0),
+                content_type=_curl_result.get("content_type", ""),
+                text=_curl_text,
+                fetched_bytes=len(_curl_bytes),
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error=_curl_error,
+                decode_replaced=_curl_decode_replaced,
+                decode_replacement_count=_curl_decode_replacement_count,
+                redirected=_curl_redirected,
+                redirect_target=_curl_redirect_target,
+                failure_stage=_curl_result.get("failure_stage", None),
+                network_error_kind=_curl_result.get("network_error_kind", None),
+                selected_transport="curl_cffi",
+                http_version=None,  # curl_cffi doesn't expose HTTP version
+                transport_policy_reason=_curl_reason,
+                transport_fallback_reason=None,
+            )
+        except asyncio.CancelledError:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            raise
+        except Exception as _curl_e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            logger.warning(f"[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}")
+            _curl_fallback_reason = f"curl_cffi_failed:{type(_curl_e).__name__}"
+
     # --- P4: Tor session setup for .onion URLs ---
     tor_session = None  # Always defined for use_tor check below
     if use_tor:
@@ -937,6 +996,15 @@ async def async_fetch_public_text(
         # P16: DoH resolution provides IP for logging/fallback but does NOT
         # override the Host header. The Host header must always be derived
         # from the URL's hostname to prevent host header injection.
+        # P1-5: SSRF NOTE - aiohttp auto-follows redirects without validating
+        # redirect targets. This is a known gap; httpx path has manual redirect
+        # validation. The aiohttp path trusts the OS-level DNS which provides
+        # some protection against DNS rebinding, but explicit redirect URL
+        # validation would be safer. For now, auto-redirect is kept to avoid
+        # breaking functionality; SSRF risk is partially mitigated by:
+        #   1. OS DNS resolution returning public IPs for legitimate domains
+        #   2. Tor/I2P sessions routing through proxies that block private IPs
+        #   3. fetch_coordinator._validate_fetch_target() validating initial URL
         request_kwargs: dict = {"headers": headers, "allow_redirects": True}
 
         # F191B: Lightweight backpressure when RAM > 5.5 GB — don't resize semaphore, just slow down
@@ -1124,7 +1192,10 @@ async def async_fetch_public_text(
                         # Determine actual transport used
                         _actual_transport = "httpx_h2" if _use_httpx_h2 else "aiohttp"
                         _fallback_info: str | None = None
-                        if not _use_httpx_h2 and _httpx_reason == "httpx_h2_fallback":
+                        # curl_cffi fallback takes priority — set when curl lane failed and aiohttp succeeded
+                        if _curl_fallback_reason:
+                            _fallback_info = _curl_fallback_reason
+                        elif not _use_httpx_h2 and _httpx_reason == "httpx_h2_fallback":
                             _fallback_info = "httpx_h2_fallback"
                         return FetchResult(
                             url=url,

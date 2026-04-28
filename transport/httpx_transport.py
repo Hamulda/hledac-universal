@@ -217,6 +217,7 @@ async def fetch_via_httpx_h2(
     url: str,
     timeout_s: float = 20.0,
     _max_bytes: int = 2 * 1024 * 1024,  # reserved for future size enforcement
+    _max_redirects: int = 10,
 ) -> "httpx.Response":  # type: ignore[name-defined]  # httpx imported lazily inside
     """
     Execute HTTP GET via HTTPX AsyncClient (HTTP/2 capable).
@@ -227,6 +228,7 @@ async def fetch_via_httpx_h2(
         url: Target URL
         timeout_s: Per-request timeout in seconds
         max_bytes: Maximum response bytes to buffer
+        max_redirects: Maximum number of redirects to follow
 
     Returns:
         httpx.Response — caller must check status and read body
@@ -239,11 +241,9 @@ async def fetch_via_httpx_h2(
     Callers are responsible for:
       - Content-Type validation
       - Body reading with size cap
-      - Redirect handling
       - Error mapping to FetchResult fields
     """
     from .httpx_client import async_get_httpx_client
-    import asyncio
 
     client = await async_get_httpx_client()
 
@@ -253,19 +253,89 @@ async def fetch_via_httpx_h2(
         "Accept-Encoding": "gzip, deflate",
     }
 
-    try:
+    # P1-5: Manual redirect handling with SSRF validation
+    visited: set[str] = set()
+    current_url = url
+
+    for _ in range(_max_redirects + 1):
+        if current_url in visited:
+            raise ValueError(f"Redirect loop detected for {url}")
+        visited.add(current_url)
+
         response = await client.get(
-            url,
+            current_url,
             headers=headers,
             timeout=timeout_s,
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        return response
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.debug(f"[HTTPX] fetch error for {url}: {e}")
-        raise
+
+        # Check for redirect status codes
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response
+
+        # P1-5: Validate redirect target before following
+        location = response.headers.get("location")
+        if not location:
+            return response
+
+        # Resolve relative URLs
+        redirect_url = urllib.parse.urljoin(current_url, location)
+
+        # Validate redirect URL is safe (no private IPs)
+        _validate_redirect_url(redirect_url)
+
+        current_url = redirect_url
+
+    raise ValueError(f"Too many redirects (> {_max_redirects}) for {url}")
+
+
+class _SSRFBlockError(Exception):
+    """Raised when redirect URL fails SSRF validation."""
+    pass
+
+
+def _validate_redirect_url(redirect_url: str) -> None:
+    """
+    Validate redirect URL is safe (no private IPs, no data: URIs, etc.).
+
+    Raises:
+        _SSRFBlockError: if redirect target is unsafe
+    """
+    import ipaddress
+    import urllib.parse
+
+    # Private network ranges to block
+    _PRIVATE_NETS = [
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("127.0.0.0/8"),
+        ipaddress.ip_network("169.254.0.0/16"),
+        ipaddress.ip_network("100.64.0.0/10"),
+    ]
+
+    parsed = urllib.parse.urlparse(redirect_url)
+
+    # Block data: and javascript: URIs
+    if parsed.scheme.lower() in ("data", "javascript", "vbscript"):
+        raise _SSRFBlockError(f"Unsafe redirect scheme blocked: {redirect_url}")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise _SSRFBlockError(f"No hostname in redirect URL: {redirect_url}")
+
+    # Check if hostname is private IP
+    try:
+        ip = ipaddress.ip_address(hostname)
+        for net in _PRIVATE_NETS:
+            if ip in net:
+                raise _SSRFBlockError(f"Redirect to private IP blocked: {redirect_url}")
+        if ip.is_multicast or ip.is_unspecified or (hasattr(ip, 'is_loopback') and ip.is_loopback):
+            raise _SSRFBlockError(f"Redirect to reserved IP blocked: {redirect_url}")
+    except _SSRFBlockError:
+        raise  # Re-raise SSRF blocks
+    except Exception:
+        pass  # Not an IP, must be domain — allow
 
 
 __all__ = [

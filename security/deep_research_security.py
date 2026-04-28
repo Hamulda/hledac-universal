@@ -243,10 +243,10 @@ class DeepResearchSecurity:
         # Ukončit všechny sessions
         for session in self._active_sessions[:]:
             await session.emergency_cleanup()
-        
-        # Smazat audit log pokud je to bezpečné
-        # (v reálném nasazení by toto mělo být konfigurovatelné)
-        
+
+        # NOTE: Audit logs are NEVER deleted — this is a compliance requirement.
+        # All emergency purge operations must be auditable post-hoc.
+
         logger.critical("EMERGENCY PURGE complete")
         
         return results
