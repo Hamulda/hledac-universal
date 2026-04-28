@@ -1136,6 +1136,22 @@ async def run_sprint(
             except Exception as e:
                 logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
         await store.aclose()
+        # Sprint F206K: Close HTTPX client if it was lazily instantiated
+        try:
+            from hledac.universal.transport.httpx_client import close_httpx_client_async
+            await close_httpx_client_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[TEARDOWN] HTTPX client close failed: {e}")  # fail-soft
+        # Sprint F206L: Close curl_cffi sessions if they were lazily instantiated
+        try:
+            from hledac.universal.transport.curl_cffi_runtime import close_curl_cffi_sessions_async
+            await close_curl_cffi_sessions_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[TEARDOWN] curl_cffi sessions close failed: {e}")  # fail-soft
 
 
 # =============================================================================

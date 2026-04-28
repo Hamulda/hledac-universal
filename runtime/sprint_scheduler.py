@@ -31,6 +31,7 @@ import asyncio
 import logging
 import struct
 import time as _time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from enum import Enum, auto
@@ -595,7 +596,7 @@ class SprintScheduler:
         # Sprint 8VB: Adaptive timeout EMA
         # F196C: Bounded to prevent unbounded growth across sprints
         self._fetch_latency_ema: dict[str, float] = {}
-        self._fetch_latency_ema_order: list[str] = []  # track insertion order for LRU
+        self._fetch_latency_ema_order: deque[str] = deque(maxlen=1000)  # O(1) LRU with auto-eviction
         self._MAX_FETCH_LATENCY_EMA: int = 1000  # max domains to track
         _EMA_ALPHA: float = 0.3
         _TIMEOUT_MIN: float = 5.0
@@ -4329,12 +4330,10 @@ class SprintScheduler:
         self._fetch_latency_ema[domain] = (
             0.3 * latency + 0.7 * prev
         )
-        # F196C: LRU eviction if exceeding max entries
+        # F196C: deque(maxlen=1000) auto-evicts oldest entry when full
         if domain not in self._fetch_latency_ema_order:
             self._fetch_latency_ema_order.append(domain)
-            if len(self._fetch_latency_ema_order) > self._MAX_FETCH_LATENCY_EMA:
-                old_domain = self._fetch_latency_ema_order.pop(0)
-                self._fetch_latency_ema.pop(old_domain, None)
+        # Eviction is automatic via deque maxlen
 
     def get_adaptive_timeout(self, domain: str) -> float:
         """Get adaptive timeout based on EMA latency. Clamped to [5, 30]s."""

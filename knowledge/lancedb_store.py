@@ -21,7 +21,6 @@ import asyncio
 import contextlib
 import hashlib
 import logging
-import pickle
 import time
 
 import orjson

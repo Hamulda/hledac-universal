@@ -579,11 +579,13 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 return await self._execute_decision(decision)
         
         # Execute all tasks with parallelism limit
+        # F206K: Added return_exceptions=True — one failure shouldn't cancel other tasks
         results = await asyncio.gather(*[
             execute_with_limit(task) for task in tasks
-        ])
-        
-        return list(results)
+        ], return_exceptions=True)
+
+        # Filter exceptions — return only successful ExecutionResult
+        return [r for r in results if not isinstance(r, Exception)]
 
     # ========================================================================
     # Task Tracking
