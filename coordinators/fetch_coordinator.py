@@ -440,6 +440,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_successes: int = 0  # successes since last increase
         self._aimd_failures: int = 0  # consecutive failures
         self._aimd_semaphore: Optional[asyncio.Semaphore] = None  # created on first use
+        self._aimd_semaphore_limit: int = int(CONCURRENCY_CLEARNET)  # P1-3: track limit explicitly (avoid _value private API)
         self._aimd_lock = asyncio.Lock()
 
         # Sprint 4B: Telemetry state
@@ -538,7 +539,7 @@ class FetchCoordinator(UniversalCoordinator):
                 return False
             if ip.is_unspecified:
                 return False
-            if hasattr(ip, 'is_loopback') and ip.is_loopback:
+            if ip.is_loopback:
                 return False
             return True
         except Exception:
@@ -608,12 +609,14 @@ class FetchCoordinator(UniversalCoordinator):
         async with self._aimd_lock:
             if self._aimd_semaphore is None:
                 self._aimd_semaphore = asyncio.Semaphore(int(self._aimd_concurrency))
+                self._aimd_semaphore_limit = int(self._aimd_concurrency)
             # Ensure semaphore limit matches current window
             # (recreate if window changed significantly)
-            current_limit = self._aimd_semaphore._value  # type: ignore
+            # P1-3 fix: use explicit limit tracking instead of private _value
             target = int(self._aimd_concurrency)
-            if abs(current_limit - target) > 2:
+            if abs(self._aimd_semaphore_limit - target) > 2:
                 self._aimd_semaphore = asyncio.Semaphore(target)
+                self._aimd_semaphore_limit = target
             await self._aimd_semaphore.acquire()
             self._telemetry['active_fetches'] += 1
             return self._aimd_concurrency
@@ -635,6 +638,7 @@ class FetchCoordinator(UniversalCoordinator):
             )
             if new_concurrency != self._aimd_concurrency:
                 self._aimd_concurrency = new_concurrency
+                self._aimd_semaphore_limit = int(new_concurrency)  # P1-3: sync limit
                 logger.debug(
                     f"[AIMD] success #{self._aimd_successes} → "
                     f"additive increase → window={self._aimd_concurrency:.1f}"
@@ -662,6 +666,7 @@ class FetchCoordinator(UniversalCoordinator):
         if new_concurrency != self._aimd_concurrency:
             old = self._aimd_concurrency
             self._aimd_concurrency = new_concurrency
+            self._aimd_semaphore_limit = int(new_concurrency)  # P1-3: sync limit
             logger.warning(
                 f"[AIMD] failure #{self._aimd_failures} → "
                 f"multiplicative decrease → window={old:.1f}→{self._aimd_concurrency:.1f}"
@@ -1172,9 +1177,16 @@ class FetchCoordinator(UniversalCoordinator):
             self._aimd_release_failure()
             result = {'url': url, 'content': b'', 'error': str(e)}
         finally:
-            # Always release AIMD slot if acquired and not yet released
-            # (handled above, but as safety net)
-            pass
+            # Safety net: always release AIMD semaphore slot if acquired.
+            # Normal success path: _aimd_release_success() called at line 1170.
+            # Normal failure path: _aimd_release_failure() called in fetch methods (lines 763, 767, 793).
+            # Exception path: _aimd_release_failure() called at line 1177.
+            # In all cases, semaphore.release() must be called to avoid resource leak.
+            if self._aimd_semaphore is not None:
+                try:
+                    self._aimd_semaphore.release()
+                except ValueError:
+                    pass  # Semaphore not acquired or already released
 
         # Sprint 46: Handle 401/403 - rotate credentials
         if result and result.get('status_code') in (401, 403):

@@ -81,6 +81,11 @@ from .layer_manager import (
     create_capabilities_manager,
     get_capabilities_manager,
 )
+from .temporal_signal_runtime import (
+    get_temporal_signal_layer,
+    reset_temporal_signal_layer,
+    get_temporal_signal_summary,
+)
 
 __all__ = [
     "GhostLayer",
@@ -148,4 +153,8 @@ __all__ = [
     "UnifiedCapabilitiesManager",
     "create_capabilities_manager",
     "get_capabilities_manager",
+    # Temporal Signal Runtime (Sprint F206P)
+    "get_temporal_signal_layer",
+    "reset_temporal_signal_layer",
+    "get_temporal_signal_summary",
 ]

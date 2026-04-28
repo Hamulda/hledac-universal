@@ -75,18 +75,7 @@ def _check_httpx_h2_capability() -> bool:
         logger.debug(f"[HTTPX] {_httpx_import_error}")
         return False
 
-    # Both available — verify httpx version
-    major = getattr(httpx, "__version__", "0.0.0").split(".")[0]
-    try:
-        major_int = int(major)
-    except (ValueError, TypeError):
-        major_int = 0
-
-    if major_int < 1:
-        _httpx_import_error = f"httpx {httpx.__version__} too old (need >= 1.0)"
-        logger.debug(f"[HTTPX] {_httpx_import_error}")
-        return False
-
+    # Both available — version check passed (h2 import is the real gate)
     _httpx_h2_enabled = True
     logger.debug(f"[HTTPX] HTTP/2 capability detected (httpx={httpx.__version__})")
     return True

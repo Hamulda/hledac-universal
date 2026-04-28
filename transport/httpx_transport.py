@@ -43,6 +43,7 @@ FAIL-SOFT BEHAVIOR:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import urllib.parse
 
@@ -179,6 +180,11 @@ def should_use_httpx_h2(
     """
     from .httpx_client import is_httpx_h2_enabled
 
+    # P4: Env gate — HLEDAC_ENABLE_HTTPX_H2 must be set (default: disabled)
+    env_val = os.environ.get("HLEDAC_ENABLE_HTTPX_H2", "").strip().lower()
+    if not env_val or env_val in ("0", "false", "no", "off"):
+        return False, "httpx_h2_disabled_env"
+
     # P3: Darknet URLs — route via aiohttp_socks
     host = _extract_host(url)
     if host.endswith(".onion"):
@@ -186,7 +192,7 @@ def should_use_httpx_h2(
     if host.endswith(".i2p") or host.endswith(".b32.i2p"):
         return False, "darknet_url"
     if host.endswith(".freenet"):
-        return False, "darknet_url"
+        return False, "freenet_not_httpx_supported"
 
     # P2: Stealth mode — uses aiohttp + StealthSession
     if use_stealth:
@@ -196,7 +202,7 @@ def should_use_httpx_h2(
     if use_js:
         return False, "js_required"
 
-    # P4: Check h2 availability
+    # P4: Check h2 availability (only reached when env is enabled)
     if not is_httpx_h2_enabled():
         return False, "httpx_h2_disabled"
 

@@ -83,6 +83,51 @@ MAX_BYTES_HARD: Final[int] = 10_000_000
 # Typed result DTO
 # ---------------------------------------------------------------------------
 
+# Transport counters — per-fetch, M1-safe slots-based dataclass
+_MAX_COUNT: int = 999_999
+
+
+class TransportCounters:
+    """Lightweight per-fetch transport counter bundle (M1-safe __slots__).
+
+    Bounded ints — counters saturate at MAX_COUNT rather than growing unbounded.
+    Not exposed in public API — aggregated by sprint coordinator from FetchResult.
+    """
+
+    __slots__ = (
+        "aiohttp_count",
+        "httpx_h2_count",
+        "curl_cffi_count",
+        "tor_aiohttp_socks_count",
+        "i2p_aiohttp_socks_count",
+        "js_renderer_count",
+        "fallback_count",
+        "curl_cffi_fallback_to_aiohttp_count",
+        "httpx_h2_fallback_to_aiohttp_count",
+    )
+
+    def __init__(
+        self,
+        aiohttp_count: int = 0,
+        httpx_h2_count: int = 0,
+        curl_cffi_count: int = 0,
+        tor_aiohttp_socks_count: int = 0,
+        i2p_aiohttp_socks_count: int = 0,
+        js_renderer_count: int = 0,
+        fallback_count: int = 0,
+        curl_cffi_fallback_to_aiohttp_count: int = 0,
+        httpx_h2_fallback_to_aiohttp_count: int = 0,
+    ) -> None:
+        self.aiohttp_count = min(aiohttp_count, _MAX_COUNT)
+        self.httpx_h2_count = min(httpx_h2_count, _MAX_COUNT)
+        self.curl_cffi_count = min(curl_cffi_count, _MAX_COUNT)
+        self.tor_aiohttp_socks_count = min(tor_aiohttp_socks_count, _MAX_COUNT)
+        self.i2p_aiohttp_socks_count = min(i2p_aiohttp_socks_count, _MAX_COUNT)
+        self.js_renderer_count = min(js_renderer_count, _MAX_COUNT)
+        self.fallback_count = min(fallback_count, _MAX_COUNT)
+        self.curl_cffi_fallback_to_aiohttp_count = min(curl_cffi_fallback_to_aiohttp_count, _MAX_COUNT)
+        self.httpx_h2_fallback_to_aiohttp_count = min(httpx_h2_fallback_to_aiohttp_count, _MAX_COUNT)
+
 
 class FetchResult(msgspec.Struct, frozen=True, gc=False):
     """Frozen msgspec result — no mutations after construction.
@@ -119,8 +164,10 @@ class FetchResult(msgspec.Struct, frozen=True, gc=False):
     # Added in F206K — Transport Capability Layer 2026 telemetry
     selected_transport: str | None = None  # aiohttp | httpx_h2 | aiohttp_socks | stealth | js
     http_version: str | None = None  # h2 | http/1.1 | h2c (detected post-response)
-    transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default
-    transport_fallback_reason: str | None = None  # set when fallback occurred (h2_unavailable, etc.)
+    transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default | httpx_h2_disabled_env | httpx_h2_disabled | httpx_h2_fallback | freenet_not_httpx_supported | explicit_stealth | status_403_or_429 | protection_detected | default_aiohttp
+    transport_fallback_reason: str | None = None  # set when fallback occurred (curl_cffi_failed:..., httpx_h2_fallback)
+    # Added in F206N — Transport Telemetry Counters
+    transport_counters: "TransportCounters | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +688,9 @@ async def async_fetch_public_text(
     """
     t0 = time.monotonic()
 
+    # --- F206N: Transport counters (per-fetch, bounded) ---
+    _tc = TransportCounters()
+
     # --- Type guard: non-string input fails fast, fail-soft ---
     if not isinstance(url, str):
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -716,6 +766,7 @@ async def async_fetch_public_text(
         if js_html:
             js_text, _ = await process_html_payload(js_html, url)
             elapsed_ms = (time.monotonic() - t0) * 1000
+            _tc.js_renderer_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -728,9 +779,11 @@ async def async_fetch_public_text(
                 error=None,
                 selected_transport="js",
                 transport_policy_reason="js_required",
+                transport_counters=_tc,
             )
         # JS rendering completely failed
         elapsed_ms = (time.monotonic() - t0) * 1000
+        _tc.js_renderer_count += 1
         return FetchResult(
             url=url,
             final_url=url,
@@ -744,6 +797,7 @@ async def async_fetch_public_text(
             failure_stage="fetching",
             selected_transport="js",
             transport_policy_reason="js_required",
+            transport_counters=_tc,
         )
 
     # --- P4: Determine transport mode ---
@@ -785,6 +839,7 @@ async def async_fetch_public_text(
                         _body_chunks.append(_chunk[:_remaining])
                         _total_read += _remaining
                     elapsed_ms = (time.monotonic() - t0) * 1000
+                    _tc.httpx_h2_count += 1
                     return FetchResult(
                         url=url,
                         final_url=_httpx_final_url,
@@ -799,6 +854,7 @@ async def async_fetch_public_text(
                         selected_transport="httpx_h2",
                         http_version=_http_ver,
                         transport_policy_reason=_httpx_reason,
+                        transport_counters=_tc,
                     )
                 _body_chunks.append(_chunk)
                 _total_read += _chunk_len
@@ -808,6 +864,7 @@ async def async_fetch_public_text(
 
             elapsed_ms = (time.monotonic() - t0) * 1000
             redirected, redirect_target = _derive_redirect_fields(url, _httpx_final_url)
+            _tc.httpx_h2_count += 1
             return FetchResult(
                 url=url,
                 final_url=_httpx_final_url,
@@ -825,6 +882,7 @@ async def async_fetch_public_text(
                 selected_transport="httpx_h2",
                 http_version=_http_ver,
                 transport_policy_reason=_httpx_reason,
+                transport_counters=_tc,
             )
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -894,6 +952,7 @@ async def async_fetch_public_text(
             elapsed_ms = (time.monotonic() - t0) * 1000
             _curl_final_url = _curl_result.get("final_url", url)
             _curl_redirected, _curl_redirect_target = _derive_redirect_fields(url, _curl_final_url)
+            _tc.curl_cffi_count += 1
             return FetchResult(
                 url=url,
                 final_url=_curl_final_url,
@@ -914,6 +973,7 @@ async def async_fetch_public_text(
                 http_version=None,  # curl_cffi doesn't expose HTTP version
                 transport_policy_reason=_curl_reason,
                 transport_fallback_reason=None,
+                transport_counters=_tc,
             )
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -922,6 +982,8 @@ async def async_fetch_public_text(
             elapsed_ms = (time.monotonic() - t0) * 1000
             logger.warning(f"[curl_cffi] stealth lane failed for {url}, falling back to aiohttp: {_curl_e}")
             _curl_fallback_reason = f"curl_cffi_failed:{type(_curl_e).__name__}"
+            _tc.curl_cffi_fallback_to_aiohttp_count += 1
+            _tc.fallback_count += 1
 
     # --- P4: Tor session setup for .onion URLs ---
     tor_session = None  # Always defined for use_tor check below
@@ -930,6 +992,7 @@ async def async_fetch_public_text(
             tor_session = await _get_tor_session()
         except RuntimeError as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
+            _tc.tor_aiohttp_socks_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -943,6 +1006,7 @@ async def async_fetch_public_text(
                 failure_stage="connection",
                 selected_transport="aiohttp_socks",
                 transport_policy_reason="darknet_url",
+                transport_counters=_tc,
             )
 
     # --- P10: I2P session setup for .i2p/.b32.i2p URLs ---
@@ -952,6 +1016,7 @@ async def async_fetch_public_text(
             i2p_session = await _get_i2p_session()
         except RuntimeError as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
+            _tc.i2p_aiohttp_socks_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -965,6 +1030,7 @@ async def async_fetch_public_text(
                 failure_stage="connection",
                 selected_transport="aiohttp_socks",
                 transport_policy_reason="darknet_url",
+                transport_counters=_tc,
             )
 
     # --- Retryable status tracking ---
@@ -1037,6 +1103,19 @@ async def async_fetch_public_text(
                         # Exhausted retries — return with error prefix
                         elapsed_ms = (time.monotonic() - t0) * 1000
                         redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                        # --- F206N: Transport counter for aiohttp/Tor/I2P path ---
+                        if _httpx_reason == "httpx_h2_fallback":
+                            _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                            _tc.fallback_count += 1
+                        elif _curl_fallback_reason is not None:
+                            # curl_cffi fallback counter already set above, add fallback_count only
+                            _tc.fallback_count += 1
+                        elif use_tor:
+                            _tc.tor_aiohttp_socks_count += 1
+                        elif use_i2p:
+                            _tc.i2p_aiohttp_socks_count += 1
+                        else:
+                            _tc.aiohttp_count += 1
                         return FetchResult(
                             url=url,
                             final_url=final_url,
@@ -1052,6 +1131,7 @@ async def async_fetch_public_text(
                             failure_stage="http",
                             selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                             transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                            transport_counters=_tc,
                         )
 
                         # --- Content-type gate with XML-ish body recovery (Feed ingress hardening F164A) ---
@@ -1084,6 +1164,17 @@ async def async_fetch_public_text(
                                     # non-XML body under wrong CT: reject without reading remainder
                                     elapsed_ms = (time.monotonic() - t0) * 1000
                                     redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                                    if _httpx_reason == "httpx_h2_fallback":
+                                        _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                                        _tc.fallback_count += 1
+                                    elif _curl_fallback_reason is not None:
+                                        _tc.fallback_count += 1
+                                    elif use_tor:
+                                        _tc.tor_aiohttp_socks_count += 1
+                                    elif use_i2p:
+                                        _tc.i2p_aiohttp_socks_count += 1
+                                    else:
+                                        _tc.aiohttp_count += 1
                                     return FetchResult(
                                         url=url,
                                         final_url=final_url,
@@ -1099,6 +1190,7 @@ async def async_fetch_public_text(
                                         failure_stage="http",
                                         selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                                         transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                        transport_counters=_tc,
                                     )
 
                             if total_read + chunk_len > max_bytes:
@@ -1109,6 +1201,17 @@ async def async_fetch_public_text(
                                 accumulated_ok = False
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                                if _httpx_reason == "httpx_h2_fallback":
+                                    _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                                    _tc.fallback_count += 1
+                                elif _curl_fallback_reason is not None:
+                                    _tc.fallback_count += 1
+                                elif use_tor:
+                                    _tc.tor_aiohttp_socks_count += 1
+                                elif use_i2p:
+                                    _tc.i2p_aiohttp_socks_count += 1
+                                else:
+                                    _tc.aiohttp_count += 1
                                 return FetchResult(
                                     url=url,
                                     final_url=final_url,
@@ -1124,6 +1227,7 @@ async def async_fetch_public_text(
                                     failure_stage="size",
                                     selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                                     transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                    transport_counters=_tc,
                                 )
                             body_chunks.append(chunk)
                             total_read += chunk_len
@@ -1150,6 +1254,7 @@ async def async_fetch_public_text(
                                 # Process JS-rendered HTML
                                 js_text, js_matches = await process_html_payload(js_html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
+                                _tc.js_renderer_count += 1
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -1162,6 +1267,7 @@ async def async_fetch_public_text(
                                     error=None,
                                     selected_transport="js",
                                     transport_policy_reason="js_required",
+                                    transport_counters=_tc,
                                 )
                             # Camoufox failed → try nodriver fallback
                             logger.warning(f"Camoufox failed, trying nodriver: {url}")
@@ -1169,6 +1275,7 @@ async def async_fetch_public_text(
                             if js_html:
                                 js_text, js_matches = await process_html_payload(js_html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
+                                _tc.js_renderer_count += 1
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -1181,6 +1288,7 @@ async def async_fetch_public_text(
                                     error=None,
                                     selected_transport="js",
                                     transport_policy_reason="js_required",
+                                    transport_counters=_tc,
                                 )
                             # Both JS renders failed → warn and return original
                             logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
@@ -1197,6 +1305,19 @@ async def async_fetch_public_text(
                             _fallback_info = _curl_fallback_reason
                         elif not _use_httpx_h2 and _httpx_reason == "httpx_h2_fallback":
                             _fallback_info = "httpx_h2_fallback"
+                        # --- F206N: Transport counter for aiohttp success ---
+                        if _curl_fallback_reason:
+                            # curl fallback counter already incremented in curl except block
+                            pass
+                        elif _fallback_info == "httpx_h2_fallback":
+                            _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                            _tc.fallback_count += 1
+                        elif use_tor:
+                            _tc.tor_aiohttp_socks_count += 1
+                        elif use_i2p:
+                            _tc.i2p_aiohttp_socks_count += 1
+                        else:
+                            _tc.aiohttp_count += 1
                         return FetchResult(
                             url=url,
                             final_url=final_url,
@@ -1217,12 +1338,25 @@ async def async_fetch_public_text(
                             http_version="http/1.1",  # aiohttp always HTTP/1.1
                             transport_policy_reason=_httpx_reason if _use_httpx_h2 else "clearnet_default",
                             transport_fallback_reason=_fallback_info,
+                            transport_counters=_tc,
                         )
 
         except asyncio.TimeoutError:
             elapsed_ms = (time.monotonic() - t0) * 1000
             if _circuit_breaker:
                 _circuit_breaker.record_failure(is_timeout=True, failure_kind="timeout")
+            # --- F206N: Transport counter for timeout ---
+            if _curl_fallback_reason:
+                pass  # curl fallback counter already incremented
+            elif _httpx_reason == "httpx_h2_fallback":
+                _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                _tc.fallback_count += 1
+            elif use_tor:
+                _tc.tor_aiohttp_socks_count += 1
+            elif use_i2p:
+                _tc.i2p_aiohttp_socks_count += 1
+            else:
+                _tc.aiohttp_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -1237,6 +1371,7 @@ async def async_fetch_public_text(
                 network_error_kind="timeout",
                 selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                 transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                transport_counters=_tc,
             )
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -1250,6 +1385,18 @@ async def async_fetch_public_text(
             # body_read_error=True only when body stream was actually entered and failed.
             # For connection/tls/http stages the body was never reached — flag stays False.
             body_read_error = failure_stage in ("body", "size")
+            # --- F206N: Transport counter for exception ---
+            if _curl_fallback_reason:
+                pass  # curl fallback counter already incremented
+            elif _httpx_reason == "httpx_h2_fallback":
+                _tc.httpx_h2_fallback_to_aiohttp_count += 1
+                _tc.fallback_count += 1
+            elif use_tor:
+                _tc.tor_aiohttp_socks_count += 1
+            elif use_i2p:
+                _tc.i2p_aiohttp_socks_count += 1
+            else:
+                _tc.aiohttp_count += 1
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -1265,6 +1412,7 @@ async def async_fetch_public_text(
                 network_error_kind=network_error_kind,
                 selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                 transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                transport_counters=_tc,
             )
 
     # Should not reach here, but as safeguard (retry exhaustion after loop):
@@ -1272,6 +1420,18 @@ async def async_fetch_public_text(
     err_str = last_error or "retry_exhausted"
     failure_stage, network_error_kind = _derive_failure_stage_and_network_kind(err_str)
     body_read_error = failure_stage in ("body", "size")
+    # --- F206N: Transport counter (same logic as retry exhausted) ---
+    if _curl_fallback_reason:
+        pass  # curl fallback counter already incremented
+    elif _httpx_reason == "httpx_h2_fallback":
+        _tc.httpx_h2_fallback_to_aiohttp_count += 1
+        _tc.fallback_count += 1
+    elif use_tor:
+        _tc.tor_aiohttp_socks_count += 1
+    elif use_i2p:
+        _tc.i2p_aiohttp_socks_count += 1
+    else:
+        _tc.aiohttp_count += 1
     return FetchResult(
         url=url,
         final_url=url,
@@ -1287,6 +1447,7 @@ async def async_fetch_public_text(
         network_error_kind=network_error_kind,
         selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
         transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+        transport_counters=_tc,
     )
 
 

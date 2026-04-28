@@ -79,7 +79,10 @@ class PromptCache:
         trigrams = [text[i:i+3].lower() for i in range(len(text)-2)]
         emb = [0.0] * self._dim
 
-        for trigram in trigrams[:100]:  # limit for speed
+        # Performance tradeoff: limit trigram extraction to first 100.
+        # Long prompts (10k chars ≈ 10k trigrams) would be expensive to hash fully.
+        _MAX_TRIGRAMS_PER_PROMPT = 100
+        for trigram in trigrams[:_MAX_TRIGRAMS_PER_PROMPT]:
             # Sprint 79b: Use xxhash for faster hashing
             if XXHASH_AVAILABLE:
                 h = xxhash.xxh3_64(trigram.encode()).intdigest()

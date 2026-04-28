@@ -3032,7 +3032,12 @@ class DuckDBShadowStore:
         self,
         entities: list[tuple[str, str, float]],
     ) -> int:
-        """Sync upsert global entities — MUST be called on worker thread."""
+        """Sync upsert global entities — MUST be called on worker thread.
+
+        Sprint 8TA B.4 fix: Batch upsert eliminates N+1 query pattern.
+        Before: N SELECTs + N INSERTs (2000 ops for 1000 entities)
+        After:  Single transaction with batch INSERT OR REPLACE
+        """
         import os as _os
         import sqlite3
 
@@ -3058,31 +3063,27 @@ class DuckDBShadowStore:
                 )
                 """
             )
-            count = 0
             now = _time.time()
-            for entity_value, entity_type, confidence in entities:
-                existing = conn.execute(
-                    "SELECT sprint_count, confidence_cumulative FROM global_entities WHERE entity_value = ?",
-                    (entity_value,),
-                ).fetchone()
-                if existing:
-                    sprint_count = existing[0] + 1
-                    confidence_cumulative = max(existing[1], confidence)
-                else:
-                    sprint_count = 1
-                    confidence_cumulative = confidence
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO global_entities
+
+            # Sprint 8TA B.4: Batch upsert — eliminates N+1 query pattern
+            # Use INSERT ... ON CONFLICT DO UPDATE for atomic increment/max semantics
+            # Before: N SELECTs + N INSERTs (2000 ops for 1000 entities)
+            # After:  Single executemany with ON CONFLICT handling (2 ops total)
+            conn.executemany(
+                """
+                INSERT INTO global_entities
                     (entity_value, entity_type, sprint_count, last_seen, confidence_cumulative)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (entity_value, entity_type, sprint_count, now, confidence_cumulative),
-                )
-                count += 1
+                VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT(entity_value) DO UPDATE SET
+                    sprint_count = sprint_count + 1,
+                    confidence_cumulative = MAX(confidence_cumulative, excluded.confidence_cumulative),
+                    last_seen = excluded.last_seen
+                """,
+                [(e, t, now, c) for e, t, c in entities],
+            )
             conn.commit()
             conn.close()
-            return count
+            return len(entities)
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             lock_file.close()

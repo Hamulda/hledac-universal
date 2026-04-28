@@ -1135,6 +1135,14 @@ async def _fetch_and_process_page(
                     from hledac.universal.brain.model_manager import get_model_manager
 
                     # Build list of (finding_id, payload_text) for accepted findings only
+                    # Sprint F206P: temporal signal observation (advisory only, fail-soft)
+                    try:
+                        from hledac.universal.layers import get_temporal_signal_layer
+                        from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
+                        temporal_layer = get_temporal_signal_layer()
+                    except Exception:
+                        temporal_layer = None
+
                     accepted_ids: list[str] = []
                     accepted_texts: list[str] = []
                     for finding, sr in zip(unique_findings, store_results):
@@ -1144,6 +1152,16 @@ async def _fetch_and_process_page(
                         else:
                             is_accepted = bool(getattr(sr, "accepted", False))
                         if is_accepted:
+                            # Sprint F206P: observe temporal event (advisory, fail-soft)
+                            if temporal_layer is not None:
+                                try:
+                                    te = event_from_finding_like(finding)
+                                    if te:
+                                        temporal_layer.observe(te)
+                                except asyncio.CancelledError:
+                                    raise
+                                except Exception:
+                                    pass  # fail-soft: temporal scoring is advisory only
                             pt = getattr(finding, "payload_text", "") or ""
                             if len(pt) > 20:
                                 fid = getattr(finding, "finding_id", None)
@@ -1902,6 +1920,10 @@ async def async_run_live_public_pipeline(
     -------
     PipelineRunResult with typed counts and per-page error breakdown.
     """
+    # Sprint F206P: Reset temporal signal layer at run start
+    from hledac.universal.layers import reset_temporal_signal_layer
+    reset_temporal_signal_layer()
+
     # Ensure hot-path imports are resolved
     _ensure_patched()
 
@@ -2336,6 +2358,13 @@ async def async_run_live_public_pipeline(
         public_next_action = "hold_public_branch"
         public_confidence_note = "marginal_signal"
 
+    # Sprint F206P: temporal signal summary (advisory, fail-soft)
+    try:
+        from hledac.universal.layers import get_temporal_signal_summary
+        temporal_signal_summary = get_temporal_signal_summary(k=10)
+    except Exception:
+        temporal_signal_summary = {}
+
     public_branch_verdict = {
         "waste_ratio": waste_ratio,
         "value_ratio": value_ratio,
@@ -2350,6 +2379,7 @@ async def async_run_live_public_pipeline(
         "corroboration_vs_burn": corroboration_vs_burn,
         "public_next_action": public_next_action,
         "public_confidence_note": public_confidence_note,
+        "temporal_signal_summary": temporal_signal_summary,
     }
 
     # Sprint F150L: usable-value run-level aggregates

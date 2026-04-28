@@ -209,7 +209,13 @@ def get_uma_pressure_level() -> tuple[int, str]:
 
 
 def is_uma_warn() -> bool:
-    """Return True if UMA usage >= 6.0 GB."""
+    """
+    Return True if UMA usage >= warn threshold (6.0 GB).
+
+    Note: This returns True for warn, critical, AND emergency levels.
+    For exact level checking, use get_uma_pressure_level() directly.
+    Use is_uma_critical() or is_uma_emergency() for specific thresholds.
+    """
     _, level = get_uma_pressure_level()
     return level in ("warn", "critical", "emergency")
 
