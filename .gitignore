@@ -55,8 +55,6 @@ __pycache__/
 *.bak_*
 *_bak_*
 .bak_*
-None
-None.*
 
 # Artifact hygiene — srclight backup
 .srclight/
@@ -76,3 +74,28 @@ tests/test_pattern_matcher.py
 .mcp.json
 .repowise/
 .rtk/
+
+# OMC persistent state
+.omc/
+
+# Local artifacts
+.backup/
+.codebase-memory/
+.full-review/
+
+# RL state (ephemeral)
+rl/.sprint_policy_state.json
+
+# Test probes (can be large/generated)
+tests/probe_f*/
+
+# Agent/Codegen artifacts
+.agent/
+.agentdb/
+.auto-claude/
+.automaker/
+.cgcignore
+.chunkhound.json
+.chunkhoundignore
+.claude-flow/
+.claude_consciousness.m8

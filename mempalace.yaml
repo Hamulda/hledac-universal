@@ -1,3 +1,235 @@
-wing: hledac-universal
-palace_path: /Users/vojtechhamada/.mempalace/palace
-backend: lance
+wing: hledac
+rooms:
+- name: cache_storage
+  description: Files from cache_storage/
+  keywords:
+  - cache_storage
+  - cache_storage
+- name: benchmark
+  description: Files from benchmark/
+  keywords:
+  - benchmark
+  - benchmark
+- name: benchmark_results
+  description: Files from benchmark_results/
+  keywords:
+  - benchmark_results
+  - benchmark_results
+- name: context_optimization
+  description: Files from context_optimization/
+  keywords:
+  - context_optimization
+  - context_optimization
+- name: temp
+  description: Files from temp/
+  keywords:
+  - temp
+  - temp
+- name: staging_config
+  description: Files from staging_config/
+  keywords:
+  - staging_config
+  - staging_config
+- name: scripts
+  description: Files from tools/
+  keywords:
+  - scripts
+  - tools
+- name: analysis
+  description: Files from analysis/
+  keywords:
+  - analysis
+  - analysis
+- name: memory
+  description: Files from memory/
+  keywords:
+  - memory
+  - memory
+- name: cache
+  description: Files from cache/
+  keywords:
+  - cache
+  - cache
+- name: embedding_cache
+  description: Files from embedding_cache/
+  keywords:
+  - embedding_cache
+  - embedding_cache
+- name: hledac.egg_info
+  description: Files from hledac.egg-info/
+  keywords:
+  - hledac.egg_info
+  - hledac.egg-info
+- name: configuration
+  description: Files from config/
+  keywords:
+  - configuration
+  - config
+- name: security
+  description: Files from security/
+  keywords:
+  - security
+  - security
+- name: plugins
+  description: Files from plugins/
+  keywords:
+  - plugins
+  - plugins
+- name: ai_research_platform
+  description: Files from ai-research-platform/
+  keywords:
+  - ai_research_platform
+  - ai-research-platform
+- name: k8s
+  description: Files from k8s/
+  keywords:
+  - k8s
+  - k8s
+- name: test_data
+  description: Files from test_data/
+  keywords:
+  - test_data
+  - test_data
+- name: mcp_server
+  description: Files from mcp-server/
+  keywords:
+  - mcp_server
+  - mcp-server
+- name: testing
+  description: Files from tests/
+  keywords:
+  - testing
+  - tests
+- name: agents
+  description: Files from agents/
+  keywords:
+  - agents
+  - agents
+- name: backend
+  description: Files from models/
+  keywords:
+  - backend
+  - models
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: schemas
+  description: Files from schemas/
+  keywords:
+  - schemas
+  - schemas
+- name: storage
+  description: Files from storage/
+  keywords:
+  - storage
+  - storage
+- name: exports
+  description: Files from exports/
+  keywords:
+  - exports
+  - exports
+- name: outdated
+  description: Files from outdated/
+  keywords:
+  - outdated
+  - outdated
+- name: logs
+  description: Files from logs/
+  keywords:
+  - logs
+  - logs
+- name: deployment
+  description: Files from deployment/
+  keywords:
+  - deployment
+  - deployment
+- name: examples
+  description: Files from examples/
+  keywords:
+  - examples
+  - examples
+- name: benchmarks
+  description: Files from benchmarks/
+  keywords:
+  - benchmarks
+  - benchmarks
+- name: src_tauri
+  description: Files from src-tauri/
+  keywords:
+  - src_tauri
+  - src-tauri
+- name: dev
+  description: Files from dev/
+  keywords:
+  - dev
+  - dev
+- name: webui
+  description: Files from webui/
+  keywords:
+  - webui
+  - webui
+- name: maintenance
+  description: Files from maintenance/
+  keywords:
+  - maintenance
+  - maintenance
+- name: hledac
+  description: Files from hledac/
+  keywords:
+  - hledac
+  - hledac
+- name: kubernetes
+  description: Files from kubernetes/
+  keywords:
+  - kubernetes
+  - kubernetes
+- name: data
+  description: Files from data/
+  keywords:
+  - data
+  - data
+- name: magicmock
+  description: Files from MagicMock/
+  keywords:
+  - magicmock
+  - magicmock
+- name: xray
+  description: Files from xray/
+  keywords:
+  - xray
+  - xray
+- name: reports
+  description: Files from reports/
+  keywords:
+  - reports
+  - reports
+- name: nas_results
+  description: Files from nas_results/
+  keywords:
+  - nas_results
+  - nas_results
+- name: src
+  description: Files from src/
+  keywords:
+  - src
+  - src
+- name: planning
+  description: Files from roadmap/
+  keywords:
+  - planning
+  - roadmap
+- name: frontend
+  description: Files from frontend/
+  keywords:
+  - frontend
+  - frontend
+- name: research
+  description: Files from research/
+  keywords:
+  - research
+  - research
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []

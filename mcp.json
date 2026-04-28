@@ -16,15 +16,15 @@
         "DEBUG_LOG_PATH": "/Users/vojtechhamada/mcp_debug.log",
         "ENABLE_APP_LOGS": "CRITICAL",
         "LOG_FILE_PATH": "/Users/vojtechhamada/.codegraphcontext/logs/cgc.log",
-        "MAX_FILE_SIZE_MB": "2",
-        "IGNORE_TEST_FILES": "true",
+        "MAX_FILE_SIZE_MB": "1",
+        "IGNORE_TEST_FILES": "false",
         "IGNORE_HIDDEN_FILES": "true",
         "ENABLE_AUTO_WATCH": "false",
-        "COMPLEXITY_THRESHOLD": "15",
+        "COMPLEXITY_THRESHOLD": "10",
         "MAX_DEPTH": "20",
-        "PARALLEL_WORKERS": "8",
+        "PARALLEL_WORKERS": "5",
         "CACHE_ENABLED": "true",
-        "IGNORE_DIRS": ".venv,site-packages,__pycache__,.git,node_modules,benchmark_results,.omc,.pi,cache,logs,runs,temp,embedding_cache,MagicMock,:memory:,data,benchmarks,_arch,autonomy,.phase1_probe_8bd,tests"
+        "IGNORE_DIRS": ".venv,site-packages,__pycache__,.git,node_modules,benchmark_results,.omc,.pi,tests,cache,logs,runs,temp,embedding_cache,MagicMock,:memory:,data,benchmarks,_arch,autonomy,.phase1_probe_8bd"
       },
       "tools": {
         "alwaysAllow": [
