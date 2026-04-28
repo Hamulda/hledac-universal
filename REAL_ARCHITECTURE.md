@@ -1,4 +1,116 @@
-# Hledač — Real Architecture (aktualizováno 2026-04-27, F206I)
+# Hledač — Real Architecture (aktualizováno 2026-04-28, F206J)
+
+## F206A — Reproducible Baseline Runner + Test Taxonomy (2026-04-27)
+
+**Cíl:** Vytvořit reprodukovatelný baseline runner pro F204/F205/F206 probe lanes s known-failure reporting. Zajistit konzistentní CLI pro kontinuální regressní monitoring.
+
+**Komponenty:**
+
+| File | Role |
+|------|------|
+| `run_baseline.py` | `BaselineResult` dataclass, `run_baseline_profile()`, `--profile` arg (`f205-green`, `f206-regression`), `--json` output, `--collect-only` mód |
+| `smoke_runner.py` | Pre-existing smoke test runner; integrated as baseline step 2 |
+| `tests/probe_f206a/` | Probe lane for baseline runner itself |
+
+**Profiles:**
+- `f205-green` — F204 (10 lanes) + F205 (9 lanes), bez F206
+- `f206-regression` — F204 + F205 + F206 (9 lanes) = 28 celkem
+
+**Known failure patterns** (reported, not silenced):
+- `smoke_fetch_semaphore`, `smoke_adaptive_semaphore`, `smoke_semaphore_limit` — pre-existing smoke failures from F195C era
+- Stale probe lanes from pre-F204: `test_sprint_2a`, `test_lifecycle_4a`, etc.
+
+**JSON output schema:**
+```json
+{"profile": str, "commands": [dict], "passed": int, "failed": int,
+ "known_failures": [str], "duration_s": float, "test_inventory": dict}
+```
+
+**GHOST_INVARIANTS:**
+- Baseline runner never loads MLX model
+- All probe lanes run with `--maxfail=1` to isolate failures
+- Known failures reported but never block exit 0
+
+**Tests:** `tests/probe_f206a/test_baseline_runner.py` — 10 invariants covering profile acceptance, lane coverage, known-failure reporting
+
+**Definition of Done:** pytest tests/probe_f206a/ -q, python run_baseline.py --profile f206-regression --json /tmp/b.json --collect-only
+
+## F206B — Shadow Diagnostics Verdicts + Loose Test Migration (2026-04-27)
+
+**Cíl:** Klasifikovat shadow moduly podle aktivního použití a odstranit diagnostické moduly bez canonical write path. Uzavřít staré test lanes které nelze aktualizovat.
+
+**Shadow module verdicts:**
+
+| Module | Verdict | Rationale |
+|--------|---------|-----------|
+| `runtime/shadow_inputs.py` | ACTIVE (diagnostic) | Read-only shadow inputs to canonical pipeline; zero canonical write calls |
+| `runtime/shadow_parity.py` | ACTIVE (diagnostic) | Pure function diagnostic; no write path, no production callers |
+| `runtime/shadow_pre_decision.py` | ACTIVE (diagnostic) | Read-only consumer of pre-decision state; no write path |
+| `runtime/windup_engine.py` | DORMANT (donor) | `run_windup()` defined but never called in production; scorecard structure used as donor for `_get_windup_scorecard()` |
+
+**Canonical write path:** Žádný shadow modul nevolá `async_ingest_findings_batch()` ani jiné canonical write API.
+
+**Probe lane scope reduction:**
+- `probe_f2a`, `probe_f4a`, `probe_f6a`, `probe_f7a` — stale lanes removed from active regression
+- Active regression: `probe_f204a-j`, `probe_f205b-j`, `probe_f206a-i`
+
+**Tests:** `tests/probe_f206b/test_shadow_verdicts.py` — 15 invariants covering VERDICT blocks in all shadow modules, no canonical write path, no production call-sites
+
+**Definition of Done:** pytest tests/probe_f206b/ -q, smoke_runner OK
+
+## F206C — Lifecycle Runner Extraction (2026-04-27)
+
+**Cíl:** Extrahovat lifecycle orchestration z `SprintScheduler.run()` do samostatného `SprintLifecycleRunner`. Scheduler zůstává owner runneringu; runner pouze spravuje phase transitions WARMUP→ACTIVE→WINDUP→TEARDOWN.
+
+**Refactor-only, žádná nová funkcionalita.**
+
+**Komponenty:**
+
+| File | Role |
+|------|------|
+| `runtime/sprint_lifecycle_runner.py` | `SprintLifecycleRunner` — phase state machine, `_phase_transition_trace` list |
+| `runtime/sprint_scheduler.py` | `_run_lifecycle()` → deleguje na `SprintLifecycleRunner`; `_phase_transition_trace` → retained na scheduler |
+
+**Phase state machine:**
+```
+WARMUP → ACTIVE → WINDUP → TEARDOWN
+  │         │        │        │
+  └─ transition events recorded in _phase_transition_trace ─┘
+```
+
+**`_phase_transition_trace` entry shape:**
+```python
+{"from_phase": str, "to_phase": str, "elapsed_s": float, "reason": str}
+```
+
+**Invariant:** `_phase_transition_trace` je bounded list — MAX_PHASE_TRANSITIONS=20; oldest entries evicted when limit exceeded.
+
+**Backward compatibility:**
+- Original `_run_lifecycle()` method retained as thin wrapper
+- Existing tests calling `_run_lifecycle()` directly continue to pass
+- `SprintLifecycleRunner` is new component, not modifying existing seams
+
+**Teardown call chain (F206C + F206D combined):**
+```
+SprintScheduler.run() → lifecycle runner
+  → SprintLifecycleRunner.run()
+       ├── WARMUP: model prewarm, state init
+       ├── ACTIVE: _run_one_cycle() branches
+       ├── WINDUP: _get_windup_scorecard(), graph accumulation
+       └── TEARDOWN: _run_advisory_runner() → advisory runner
+                        └── planner → executor → governor → brief
+                    → _unload_hermes_at_teardown()
+```
+
+**GHOST_INVARIANTS:**
+- No new canonical write paths introduced
+- No model load in lifecycle runner (model prewarm via `brain.model_lifecycle`)
+- RAM guard respected throughout phase transitions
+- `CancelledError` propagates through phase transitions
+
+**Tests:** `tests/probe_f206c/test_lifecycle_runner_refactor.py` — phase trace, windup guard, abort handling
+
+**Definition of Done:** pytest tests/probe_f206c/ -q, pytest tests/probe_f205f/ -q, smoke_runner OK
 
 ## F203I — Streaming Embedding Pipeline & LanceDB Pre-warm (2026-04-26)
 
@@ -790,6 +902,92 @@ scheduler.inject_prefetch_oracle(oracle)
 - Both new methods are sync (no `asyncio.gather` needed)
 - Fail-soft: empty dict on error, never raise
 - No canonical write path touched (read-only, diagnostic)
+
+## F206J — Architecture Seal (2026-04-28)
+
+**Cíl:** Uzavřít F206 sérii úplnou regression matrix, aktualizovanou architekturou a dokumentovanými exit criteria. Žádná nová funkcionalita — pouze seal and documentation.
+
+**F206J seal obsahuje:**
+1. **Verdict finalization** — všechny shadow/dormant verdicts potvrzeny a zadokumentovány
+2. **Scheduler decomposition** — lifecycle runner + advisory runner + sidecar dispatcher jako 3 samostatné komponenty
+3. **Regression matrix** — f206-regression profile zahrnuje F204 + F205 + F206 lanes (28 celkem)
+4. **Benchmark matrix** — hermetic E2E canonical benchmark validuje findings/min, dedup ratio, sidecar timing, RSS ceiling
+
+**Active/Dormant/Orphan verdicts after F206:**
+
+| Module | Verdict | Notes |
+|--------|---------|-------|
+| `runtime/shadow_inputs.py` | ACTIVE (diagnostic) | Read-only shadow inputs; no canonical write path |
+| `runtime/shadow_parity.py` | ACTIVE (diagnostic) | Pure function diagnostic; no write path |
+| `runtime/shadow_pre_decision.py` | ACTIVE (diagnostic) | Read-only consumer; no write path |
+| `runtime/windup_engine.py` | DORMANT (donor) | `run_windup()` never called; scorecard structure used as donor |
+| `runtime/sprint_lifecycle_runner.py` | ACTIVE (canonical) | Lifecycle orchestration extracted (F206C) |
+| `runtime/sprint_advisory_runner.py` | ACTIVE (canonical) | Advisory runner extracted (F206D) |
+| `runtime/sidecar_dispatcher.py` | ACTIVE (canonical) | Batch dispatch orchestration (F205F) |
+| `dht/kademlia_node.py` | DORMANT (experimental) | `DHT_PROMOTION_STATUS = "simulated_no_persist"` |
+| `network/ipfs_client.py` | DORMANT (experimental) | `IPFS_PROMOTION_STATUS = "bounded_gateway_fetch"` |
+| `knowledge/graph_service.py` | ACTIVE (canonical) | Read-only graph analytics seam |
+| `knowledge/target_memory.py` | ACTIVE (canonical) | Cross-sprint drift intelligence |
+
+**Scheduler decomposition (canonical):**
+```
+SprintScheduler.run()
+├── SprintLifecycleRunner      # F206C: phase machine WARMUP→ACTIVE→WINDUP→TEARDOWN
+├── _run_one_cycle()            # canonical branch execution (stable/aggressive)
+├── SidecarDispatcher           # F205F: batch dispatch to FindingSidecarBus
+│   └── FindingSidecarBus       # F205B: 3-stage staged execution (sidecar runners)
+└── SprintAdvisoryRunner        # F206D: planner→executor→governor→brief
+     ├── pivot_planner          # F202G: PivotPlanner.plan_pivots → planned_pivots
+     ├── pivot_executor         # F204C: AutonomousPivotExecutor.execute_top → executed_pivots
+     ├── resource_governor       # F202J: governor.evaluate + apply_decision → recorded
+     └── analyst_brief           # F204E/F205J: workbench.build_sprint_brief → brief_generated
+```
+
+**Regression matrix — probe lanes:**
+
+| Profile | Lanes | Total tests | Known failure clusters |
+|---------|-------|-------------|----------------------|
+| `f205-green` | F204 (10) + F205 (9) | ~280 | AdaptiveSemaphore smoke, stale probe lanes |
+| `f206-regression` | + F206 (9) | ~444 | Same as f205-green + pre-F206 stale lanes |
+
+**Known failure clusters (documented, reported, not silenced):**
+- `AdaptiveSemaphore` smoke — `FETCH_SEMAPHORE` is `_FetchSemaphoreProxy`, not `AdaptiveSemaphore`; `current_limit` unavailable on plain `asyncio.Semaphore`
+- Historical stale lanes — `probe_f2a`, `probe_f4a`, `probe_f6a–7a` — removed from active regression
+- UMA snapshot shape drift — `probe_1b`, `probe_6b` — shape changes since F195
+
+**Benchmark matrix (hermetic E2E canonical):**
+| Metric | Target | Notes |
+|--------|--------|-------|
+| `findings_per_minute` | ≥ 10000 | Hermetic mode: synthetic findings, no network/MLX |
+| `dedup_ratio` | 0.8–1.0 | Mock accept rate 0.70, dedup via MockDuckDBStore |
+| `sidecar_total_ms` | < 100ms | 11 registered runners @ 5ms light load each |
+| `peak_rss_mb` | < 6654MB | M1 8GB ceiling (6.5 × 1024) |
+| `target_memory_summary_present` | True | F205J: MockDuckDBStore provides synthetic memory |
+| `analyst_brief_includes_memory` | True | F205J: "Target memory" or "prior sprint" in brief text |
+
+**Probe lane totals:**
+- F204: 10 lanes (probe_f204a–j)
+- F205: 9 lanes (probe_f205b–j)
+- F206: 9 lanes (probe_f206a–i)
+- Total in f206-regression: 28 lanes
+
+**GHOST_INVARIANTS enforced:**
+- `asyncio.gather` with `return_exceptions=True` in all teardown paths
+- `_check_gathered()` after every gather
+- `CancelledError` re-raised never swallowed
+- No blocking calls in event loop (CPU/IO via `run_in_executor`)
+- Canonical write path: `async_ingest_findings_batch()` only
+- Model lifecycle: `brain.model_lifecycle` only
+- RAM guard: skip heavy ops when RSS > high_water
+- Fail-soft: advisory/sidecar error never crashes teardown
+
+**Updated files:**
+- `REAL_ARCHITECTURE.md` — F206A–F206J sections added/updated
+- `LONGTERM_PLAN.md` — F206A–F206J section with verdicts and matrix
+- `run_baseline.py` — `f206-regression` profile, `F206_REGRESSION_LANES`
+- `tests/probe_f206j/test_f206_architecture_seal.py` — 17 invariants covering architecture seal
+
+**Definition of Done:** pytest tests/probe_f206j/ -q, python run_baseline.py --profile f206-regression --json /tmp/f206_regression.json, python smoke_runner.py --smoke, python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3
 
 ## F196A Ghost Verdict (2026-04-23)
 
