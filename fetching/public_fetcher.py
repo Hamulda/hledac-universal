@@ -33,6 +33,10 @@ from hledac.universal.transport.circuit_breaker import (
     CircuitBreaker,
     CircuitDecision,
 )
+from hledac.universal.transport.httpx_transport import (
+    should_use_httpx_h2,
+    fetch_via_httpx_h2,
+)
 from hledac.universal.utils.concurrency import (
     FETCH_SEMAPHORE,
     get_clearnet_semaphore,
@@ -110,6 +114,11 @@ class FetchResult(msgspec.Struct, frozen=True, gc=False):
     redirect_target: str | None = None  # redirect destination (set only when redirected=True)
     failure_stage: str | None = None  # validation | connection | tls | http | body | size
     network_error_kind: str | None = None  # dns_error | connect_error | tls_error | timeout
+    # Added in F206K — Transport Capability Layer 2026 telemetry
+    selected_transport: str | None = None  # aiohttp | httpx_h2 | aiohttp_socks | stealth | js
+    http_version: str | None = None  # h2 | http/1.1 | h2c (detected post-response)
+    transport_policy_reason: str | None = None  # api_like | darknet_url | stealth_required | js_required | clearnet_default
+    transport_fallback_reason: str | None = None  # set when fallback occurred (h2_unavailable, etc.)
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +694,8 @@ async def async_fetch_public_text(
                     elapsed_ms=elapsed_ms,
                     error=f"circuit_breaker_open:{decision.state}:{decision.reason}",
                     failure_stage="circuit_breaker",
+                    selected_transport="aiohttp",
+                    transport_policy_reason="clearnet_default",
                 )
     except Exception as e:
         logger.debug(f"Circuit breaker check failed (non-fatal): {e}")
@@ -713,6 +724,8 @@ async def async_fetch_public_text(
                 declared_length=-1,
                 elapsed_ms=elapsed_ms,
                 error=None,
+                selected_transport="js",
+                transport_policy_reason="js_required",
             )
         # JS rendering completely failed
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -727,6 +740,8 @@ async def async_fetch_public_text(
             elapsed_ms=elapsed_ms,
             error="js_render_failed",
             failure_stage="fetching",
+            selected_transport="js",
+            transport_policy_reason="js_required",
         )
 
     # --- P4: Determine transport mode ---
@@ -736,6 +751,88 @@ async def async_fetch_public_text(
     use_tor = is_onion  # .onion URLs always go via Tor
     use_i2p = is_i2p  # .i2p/.b32.i2p URLs go via I2P SOCKS
     use_freenet = is_freenet  # .freenet URLs go via Freenet HTTP proxy
+
+    # --- F206K: HTTPX H2 optional clearnet lane ---
+    _use_httpx_h2, _httpx_reason = should_use_httpx_h2(url, use_stealth, use_js)
+    if _use_httpx_h2:
+        logger.debug(f"[HTTPX] H2 lane selected for {url}: {_httpx_reason}")
+        try:
+            import httpx as _httpx
+
+            _httpx_resp = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
+            _httpx_final_url = str(_httpx_resp.url)
+            _httpx_status = _httpx_resp.status
+            _httpx_content_type = _httpx_resp.headers.get("Content-Type", "")
+            _httpx_raw_ct = _httpx_content_type.split(";")[0].strip().lower()
+
+            # Detect HTTP version from response
+            _http_ver: str | None = None
+            if hasattr(_httpx_resp, "extensions") and _httpx_resp.extensions:
+                _http_ver = _httpx_resp.extensions.get("http_version", None)
+                if _http_ver:
+                    _http_ver = f"http/{_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver}"
+
+            # Read body with size cap (mirrors aiohttp chunked read logic)
+            _body_chunks: list[bytes] = []
+            _total_read = 0
+            async for _chunk in _httpx_resp.aiter_chunked(8192):
+                _chunk_len = len(_chunk)
+                if _total_read + _chunk_len > max_bytes:
+                    _remaining = max_bytes - _total_read
+                    if _remaining > 0:
+                        _body_chunks.append(_chunk[:_remaining])
+                        _total_read += _remaining
+                    elapsed_ms = (time.monotonic() - t0) * 1000
+                    return FetchResult(
+                        url=url,
+                        final_url=_httpx_final_url,
+                        status_code=_httpx_status,
+                        content_type=_httpx_content_type,
+                        text=None,
+                        fetched_bytes=_total_read,
+                        declared_length=-1,
+                        elapsed_ms=elapsed_ms,
+                        error="size_cap_exceeded",
+                        failure_stage="size",
+                        selected_transport="httpx_h2",
+                        http_version=_http_ver,
+                        transport_policy_reason=_httpx_reason,
+                    )
+                _body_chunks.append(_chunk)
+                _total_read += _chunk_len
+
+            _body_bytes = b"".join(_body_chunks)
+            _text, _decode_replaced, _decode_replacement_count = _try_decode(_body_bytes)
+
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            redirected, redirect_target = _derive_redirect_fields(url, _httpx_final_url)
+            return FetchResult(
+                url=url,
+                final_url=_httpx_final_url,
+                status_code=_httpx_status,
+                content_type=_httpx_content_type,
+                text=_text,
+                fetched_bytes=_total_read,
+                declared_length=-1,
+                elapsed_ms=elapsed_ms,
+                error=None,
+                decode_replaced=_decode_replaced,
+                decode_replacement_count=_decode_replacement_count,
+                redirected=redirected,
+                redirect_target=redirect_target,
+                selected_transport="httpx_h2",
+                http_version=_http_ver,
+                transport_policy_reason=_httpx_reason,
+            )
+        except asyncio.CancelledError:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            raise
+        except Exception as _e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            # HTTPX H2 failed — fallback to aiohttp with telemetry
+            logger.warning(f"[HTTPX] H2 lane failed for {url}, falling back to aiohttp: {_e}")
+            _use_httpx_h2 = False
+            _httpx_reason = "httpx_h2_fallback"
 
     # Apply longer timeout for anonymized networks (Tor/I2P)
     if use_tor or use_i2p:
@@ -785,6 +882,8 @@ async def async_fetch_public_text(
                 elapsed_ms=elapsed_ms,
                 error=f"tor_unavailable;{type(e).__name__};{e}",
                 failure_stage="connection",
+                selected_transport="aiohttp_socks",
+                transport_policy_reason="darknet_url",
             )
 
     # --- P10: I2P session setup for .i2p/.b32.i2p URLs ---
@@ -805,6 +904,8 @@ async def async_fetch_public_text(
                 elapsed_ms=elapsed_ms,
                 error=f"i2p_unavailable;{type(e).__name__};{e}",
                 failure_stage="connection",
+                selected_transport="aiohttp_socks",
+                transport_policy_reason="darknet_url",
             )
 
     # --- Retryable status tracking ---
@@ -881,6 +982,8 @@ async def async_fetch_public_text(
                             redirected=redirected,
                             redirect_target=redirect_target,
                             failure_stage="http",
+                            selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+                            transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
                         )
 
                         # --- Content-type gate with XML-ish body recovery (Feed ingress hardening F164A) ---
@@ -926,6 +1029,8 @@ async def async_fetch_public_text(
                                         redirected=redirected,
                                         redirect_target=redirect_target,
                                         failure_stage="http",
+                                        selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+                                        transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
                                     )
 
                             if total_read + chunk_len > max_bytes:
@@ -949,6 +1054,8 @@ async def async_fetch_public_text(
                                     redirected=redirected,
                                     redirect_target=redirect_target,
                                     failure_stage="size",
+                                    selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+                                    transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
                                 )
                             body_chunks.append(chunk)
                             total_read += chunk_len
@@ -985,6 +1092,8 @@ async def async_fetch_public_text(
                                     declared_length=-1,
                                     elapsed_ms=elapsed_ms,
                                     error=None,
+                                    selected_transport="js",
+                                    transport_policy_reason="js_required",
                                 )
                             # Camoufox failed → try nodriver fallback
                             logger.warning(f"Camoufox failed, trying nodriver: {url}")
@@ -1002,6 +1111,8 @@ async def async_fetch_public_text(
                                     declared_length=-1,
                                     elapsed_ms=elapsed_ms,
                                     error=None,
+                                    selected_transport="js",
+                                    transport_policy_reason="js_required",
                                 )
                             # Both JS renders failed → warn and return original
                             logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
@@ -1010,6 +1121,11 @@ async def async_fetch_public_text(
                         if _circuit_breaker and last_status_code >= 200 and last_status_code < 300:
                             _circuit_breaker.record_success()
                         redirected, redirect_target = _derive_redirect_fields(url, final_url)
+                        # Determine actual transport used
+                        _actual_transport = "httpx_h2" if _use_httpx_h2 else "aiohttp"
+                        _fallback_info: str | None = None
+                        if not _use_httpx_h2 and _httpx_reason == "httpx_h2_fallback":
+                            _fallback_info = "httpx_h2_fallback"
                         return FetchResult(
                             url=url,
                             final_url=final_url,
@@ -1026,6 +1142,10 @@ async def async_fetch_public_text(
                             decode_replacement_count=decode_replacement_count,  # F178E
                             redirected=redirected,
                             redirect_target=redirect_target,
+                            selected_transport=_actual_transport,
+                            http_version="http/1.1",  # aiohttp always HTTP/1.1
+                            transport_policy_reason=_httpx_reason if _use_httpx_h2 else "clearnet_default",
+                            transport_fallback_reason=_fallback_info,
                         )
 
         except asyncio.TimeoutError:
@@ -1044,6 +1164,8 @@ async def async_fetch_public_text(
                 error="timeout",
                 failure_stage="connection",
                 network_error_kind="timeout",
+                selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+                transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
             )
         except asyncio.CancelledError:
             elapsed_ms = (time.monotonic() - t0) * 1000
@@ -1070,6 +1192,8 @@ async def async_fetch_public_text(
                 body_read_error=body_read_error,
                 failure_stage=failure_stage,
                 network_error_kind=network_error_kind,
+                selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+                transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
             )
 
     # Should not reach here, but as safeguard (retry exhaustion after loop):
@@ -1090,6 +1214,8 @@ async def async_fetch_public_text(
         body_read_error=body_read_error,
         failure_stage=failure_stage,
         network_error_kind=network_error_kind,
+        selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
+        transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
     )
 
 
