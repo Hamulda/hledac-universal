@@ -1,7 +1,6 @@
 import os
 import logging
 import tempfile
-import warnings
 import zipfile
 from typing import TYPE_CHECKING, Optional
 from pathlib import Path
@@ -49,7 +48,10 @@ class LootManager:
     SECURE EXPORT PATH (priority order):
         1. pyzipper AES (WZ_AES) — requires pyzipper
         2. Fernet (cryptography) — requires cryptography
-        3. XOR fallback (FALLBACK_ENC:) — degraded, requires no crypto deps
+
+    SECURITY INVARIANT:
+        - XOR fallback REMOVED (P0-3/P0-5 fix) — no obfuscation, real encryption required
+        - Module FAILS at instantiation if neither cryptography nor pyzipper is available
 
     NON-AUTHORITY (NOT this module):
         - PII detection/sanitization (see pii_gate.py)
@@ -61,14 +63,13 @@ class LootManager:
 
     def __init__(self, vault_path: str):
         self.vault_path = Path(vault_path)
-        self._use_fallback = not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE)
-        
-        if self._use_fallback:
-            warnings.warn(
-                "FALLBACK MODE ACTIVE: vault_manager is using XOR encryption fallback which provides NO real security. "
-                "Data is obfuscated only, not encrypted. Install 'cryptography' or 'pyzipper' for actual encryption.",
-                UserWarning,
-                stacklevel=2
+
+        # P0-3/P0-5 fix: FAIL FAST if no real encryption available
+        if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):
+            raise RuntimeError(
+                "vault_manager requires 'cryptography' or 'pyzipper' for real encryption. "
+                "XOR fallback has been removed (P0-3/P0-5 fix). "
+                "Install: pip install cryptography pyzipper"
             )
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
@@ -113,12 +114,14 @@ class LootManager:
             return False
 
     def _create_encrypted_zip(self, source_path: Path, output_path: Path, password: str) -> bool:
+        # P0-3/P0-5 fix: removed XOR fallback — only real encryption allowed
         if PYZIPPER_AVAILABLE:
             return self._create_zip_pyzipper(source_path, output_path, password)
         elif CRYPTO_AVAILABLE:
             return self._create_zip_fernet(source_path, output_path, password)
         else:
-            return self._create_zip_fallback(source_path, output_path, password)
+            # This should never happen due to __init__ check, but guard anyway
+            raise RuntimeError("No encryption backend available")
 
     def _create_zip_pyzipper(self, source_path: Path, output_path: Path, password: str) -> bool:
         try:
@@ -163,52 +166,6 @@ class LootManager:
             return True
         except Exception as e:
             logger.error(f"Failed to create encrypted ZIP with fernet: {e}")
-            if temp_path is not None and temp_path.exists():
-                os.unlink(temp_path)
-            return False
-
-    def _create_zip_fallback(self, source_path: Path, output_path: Path, password: str) -> bool:
-        temp_path = None
-        try:
-            import hashlib
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=_get_tempdir()) as temp_file:
-                temp_path = Path(temp_file.name)
-
-            if not self._create_zip(source_path, temp_path):
-                # temp_path created but zip failed — clean up before returning
-                if temp_path is not None and temp_path.exists():
-                    os.unlink(temp_path)
-                return False
-
-            with open(temp_path, 'rb') as f:
-                data = f.read()
-
-            hash_obj = hashlib.sha256()
-            hash_obj.update(password.encode())
-            xor_key = hash_obj.digest()
-
-            key_len = len(xor_key)
-            encrypted = bytearray(len(data))
-            for i, byte in enumerate(data):
-                encrypted[i] = byte ^ xor_key[i % key_len]
-
-            with open(output_path, 'wb') as f:
-                f.write(b'FALLBACK_ENC:')
-                f.write(encrypted)
-
-            os.unlink(temp_path)
-            # FALLBACK PATH: degraded choice when crypto deps unavailable
-            # NOT a security feature — do not present as encryption authority
-            warnings.warn(
-                "FALLBACK MODE: Using XOR encryption which provides NO real security. "
-                "Data is obfuscated with trivial XOR — NOT encryption. Install 'cryptography' or 'pyzipper'.",
-                UserWarning,
-                stacklevel=2
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Failed to create encrypted ZIP with fallback: {e}")
             if temp_path is not None and temp_path.exists():
                 os.unlink(temp_path)
             return False
@@ -258,9 +215,10 @@ class LootManager:
         Encrypts vault_path contents using (in priority order):
           1. pyzipper AES (WZ_AES) — requires pyzipper
           2. Fernet (cryptography) — requires cryptography
-          3. XOR fallback (FALLBACK_ENC:) — degraded, requires no crypto deps
 
         Result is a .enc file, then original vault directory is securely shredded.
+
+        P0-3/P0-5 fix: XOR fallback removed — module fails at init if no real crypto available.
 
         Args:
             output_dir: Destination directory for the encrypted archive
@@ -306,9 +264,10 @@ class LootManager:
             with open(encrypted_file, 'rb') as f:
                 encrypted_data = f.read()
 
-            # FALLBACK_ENC: prefix — always checked first (XOR degraded)
+            # P0-3/P0-5 fix: removed FALLBACK_ENC support — XOR-encrypted exports no longer valid
             if encrypted_data.startswith(b'FALLBACK_ENC:'):
-                return self._decrypt_fallback(encrypted_data[14:], password, output_path)
+                logger.error("FALLBACK_ENC export detected — XOR fallback removed, cannot decrypt")
+                return None
 
             # Format sniffing: ZIP AES vs Fernet blob
             # Priority: ZIP (pyzipper) → Fernet
@@ -323,9 +282,6 @@ class LootManager:
             elif CRYPTO_AVAILABLE:
                 # Fernet blob or other cryptography format
                 return self._decrypt_fernet(encrypted_data, password, output_path)
-            elif PYZIPPER_AVAILABLE:
-                # Fallback: pyzipper without ZIP check (legacy behavior)
-                return self._decrypt_pyzipper(encrypted_file, password, output_path)
             else:
                 logger.error("No decryption method available")
                 return None
@@ -373,38 +329,6 @@ class LootManager:
             logger.error(f"Pyzipper decryption failed: {e}")
             return None
 
-    def _decrypt_fallback(self, encrypted_data: bytes, password: str, output_path: Path) -> Optional[str]:
-        temp_path = None
-        try:
-            import hashlib
-
-            hash_obj = hashlib.sha256()
-            hash_obj.update(password.encode())
-            xor_key = hash_obj.digest()
-
-            key_len = len(xor_key)
-            decrypted = bytearray(len(encrypted_data))
-            for i, byte in enumerate(encrypted_data):
-                decrypted[i] = byte ^ xor_key[i % key_len]
-
-            extract_path = output_path / "decrypted_vault"
-            extract_path.mkdir(exist_ok=True)
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=_get_tempdir()) as temp_file:
-                temp_path = Path(temp_file.name)
-
-            temp_path.write_bytes(bytes(decrypted))
-
-            with zipfile.ZipFile(temp_path, 'r') as zipf:
-                zipf.extractall(extract_path)
-
-            os.unlink(temp_path)
-            return str(extract_path)
-        except Exception as e:
-            logger.error(f"Fallback decryption failed: {e}")
-            if temp_path is not None and temp_path.exists():
-                os.unlink(temp_path)
-            return None
 
 
 # =============================================================================

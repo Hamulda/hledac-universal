@@ -27,6 +27,7 @@ Source type: "rir_correlation"
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import ipaddress
 import logging
 import socket
@@ -79,7 +80,7 @@ class RIRCorrelationResult:
 # ── In-Memory LRU Cache ───────────────────────────────────────────────────────
 
 _cache: dict[str, dict[str, Any]] = {}
-_cache_order: list[str] = []  # simple FIFO, bounded by MAX_RIR_CACHE_ENTRIES
+_cache_order: deque[str] = deque()  # FIFO via deque.popleft(), bounded by MAX_RIR_CACHE_ENTRIES
 
 
 def _cache_get(key: str) -> dict[str, Any] | None:
@@ -90,8 +91,8 @@ def _cache_get(key: str) -> dict[str, Any] | None:
 def _cache_set(key: str, value: dict[str, Any]) -> None:
     """Store RIR data in bounded FIFO cache."""
     if len(_cache) >= MAX_RIR_CACHE_ENTRIES:
-        # Evict oldest
-        oldest = _cache_order.pop(0)
+        # Evict oldest via deque popleft (O(1) vs list.pop(0) O(n))
+        oldest = _cache_order.popleft()
         _cache.pop(oldest, None)
     _cache[key] = value
     _cache_order.append(key)

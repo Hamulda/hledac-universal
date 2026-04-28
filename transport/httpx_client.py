@@ -31,7 +31,7 @@ INVARIANTS:
 
 from __future__ import annotations
 
-import threading
+import asyncio
 import logging
 from typing import Optional
 
@@ -97,7 +97,7 @@ def _check_httpx_h2_capability() -> bool:
 # =============================================================================
 
 _httpx_client_instance: Optional["httpx.AsyncClient"] = None
-_httpx_client_lock: threading.Lock = threading.Lock()
+_httpx_client_lock: asyncio.Lock = asyncio.Lock()
 _httpx_client_closed: bool = False
 
 
@@ -125,7 +125,7 @@ async def async_get_httpx_client() -> "httpx.AsyncClient":
             f"HTTPX HTTP/2 not available: {_httpx_import_error or 'unknown'}"
         )
 
-    with _httpx_client_lock:
+    async with _httpx_client_lock:
         if _httpx_client_instance is None or _httpx_client_closed:
             import httpx
 
@@ -197,7 +197,7 @@ async def close_httpx_client_async() -> None:
     # Extract client reference inside lock, then close OUTSIDE lock
     # (matching session_runtime.py pattern — do NOT hold lock during await)
     client = None
-    with _httpx_client_lock:
+    async with _httpx_client_lock:
         if _httpx_client_instance is not None and not _httpx_client_closed:
             client = _httpx_client_instance
             _httpx_client_instance = None

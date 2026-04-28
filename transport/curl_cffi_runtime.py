@@ -13,6 +13,7 @@ Invariant: close is idempotent.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import logging
 from typing import Any, Dict, Optional
 
@@ -27,7 +28,7 @@ _CURL_CFFI_IMPORT_ERROR: Optional[str] = None
 _MAX_CURL_CFFI_PROFILES = 3
 _curl_cffi_sessions: Dict[str, Any] = {}
 _curl_cffi_lock = asyncio.Lock()
-_curl_cffi_profiles_order: list[str] = []  # track access order for LRU
+_curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
 
 # Preferred profile fallback order
 _PROFILE_FALLBACK_ORDER = ["chrome136", "chrome120", "chrome110", "safari17_0"]
@@ -113,7 +114,7 @@ async def _get_or_create_session(profile: str) -> Optional[Any]:
         # Evict oldest if at capacity
         if len(_curl_cffi_sessions) >= _MAX_CURL_CFFI_PROFILES:
             if _curl_cffi_profiles_order:
-                oldest = _curl_cffi_profiles_order.pop(0)
+                oldest = _curl_cffi_profiles_order.popleft()  # O(1) vs list.pop(0) O(n)
                 if oldest in _curl_cffi_sessions:
                     old_session = _curl_cffi_sessions.pop(oldest)
                     # Close outside lock scope is handled by caller

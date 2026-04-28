@@ -1252,6 +1252,8 @@ class DuckDBShadowStore:
     REPLAY_CHUNK_SIZE: int = 100  # markers per chunk; yields event loop between chunks
     MAX_RETRY_COUNT: int = 3      # max retries before dead-lettering a marker
     DEADLETTER_PREFIX: str = "deadletter_duckdb_sync:"  # dead-letter namespace
+    # P0-9 fix: bound pending sync markers to prevent unbounded LMDB growth
+    MAX_PENDING_SYNC_MARKERS: int = 10000  # max pending markers before oldest eviction
 
     # ------------------------------------------------------------------
     # Internal sync helpers — ALL run on the worker thread
@@ -5926,6 +5928,59 @@ class DuckDBShadowStore:
 
         return result
 
+    def _wal_evict_oldest_pending_markers(self, keep_count: int) -> int:
+        """
+        P0-9 fix: Evict oldest pending sync markers to enforce MAX_PENDING_SYNC_MARKERS bound.
+
+        Removes (total_count - keep_count) oldest markers by timestamp.
+        Returns number of markers evicted.
+        """
+        try:
+            if not hasattr(self, "_wal_lmdb") or self._wal_lmdb is None:
+                return 0
+            env = self._wal_lmdb._env
+            if env is None:
+                return 0
+
+            # Collect all pending markers with their timestamps
+            prefix = "pending_duckdb_sync:"
+            markers: list[tuple[float, str]] = []  # (timestamp, key)
+
+            with env.begin(write=False, buffers=True) as txn:
+                cursor = txn.cursor()
+                if cursor.set_range(prefix.encode("utf-8")):
+                    for key_bytes, value_bytes in cursor.iternext():
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        if not key.startswith(prefix):
+                            break
+                        try:
+                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
+                            import orjson
+                            value = orjson.loads(vb)
+                            ts = value.get("ts", 0.0)
+                            markers.append((ts, key))
+                        except Exception:
+                            continue
+
+            if len(markers) <= keep_count:
+                return 0
+
+            # Sort by timestamp ascending (oldest first)
+            markers.sort(key=lambda x: x[0])
+            # Evict oldest (len - keep_count) markers
+            evict_count = len(markers) - keep_count
+            evicted = 0
+            for i in range(evict_count):
+                _, key = markers[i]
+                if self._wal_lmdb.delete(key):
+                    evicted += 1
+
+            if evicted > 0:
+                _logger.warning(f"[P0-9] Evicted {evicted} oldest pending sync markers (limit={keep_count})")
+            return evicted
+        except Exception:
+            return 0
+
     def _wal_write_pending_sync_marker(
         self,
         finding_id: str,
@@ -5935,13 +5990,13 @@ class DuckDBShadowStore:
     ) -> bool:
         """
         Sprint 8F: Write a pending-sync recovery marker to LMDB.
+        P0-9 fix: Enforces MAX_PENDING_SYNC_MARKERS bound via oldest eviction.
 
         Marker key:  pending_duckdb_sync:{id}
         Value:       same structure as WAL finding (id, query, source_type, confidence, ts)
 
         This marker is written ONLY when LMDB succeeded but DuckDB failed.
         A future recovery sprint can find it via prefix scan and retry the DuckDB write.
-        The marker is NOT automatically cleared — explicit recovery is required.
         """
         try:
             import time as _time
@@ -5960,6 +6015,10 @@ class DuckDBShadowStore:
                     self._wal_lmdb.delete("_schema_init")
                 except Exception:
                     pass
+
+            # P0-9 fix: Evict oldest markers if we're at or above the bound
+            self._wal_evict_oldest_pending_markers(self.MAX_PENDING_SYNC_MARKERS - 1)
+
             key = f"pending_duckdb_sync:{finding_id}"
             value = {
                 "id": finding_id,
