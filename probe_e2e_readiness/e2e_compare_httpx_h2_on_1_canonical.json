@@ -1,0 +1,56 @@
+{
+  "baseline_path": "probe_e2e_readiness/e2e_baseline_truth_repeat_1.json",
+  "new_path": "probe_e2e_readiness/e2e_httpx_h2_on_1_canonical.json",
+  "verdict": "STABLE_BASELINE",
+  "verdict_reason": "both artifacts valid and complete, no count differences",
+  "baseline_truth_surfaces": {
+    "runtime_truth": true,
+    "timing_truth": true,
+    "canonical_run_summary": true,
+    "_signal_quality_classification": false,
+    "temporal_signal_summary": false,
+    "temporal_priority_hints": false,
+    "transport_counters": false,
+    "memory_truth": false
+  },
+  "new_truth_surfaces": {
+    "runtime_truth": true,
+    "timing_truth": true,
+    "canonical_run_summary": true,
+    "_signal_quality_classification": false,
+    "temporal_signal_summary": false,
+    "temporal_priority_hints": false,
+    "transport_counters": false,
+    "memory_truth": false
+  },
+  "baseline_comparable": {
+    "exit_code": null,
+    "duration_actual_s": null,
+    "actual_duration_s": null,
+    "cycles_started": null,
+    "cycles_completed": null,
+    "accepted_findings": null,
+    "public_accepted_findings": null,
+    "feed_findings": null,
+    "ct_findings": null,
+    "errors": null
+  },
+  "new_comparable": {
+    "exit_code": null,
+    "duration_actual_s": null,
+    "actual_duration_s": null,
+    "cycles_started": null,
+    "cycles_completed": null,
+    "accepted_findings": null,
+    "public_accepted_findings": null,
+    "feed_findings": null,
+    "ct_findings": null,
+    "errors": null
+  },
+  "field_diffs": [],
+  "new_added_surfaces": [],
+  "new_missing_surfaces": [],
+  "schema_mismatch_info": null,
+  "new_artifact_type": "canonical_report",
+  "baseline_artifact_type": "canonical_report"
+}

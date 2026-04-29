@@ -256,13 +256,15 @@ class TestNoSyncInAsync:
     """Test Sprint 4B: No blocking sync calls in async paths."""
 
     def test_validate_fetch_target_offloads_dns(self):
-        """Verify _validate_fetch_target uses asyncio.to_thread for DNS."""
+        """Verify _validate_fetch_target uses async DNS (loop.getaddrinfo or to_thread)."""
         import inspect
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         source = inspect.getsource(FetchCoordinator._validate_fetch_target)
-        assert 'asyncio.to_thread' in source, (
-            "DNS resolution must be offloaded to thread to avoid blocking"
+        # Accept either async-native loop.getaddrinfo or thread-based to_thread
+        uses_async_dns = 'async_getaddrinfo' in source or 'asyncio.to_thread' in source
+        assert uses_async_dns, (
+            "DNS resolution must use async_getaddrinfo (loop.getaddrinfo) or asyncio.to_thread"
         )
 
     def test_resolve_host_ips_is_sync(self):

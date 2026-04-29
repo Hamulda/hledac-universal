@@ -1,0 +1,140 @@
+{
+  "synthesis_engine_used": "hermes3",
+  "gnn_predicted_links": 0,
+  "top_graph_nodes": [],
+  "phase_duration_seconds": {},
+  "identity_candidates_found": 0,
+  "identity_findings_produced": 0,
+  "product_value_summary": {
+    "sprint_id": "8sa_1777480413016_854040",
+    "accepted": 0,
+    "reject_breakdown": {
+      "low_information": 0,
+      "in_memory_duplicate": 0,
+      "persistent_duplicate": 0,
+      "fail_open": 0
+    },
+    "total_rejected": 0,
+    "findings_per_minute": 0.0,
+    "ioc_density": 0.0,
+    "cb_open_domains": [],
+    "gnn_predictions": 0,
+    "synthesis_engine": "unknown",
+    "dedup_effective": true,
+    "dedup_lmdb_path": "/Users/vojtechhamada/.hledac_fallback_ramdisk/db/lmdb/dedup.lmdb",
+    "hot_cache": {
+      "size": 0,
+      "capacity": 10000
+    },
+    "commoncrawl_archive_augmented": 0,
+    "academic_discovery_contribution": 0,
+    "_signal_quality_classification": "depleted"
+  },
+  "analyst_brief": "AnalystBrief(sprint_id='unknown', target_id='unknown', headline='Sprint unknown: 0 findings, 0 graph nodes (RAM pressure \u2014 minimal brief)', key_findings=('Accepted findings: 0', 'Graph nodes: 0', 'Graph edges: 0'), evidence_chain_ids=(), next_actions=('Continue investigation with reduced scope',), open_questions=('What caused RAM pressure?',), confidence=0.3, generated_ts=1777480599.5184488)",
+  "canonical_run_summary": {
+    "meaningful": true,
+    "primary_signal": "none",
+    "posture": "unknown",
+    "dominant_signal_path": "unknown",
+    "corroborated": false,
+    "is_noisy": false,
+    "next_pivot": "unknown",
+    "branch_verdict": "unknown",
+    "risk_score": 0.0,
+    "hypothesis_count": 0,
+    "first_action": "",
+    "confidence": "",
+    "runtime_truth_level": "meaningful_empty",
+    "checkpoint_zero_category": "degraded_public_blocker",
+    "checkpoint_zero_reason": "degraded_public_branch_blocked:backend_error",
+    "observed_run_tuple": [
+      "ransomware infrastructure leak",
+      186.5,
+      16,
+      "https://abuse.ch/feeds/urlhaus/=0, https://feeds.feedburner.com/TheHackersNews=0, https://isc.sans.edu/rssfeed.xml=0, https://krebsonsecurity.com/feed/=0, https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml=0, https://www.bleepingcomputer.com/feed/=0, https://www.cisa.gov/feeds/hns.xml=0, https://www.welivesecurity.com/feed/=0",
+      "meaningful_empty"
+    ],
+    "canonical_sprint_owner": "core.__main__.run_sprint",
+    "canonical_path_used": "run_sprint",
+    "effective_source_mix": "https://abuse.ch/feeds/urlhaus/=0, https://feeds.feedburner.com/TheHackersNews=0, https://isc.sans.edu/rssfeed.xml=0, https://krebsonsecurity.com/feed/=0, https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml=0, https://www.bleepingcomputer.com/feed/=0, https://www.cisa.gov/feeds/hns.xml=0, https://www.welivesecurity.com/feed/=0",
+    "effective_parallelism": 8,
+    "effective_timeouts": {},
+    "active_iteration_count": 16,
+    "pre_loop_elapsed_s": 15.067900749998444,
+    "pre_loop_blocker_reason": "",
+    "pre_active_starvation": false,
+    "export_finish_layer_status": "empty_run",
+    "public_error": "backend_error",
+    "ct_log_discovered": 0,
+    "ct_log_stored": 0,
+    "ct_log_accepted_findings": 0,
+    "timing_truth": {
+      "requested_duration_s": 360.0,
+      "windup_lead_s": 180.0,
+      "time_to_windup_s": 186.5,
+      "time_to_teardown_s": 186.51,
+      "active_window_budget_s": 180.0,
+      "windup_lead_observed_s": 0.01,
+      "pre_scheduler_boot_s": 0.0,
+      "scheduler_wall_s": 186.5,
+      "scheduler_returned_phase": "ACTIVE",
+      "entered_active_truth": true,
+      "first_cycle_truth": true,
+      "pre_active_starvation": false,
+      "pre_active_blocker": null,
+      "canonical_runtime_budget_view": {
+        "pre_boot_s": 0.0,
+        "scheduler_elapsed_s": 186.5,
+        "total_wallclock_s": 186.5,
+        "budget_consumed_pct": 51.8
+      },
+      "active_runtime_occurred": true
+    }
+  },
+  "timing_truth": {
+    "requested_duration_s": 360.0,
+    "windup_lead_s": 180.0,
+    "time_to_windup_s": 186.5,
+    "time_to_teardown_s": 186.51,
+    "active_window_budget_s": 180.0,
+    "windup_lead_observed_s": 0.01,
+    "pre_scheduler_boot_s": 0.0,
+    "scheduler_wall_s": 186.5,
+    "scheduler_returned_phase": "ACTIVE",
+    "entered_active_truth": true,
+    "first_cycle_truth": true,
+    "pre_active_starvation": false,
+    "pre_active_blocker": null,
+    "canonical_runtime_budget_view": {
+      "pre_boot_s": 0.0,
+      "scheduler_elapsed_s": 186.5,
+      "total_wallclock_s": 186.5,
+      "budget_consumed_pct": 51.8
+    },
+    "active_runtime_occurred": true
+  },
+  "runtime_truth": {
+    "is_meaningful": true,
+    "evidence_note": "187s runtime, 16/16 cycles completed, no findings but within normal parameters",
+    "command_params": {
+      "query": "ransomware infrastructure leak",
+      "requested_duration_s": 360.0
+    },
+    "actual_duration_s": 186.5,
+    "cycles_completed": 16,
+    "cycles_started": 16,
+    "branch_mix": {
+      "feed_findings": 0,
+      "public_findings": 0,
+      "ct_findings": 0
+    },
+    "primary_signal_source": "none",
+    "total_pattern_hits": 0,
+    "accepted_findings": 0,
+    "pre_sprint_swap_detected": true,
+    "pre_sprint_uma_state": "ok",
+    "branch_timeout_count": 0,
+    "public_branch_timed_out": false,
+    "ct_branch_timed_out": false
+  }
+}

@@ -444,8 +444,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 41: zstd compression
         self._zstd = ZstdCompressor()
 
-        # Sprint 44: Lightpanda for JS-heavy pages
-        # Sprint 45: Pool for concurrent requests
+        # Sprint 44/45: Lightpanda pool for JS-heavy pages + concurrent requests
         self._lightpanda_pool = LightpandaPool(size=2)
         self._lightpanda_pool_started = False
         self._lightpanda_lock = asyncio.Lock()  # P1-1: thread-safe pool init
@@ -590,7 +589,15 @@ class FetchCoordinator(UniversalCoordinator):
             return False
 
     async def _validate_fetch_target(self, url: str) -> Tuple[bool, Dict[str, Any]]:
-        """Validate fetch target: resolve and check for private IPs."""
+        """
+        Validate fetch target: resolve and check for private IPs.
+
+        NOTE (P3-8): This provides DNS rebinding protection but has a residual
+        TOCTOU window between validation and fetch. The actual aiohttp fetch
+        resolves DNS independently. For HTTPS, certificate validation provides
+        secondary protection. For HTTP, the risk is acknowledged but the
+        performance cost of binding to pre-validated IPs is prohibitive.
+        """
         try:
             parsed = urlparse(url)
             hostname = parsed.hostname
