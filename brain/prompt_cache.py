@@ -152,7 +152,14 @@ class PromptCache:
             if now - self._cache[cached_prompt][1] > self._ttl:
                 continue
 
-            cached_emb = self._get_embedding(cached_prompt)
+            # MEDIUM-10 fix: reuse cached embedding if available
+            # (avoids recomputing trigram hash for every cached prompt)
+            with self._lock:
+                if cached_prompt in self._embeddings:
+                    cached_emb = self._embeddings[cached_prompt]
+                else:
+                    # Compute and cache for future reuse
+                    cached_emb = self._get_embedding(cached_prompt)
             sim = self._cosine_similarity(prompt_emb, cached_emb)
             if sim > best_sim:
                 best_sim = sim

@@ -221,13 +221,14 @@ class ZstdCompressor:
             return data
 
     def add_sample(self, data: bytes, content_type: str):
-        """Collect samples for dictionary building."""
+        """Collect samples for dictionary building. Rebuilds dictionary every 100 samples."""
         if not ZSTD_AVAILABLE:
             return
-        if self._response_counter < 100:
-            self._response_samples.append((data, content_type))
+        # P2-2 fix: always collect samples (deque maxlen=100 auto-evicts oldest)
+        self._response_samples.append((data, content_type))
         self._response_counter += 1
-        if self._response_counter == 100:
+        # Rebuild dictionary every 100 samples (not just once at counter==100)
+        if self._response_counter >= 100 and self._response_counter % 100 == 0:
             self._build_dictionary()
 
     def _build_dictionary(self):

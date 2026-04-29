@@ -261,14 +261,22 @@ async def export_sprint(
             if sanitized_obj is None:
                 sanitized_obj = {}
 
-        # Sprint F150I §3: Attach product_value_summary to JSON report (derived output)
+        # Sprint F206S §3: Attach additive canonical truth surfaces to JSON report.
+        # canonical_run_summary (from ExportHandoff) already contains the full timing_truth
+        # computed at __main__ write time — use it directly to avoid hardcoded assumptions.
         if isinstance(sanitized_obj, dict):
             sanitized_obj["product_value_summary"] = pvs
-            # Sprint F204E: Attach analyst brief to JSON report
             if eh.analyst_brief:
                 sanitized_obj["analyst_brief"] = _make_serializable(eh.analyst_brief)
+            # F206S: Inject additive top-level truth surfaces
+            if eh.canonical_run_summary:
+                sanitized_obj["canonical_run_summary"] = eh.canonical_run_summary
+                # Use the original timing_truth from canonical_run_summary (not reconstructed)
+                if "timing_truth" in eh.canonical_run_summary:
+                    sanitized_obj["timing_truth"] = eh.canonical_run_summary["timing_truth"]
+            if eh.runtime_truth:
+                sanitized_obj["runtime_truth"] = eh.runtime_truth
         elif isinstance(sanitized_obj, list):
-            # Edge case: truncated JSON is a list — wrap in dict with pvs
             sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs}
 
         with open(report_path, "w", encoding="utf-8") as f:

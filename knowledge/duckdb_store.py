@@ -1308,10 +1308,13 @@ class DuckDBShadowStore:
                 self._temp_dir = self._db_path.parent / "duckdb_tmp"
             self._temp_dir.mkdir(parents=True, exist_ok=True)
             conn = duckdb.connect(str(self._db_path))
-            # P1-3: Use validated settings to prevent SQL injection
-            conn.execute(f"SET memory_limit = '{_validate_duckdb_setting(self._memory_limit, 'memory_limit')}'")
-            conn.execute(f"SET max_temp_directory_size = '{_validate_duckdb_setting(self._max_temp, 'max_temp')}'")
-            conn.execute(f"SET temp_directory = '{_validate_path_setting(self._temp_dir, 'temp_directory')}'")
+            # P1-3: Defense-in-depth: validate AND parameterize
+            memory_limit_val = _validate_duckdb_setting(self._memory_limit, 'memory_limit')
+            max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
+            temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
+            conn.execute("SET memory_limit = ?", [memory_limit_val])
+            conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
+            conn.execute("SET temp_directory = ?", [temp_dir_val])
             conn.execute("PRAGMA threads=2")
             conn.execute(_SCHEMA_SQL)
             conn.close()
@@ -1319,14 +1322,20 @@ class DuckDBShadowStore:
             self._apply_schema_migrations()
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path))
-            self._file_conn.execute(f"SET memory_limit = '{_validate_duckdb_setting(self._memory_limit, 'memory_limit')}'")
-            self._file_conn.execute(f"SET max_temp_directory_size = '{_validate_duckdb_setting(self._max_temp, 'max_temp')}'")
-            self._file_conn.execute(f"SET temp_directory = '{_validate_path_setting(self._temp_dir, 'temp_directory')}'")
+            # P1-3: Defense-in-depth: validate AND parameterize
+            memory_limit_val = _validate_duckdb_setting(self._memory_limit, 'memory_limit')
+            max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
+            temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
+            self._file_conn.execute("SET memory_limit = ?", [memory_limit_val])
+            self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
+            self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
             self._file_conn.execute("PRAGMA threads=2")
         else:
             # MODE B: RAMDISK inactive — :memory: with PERSISTENT single connection
             self._persistent_conn = duckdb.connect(":memory:")
-            self._persistent_conn.execute(f"SET memory_limit = '{_validate_duckdb_setting(self._memory_limit, 'memory_limit')}'")
+            # P1-3: Defense-in-depth: validate AND parameterize
+            memory_limit_val = _validate_duckdb_setting(self._memory_limit, 'memory_limit')
+            self._persistent_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
             self._persistent_conn.execute("PRAGMA threads=2")
             self._persistent_conn.execute(_SCHEMA_SQL)

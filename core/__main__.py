@@ -1003,7 +1003,8 @@ async def run_sprint(
                 "timing_truth": timing_truth,
             },
             # Sprint F206S: Additive canonical truth surfaces for benchmark artifact hygiene.
-            # These are already computed in this scope — mirror to top-level for probe readability.
+            # The nested canonical_run_summary above (lines 964-1004) is a VALUE, not a top-level key.
+            # Add canonical_run_summary as a top-level key so it surfaces in the JSON artifact.
             "canonical_run_summary": {
                 "meaningful": runtime_truth["is_meaningful"],
                 "primary_signal": runtime_truth["primary_signal_source"],
