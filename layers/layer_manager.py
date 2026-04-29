@@ -38,6 +38,9 @@ class M1MemoryOptimizer:
     """
     M1 MacBook Air 8GB RAM optimization utilities.
 
+    IMPORTANT: Layer cleanup utility only — not the canonical Uma governor.
+    Canonical Uma policy lives in core/resource_governor.py.
+
     Provides:
     - Aggressive garbage collection
     - MLX cache clearing

@@ -15,6 +15,10 @@ Manages memory for M1 8GB MacBook Air:
 This is a thin wrapper around existing MemoryCoordinator with
 integration logic for the universal orchestrator.
 
+IMPORTANT: Layer-system memory surface — not the canonical Uma policy owner.
+Canonical sprint Uma governance lives in core/resource_governor.py.
+This module provides get_memory_pressure() for layer consumers.
+
 Refactored with internal classes for M1 8GB optimization:
 - _MemoryStateManager: System state machine and health monitoring
 - _StorageCoordinator: RAM disk and shared memory management
