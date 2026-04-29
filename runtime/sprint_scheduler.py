@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import struct
 import time as _time
 from collections import deque
@@ -3892,25 +3893,42 @@ class SprintScheduler:
                 self._memory_manager = None
                 return
 
-        # F203J: Advisory budget check before prewarm — QuantizationSelector
-        # result is logged for visibility; actual load authority stays in ModelManager
-        try:
-            from hledac.universal.core.resource_governor import sample_uma_status
-            from hledac.universal.brain.quantization_selector import QuantizationSelector
-            uma = sample_uma_status()
-            selector = QuantizationSelector()
-            budget = selector.select(uma, requested_model="hermes")
+        # F206AE: Lazy advisory gate — Hermes load is EXPENSIVE on M1 8GB and
+        # the loaded engine is NOT used in canonical acquisition sprint.
+        # Gate: HLEDAC_ENABLE_HERMES_SYNTHESIS=1 (default disabled)
+        # If disabled, Hermes is NOT loaded; _hermes_engine stays None.
+        # ModelManager remains load authority — gate is purely advisory skip.
+        hermes_synthesis_enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
+        hermes_load_skipped_reason = None
+        if not hermes_synthesis_enabled:
+            hermes_load_skipped_reason = "disabled_env"
+            self._hermes_engine = None
+            self._memory_manager = None
             log.debug(
-                f"[F203J] Hermes prewarm budget: quant={budget.quantization}, "
-                f"tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, "
-                f"reason={budget.reason}"
+                "[F206AE] Hermes load skipped — HLEDAC_ENABLE_HERMES_SYNTHESIS != '1', "
+                f"reason={hermes_load_skipped_reason}"
             )
-        except Exception as e:
-            log.debug("[F203J] QuantizationSelector prewarm advisory error: %s", e)
+        else:
+            # Shared load path via ModelManager (canonical lifecycle owner)
+            # ModelManager enforces M1 8GB memory admission + F203J QuantizationSelector
+            await self._load_hermes_for_sprint()
 
-        # Shared load path via ModelManager (canonical lifecycle owner)
-        # ModelManager enforces M1 8GB memory admission + F203J QuantizationSelector
-        await self._load_hermes_for_sprint()
+            # F203J: Advisory budget check after Hermes load — QuantizationSelector
+            # result is logged for visibility; actual load authority stays in ModelManager
+            # Only run when Hermes is actually being loaded (gate passed)
+            try:
+                from hledac.universal.core.resource_governor import sample_uma_status
+                from hledac.universal.brain.quantization_selector import QuantizationSelector
+                uma = sample_uma_status()
+                selector = QuantizationSelector()
+                budget = selector.select(uma, requested_model="hermes")
+                log.debug(
+                    f"[F203J] Hermes prewarm budget: quant={budget.quantization}, "
+                    f"tokens={budget.max_tokens}, latency={budget.max_latency_ms}ms, "
+                    f"reason={budget.reason}"
+                )
+            except Exception as e:
+                log.debug("[F203J] QuantizationSelector prewarm advisory error: %s", e)
 
     async def _load_hermes_for_sprint(self) -> None:
         """
