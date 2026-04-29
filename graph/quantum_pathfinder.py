@@ -1283,6 +1283,55 @@ class DuckPGQGraph:
             logger.warning(f"[GRAPH] find_connected failed: {e}")
             return []
 
+    def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
+        """
+        P1-1 fix: Batch version of find_connected for N+1 query optimization.
+        Returns dict mapping each input value to its connected nodes.
+        Falls back to individual find_connected calls on error.
+        """
+        if not values:
+            return {}
+        # Use CTE with IN clause for batch query
+        sql = """
+            WITH RECURSIVE paths(src_value, dst_id, depth) AS (
+                SELECT n.value, e.dst_id, 1
+                FROM ioc_edges e
+                JOIN ioc_nodes n ON n.id = e.src_id
+                WHERE n.value IN (%s)
+                UNION ALL
+                SELECT p.src_value, e.dst_id, p.depth + 1
+                FROM ioc_edges e
+                JOIN paths p ON p.dst_id = e.src_id
+                WHERE p.depth < ?
+            )
+            SELECT p.src_value, n.value as dst_value, n.ioc_type, n.confidence, n.source
+            FROM paths p
+            JOIN ioc_nodes n ON n.id = p.dst_id
+            LIMIT %d
+        """ % (",".join(["?"] * len(values)), len(values) * 100)
+
+        params = list(values) + [max_hops]
+        try:
+            df = self.con.execute(sql, params).fetchdf()
+            result: dict[str, list[dict]] = {v: [] for v in values}
+            for _, row in df.iterrows():
+                src = row["src_value"]
+                if src in result:
+                    result[src].append({
+                        "value": row["dst_value"],
+                        "ioc_type": row["ioc_type"],
+                        "confidence": row["confidence"],
+                        "source": row["source"],
+                    })
+            return result
+        except Exception as e:
+            logger.warning(f"[GRAPH] find_connected_batch failed, falling back: {e}")
+            # Fallback: individual calls
+            result = {}
+            for v in values:
+                result[v] = self.find_connected(v, max_hops=max_hops)
+            return result
+
     def stats(self) -> dict:
         nodes = self.con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()[0]
         edges = self.con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()[0]

@@ -39,7 +39,7 @@ class _LazyModule:
     For parallel loading:
         light_modules = [_LazyModule("os"), _LazyModule("json")]
         heavy_modules = [_LazyModule("mlx_lm")]
-        await asyncio.gather(*(m.ensure_loaded() for m in light_modules))
+        await asyncio.gather(*(m.ensure_loaded() for m in light_modules), return_exceptions=True)
         for m in heavy_modules:
             await m.ensure_loaded()
     """

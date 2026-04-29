@@ -42,10 +42,14 @@ FAIL-SOFT BEHAVIOR:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import re
+import socket
 import urllib.parse
+
+from ..utils.async_helpers import async_getaddrinfo
 
 logger = logging.getLogger(__name__)
 
@@ -287,8 +291,8 @@ async def fetch_via_httpx_h2(
         # Resolve relative URLs
         redirect_url = urllib.parse.urljoin(current_url, location)
 
-        # Validate redirect URL is safe (no private IPs)
-        _validate_redirect_url(redirect_url)
+        # Validate redirect URL is safe (no private IPs, DNS rebinding protection)
+        await _validate_redirect_url(redirect_url)
 
         current_url = redirect_url
 
@@ -300,16 +304,15 @@ class _SSRFBlockError(Exception):
     pass
 
 
-def _validate_redirect_url(redirect_url: str) -> None:
+async def _validate_redirect_url(redirect_url: str) -> None:
     """
     Validate redirect URL is safe (no private IPs, no data: URIs, etc.).
+
+    Performs DNS resolution for domain names to detect DNS rebinding attacks.
 
     Raises:
         _SSRFBlockError: if redirect target is unsafe
     """
-    import ipaddress
-    import urllib.parse
-
     # Private network ranges to block
     _PRIVATE_NETS = [
         ipaddress.ip_network("10.0.0.0/8"),
@@ -330,7 +333,7 @@ def _validate_redirect_url(redirect_url: str) -> None:
     if not hostname:
         raise _SSRFBlockError(f"No hostname in redirect URL: {redirect_url}")
 
-    # Check if hostname is private IP
+    # Check if hostname is private IP (literal)
     try:
         ip = ipaddress.ip_address(hostname)
         for net in _PRIVATE_NETS:
@@ -338,10 +341,40 @@ def _validate_redirect_url(redirect_url: str) -> None:
                 raise _SSRFBlockError(f"Redirect to private IP blocked: {redirect_url}")
         if ip.is_multicast or ip.is_unspecified or (hasattr(ip, 'is_loopback') and ip.is_loopback):
             raise _SSRFBlockError(f"Redirect to reserved IP blocked: {redirect_url}")
+        # Literal IP is valid and safe — no DNS resolution needed
+        return
     except _SSRFBlockError:
         raise  # Re-raise SSRF blocks
-    except Exception:
-        pass  # Not an IP, must be domain — allow
+    except ValueError:
+        pass  # Not an IP, must be domain — resolve DNS below
+
+    # Resolve DNS and check all resolved IPs for private ranges
+    # This prevents DNS rebinding attacks where a domain initially resolves
+    # to a public IP but later redirects to a private IP
+    try:
+        raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
+        resolved_ips = sorted(set(str(r[4][0]) for r in raw_results))
+        if not resolved_ips:
+            raise _SSRFBlockError(f"DNS resolution failed for redirect URL: {redirect_url}")
+
+        for ip_str in resolved_ips:
+            try:
+                ip_obj = ipaddress.ip_address(ip_str)
+                for net in _PRIVATE_NETS:
+                    if ip_obj in net:
+                        raise _SSRFBlockError(
+                            f"Redirect to private IP via DNS rebinding blocked: {redirect_url} "
+                            f"(resolved to {ip_str})"
+                        )
+                if ip_obj.is_multicast or ip_obj.is_unspecified:
+                    raise _SSRFBlockError(f"Redirect to reserved IP blocked: {redirect_url}")
+            except ValueError:
+                pass  # Not an IP format, skip
+    except _SSRFBlockError:
+        raise
+    except Exception as exc:
+        # Fail-safe: block on any resolution error
+        raise _SSRFBlockError(f"DNS resolution error for redirect URL: {redirect_url}: {exc}")
 
 
 __all__ = [

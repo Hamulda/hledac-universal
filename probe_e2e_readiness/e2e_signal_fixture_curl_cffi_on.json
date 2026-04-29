@@ -1,0 +1,131 @@
+{
+  "artifact_type": "signal_fixture",
+  "run_name": "curl_cffi_on",
+  "env": {
+    "HLEDAC_ENABLE_CURL_CFFI": "1"
+  },
+  "fixture_url": "http://127.0.0.1:18102/test",
+  "exit_code": 0,
+  "status_code": 200,
+  "selected_transport": "curl_cffi",
+  "http_version": null,
+  "transport_policy_reason": "explicit_stealth",
+  "transport_fallback_reason": null,
+  "fetched_bytes": 823,
+  "fixture_hits": 1,
+  "pattern_hits": 24,
+  "pattern_hit_list": [
+    {
+      "pattern": "ransomware",
+      "ioc_type": "malware_type"
+    },
+    {
+      "pattern": "leak",
+      "ioc_type": "security_incident"
+    },
+    {
+      "pattern": "ransomware",
+      "ioc_type": "malware_type"
+    },
+    {
+      "pattern": "ransomware-as-a-service",
+      "ioc_type": "malware_type"
+    },
+    {
+      "pattern": "bitcoin address",
+      "ioc_type": "bitcoin_payment"
+    },
+    {
+      "pattern": ".onion",
+      "ioc_type": "darknet_domain"
+    },
+    {
+      "pattern": "cve-",
+      "ioc_type": "vulnerability_id"
+    },
+    {
+      "pattern": "cve-2024-21412",
+      "ioc_type": "cve_identifier"
+    },
+    {
+      "pattern": "vulnerability",
+      "ioc_type": "threat_type"
+    },
+    {
+      "pattern": "lockbit",
+      "ioc_type": "ransomware_group"
+    },
+    {
+      "pattern": "ransomware",
+      "ioc_type": "malware_type"
+    },
+    {
+      "pattern": "darknet domain",
+      "ioc_type": "darknet_domain"
+    },
+    {
+      "pattern": "leak",
+      "ioc_type": "security_incident"
+    },
+    {
+      "pattern": "leaked",
+      "ioc_type": "security_incident"
+    },
+    {
+      "pattern": "leaked database",
+      "ioc_type": "osint_source"
+    },
+    {
+      "pattern": "credential",
+      "ioc_type": "credential_type"
+    },
+    {
+      "pattern": "combolist",
+      "ioc_type": "credential_leak"
+    },
+    {
+      "pattern": "royal ransomware",
+      "ioc_type": "ransomware_group"
+    },
+    {
+      "pattern": "ransomware",
+      "ioc_type": "malware_type"
+    },
+    {
+      "pattern": "bl00dy",
+      "ioc_type": "ransomware_group"
+    },
+    {
+      "pattern": "rhysida",
+      "ioc_type": "ransomware_group"
+    },
+    {
+      "pattern": "database leak",
+      "ioc_type": "security_incident"
+    },
+    {
+      "pattern": "leak",
+      "ioc_type": "security_incident"
+    },
+    {
+      "pattern": "misp-event",
+      "ioc_type": "misp_indicator"
+    }
+  ],
+  "accepted_findings": 1,
+  "public_fetched": 1,
+  "public_discovered": 1,
+  "transport_counters": {
+    "aiohttp_count": 0,
+    "httpx_h2_count": 0,
+    "curl_cffi_count": 1,
+    "tor_aiohttp_socks_count": 0,
+    "i2p_aiohttp_socks_count": 0,
+    "js_renderer_count": 0,
+    "fallback_count": 0,
+    "curl_cffi_fallback_to_aiohttp_count": 0,
+    "httpx_h2_fallback_to_aiohttp_count": 0
+  },
+  "duration_ms": 0,
+  "errors": []
+}

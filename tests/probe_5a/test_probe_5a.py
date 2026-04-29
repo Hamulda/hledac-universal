@@ -34,7 +34,7 @@ import pytest
 class TestCheckpointRestore:
     """Verify _last_checkpoint is actually consumed by restore methods."""
 
-    async def test_probe_checkpoint_restore_stores_in_last_checkpoint(self):
+    def test_probe_checkpoint_restore_stores_in_last_checkpoint(self):
         """Verify _probe_checkpoint_restore stores checkpoint in _last_checkpoint."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -64,7 +64,7 @@ class TestCheckpointRestore:
         assert orch._last_checkpoint is mock_cp
         assert mock_manager.load_checkpoint.called
 
-    async def test_probe_checkpoint_restore_calls_frontier_from_list(self):
+    def test_probe_checkpoint_restore_calls_frontier_from_list(self):
         """Verify frontier is restored via from_list when frontier_data is present."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -100,7 +100,7 @@ class TestCheckpointRestore:
         # Verify from_list was called with frontier data
         mock_frontier.from_list.assert_called_once_with(frontier_data)
 
-    async def test_probe_checkpoint_restore_calls_microplan_restore(self):
+    def test_probe_checkpoint_restore_calls_microplan_restore(self):
         """Verify microplans are restored via _restore_microplans_from_head."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -134,7 +134,7 @@ class TestCheckpointRestore:
 
         orch._restore_microplans_from_head.assert_called_once_with(microplan_head)
 
-    async def test_probe_checkpoint_restore_fail_open(self):
+    def test_probe_checkpoint_restore_fail_open(self):
         """Verify restore is fail-open: missing _url_frontier does not raise."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -288,7 +288,7 @@ class TestExportSink:
 class TestLifecyclePath:
     """Verify WINDUP → EXPORT → TEARDOWN as a real path."""
 
-    async def test_lifecycle_windup_transitions_to_export(self):
+    def test_lifecycle_windup_transitions_to_export(self):
         """Verify request_windup → request_export transitions correctly."""
         from hledac.universal.utils.sprint_lifecycle import (
             SprintLifecycleManager,
@@ -314,7 +314,7 @@ class TestLifecyclePath:
         mgr.request_teardown()
         assert mgr.state == SprintLifecycleState.TEARDOWN
 
-    async def test_windup_hook_called_at_t_minus_3min(self):
+    def test_windup_hook_called_at_t_minus_3min(self):
         """Verify windup hook fires when remaining_time <= windup_lead."""
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 
@@ -336,7 +336,7 @@ class TestLifecyclePath:
         # Remaining = 200 - 20 = 180s — exactly at windup lead threshold
         assert mgr.remaining_time == pytest.approx(180.0, abs=1.0)
 
-    async def test_request_export_fires_export_hook(self):
+    def test_request_export_fires_export_hook(self):
         """Verify request_export calls the export hook."""
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 
@@ -360,7 +360,7 @@ class TestLifecyclePath:
 
         assert len(export_called) == 1
 
-    async def test_lifecycle_is_idempotent(self):
+    def test_lifecycle_is_idempotent(self):
         """Verify state transitions are idempotent (same-state is no-op)."""
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 
@@ -386,7 +386,7 @@ class TestLifecyclePath:
 class TestBgTaskTracking:
     """Verify AO uses lifecycle.track_task for background tasks."""
 
-    async def test_track_task_method_exists(self):
+    def test_track_task_method_exists(self):
         """Verify SprintLifecycleManager.track_task is callable."""
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 
@@ -394,6 +394,7 @@ class TestBgTaskTracking:
         assert hasattr(mgr, 'track_task')
         assert callable(mgr.track_task)
 
+    @pytest.mark.asyncio
     async def test_track_task_registers_task(self):
         """Verify track_task adds task to internal registry."""
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
@@ -416,7 +417,7 @@ class TestBgTaskTracking:
         except asyncio.CancelledError:
             pass
 
-    async def test_orchestrator_has_lifecycle(self):
+    def test_orchestrator_has_lifecycle(self):
         """Verify FullyAutonomousOrchestrator has _lifecycle with track_task."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -434,7 +435,7 @@ class TestBgTaskTracking:
 class TestCheckpointSave:
     """Verify _save_checkpoint_windup collects real frontier/microplan data."""
 
-    async def test_save_checkpoint_windup_collects_frontier_data(self):
+    def test_save_checkpoint_windup_collects_frontier_data(self):
         """Verify _save_checkpoint_windup calls _url_frontier.to_list()."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -466,7 +467,7 @@ class TestCheckpointSave:
         saved_cp = mock_manager.save_checkpoint.call_args[0][0]
         assert len(saved_cp.frontier_data) == 2
 
-    async def test_save_checkpoint_windup_collects_microplan_head(self):
+    def test_save_checkpoint_windup_collects_microplan_head(self):
         """Verify _save_checkpoint_windup calls _export_microplan_head."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -493,7 +494,7 @@ class TestCheckpointSave:
         saved_cp = mock_manager.save_checkpoint.call_args[0][0]
         assert len(saved_cp.microplan_head) == 1
 
-    async def test_save_checkpoint_windup_fail_open(self):
+    def test_save_checkpoint_windup_fail_open(self):
         """Verify _save_checkpoint_windup is fail-open."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -515,7 +516,7 @@ class TestCheckpointSave:
 class TestAOCanary:
     """Verify AO still instantiates and basic methods work."""
 
-    async def test_orchestrator_instantiation(self):
+    def test_orchestrator_instantiation(self):
         """Verify orchestrator can be instantiated."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -523,7 +524,7 @@ class TestAOCanary:
         assert orch is not None
         assert orch._state_mgr is None
 
-    async def test_shutdown_all_is_callable(self):
+    def test_shutdown_all_is_callable(self):
         """Verify shutdown_all exists and is callable."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 
@@ -531,6 +532,7 @@ class TestAOCanary:
         assert hasattr(orch, 'shutdown_all')
         assert callable(orch.shutdown_all)
 
+    @pytest.mark.asyncio
     async def test_shutdown_all_completes_with_none_managers(self):
         """shutdown_all completes even with None managers."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
@@ -545,7 +547,7 @@ class TestAOCanary:
         # Should not raise
         await orch.shutdown_all()
 
-    async def test_lifecycle_manager_exists(self):
+    def test_lifecycle_manager_exists(self):
         """Verify _lifecycle is a SprintLifecycleManager."""
         from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager

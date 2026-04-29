@@ -332,6 +332,17 @@ class LightpandaManager:
             else:
                 raise RuntimeError("Lightpanda failed to start")
 
+    # SEC-07: Guard for tab.evaluate() - prevents JS injection if made dynamic
+    # Currently uses static string literal (safe). If refactored to accept dynamic input,
+    # validate with _SAFE_JS_IDENTIFIER_PATTERN below.
+    _SAFE_JS_PATTERN = re.compile(r"^[a-zA-Z0-9_.\[\]]+$")
+
+    def _validate_js_expression(self, expr: str) -> str:
+        """Validate a JavaScript expression is safe for tab.evaluate()."""
+        if not self._SAFE_JS_PATTERN.match(expr):
+            raise ValueError(f"Unsafe JS expression rejected: {expr!r}")
+        return expr
+
     async def fetch_js(self, url: str, proxy: str = None) -> bytes:
         """Fetch URL with JS rendering using nodriver."""
         try:
@@ -350,7 +361,9 @@ class LightpandaManager:
 
             tab = await browser.get(url)
             await tab.wait_domcontentloaded()
-            content = await tab.evaluate("document.documentElement.outerHTML")
+            # SEC-07: Static string - safe from injection. Guard validates if ever made dynamic.
+            js_expr = self._validate_js_expression("document.documentElement.outerHTML")
+            content = await tab.evaluate(js_expr)
             await browser.stop()
             return content.encode()
         except Exception as e:

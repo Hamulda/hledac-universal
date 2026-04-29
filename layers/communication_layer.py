@@ -579,6 +579,9 @@ class CommunicationLayer:
                 # Process batch – one failure doesn't kill others
                 results = await self._process_batch_parallel([item.query for item in batch])
                 for item, res in zip(batch, results):
+                    # Handle Exception objects from gather with return_exceptions=True
+                    if isinstance(res, Exception):
+                        res = {"success": False, "error": str(res), "response": None}
                     if not item.future.done():
                         item.future.set_result(res)
 
@@ -600,7 +603,7 @@ class CommunicationLayer:
             except Exception as e:
                 return {"success": False, "error": str(e), "response": None}
 
-        return await asyncio.gather(*[run_one(q) for q in queries])
+        return await asyncio.gather(*[run_one(q) for q in queries], return_exceptions=True)
 
     async def _process_batch(self, batch: List[dict]) -> None:
         """Process a batch of queries (Sprint 26)."""

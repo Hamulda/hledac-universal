@@ -946,6 +946,35 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
+    def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list]:
+        """
+        P1-1 fix: Batch version of get_connected_iocs for N+1 query optimization.
+        Returns dict mapping each value to its connected IOC list.
+
+        CAPABILITY REQUIREMENTS
+        -----------------------
+        Requires attached graph to implement find_connected_batch(values, max_hops) → dict.
+        DuckPGQGraph: has this method (P1-1 fix).
+        IOCGraph: does NOT have this method → returns {} (fail-open).
+        """
+        if not values or self._ioc_graph is None:
+            return {}
+        try:
+            method = getattr(self._ioc_graph, "find_connected_batch", None)
+            if not callable(method):
+                # Fallback: individual calls
+                result = {}
+                for v in values:
+                    result[v] = self.get_connected_iocs(v, max_hops=max_hops)
+                return result
+            batch_result = method(values, max_hops=max_hops)
+            if not isinstance(batch_result, dict):
+                return {}
+            # Ensure all keys present
+            return {v: batch_result.get(v, []) for v in values}
+        except Exception:
+            return {}
+
     # --------------------------------------------------------------------------
     # Sprint F193A: Graph enrichment annotation layer
     # --------------------------------------------------------------------------
@@ -1023,12 +1052,10 @@ class DuckDBShadowStore:
 
             # P1-1: N+1 query pattern — batch optimization needed
             # Current: N queries for N unique IOCs
-            # Solution: Add get_connected_iocs_batch() to ioc_graph interface
-            # Temporary mitigation: process in parallel with asyncio (still N queries)
-            connected_cache: dict[str, list[dict]] = {}
-            for ioc_value in ioc_seen:
-                connected = self.get_connected_iocs(ioc_value, max_hops=max_hops)
-                connected_cache[ioc_value] = connected if connected else []
+            # P1-1 fix: Batch query — single SQL call for all IOCs instead of N calls
+            connected_cache: dict[str, list[dict]] = self.get_connected_iocs_batch(
+                list(ioc_seen), max_hops=max_hops
+            )
 
             # Build annotation map
             annotation_map: dict[str, dict] = {}

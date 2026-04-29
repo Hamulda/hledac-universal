@@ -230,9 +230,19 @@ class WorkflowEngine:
             
             async def run_task(task_id: str) -> None:
                 async with semaphore:
-                    await self._execute_task_with_retry(workflow, task_id)
-            
-            await asyncio.gather(*[run_task(tid) for tid in level_tasks])
+                    try:
+                        await self._execute_task_with_retry(workflow, task_id)
+                    except Exception as e:
+                        # Store exception in task.error for caller visibility
+                        workflow.tasks[task_id].error = str(e)
+                        workflow.tasks[task_id].status = TaskStatus.FAILED
+                        logger.error(f"Task {task_id} permanently failed: {e}")
+
+            results = await asyncio.gather(*[run_task(tid) for tid in level_tasks], return_exceptions=True)
+            # Log any unexpected exceptions (shouldn't happen since run_task catches them)
+            for tid, result in zip(level_tasks, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Task {tid} unexpected exception: {result}")
             
             # Callback
             if on_task_complete:

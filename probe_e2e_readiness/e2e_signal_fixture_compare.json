@@ -1,0 +1,89 @@
+{
+  "artifact_type": "signal_fixture_compare",
+  "run_name": "transport_matrix",
+  "baseline_path": "probe_e2e_readiness/e2e_signal_fixture_baseline.json",
+  "httpx_h2_path": "probe_e2e_readiness/e2e_signal_fixture_httpx_h2_on.json",
+  "curl_cffi_path": "probe_e2e_readiness/e2e_signal_fixture_curl_cffi_on.json",
+  "verdict": "SIGNAL_FIXTURE_VALID",
+  "verdict_reason": "All three transport lanes produced non-empty signal",
+  "field_diffs": [
+    {
+      "field": "selected_transport",
+      "baseline": "aiohttp",
+      "httpx_h2_on": "httpx_h2",
+      "curl_cffi_on": "curl_cffi"
+    },
+    {
+      "field": "http_version",
+      "baseline": null,
+      "httpx_h2_on": "http/HTTP/1.0",
+      "curl_cffi_on": null
+    }
+  ],
+  "baseline_comparable": {
+    "fixture_hits": 1,
+    "fetched_bytes": 823,
+    "status_code": 200,
+    "pattern_hits": 24,
+    "public_fetched": 1,
+    "selected_transport": "aiohttp",
+    "http_version": null,
+    "duration_ms": 0
+  },
+  "httpx_h2_comparable": {
+    "fixture_hits": 1,
+    "fetched_bytes": 823,
+    "status_code": 200,
+    "pattern_hits": 24,
+    "public_fetched": 1,
+    "selected_transport": "httpx_h2",
+    "http_version": "http/HTTP/1.0",
+    "duration_ms": 0
+  },
+  "curl_cffi_comparable": {
+    "fixture_hits": 1,
+    "fetched_bytes": 823,
+    "status_code": 200,
+    "pattern_hits": 24,
+    "public_fetched": 1,
+    "selected_transport": "curl_cffi",
+    "http_version": null,
+    "duration_ms": 0
+  },
+  "transport_counters_baseline": {
+    "aiohttp_count": 1,
+    "httpx_h2_count": 0,
+    "curl_cffi_count": 0,
+    "tor_aiohttp_socks_count": 0,
+    "i2p_aiohttp_socks_count": 0,
+    "js_renderer_count": 0,
+    "fallback_count": 0,
+    "curl_cffi_fallback_to_aiohttp_count": 0,
+    "httpx_h2_fallback_to_aiohttp_count": 0
+  },
+  "transport_counters_httpx_h2": {
+    "aiohttp_count": 0,
+    "httpx_h2_count": 1,
+    "curl_cffi_count": 0,
+    "tor_aiohttp_socks_count": 0,
+    "i2p_aiohttp_socks_count": 0,
+    "js_renderer_count": 0,
+    "fallback_count": 0,
+    "curl_cffi_fallback_to_aiohttp_count": 0,
+    "httpx_h2_fallback_to_aiohttp_count": 0
+  },
+  "transport_counters_curl_cffi": {
+    "aiohttp_count": 0,
+    "httpx_h2_count": 0,
+    "curl_cffi_count": 1,
+    "tor_aiohttp_socks_count": 0,
+    "i2p_aiohttp_socks_count": 0,
+    "js_renderer_count": 0,
+    "fallback_count": 0,
+    "curl_cffi_fallback_to_aiohttp_count": 0,
+    "httpx_h2_fallback_to_aiohttp_count": 0
+  },
+  "baseline_errors": [],
+  "httpx_h2_errors": [],
+  "curl_cffi_errors": []
+}
