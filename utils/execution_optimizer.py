@@ -394,24 +394,22 @@ class ParallelExecutionOptimizer:
     def _run_in_executor_safe(self, executor, func):
         """Run coroutine func in executor safely - handles running loop correctly.
 
-        M1-SAFE: When a loop is already running, run func in a worker thread
-        with its own event loop via asyncio.run(). This avoids calling
-        run_until_complete() from a different thread which is not safe.
+        M1-SAFE: When a loop is already running, use run_until_complete on the
+        existing loop from the worker thread. This avoids creating a nested event
+        loop with asyncio.run() which crashes Metal on Apple Silicon M1.
         """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop in this thread - create one with asyncio.run()
-            # F196A: This runs in a worker thread, not the main thread's loop.
-            return asyncio.run(func())
-        # A loop is running in this thread - we're inside an async context.
-        # This function is sync so it shouldn't be called directly from async
-        # code (use 'await func()' instead). If it is called, we fall back to
-        # creating a new loop in a worker thread to avoid the nested loop issue.
-        import concurrent.futures
-        _worker_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = _worker_exec.submit(asyncio.run, func())
-        return future.result()
+            # F206L: M1-SAFE - create new event loop in worker thread, don't use asyncio.run()
+            new_loop = asyncio.new_event_loop()
+            try:
+                return new_loop.run_until_complete(func())
+            finally:
+                new_loop.close()
+        # M1-SAFE: Use run_until_complete on the existing loop from this worker thread.
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(func())
 
     async def _execute_round_robin(self, tasks: List[Any], max_workers: int) -> List[Any]:
         """Execute tasks using round-robin distribution"""

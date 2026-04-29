@@ -488,7 +488,8 @@ class TestTimeoutPath:
             result = await dda.async_search_public_web("timeout test", timeout_s=0.1)
 
         assert result.hits == ()
-        assert result.error in ("timeout", "backend_error")
+        # F206AB: backend_error taxonomy split - generic RuntimeError -> unknown_backend_error
+        assert result.error in ("timeout", "unknown_backend_error", "network_error", "server_error")
 
     @pytest.mark.asyncio
     async def test_asyncio_timeout_exception_caught(self):
@@ -501,7 +502,8 @@ class TestTimeoutPath:
             result = await dda.async_search_public_web("inner timeout test", timeout_s=5.0)
 
         assert result.hits == ()
-        assert result.error in ("timeout", "backend_error")
+        # F206AB: asyncio.TimeoutError now explicitly caught -> "timeout"
+        assert result.error == "timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +541,11 @@ class TestGenericExceptionFailSoft:
             result = await dda.async_search_public_web("error test")
 
         assert result.hits == ()
-        assert result.error in ("backend_error", "rate_limited", "timeout")
+        # F206AB: backend_error taxonomy split into concrete types
+        assert result.error in (
+            "unknown_backend_error", "proxy_error", "network_error",
+            "server_error", "rate_limited", "timeout",
+        )
 
 
 # ---------------------------------------------------------------------------

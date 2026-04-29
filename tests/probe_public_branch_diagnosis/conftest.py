@@ -55,8 +55,8 @@ def mock_discovery_result_empty():
 
 @pytest.fixture
 def mock_discovery_result_error():
-    """Return a DiscoveryBatchResult with a backend error."""
-    return DiscoveryBatchResult(hits=(), error="backend_error:DuckDuckGoSearchException:rate limited", fallback_triggered=None)
+    """Return a DiscoveryBatchResult with a backend error (F206AB taxonomy)."""
+    return DiscoveryBatchResult(hits=(), error="rate_limited", fallback_triggered=None)
 
 
 @pytest.fixture

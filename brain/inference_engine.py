@@ -439,9 +439,13 @@ class InferenceEngine:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(coro)
+            # F206L: M1-SAFE - create new event loop in worker thread, don't use asyncio.run()
+            new_loop = asyncio.new_event_loop()
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
         # M1-SAFE: Use run_until_complete on the existing loop from this worker thread.
-        # asyncio.run() creates a new nested event loop which crashes Metal on M1.
         loop = asyncio.get_running_loop()
         return loop.run_until_complete(coro)
 

@@ -77,8 +77,8 @@ class _MemoryStateManager:
     def __init__(self, config: MemoryConfig):
         self.config = config
         self._current_state = SystemState.HEALTHY
-        self._metrics_history: deque = deque()
         self._max_history = 100
+        self._metrics_history: deque = deque(maxlen=self._max_history)  # F206L: bounded
         self._health_check_task: Optional[asyncio.Task] = None
         self._running = False
         self._state_change_callbacks: List[Callable[[SystemState, SystemState], None]] = []

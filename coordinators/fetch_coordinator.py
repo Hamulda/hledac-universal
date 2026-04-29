@@ -290,18 +290,17 @@ class LightpandaManager:
                         # Expected hash from trusted source stored in LIGHTPANDA_SHA256 env var
                         actual_hash = hashlib.sha256(content).hexdigest()
                         expected_hash = os.environ.get('LIGHTPANDA_SHA256')
-                        if expected_hash:
-                            if actual_hash != expected_hash:
-                                raise ValueError(
-                                    f"[LIGHTPANDA] Hash mismatch! "
-                                    f"expected={expected_hash}, actual={actual_hash}"
-                                )
-                            logger.info(f"[LIGHTPANDA] Hash verified: {actual_hash[:16]}...")
-                        else:
-                            logger.warning(
-                                f"[LIGHTPANDA] Downloaded binary hash (for audit only): "
-                                f"{actual_hash} - set LIGHTPANDA_SHA256 env var to verify"
+                        if not expected_hash:
+                            raise ValueError(
+                                "[LIGHTPANDA] LIGHTPANDA_SHA256 env var must be set to verify "
+                                "binary integrity before download. Set it to the trusted SHA256 hash."
                             )
+                        if actual_hash != expected_hash:
+                            raise ValueError(
+                                f"[LIGHTPANDA] Hash mismatch! "
+                                f"expected={expected_hash}, actual={actual_hash}"
+                            )
+                        logger.info(f"[LIGHTPANDA] Hash verified: {actual_hash[:16]}...")
                         with open(self._bin_path, 'wb') as f:
                             f.write(content)
                         os.chmod(self._bin_path, 0o755)

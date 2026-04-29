@@ -438,11 +438,27 @@ class ToolRegistry:
 
         async def _execute_dns_tunnel_async(args: dict) -> dict:
             """Async execution of DNS tunnel check."""
+            # P1-13: Input validation to prevent command injection
+            if not isinstance(args, dict):
+                return {"error": "args must be a dict", "findings": []}
+
             mode = args.get("mode", "analyze_queries")
-            if mode != "analyze_queries":
+            if not isinstance(mode, str) or mode != "analyze_queries":
                 return {"error": f"unknown mode: {mode}", "findings": []}
 
-            queries = args.get("queries", [])[:500]  # bounded
+            queries_raw = args.get("queries", [])
+            if not isinstance(queries_raw, (list, tuple)):
+                return {"error": "queries must be a list", "findings": []}
+
+            # P1-13: Validate each query is a non-empty string and cap at 500
+            queries: list[str] = []
+            for q in queries_raw:
+                if not isinstance(q, str) or not q.strip():
+                    continue
+                if len(q) > 253:  # Max domain length
+                    continue
+                queries.append(q.strip())
+            queries = queries[:500]  # bounded
             if not queries:
                 return {"findings": [], "error": "no queries provided"}
 

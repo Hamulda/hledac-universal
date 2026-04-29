@@ -32,6 +32,8 @@ from typing import Optional
 # Default parameters for URL deduplication
 DEFAULT_URL_ESTIMATE = 100000
 DEFAULT_FPR = 0.01  # 1% false positive rate (min value for probables)
+# P1-15: Cap to prevent unbounded memory growth on M1 8GB
+MAX_URL_ESTIMATE = 1_000_000
 
 
 def fast_hash(text: str) -> str:
@@ -65,6 +67,8 @@ def create_rotating_bloom_filter(
     """
     if not PROBABLES_AVAILABLE:
         raise ImportError("probables library required: pip install probables")
+    # P1-15: Enforce upper bound to prevent unbounded memory growth
+    est_elements = min(est_elements, MAX_URL_ESTIMATE)
     return RotatingBloomFilter(
         est_elements=est_elements,
         false_positive_rate=false_positive_rate

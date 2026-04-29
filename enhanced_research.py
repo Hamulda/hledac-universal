@@ -813,7 +813,7 @@ class UnifiedResearchEngine:
 
                 for r in result.deduplicated_results:
                     finding = ResearchFinding(
-                        id=hashlib.md5(f"{r.title}{r.url}".encode()).hexdigest()[:16],
+                        id=hashlib.blake2b(f"{r.title}{r.url}".encode(), digest_size=8).hexdigest(),
                         title=r.title,
                         content=r.snippet,
                         url=r.url,
@@ -840,7 +840,7 @@ class UnifiedResearchEngine:
 
                 for r in results:
                     finding = ResearchFinding(
-                        id=hashlib.md5(f"{r.title}{r.url}".encode()).hexdigest()[:16],
+                        id=hashlib.blake2b(f"{r.title}{r.url}".encode(), digest_size=8).hexdigest(),
                         title=r.title,
                         content=r.snippet,
                         url=r.url,
@@ -1216,7 +1216,7 @@ class UnifiedResearchEngine:
                 seen_urls.add(normalized_url)
 
             # Content hash-based dedup
-            content_hash = hashlib.md5(f.content[:200].lower().encode()).hexdigest()[:16]
+            content_hash = hashlib.blake2b(f.content[:200].lower().encode(), digest_size=8).hexdigest()
             if content_hash in seen_hashes:
                 continue
             seen_hashes.add(content_hash)

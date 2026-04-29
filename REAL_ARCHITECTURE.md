@@ -3032,4 +3032,53 @@ SprintScheduler.run()
 - `python smoke_runner.py --smoke`
 - `python benchmarks/e2e_canonical_benchmark.py --hermetic --runs 3`
 
+## F206K — HTTPX Transport Routing (2026-04-29)
+
+**Cíl:** Dokumentovat per-request HTTPX H2 lane routing v transport capability vrstvě.
+
+**Komponenty:**
+- `transport/httpx_transport.py` — HTTPX H2 routing a fetch implementation
+- `transport/httpx_client.py` — lazy singleton HTTPX AsyncClient (HTTP/2 capable)
+
+**Transport routing truth table (F206K):**
+
+| URL Type | Lane | Transport |
+|----------|------|-----------|
+| random clearnet HTML | aiohttp | TCPConnector |
+| same-host/API clearnet | httpx_h2 | HTTP/2 |
+| CT/CDX/API endpoint | httpx_h2 | HTTP/2 |
+| .onion | aiohttp_socks | ProxyConnector |
+| .i2p / .b32.i2p | aiohttp_socks | ProxyConnector |
+| .freenet | aiohttp | HTTP proxy |
+| use_js=True | aiohttp | TCPConnector |
+| use_stealth=True | aiohttp | StealthSession |
+
+**HTTPX H2 lane activation:**
+- Env gate: `HLEDAC_ENABLE_HTTPX_H2=1` (default: disabled)
+- HTTPX H2 selected only for:
+  1. Clearnet URLs (not Tor/I2P/Freenet)
+  2. use_stealth=False
+  3. use_js=False
+  4. URL is API-like OR same-host batch candidate
+
+**API-like URL patterns:**
+- Host patterns: `cdn.*`, `static.*`, `*.workers.dev`, `*.on.microsoft.com`
+- Path patterns: `/api/v\d+/`, `/api/`, `/v\d+/api/`
+- Known API hosts: cloudflare.com, akamai.com, fastly.com, cloudfront.net, workers.dev, azureedge.net, azure.com, digitaloceanspaces.com, linode.com, vultr.com
+
+**Fail-soft behavior:**
+- If HTTPX H2 selected but h2 not installed → fall back to aiohttp
+- transport_fallback_reason set on fallback
+
+**Invariants:**
+- [H2-P1] Tor/I2P/Freenet URLs NEVER select HTTPX H2
+- [H2-P2] use_stealth=True NEVER selects HTTPX H2
+- [H2-P3] use_js=True NEVER selects HTTPX H2
+- [H2-P4] HTTPX H2 requires h2 library to be installed
+
+**Tests:** `tests/probe_transport_cap_2026/test_httpx_transport.py` — httpx_transport routing tests
+
+**Definition of Done:**
+- `pytest tests/probe_transport_cap_2026/ -q`
+
 ## Architectural verdict

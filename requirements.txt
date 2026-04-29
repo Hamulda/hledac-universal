@@ -8,7 +8,6 @@ pytesseract>=0.3.10
 stem>=1.8.0
 dnspython>=2.4.0
 aiobtcdht>=0.1.0
-aiohttp-socks>=0.8.0
 
 # F196A pre-review fixes: missing runtime dependencies
 probables>=4.0.0        # url_dedup.py RotatingBloomFilter import

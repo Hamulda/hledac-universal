@@ -97,6 +97,84 @@ class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
 
 
 # ---------------------------------------------------------------------------
+# Discovery error taxonomy — F206AB
+# ---------------------------------------------------------------------------
+
+
+def classify_discovery_error(
+    error: str | Exception | None,
+    *,
+    elapsed_s: float | None = None,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    hits_count: int = 0,
+) -> str:
+    """
+    Classify a discovery error into a concrete F206AB taxonomy category.
+
+    Args:
+        error: Error string, Exception object, or None.
+        elapsed_s: Actual elapsed time of the discovery call in seconds.
+        timeout_s: Expected timeout threshold (default 35s).
+        hits_count: Number of hits returned (default 0).
+
+    Returns one of:
+        - none              : error is None/empty AND hits_count > 0 (successful call)
+        - timeout           : asyncio.TimeoutError / "timeout" / elapsed >= timeout_s
+        - rate_limited      : ratelimit / 429 / "too many" signals
+        - captcha_or_blocked : captcha / blocked / 403 / bot signals
+        - provider_empty    : error is None AND hits_count == 0 (provider returned nothing)
+        - provider_exception : non-Error Exception caught during search
+        - import_error      : ImportError / ModuleNotFoundError
+        - task_cancelled    : asyncio.CancelledError (re-raised by caller)
+        - unknown_backend_error : any other error
+    """
+    # ---- CancelledError → task_cancelled (re-raised by caller) ----
+    if isinstance(error, asyncio.CancelledError):
+        return "task_cancelled"
+
+    # ---- TimeoutError → timeout ----
+    if isinstance(error, asyncio.TimeoutError) or isinstance(error, TimeoutError):
+        return "timeout"
+
+    # ---- None / empty → classify by hits_count ----
+    if error is None or (isinstance(error, str) and not error.strip()):
+        if hits_count > 0:
+            return "none"  # successful call with results
+        # elapsed_s >= timeout_s with no error: slow call that returned normally → provider_empty
+        return "provider_empty"
+
+    # ---- string coercion for remaining checks ----
+    err_str = str(error)
+
+    # ---- timeout keyword in string ----
+    if "timeout" in err_str.lower():
+        return "timeout"
+
+    # ---- elapsed >= timeout_s with error present → timeout ----
+    if elapsed_s is not None and elapsed_s >= timeout_s:
+        return "timeout"
+
+    # ---- rate limiting ----
+    if any(kw in err_str.lower() for kw in ("ratelimit", "rate limit", "429", "too many")):
+        return "rate_limited"
+
+    # ---- captcha / blocking ----
+    if any(kw in err_str.lower() for kw in ("captcha", "blocked", "403", "bot detection", "forbidden", "access denied")):
+        return "captcha_or_blocked"
+
+    # ---- import error ----
+    if isinstance(error, (ImportError, ModuleNotFoundError)):
+        return "import_error"
+
+    # ---- generic exception (non-CancelledError/TimeoutError) ----
+    if isinstance(error, Exception):
+        return "provider_exception"
+
+    # ---- anything else: unknown backend error ----
+    return "unknown_backend_error"
+
+
+# ---------------------------------------------------------------------------
 # Status helpers (O(1), no network calls)
 # ---------------------------------------------------------------------------
 
@@ -563,11 +641,14 @@ async def async_search_public_web(
     Returns:
         DiscoveryBatchResult with hits tuple and optional error string.
 
-    Fail-soft errors:
-        - "empty_query"     : query was blank after strip
-        - "rate_limited"    : RatelimitException from backend
-        - "timeout"         : TimeoutException / asyncio.TimeoutError
-        - "backend_error"   : Any other DuckDuckGoSearchException
+    Fail-soft errors (F206AB taxonomy):
+        - "empty_query"        : query was blank after strip
+        - "rate_limited"       : RatelimitException from backend
+        - "timeout"            : TimeoutException / asyncio.TimeoutError
+        - "proxy_error"        : Proxy-related failure
+        - "network_error"      : Network/connection failure
+        - "server_error"       : HTTP 5xx response from backend
+        - "unknown_backend_error": Any other DuckDuckGoSearchException
 
     Note: max_results is silently clamped to [1, HARD_MAX_RESULTS] — no error is returned.
 
@@ -601,24 +682,33 @@ async def async_search_public_web(
     except asyncio.CancelledError:
         _last_error = "cancelled"
         raise  # always re-raise — do NOT swallow
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, TimeoutError):
+        # asyncio.timeout raises TimeoutError from stdlib in __aexit__
         _last_error = "timeout"
         return DiscoveryBatchResult(hits=(), error="timeout")
     except Exception as e:
-        # ---- fail-soft for all backend errors ---------------------------------
+        # ---- fail-soft: classify into concrete error taxonomy (F206AB) ----
         err_str = str(e)
+        err_name = type(e).__name__
         error_tag: str
-        if "ratelimit" in err_str.lower() or "RatelimitException" in type(e).__name__:
+        if "ratelimit" in err_str.lower() or "RatelimitException" in err_name:
             error_tag = "rate_limited"
-        elif "timeout" in err_str.lower() or "TimeoutException" in type(e).__name__:
+        elif "timeout" in err_str.lower() or "TimeoutException" in err_name or "TimeoutError" in err_name:
             error_tag = "timeout"
+        elif "proxy" in err_str.lower() or "ProxyError" in err_name:
+            error_tag = "proxy_error"
+        elif "network" in err_str.lower() or "ConnectionError" in err_name or "HTTPError" in err_name:
+            error_tag = "network_error"
+        elif "server" in err_str.lower() or "500" in err_str or "502" in err_str or "503" in err_str or "504" in err_str:
+            error_tag = "server_error"
         else:
-            error_tag = "backend_error"
+            error_tag = "unknown_backend_error"
 
         _last_error = error_tag
 
-        # ---- bounded fallback: backend_error / timeout only (NOT rate_limited) --
-        if error_tag not in ("backend_error", "timeout"):
+        # ---- bounded fallback: backend_error variants / timeout only (NOT rate_limited) --
+        _BACKEND_ERROR_TAGS = {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}
+        if error_tag not in _BACKEND_ERROR_TAGS and error_tag != "timeout":
             return DiscoveryBatchResult(hits=(), error=error_tag)
 
         try:

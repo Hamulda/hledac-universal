@@ -28,6 +28,11 @@ import msgspec
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
+# F206AB: discovery error taxonomy helper
+from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
+    classify_discovery_error,
+)
+
 # -----------------------------------------------------------------------------
 # Constants
 # -----------------------------------------------------------------------------
@@ -2004,11 +2009,19 @@ async def async_run_live_public_pipeline(
 
     # ---- Discovery (8AC) -----------------------------------------------------
     discovery_error: str | None = None
+    discovery_error_type: str | None = None
+    discovery_elapsed_s: float | None = None
+    discovery_attempted: bool = False
     hits: tuple = ()
+    _discovery_start: float | None = None
 
     try:
         # 8AC surface — duckduckgo_search passive discovery
+        _discovery_start = time.monotonic()
+        discovery_attempted = True
         discovery_result = await _ASYNC_DISCOVERY_SEARCH(query, max_results)
+        discovery_elapsed_s = time.monotonic() - _discovery_start
+
         if hasattr(discovery_result, "hits"):
             hits = discovery_result.hits
         elif isinstance(discovery_result, dict):
@@ -2017,10 +2030,30 @@ async def async_run_live_public_pipeline(
         err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
         if err_val:
             discovery_error = str(err_val)
+
+        # F206AB: classify concrete error type from error string
+        discovery_error_type = classify_discovery_error(
+            discovery_error,
+            elapsed_s=discovery_elapsed_s,
+            timeout_s=35.0,
+            hits_count=len(hits),
+        )
     except asyncio.CancelledError:
+        discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
+        discovery_error_type = classify_discovery_error(
+            asyncio.CancelledError("cancelled"),
+            elapsed_s=discovery_elapsed_s,
+            hits_count=0,
+        )
         raise  # [I6]
     except Exception as exc:
+        discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
         discovery_error = f"discovery_exception:{type(exc).__name__}:{exc}"
+        discovery_error_type = classify_discovery_error(
+            discovery_error,
+            elapsed_s=discovery_elapsed_s,
+            hits_count=0,
+        )
         hits = ()
 
     if not hits:
@@ -2504,6 +2537,9 @@ async def async_run_live_public_pipeline(
     public_branch_verdict["backend_degraded"] = _backend_degraded
     public_branch_verdict["public_proof_grade"] = _derived_proof_grade
 
+    # Sprint F206AB: discovery error taxonomy — concrete error reason preserved in verdict
+    public_branch_verdict["discovery_error_detail"] = discovery_error  # None | "network_error" | "server_error" | etc.
+
     # Sprint F170D: lower-layer truth consumption
     # Read fallback_triggered from discovery_result
     fallback_triggered: str | None = getattr(discovery_result, "fallback_triggered", None)
@@ -2518,6 +2554,42 @@ async def async_run_live_public_pipeline(
     public_discovery_fallback_state = _FALLBACK_STATE_MAP.get(fallback_triggered) or (
         "no_fallback_needed" if discovery_error is None else None
     )
+
+    # Sprint F206AB: per-stage discovery counters (additive telemetry)
+    public_branch_verdict["discovery_calls"] = 1  # always 1 in current single-discovery architecture
+    public_branch_verdict["discovery_hits_total"] = len(hits)
+    public_branch_verdict["discovery_error_count"] = 1 if discovery_error else 0
+    public_branch_verdict["discovery_fallback_count"] = 1 if fallback_triggered else 0
+
+    # Sprint F206AB: discovery error taxonomy — additive fields
+    public_branch_verdict["discovery_attempted"] = discovery_attempted
+    public_branch_verdict["discovery_elapsed_s"] = discovery_elapsed_s
+    public_branch_verdict["discovery_error_type"] = discovery_error_type  # F206AB taxonomy string
+    public_branch_verdict["discovery_fallback_triggered"] = fallback_triggered  # raw adapter string
+
+    # Sprint F206AB: fetch stage counters — collected from all_page_results
+    # Success: p.fetched=True AND p.error=None (per PipelinePageResult construction pattern)
+    _fetch_attempted = 0
+    _fetch_success = 0
+    _fetch_error = 0
+    for p in all_page_results:
+        _fetch_attempted += 1
+        p_fetched = getattr(p, "fetched", False)
+        p_error = getattr(p, "error", None)
+        if p_fetched and p_error is None:
+            _fetch_success += 1
+        else:
+            _fetch_error += 1
+    public_branch_verdict["fetch_attempted"] = _fetch_attempted
+    public_branch_verdict["fetch_success"] = _fetch_success
+    public_branch_verdict["fetch_error"] = _fetch_error
+
+    # Sprint F206AB: admission and pattern hit counters
+    # admitted_urls: URL count after deduplication, before fetch
+    public_branch_verdict["admitted_urls"] = len(hits) if hits else 0
+
+    # pattern_hits: sum of matched_patterns across all fetched pages
+    public_branch_verdict["pattern_hits"] = sum(p.matched_patterns for p in all_page_results)
 
     # F185A DF-3 FIX: same dictionary approach for public_discovery_blocker
     _BLOCKER_BY_BACKEND_ERROR: dict[str, str] = {

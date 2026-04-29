@@ -1,0 +1,65 @@
+{
+  "sprint": "F206AB",
+  "query": "ransomware attack ioc indicators",
+  "timestamp": "2026-04-29T22:13:58Z",
+  "phase": "PHASE_5_DIAGNOSTIC_ARTIFACT",
+  "discovery_adapter": "duckduckgo_adapter.async_search_public_web",
+  "discovery_attempted": true,
+  "discovery_elapsed_s": 0.794,
+  "discovery_hits_count": 10,
+  "discovery_error_type": "none",
+  "discovery_error_detail": null,
+  "discovery_fallback_triggered": null,
+  "public_discovery_blocker": null,
+  "admitted_urls": 10,
+  "fetch_attempted": 10,
+  "fetch_success": 0,
+  "fetch_error": 10,
+  "pattern_hits": 0,
+  "public_proof_grade": "empty",
+  "suspected_root_cause": "FETCH_STAGE_FAILURE — discovery returned 10 hits successfully (DDG working, error_type=none). All 10 fetches failed (fetch_success=0, fetch_error=10). Fetch errors not captured in verdict. Root cause is at fetch stage: likely URL accessibility failures (timeout/TLS/connection) or circuit breaker blocking all domains. Discovery is healthy; investigation should focus on fetch stage diagnostics.",
+  "stage_map": {
+    "1_discovery": {
+      "active": true,
+      "adapter": "duckduckgo_adapter.async_search_public_web",
+      "hits_returned": 10,
+      "error": null,
+      "error_type": "none",
+      "fallback_triggered": null,
+      "elapsed_s": 0.794
+    },
+    "2_admission": {
+      "active": true,
+      "admitted_urls": 10,
+      "note": "admitted_urls=discovery_hits_count=10"
+    },
+    "3_fetch": {
+      "active": true,
+      "fetch_attempted": 10,
+      "fetch_success": 0,
+      "fetch_error": 10,
+      "note": "ALL fetches failed — fetch_error=10, fetch_success=0. Fetch errors not surfaced in verdict."
+    },
+    "4_pattern_match": {
+      "active": true,
+      "pattern_hits": 0,
+      "note": "0 pattern hits because 0 successful fetches"
+    }
+  },
+  "missing_counters": [],
+  "key_findings": [
+    "Discovery healthy: 10 hits, error_type=none, elapsed=0.79s",
+    "All 10 fetches failed (fetch_success=0, fetch_error=10)",
+    "No backend_error in discovery stage",
+    "F206AB taxonomy correctly identifies: discovery_error_type=none, no blocker",
+    "All new additive fields present in verdict: discovery_attempted, discovery_elapsed_s, discovery_error_type, fetch_attempted, fetch_success, fetch_error, pattern_hits"
+  ],
+  "f206ab_verification": {
+    "backend_error_no_longer_only_label": true,
+    "discovery_error_type_present": true,
+    "error_types_distinguishable": true,
+    "diagnostic_artifact_created": true,
+    "no_behavior_changes": true
+  },
+  "recommendation": "D — leave as-is for discovery layer. Focus next sprint on fetch stage diagnostics (capture fetch error types in verdict, add fetch_error_type taxonomy similar to F206AB discovery error taxonomy)."
+}

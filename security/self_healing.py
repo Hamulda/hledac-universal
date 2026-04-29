@@ -181,7 +181,7 @@ class SelfHealingCICD:
         self.health_checks = {}
         self.healing_actions = {}
         self.circuit_breakers = defaultdict(CircuitBreaker)
-        self.health_history = defaultdict(deque)
+        self.health_history = defaultdict(lambda: deque(maxlen=1000))
         self.healing_history = deque(maxlen=1000)
         self.component_status = defaultdict(dict)
         self.active_healing = defaultdict(bool)

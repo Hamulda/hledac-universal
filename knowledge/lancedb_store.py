@@ -34,6 +34,18 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# P1-12: RAM guard for M1 8GB — import lazily to avoid circular deps
+_uma_budget = None
+
+
+def _get_uma_budget():
+    global _uma_budget
+    if _uma_budget is None:
+        from utils.uma_budget import is_uma_critical
+        _uma_budget = is_uma_critical
+    return _uma_budget
+
+
 # Compiled similarity function - conditional import for MLX (fail gracefully in CI)
 try:
     import mlx.core as mx
@@ -298,6 +310,15 @@ class LanceDBIdentityStore:
             return all_embs
 
         all_embs = []
+
+        # P1-12: M1 8GB RAM guard — skip embedding under critical memory pressure
+        if _get_uma_budget()():
+            logger.warning(
+                f"[EMBED] Skipping {len(texts)} embeddings — M1 critical memory pressure "
+                f"({len(texts)} texts, batch_size={batch_size})"
+            )
+            # Return zero embeddings of correct dimensionality (fail-safe degradation)
+            return [[0.0] * self._current_mrl_dim for _ in texts]
 
         async with self._embed_lock:
             for i in range(0, len(texts), batch_size):

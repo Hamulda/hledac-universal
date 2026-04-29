@@ -63,7 +63,7 @@ import datetime as _dt
 import hashlib
 import os
 import time as _time
-from collections import Counter, deque
+from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import psutil
@@ -626,7 +626,7 @@ class DuckDBShadowStore:
         self._dedup_lmdb_boot_error: Optional[str] = None
         # Bounded hot cache — hard limit to prevent unbounded memory growth
         self._dedup_hot_cache: Dict[str, str] = {}  # fp → finding_id, bounded
-        self._dedup_hot_cache_order: deque = deque()  # FIFO order for eviction
+        self._dedup_hot_cache_order: OrderedDict = OrderedDict()  # FIFO order for eviction (O(1) move_to_end)
 
         # Sprint 8QA: Background task tracking for graph ingest
         self._bg_tasks: set[asyncio.Task] = set()
@@ -6523,20 +6523,19 @@ class DuckDBShadowStore:
         Add entry to bounded hot cache with FIFO eviction.
 
         Hard cap: _DEDUP_HOT_CACHE_MAX entries.
+        O(1) operations using OrderedDict: move_to_end() for MRU, popitem(last=False) for FIFO.
         """
         if fp in self._dedup_hot_cache:
             # Existing entry — bump access order to recent (MRU semantics)
-            try:
-                self._dedup_hot_cache_order.remove(fp)
-            except ValueError:
-                pass
-            self._dedup_hot_cache_order.append(fp)
+            # O(1) with OrderedDict
+            self._dedup_hot_cache_order.move_to_end(fp)
             return
         if len(self._dedup_hot_cache) >= _DEDUP_HOT_CACHE_MAX:
-            oldest = self._dedup_hot_cache_order.popleft()
+            # FIFO eviction — O(1) with OrderedDict
+            oldest, _ = self._dedup_hot_cache_order.popitem(last=False)
             self._dedup_hot_cache.pop(oldest, None)
         self._dedup_hot_cache[fp] = finding_id
-        self._dedup_hot_cache_order.append(fp)
+        self._dedup_hot_cache_order[fp] = None  # value unused, order is all we need
 
     def _hot_cache_lookup(self, fp: str) -> Optional[str]:
         """Bounded hot cache lookup."""
