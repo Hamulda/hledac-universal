@@ -316,7 +316,8 @@ async def _do_aclose(store):
 def test_aclose_flushes_truth_write_graph():
     """aclose() calls flush_buffers on _truth_write_graph if present."""
     store = DuckDBShadowStore.__new__(DuckDBShadowStore)
-    store._truth_write_graph = MockTruthWriteGraph()
+    tw_graph = MockTruthWriteGraph()
+    store._truth_write_graph = tw_graph
     store._ioc_graph = None
     store._stix_graph = None
     store._bg_tasks = set()
@@ -326,10 +327,12 @@ def test_aclose_flushes_truth_write_graph():
 
     asyncio.run(_do_aclose(store))
 
-    assert store._truth_write_graph.flush_called is True, (
+    # aclose() sets _truth_write_graph = None after flush/close, so check the
+    # local reference we saved BEFORE calling aclose()
+    assert tw_graph.flush_called is True, (
         "flush_buffers not called on _truth_write_graph"
     )
-    assert store._truth_write_graph.close_called is True, (
+    assert tw_graph.close_called is True, (
         "close not called on _truth_write_graph"
     )
     print("PASS: aclose() flushes and closes _truth_write_graph")
@@ -338,8 +341,10 @@ def test_aclose_flushes_truth_write_graph():
 def test_aclose_closes_analytics_graph_separately():
     """aclose() closes _ioc_graph (analytics) separately from _truth_write_graph."""
     store = DuckDBShadowStore.__new__(DuckDBShadowStore)
-    store._truth_write_graph = MockTruthWriteGraph()
-    store._ioc_graph = MockAnalyticsGraph()
+    tw_graph = MockTruthWriteGraph()
+    analytics_graph = MockAnalyticsGraph()
+    store._truth_write_graph = tw_graph
+    store._ioc_graph = analytics_graph
     store._stix_graph = None
     store._bg_tasks = set()
     store._closed = False
@@ -348,8 +353,10 @@ def test_aclose_closes_analytics_graph_separately():
 
     asyncio.run(_do_aclose(store))
 
-    assert store._truth_write_graph.close_called is True
-    assert store._ioc_graph.close_called is True, (
+    # aclose() sets _truth_write_graph = None after flush/close, so check the
+    # local references we saved BEFORE calling aclose()
+    assert tw_graph.close_called is True
+    assert analytics_graph.close_called is True, (
         "close not called on _ioc_graph analytics"
     )
     print("PASS: aclose() closes both _truth_write_graph and _ioc_graph")
@@ -412,6 +419,8 @@ def test_no_new_graph_framework():
         "get_analytics_graph_for_synthesis",
         "get_top_seed_nodes",
         "get_top_entities_for_ghost_global",
+        # Sprint F193A §1: graph context annotation seam
+        "annotate_findings_with_graph_context",
     }
 
     unexpected = [a for a in graph_attrs if a not in expected]

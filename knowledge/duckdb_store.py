@@ -36,7 +36,7 @@ DESIGN PRINCIPLES:
 - All DB operations run on a dedicated single-worker ThreadPoolExecutor
 - All async public methods use run_in_executor to avoid event-loop blocking
 - Connection is created INSIDE the worker thread (thread-affine)
-- PRAGMA threads=2 applied after connection init
+- PRAGMA threads=2 applied after connection init (M1 8GB UMA: conservative for memory budget)
 - Batch methods enforce chunking: max_batch_size=500
 - aclose() is idempotent with _closed flag
 
@@ -68,7 +68,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import psutil
 import msgspec
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 # Sprint F202K: TargetProfileSummary import with inline fallback
 try:
@@ -196,6 +196,32 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     entropy: float
     normalized_hash: str | None
     duplicate: bool
+
+
+# ---------------------------------------------------------------------------
+# Graph injection helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_graph_capability(graph: Any, slot_name: str) -> None:
+    """
+    Runtime type safety for graph injection slots.
+
+    Validates that the graph has the required buffer_ioc/flush_buffers methods.
+    Raises TypeError if the graph lacks required capabilities.
+
+    This prevents DuckPGQGraph (which lacks buffered writes) from being
+    accidentally injected into truth-write-only slots.
+    """
+    if not (
+        callable(getattr(graph, "buffer_ioc", None))
+        and callable(getattr(graph, "flush_buffers", None))
+    ):
+        raise TypeError(
+            f"{slot_name}: graph must implement buffer_ioc() and flush_buffers(). "
+            f"Got {graph.__class__.__name__} which lacks buffered write capability. "
+            f"Use IOCGraph (Kuzu) for truth-write slots."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +613,9 @@ class DuckDBShadowStore:
         self._persistent_conn: Optional[Any] = None
 
         # Sprint 7H: Persistent file-backed connection for file mode
+        # THREAD SAFETY: _file_conn is worker-thread-only. All _sync_* methods
+        # using _file_conn are explicitly documented with "MUST be called on worker thread".
+        # DuckDB connections are NOT thread-safe; this design ensures single-threaded access.
         self._file_conn: Optional[Any] = None
 
         # Async queue for batch scheduling (optional, deferred to future sprint)
@@ -616,7 +645,7 @@ class DuckDBShadowStore:
 
         # Sprint 8W: In-memory dedup set (key = BLAKE2b fingerprint, val = finding_id)
         # Hot cache only — LMDB is the authority for persistence across restarts
-        self._dedup_fingerprints: Dict[str, str] = {}
+        self._dedup_fingerprints: dict[str, str] = {}
 
         # Sprint 8AG §6.17: Persistent dedup LMDB — separate from WAL LMDB
         # Namespace: b"dedup:{fingerprint_hex}" → finding_id (UTF-8 bytes)
@@ -625,7 +654,7 @@ class DuckDBShadowStore:
         self._dedup_lmdb_last_error: Optional[str] = None
         self._dedup_lmdb_boot_error: Optional[str] = None
         # Bounded hot cache — hard limit to prevent unbounded memory growth
-        self._dedup_hot_cache: Dict[str, str] = {}  # fp → finding_id, bounded
+        self._dedup_hot_cache: dict[str, str] = {}  # fp → finding_id, bounded
         self._dedup_hot_cache_order: OrderedDict = OrderedDict()  # FIFO order for eviction (O(1) move_to_end)
 
         # Sprint 8QA: Background task tracking for graph ingest
@@ -724,7 +753,16 @@ class DuckDBShadowStore:
 
         Args:
             graph: IOCGraph (Kuzu) instance or None to clear.
+
+        Raises:
+            TypeError: if graph is not None and lacks export_stix_bundle().
         """
+        if graph is not None and not callable(getattr(graph, "export_stix_bundle", None)):
+            raise TypeError(
+                f"inject_stix_graph: graph must implement export_stix_bundle(). "
+                f"Got {graph.__class__.__name__} which lacks STIX export capability. "
+                f"Use IOCGraph (Kuzu) for STIX slots."
+            )
         self._stix_graph = graph
 
     def get_stix_graph(self) -> Any:
@@ -754,7 +792,12 @@ class DuckDBShadowStore:
 
         Args:
             graph: IOCGraph (Kuzu) instance or None to clear.
+
+        Raises:
+            TypeError: if graph is not None and lacks buffer_ioc/flush_buffers.
         """
+        if graph is not None:
+            _check_graph_capability(graph, "inject_truth_write_graph")
         self._truth_write_graph = graph
 
     def get_truth_write_graph(self) -> Any:
@@ -1501,7 +1544,7 @@ class DuckDBShadowStore:
 
     def _sync_insert_findings_bulk(
         self,
-        findings: List[Dict[str, Any]],
+        findings: list[dict[str, Any]],
     ) -> int:
         """
         Sprint 7H: True bulk insert using executemany in explicit transaction.
@@ -1592,7 +1635,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    def _sync_query_findings(self, limit: int) -> List[Dict[str, Any]]:
+    def _sync_query_findings(self, limit: int) -> list[dict[str, Any]]:
         """Sync query — MUST be called on the worker thread. Uses persistent _file_conn."""
         try:
             if self._db_path:
@@ -2170,7 +2213,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    def query_recent_findings(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def query_recent_findings(self, limit: int = 10) -> list[dict[str, Any]]:
         """Sync query — backward compat. For async use async_query_recent_findings()."""
         if not self._initialized or self._closed:
             return []
@@ -2355,7 +2398,7 @@ class DuckDBShadowStore:
 
     async def async_record_shadow_findings_batch(
         self,
-        findings: List[Dict[str, Any]],
+        findings: list[dict[str, Any]],
         max_batch_size: int = 500,
     ) -> int:
         """
@@ -2385,7 +2428,7 @@ class DuckDBShadowStore:
 
         return total_inserted
 
-    async def async_query_recent_findings(self, limit: int = 10) -> List[Dict[str, Any]]:
+    async def async_query_recent_findings(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         Query recent findings ordered by timestamp descending.
 
@@ -3783,8 +3826,8 @@ class DuckDBShadowStore:
 
     async def async_record_activation_batch(
         self,
-        findings: List[Dict[str, Any]],
-    ) -> List[ActivationResult]:
+        findings: list[dict[str, Any]],
+    ) -> list[ActivationResult]:
         """
         Record multiple findings with WAL-first semantics.
 
@@ -3798,7 +3841,7 @@ class DuckDBShadowStore:
                       id, query, source_type, confidence
 
         Returns:
-            List[ActivationResult] — one per finding
+            list[ActivationResult] — one per finding
         """
         if not self._initialized or self._closed:
             return [
@@ -3846,7 +3889,7 @@ class DuckDBShadowStore:
             failed_ids = set(result.get("failed_ids", []))
             activated_ids = [f.get("id") for f in findings if f.get("id")]
 
-            results: List[ActivationResult] = []
+            results: list[ActivationResult] = []
             for f in findings:
                 fid = f.get("id", "")
                 lmdb_success = lmdb_ok and fid not in failed_ids
@@ -4171,7 +4214,7 @@ class DuckDBShadowStore:
             limit: Maximum number of findings to return (ordered by ts DESC).
 
         Returns:
-            List[CanonicalFinding] — ordered by ts descending, most recent first.
+            list[CanonicalFinding] — ordered by ts descending, most recent first.
         """
         if not self._initialized or self._closed:
             return []
@@ -4347,7 +4390,7 @@ class DuckDBShadowStore:
             limit: Maximum number of findings to return (default 1000).
 
         Returns:
-            List[CanonicalFinding] — ordered by ts descending, most recent first.
+            list[CanonicalFinding] — ordered by ts descending, most recent first.
             Returns empty list if store is closed, uninitialized, or query fails.
         """
         if not self._initialized or self._closed:
@@ -4500,7 +4543,7 @@ class DuckDBShadowStore:
                       finding_id, query, source_type, confidence, ts, provenance.
 
         Returns:
-            List[ActivationResult] — 1:1 mapping, len(results) == len(findings).
+            list[ActivationResult] — 1:1 mapping, len(results) == len(findings).
             Empty list if input is empty or store is closed.
         """
         if not findings:
@@ -5325,7 +5368,7 @@ class DuckDBShadowStore:
             k: RRF constant (default 30 — snižuje vliv nízkých ranků)
 
         Returns:
-            List[dict] s keys: finding_id, content, rrf_score, semantic_score,
+            list[dict] s keys: finding_id, content, rrf_score, semantic_score,
             pattern_count, ioc_degree, ts
         """
         if not self._initialized or self._closed:
@@ -5463,7 +5506,7 @@ class DuckDBShadowStore:
 
         # Deduplicate
         seen_ids: set = set()
-        unique_markers: List[Dict[str, Any]] = []
+        unique_markers: list[dict[str, Any]] = []
         for m in all_markers:
             fid = m.get("id", "")
             if fid and fid not in seen_ids:
@@ -5654,7 +5697,7 @@ class DuckDBShadowStore:
     async def async_replay_all_pending_duckdb_sync(
         self,
         limit: Optional[int] = None,
-    ) -> List[ReplayResult]:
+    ) -> list[ReplayResult]:
         """
         Sprint 8H: Replay all pending markers with chunking and event-loop yields.
 
@@ -5668,7 +5711,7 @@ class DuckDBShadowStore:
             limit: Optional maximum number of markers to replay. None = all.
 
         Returns:
-            List[ReplayResult], one per processed marker.
+            list[ReplayResult], one per processed marker.
         """
         if self._closed:
             return []
@@ -5682,7 +5725,7 @@ class DuckDBShadowStore:
 
         # Deduplicate by id (scan may return same id if multiple markers exist)
         seen_ids: set = set()
-        unique_markers: List[Dict[str, Any]] = []
+        unique_markers: list[dict[str, Any]] = []
         for m in all_markers:
             fid = m.get("id", "")
             if fid and fid not in seen_ids:
@@ -5694,7 +5737,7 @@ class DuckDBShadowStore:
         if limit is not None:
             unique_markers = unique_markers[:limit]
 
-        results: List[ReplayResult] = []
+        results: list[ReplayResult] = []
         chunk_size = self.REPLAY_CHUNK_SIZE
 
         async with lock:
@@ -6104,7 +6147,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    def _wal_scan_pending_sync_markers(self) -> List[Dict[str, Any]]:
+    def _wal_scan_pending_sync_markers(self) -> list[dict[str, Any]]:
         """
         Sprint 8F: Efficient prefix scan for all pending_duckdb_sync markers.
 
@@ -6188,7 +6231,7 @@ class DuckDBShadowStore:
         except Exception:
             return False
 
-    def _wal_get_pending_marker(self, finding_id: str) -> Optional[Dict[str, Any]]:
+    def _wal_get_pending_marker(self, finding_id: str) -> Optional[dict[str, Any]]:
         """
         Sprint 8H: Get a single pending marker value by finding_id.
 
@@ -6217,7 +6260,7 @@ class DuckDBShadowStore:
     def _sync_replay_single_marker(
         self,
         finding_id: str,
-        marker: Dict[str, Any],
+        marker: dict[str, Any],
     ) -> bool:
         """
         Sprint 8H: Synchronous single-marker replay — MUST be called on the worker thread.
@@ -6290,7 +6333,7 @@ class DuckDBShadowStore:
 
     def _activation_record_findings_batch(
         self,
-        findings: List[Dict[str, Any]],
+        findings: list[dict[str, Any]],
     ) -> dict:
         """
         Sprint 8A: Batch activation — LMDB WAL first, DuckDB second.

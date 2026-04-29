@@ -346,6 +346,129 @@ def _derive_failure_stage_and_network_kind(error: str | None) -> tuple[str | Non
     return ("body", None)
 
 
+# Sprint F206AC: Fetch error taxonomy for public_branch_verdict telemetry
+_FETCH_ERROR_TAXONOMY: dict[str, str] = {
+    "dns_error": "dns_error",
+    "connect_error": "connect_error",
+    "tls_error": "tls_error",
+    "timeout": "read_timeout",
+    "content_type_rejected:": "content_type_rejected",
+    "fetch_text_none_or_empty": "body_empty",
+    "fetch_timeout_after_": "connect_timeout",
+    "fetch_exception: asyncio.TimeoutError": "connect_timeout",
+    "fetch_exception: TimeoutError": "read_timeout",
+    "fetch_exception: ClientConnectorError": "connect_error",
+    "fetch_exception: ClientSSLError": "tls_error",
+    "fetch_exception: ClientProxyError": "proxy_error",
+    "fetch_exception: ClientConnectorCertificateError": "tls_error",
+    "circuit_breaker": "circuit_breaker_blocked",
+    "resource_governor": "resource_governor_blocked",
+}
+
+
+def classify_fetch_error(result_or_error) -> str:
+    """Classify a fetch outcome into a flat error type string for verdict telemetry.
+
+    Takes a FetchResult (success or failure) or an error string.
+    Returns one of the Sprint F206AC taxonomy strings:
+      none | dns_error | connect_timeout | read_timeout | tls_error | proxy_error
+      | http_403 | http_404 | http_429 | http_5xx | content_type_rejected
+      | body_empty | max_bytes_exceeded | circuit_breaker_blocked
+      | resource_governor_blocked | task_cancelled | unknown_fetch_error
+
+    HARD RULE: CancelledError is re-raised, never classified and swallowed.
+    """
+    # ---- Handle FetchResult objects ----------------------------------------
+    if hasattr(result_or_error, "status_code"):
+        result = result_or_error
+        # Success path
+        if result.error is None and result.status_code == 200 and result.text:
+            # Check for body_empty (success but no text)
+            if not result.text.strip():
+                return "body_empty"
+            return "none"
+        # Error path from FetchResult
+        error_str = result.error or ""
+        status_code = result.status_code or 0
+        failure_stage = getattr(result, "failure_stage", None) or ""
+        network_kind = getattr(result, "network_error_kind", None) or ""
+
+        # CancelledError — re-raise
+        if "CancelledError" in error_str:
+            import asyncio
+            raise asyncio.CancelledError("fetch cancelled")
+
+        # HTTP status codes (only when we got a response)
+        if status_code == 403:
+            return "http_403"
+        if status_code == 404:
+            return "http_404"
+        if status_code == 429:
+            return "http_429"
+        if 500 <= status_code < 600:
+            return "http_5xx"
+
+        # Structural failures from failure_stage / network_error_kind
+        if failure_stage == "validation":
+            return "unknown_fetch_error"
+        if failure_stage == "tls" or network_kind == "tls_error":
+            return "tls_error"
+        if network_kind == "dns_error":
+            return "dns_error"
+        if network_kind == "connect_error":
+            return "connect_error"
+        if network_kind == "timeout":
+            return "read_timeout"
+        if failure_stage == "http":
+            if "content_type_rejected" in error_str:
+                return "content_type_rejected"
+            return "unknown_fetch_error"
+        if failure_stage == "size":
+            return "max_bytes_exceeded"
+
+        # Circuit/resource blocks
+        if "circuit_breaker" in error_str:
+            return "circuit_breaker_blocked"
+        if "resource_governor" in error_str:
+            return "resource_governor_blocked"
+
+        # Exception-type-based classification
+        for prefix, category in (
+            ("fetch_exception: asyncio.TimeoutError", "connect_timeout"),
+            ("fetch_exception: TimeoutError", "read_timeout"),
+            ("fetch_exception: ClientConnectorError", "connect_error"),
+            ("fetch_exception: ClientSSLError", "tls_error"),
+            ("fetch_exception: ClientProxyError", "proxy_error"),
+            ("fetch_exception: ClientConnectorCertificateError", "tls_error"),
+            ("fetch_timeout_after_", "connect_timeout"),
+            ("fetch_text_none_or_empty", "body_empty"),
+            ("content_type_rejected:", "content_type_rejected"),
+        ):
+            if error_str.startswith(prefix):
+                return category
+
+        if error_str:
+            return "unknown_fetch_error"
+        return "none"
+
+    # ---- Handle plain error strings ---------------------------------------
+    error_str = str(result_or_error) if result_or_error is not None else ""
+
+    # CancelledError — re-raise
+    if "CancelledError" in error_str:
+        import asyncio
+        raise asyncio.CancelledError("fetch cancelled")
+
+    if not error_str:
+        return "none"
+
+    for prefix, category in _FETCH_ERROR_TAXONOMY.items():
+        if error_str.startswith(prefix):
+            return category
+
+    return "unknown_fetch_error"
+
+
 # ---------------------------------------------------------------------------
 # XML-ish body sniffing helper — bounded, fail-safe
 # ---------------------------------------------------------------------------

@@ -1,0 +1,113 @@
+{
+  "artifact_type": "public_branch_fetch_diagnosis_f206ac",
+  "sprint": "F206AC",
+  "query": "ransomware attack ioc indicators",
+  "timestamp": "2026-04-30T00:00:00Z",
+  "phase": "PHASE_5_DIAGNOSTIC_ARTIFACT",
+  "phase_0_import_truth": {
+    "probe_public_fetcher_retry_status": "PASS",
+    "probe_public_fetcher_retry_passed": 29,
+    "probe_public_fetcher_retry_failed": 0,
+    "note": "ModuleNotFoundError resolved prior to F206AC work"
+  },
+  "phase_1_fetch_stage_map": {
+    "async_fetch_public_text_call_site": "pipeline/live_public_pipeline.py:824",
+    "fetch_attempted_counted_at": "pipeline/live_public_pipeline.py:2576",
+    "fetch_success_counted_at": "pipeline/live_public_pipeline.py:2580",
+    "fetch_error_counted_at": "pipeline/live_public_pipeline.py:2582",
+    "fetch_result_unpacked": "pipeline/live_public_pipeline.py:892-896",
+    "failure_stage_on_pipeline_page_result": "pipeline/live_public_pipeline.py:889",
+    "public_branch_verdict_assembly": "pipeline/live_public_pipeline.py:2583-2608",
+    "verdict_has_fetch_error_types": true,
+    "verdict_has_fetch_error_samples": true,
+    "fetch_result_attached_to_ppr": "ppr._fetch_result (hidden attr)"
+  },
+  "phase_2_classify_fetch_error": {
+    "location": "fetching/public_fetcher.py:348-456",
+    "categories": [
+      "none",
+      "dns_error",
+      "connect_timeout",
+      "read_timeout",
+      "tls_error",
+      "proxy_error",
+      "http_403",
+      "http_404",
+      "http_429",
+      "http_5xx",
+      "content_type_rejected",
+      "body_empty",
+      "max_bytes_exceeded",
+      "circuit_breaker_blocked",
+      "resource_governor_blocked",
+      "task_cancelled",
+      "unknown_fetch_error"
+    ],
+    "cancelled_error_rule": "re-raised, never classified",
+    "source": "fetching/public_fetcher.py:392-396"
+  },
+  "phase_4_isolated_fetch": {
+    "url": "https://www.bleepingcomputer.com/feed/",
+    "selected_transport": "aiohttp",
+    "transport_policy_reason": "clearnet_default",
+    "status_code": 200,
+    "fetched_bytes": 12705,
+    "text_present": true,
+    "error_type": "none",
+    "failure_stage": null,
+    "network_error_kind": null,
+    "content_type": "text/xml; charset=utf-8",
+    "elapsed_ms": 19,
+    "note": "aiohttp WITH curl_cffi disabled works correctly \u2014 200, text present, 12KB"
+  },
+  "phase_4_isolated_fetch_404": {
+    "url": "https://www.bleepingcomputer.com/news/security/lockbit-ransomware-infrastructure-compromised-by-law-enforcement/",
+    "selected_transport": "aiohttp",
+    "transport_policy_reason": "clearnet_default",
+    "status_code": 404,
+    "fetched_bytes": 52663,
+    "text_present": true,
+    "error_type": "http_404",
+    "failure_stage": null,
+    "network_error_kind": null,
+    "content_type": "text/html; charset=UTF-8",
+    "elapsed_ms": 923,
+    "note": "aiohttp WITH curl_cffi disabled works \u2014 404 is valid HTTP, body returned"
+  },
+  "f206ab_context": {
+    "fetch_attempted": 10,
+    "fetch_success": 0,
+    "fetch_error": 10,
+    "discovery_hits_count": 10,
+    "discovery_error_type": "none",
+    "discovery_elapsed_s": 0.794,
+    "env": {
+      "HLEDAC_ENABLE_CURL_CFFI": "0",
+      "HLEDAC_ENABLE_HTTPX_H2": "1"
+    },
+    "note": "httpx_h2 ENABLED, curl_cffi DISABLED"
+  },
+  "suspected_root_cause": "httpx_h2 transport path failure \u2014 when curl_cffi is DISABLED and httpx_h2 is ENABLED, the httpx_h2 path is used for all public fetches. Isolated test with httpx_h2 disabled (forcing aiohttp directly) shows aiohttp works perfectly (200, text). The httpx_h2 transport may be failing silently or corrupting connection state, causing ALL 10 fetches to fail. This is NOT a discovery problem (10 hits returned), NOT a content-type problem (aiohttp gets text), and NOT a circuit breaker at discovery stage. Root cause is in the httpx_h2 multiplexed connection management.",
+  "key_findings": [
+    "Discovery is healthy: 10 hits, error_type=none, 0.79s",
+    "Isolated aiohttp fetch WORKS: 200 status, 12KB XML text, no errors",
+    "httpx_h2 ENABLED in F206AB run \u2014 all 10 fetches failed",
+    "aiohttp works in isolation \u2014 httpx_h2 is the likely culprit",
+    "probe_public_fetcher_retry: 29/29 green",
+    "classify_fetch_error: 17 categories, CancelledError re-raised",
+    "fetch_error_types and fetch_error_samples added to public_branch_verdict",
+    "No behavior changes to fetch decisions"
+  ],
+  "recommendation": "A) httpx_h2 connection management investigation \u2014 httpx_h2 multiplexed connections may be in a bad state. Consider: (1) httpx_h2 connection pool reset between fetches, (2) adding httpx_h2 circuit breaker similar to curl_cffi, (3) reverting to aiohttp as default when curl_cffi is disabled. The isolated fetch proves aiohttp works fine; the problem is specifically with the httpx_h2 path in the pipeline context.",
+  "f206ac_verification": {
+    "probe_public_fetcher_retry_green": true,
+    "fetch_error_types_in_verdict": true,
+    "fetch_error_samples_bounded_max_5": true,
+    "per_url_samples_no_body": true,
+    "no_behavior_changes": true,
+    "diagnostic_artifact_created": true,
+    "classify_fetch_error_tested": true,
+    "new_tests_24_pass": true,
+    "regression_219_pass_1_pre_existing": true
+  }
+}

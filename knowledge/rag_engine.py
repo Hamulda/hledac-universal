@@ -26,7 +26,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Optional, Tuple, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sklearn.decomposition import PCA
@@ -86,8 +86,8 @@ class Document:
     """Document for retrieval"""
     id: str
     content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    embedding: Optional[List[float]] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: Optional[list[float]] = None
     
     def __hash__(self):
         return hash(self.id)
@@ -106,27 +106,32 @@ class RetrievedChunk:
 class BM25Index:
     """Simple BM25 implementation for sparse retrieval"""
 
+    # Sprint F206L: Bounded document count to prevent unbounded term_doc_freqs growth
+    MAX_BM25_DOCUMENTS: int = 50000
+
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
         self.b = b
-        self.documents: List[Document] = []
-        self.doc_freqs: Dict[str, int] = defaultdict(int)
-        self.doc_lengths: List[int] = []
+        self.documents: list[Document] = []
+        self.doc_freqs: dict[str, int] = defaultdict(int)
+        self.doc_lengths: list[int] = []
         self.avg_doc_length: float = 0.0
-        self.term_doc_freqs: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        self.term_doc_freqs: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
         self.doc_count: int = 0
         # rank_bm25 library for faster BM25 (Fix 4)
         self._rank_bm25 = None
-    
-    def _tokenize(self, text: str) -> List[str]:
+
+    def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization"""
         return re.findall(r'\b[a-zA-Z]+\b', text.lower())
-    
+
     def add_document(self, doc: Document):
-        """Add document to index"""
+        """Add document to index. Silently drops if MAX_BM25_DOCUMENTS reached."""
+        if len(self.documents) >= self.MAX_BM25_DOCUMENTS:
+            return  # Fail-soft: ignore new documents beyond bound
         tokens = self._tokenize(doc.content)
         doc_length = len(tokens)
-        
+
         self.documents.append(doc)
         self.doc_lengths.append(doc_length)
         
@@ -148,7 +153,7 @@ class BM25Index:
             tokenized_corpus = [self._tokenize(doc.content) for doc in self.documents]
             self._rank_bm25 = _RankBM25(tokenized_corpus)
 
-    def search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
+    def search(self, query: str, top_k: int = 10) -> list[Tuple[int, float]]:
         """Search documents using BM25"""
         if not self.documents:
             return []
@@ -237,8 +242,8 @@ class HNSWVectorIndex:
         self.index_path = index_path
 
         self._index = None
-        self._id_to_label: Dict[str, int] = {}
-        self._label_to_id: Dict[int, str] = {}
+        self._id_to_label: dict[str, int] = {}
+        self._label_to_id: dict[int, str] = {}
         self._current_label = 0
         self._is_initialized = False
 
@@ -253,7 +258,7 @@ class HNSWVectorIndex:
             self._available = False
 
         # Brute-force fallback storage
-        self._vectors: Dict[str, np.ndarray] = {}
+        self._vectors: dict[str, np.ndarray] = {}
 
     def _init_index(self):
         """Initialize the hnswlib index."""
@@ -286,7 +291,7 @@ class HNSWVectorIndex:
             logger.error(f"Failed to initialize HNSW index: {e}")
             self._available = False
 
-    def add_vectors(self, vectors: np.ndarray, ids: List[str]) -> None:
+    def add_vectors(self, vectors: np.ndarray, ids: list[str]) -> None:
         """
         Add vectors to the index.
 
@@ -342,8 +347,8 @@ class HNSWVectorIndex:
         self,
         query_vector: np.ndarray,
         k: int = 10,
-        filter_ids: Optional[List[str]] = None
-    ) -> Tuple[List[str], List[float]]:
+        filter_ids: Optional[list[str]] = None
+    ) -> Tuple[list[str], list[float]]:
         """
         Search for k nearest neighbors.
 
@@ -392,8 +397,8 @@ class HNSWVectorIndex:
         self,
         query_vector: np.ndarray,
         k: int,
-        filter_ids: Optional[List[str]] = None
-    ) -> Tuple[List[str], List[float]]:
+        filter_ids: Optional[list[str]] = None
+    ) -> Tuple[list[str], list[float]]:
         """Brute-force search fallback."""
         if not self._vectors:
             return [], []
@@ -438,8 +443,8 @@ class HNSWVectorIndex:
         self,
         query_vectors: np.ndarray,
         k: int = 10,
-        filter_ids: Optional[List[str]] = None
-    ) -> List[Tuple[List[str], List[float]]]:
+        filter_ids: Optional[list[str]] = None
+    ) -> list[Tuple[list[str], list[float]]]:
         """
         Batch search for multiple query vectors.
 
@@ -558,7 +563,7 @@ class HNSWVectorIndex:
                 logger.error(f"Failed to load vectors: {e}")
                 raise
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get index statistics.
 
@@ -632,8 +637,8 @@ class RaptorNode:
     node_id: str
     level: int           # 0 = leaf chunk, 1+ = cluster summary
     text: str
-    embedding: List[float]
-    child_ids: List[str] = field(default_factory=list)
+    embedding: list[float]
+    child_ids: list[str] = field(default_factory=list)
     cluster_id: int = -1
 
     def to_dict(self) -> dict:
@@ -678,11 +683,11 @@ class RAGEngine:
 
         # HNSW Vector Index
         self._hnsw_index: Optional[HNSWVectorIndex] = None
-        self._document_map: Dict[str, Document] = {}
+        self._document_map: dict[str, Document] = {}
         self._use_hnsw = self.config.use_hnsw
 
         # RAPTOR tree for hierarchical summarization
-        self._raptor_nodes: Dict[str, RaptorNode] = {}
+        self._raptor_nodes: dict[str, RaptorNode] = {}
 
         # Sprint 42: CoreML ANE embedder
         self._coreml_embedder = None
@@ -777,10 +782,10 @@ class RAGEngine:
     async def query(
         self,
         query: str,
-        context_chunks: List[str],
+        context_chunks: list[str],
         use_compression: bool = None,
         secure: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Procesovat RAG query.
         
@@ -822,7 +827,7 @@ class RAGEngine:
             "complex": is_complex,
         }
     
-    async def _compress_chunks(self, chunks: List[str]) -> List[str]:
+    async def _compress_chunks(self, chunks: list[str]) -> list[str]:
         """Komprimovat chunky pomocí SPR"""
         if not self._spr_compressor:
             return chunks
@@ -838,7 +843,7 @@ class RAGEngine:
         
         return compressed
     
-    async def _secure_process(self, chunks: List[str]) -> List[str]:
+    async def _secure_process(self, chunks: list[str]) -> list[str]:
         """Zpracovat chunky v secure enclave"""
         if not self._secure_enclave:
             return chunks
@@ -859,10 +864,10 @@ class RAGEngine:
     async def hybrid_retrieve(
         self,
         query: str,
-        documents: List[Document],
+        documents: list[Document],
         top_k: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> List[RetrievedChunk]:
+        filters: Optional[dict[str, Any]] = None
+    ) -> list[RetrievedChunk]:
         """
         Retrieve relevant documents using hybrid search (dense + sparse).
         
@@ -890,7 +895,7 @@ class RAGEngine:
         
         # Index documents
         bm25 = BM25Index(k1=self.config.bm25_k1, b=self.config.bm25_b)
-        embeddings: Dict[str, List[float]] = {}
+        embeddings: dict[str, list[float]] = {}
         
         for doc in documents:
             bm25.add_document(doc)
@@ -908,7 +913,7 @@ class RAGEngine:
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
         
         # Combine using weighted fusion
-        doc_scores: Dict[str, Dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
+        doc_scores: dict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
         
         for doc_id, score in dense_results:
             doc_scores[doc_id]['dense'] = score
@@ -919,7 +924,7 @@ class RAGEngine:
             doc_scores[doc_id]['sparse'] = score / max_sparse if max_sparse > 0 else 0
         
         # Calculate final scores
-        results: List[RetrievedChunk] = []
+        results: list[RetrievedChunk] = []
         doc_map = {d.id: d for d in documents}
         
         for doc_id, scores in doc_scores.items():
@@ -950,7 +955,7 @@ class RAGEngine:
         results.sort(key=lambda x: x.final_score, reverse=True)
         return results[:top_k]
     
-    async def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def _generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for texts using cached FastEmbed or MLXEmbeddingManager.
 
         M1 8GB: TextEmbedding instance is cached in self._fastembed_embedder
@@ -1002,10 +1007,10 @@ class RAGEngine:
     
     def _dense_retrieval(
         self,
-        query_embedding: List[float],
-        doc_embeddings: Dict[str, List[float]],
+        query_embedding: list[float],
+        doc_embeddings: dict[str, list[float]],
         top_k: int
-    ) -> List[Tuple[str, float]]:
+    ) -> list[Tuple[str, float]]:
         """Dense retrieval using cosine similarity."""
         import numpy as np
         
@@ -1023,7 +1028,7 @@ class RAGEngine:
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:top_k]
     
-    def _matches_filters(self, doc: Document, filters: Dict[str, Any]) -> bool:
+    def _matches_filters(self, doc: Document, filters: dict[str, Any]) -> bool:
         """Check if document matches filters."""
         for key, value in filters.items():
             if doc.metadata.get(key) != value:
@@ -1034,8 +1039,8 @@ class RAGEngine:
 
     def build_hnsw_index(
         self,
-        documents: List[Document],
-        embeddings: Optional[Dict[str, List[float]]] = None
+        documents: list[Document],
+        embeddings: Optional[dict[str, list[float]]] = None
     ) -> None:
         """
         Build HNSW index from documents.
@@ -1119,10 +1124,10 @@ class RAGEngine:
 
     def _hnsw_retrieval(
         self,
-        query_embedding: Union[List[float], np.ndarray],
+        query_embedding: Union[list[float], np.ndarray],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> List[RetrievedChunk]:
+        filters: Optional[dict[str, Any]] = None
+    ) -> list[RetrievedChunk]:
         """
         Retrieve documents using HNSW index.
 
@@ -1188,11 +1193,11 @@ class RAGEngine:
     async def hybrid_retrieve_with_hnsw(
         self,
         query: str,
-        documents: Optional[List[Document]] = None,
+        documents: Optional[list[Document]] = None,
         top_k: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[dict[str, Any]] = None,
         use_hnsw: Optional[bool] = None
-    ) -> List[RetrievedChunk]:
+    ) -> list[RetrievedChunk]:
         """
         Retrieve relevant documents using hybrid search (dense + sparse) with optional HNSW.
 
@@ -1225,8 +1230,8 @@ class RAGEngine:
         self,
         query: str,
         top_k: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> List[RetrievedChunk]:
+        filters: Optional[dict[str, Any]] = None
+    ) -> list[RetrievedChunk]:
         """
         Internal hybrid retrieval using HNSW for dense search.
         """
@@ -1248,7 +1253,7 @@ class RAGEngine:
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
 
         # Combine using weighted fusion
-        doc_scores: Dict[str, Dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
+        doc_scores: dict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
 
         for chunk in dense_results:
             doc_scores[chunk.document.id]['dense'] = chunk.dense_score
@@ -1259,7 +1264,7 @@ class RAGEngine:
             doc_scores[doc_id]['sparse'] = score / max_sparse if max_sparse > 0 else 0
 
         # Calculate final scores
-        results: List[RetrievedChunk] = []
+        results: list[RetrievedChunk] = []
 
         for doc_id, scores in doc_scores.items():
             if doc_id not in self._document_map:
@@ -1358,7 +1363,7 @@ class RAGEngine:
 
         logger.info(f"HNSW index loaded from {load_path}")
 
-    def get_hnsw_stats(self) -> Optional[Dict[str, Any]]:
+    def get_hnsw_stats(self) -> Optional[dict[str, Any]]:
         """
         Get HNSW index statistics.
 
@@ -1371,7 +1376,7 @@ class RAGEngine:
 
     # ============== COREML CONVERSION (Sprint 42) ==============
 
-    async def _get_random_chunks(self, n: int) -> List[str]:
+    async def _get_random_chunks(self, n: int) -> list[str]:
         """Return up to n random text chunks from documents."""
         import random
         if not self._document_map:
@@ -1425,7 +1430,7 @@ class RAGEngine:
 
     # ============== RAPTOR HIERARCHICAL SUMMARIZATION ==============
 
-    async def _embed_text(self, text: str) -> List[float]:
+    async def _embed_text(self, text: str) -> list[float]:
         """Embed text using CoreML if available, fallback to MLX."""
         # Sprint 42: Try CoreML first
         if self._coreml_embedder is not None:
@@ -1471,18 +1476,18 @@ class RAGEngine:
 
     async def _build_raptor_tree(
         self,
-        documents: List["Document"],
+        documents: list["Document"],
         max_levels: int = 2,
         max_docs: int = 50
-    ) -> Dict[str, "RaptorNode"]:
+    ) -> dict[str, "RaptorNode"]:
         """Build RAPTOR summarization tree. Returns node_id -> RaptorNode dict."""
         docs = documents[:max_docs]
         if len(docs) < 3:
             return {}
 
-        nodes: Dict[str, RaptorNode] = {}
-        current_level_texts: List[str] = []
-        current_level_embeddings: List[List[float]] = []
+        nodes: dict[str, RaptorNode] = {}
+        current_level_texts: list[str] = []
+        current_level_embeddings: list[list[float]] = []
 
         # Level 0: leaf nodes
         for i, doc in enumerate(docs):
@@ -1522,8 +1527,8 @@ class RAGEngine:
                 break
 
             prev_level_node_ids = [nid for nid, n in nodes.items() if n.level == level - 1]
-            new_texts: List[str] = []
-            new_embeddings: List[List[float]] = []
+            new_texts: list[str] = []
+            new_embeddings: list[list[float]] = []
 
             for cluster_id in range(n_clusters):
                 cluster_indices = [i for i, l in enumerate(cluster_labels) if l == cluster_id]
@@ -1582,10 +1587,10 @@ class RAGEngine:
 
     def _raptor_retrieve(
         self,
-        query_embedding: List[float],
-        nodes: Dict[str, "RaptorNode"],
+        query_embedding: list[float],
+        nodes: dict[str, "RaptorNode"],
         top_k: int = 5
-    ) -> List["RaptorNode"]:
+    ) -> list["RaptorNode"]:
         """Retrieve top-K nodes from all RAPTOR levels by cosine similarity."""
         if not nodes:
             return []
@@ -1593,7 +1598,7 @@ class RAGEngine:
         q_norm = np.linalg.norm(q)
         if q_norm == 0:
             return []
-        scores: List[Tuple[float, RaptorNode]] = []
+        scores: list[Tuple[float, RaptorNode]] = []
         for node in nodes.values():
             if not node.embedding:
                 continue
@@ -1608,11 +1613,11 @@ class RAGEngine:
 
     def _rrf_merge(
         self,
-        list_a: List[Any],
-        list_b: List[Any],
+        list_a: list[Any],
+        list_b: list[Any],
         top_k: int = 10,
         k: int = 60
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Merge two ranked lists via Reciprocal Rank Fusion. Stable key = hash of content."""
         def _item_key(item) -> str:
             # Prefer URL, fall back to content hash
@@ -1622,8 +1627,8 @@ class RAGEngine:
             content = getattr(item, 'content', None) or getattr(item, 'text', None) or str(item)
             return hashlib.md5(content[:200].encode(errors='ignore')).hexdigest()
 
-        scores: Dict[str, float] = {}
-        items: Dict[str, Any] = {}
+        scores: dict[str, float] = {}
+        items: dict[str, Any] = {}
 
         for rank, item in enumerate(list_a):
             key = _item_key(item)

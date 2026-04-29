@@ -587,6 +587,8 @@ class SprintScheduler:
 
     Advisory gate: computed at WINDUP entry, DIAGNOSTIC ONLY.
     Shadow pre-decision: read-only parity/composition, DIAGNOSTIC ONLY.
+
+    Dependency injection: see inject_* methods for authoritative documentation.
     """
 
     def __init__(self, config: SprintSchedulerConfig, ct_log_client: Any = None) -> None:

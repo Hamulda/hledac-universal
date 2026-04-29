@@ -33,6 +33,11 @@ from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
     classify_discovery_error,
 )
 
+# F206AC: fetch error taxonomy helper
+from hledac.universal.fetching.public_fetcher import (  # noqa: E402
+    classify_fetch_error,
+)
+
 # -----------------------------------------------------------------------------
 # Constants
 # -----------------------------------------------------------------------------
@@ -789,7 +794,7 @@ async def _fetch_and_process_page(
                 error="skipped:weak_discovery",
                 extracted_text_len=0,
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url,
                 fetched=False,
                 matched_patterns=0,
@@ -810,6 +815,8 @@ async def _fetch_and_process_page(
                 redirected=False,
                 redirect_target=None,
             )
+            ppr._fetch_result = None  # type: ignore[attr-defined]
+            return ppr
 
         # Sprint F193B: Policy-driven fetch — JS/DoH/stealth driven by signal, not dormant defaults
         policy = _compute_fetch_policy(hit_url, discovery_score, discovery_reason, strong_signal)
@@ -832,7 +839,7 @@ async def _fetch_and_process_page(
                 error=f"fetch_timeout_after_{effective_timeout:.1f}s",
                 extracted_text_len=0,
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url, fetched=False, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
                 error=f"fetch_timeout_after_{effective_timeout:.1f}s",
@@ -849,6 +856,8 @@ async def _fetch_and_process_page(
                 redirected=False,
                 redirect_target=None,
             )
+            ppr._fetch_result = None  # type: ignore[attr-defined]  # no FetchResult on timeout
+            return ppr
         except asyncio.CancelledError:
             raise  # [I6] propagate, never swallow
         except Exception as exc:
@@ -859,7 +868,7 @@ async def _fetch_and_process_page(
                 error=f"fetch_exception:{type(exc).__name__}:{exc}",
                 extracted_text_len=0,
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url, fetched=False, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
                 error=f"fetch_exception:{type(exc).__name__}:{exc}",
@@ -876,6 +885,8 @@ async def _fetch_and_process_page(
                 redirected=False,
                 redirect_target=None,
             )
+            ppr._fetch_result = None  # type: ignore[attr-defined]  # no FetchResult on exception path
+            return ppr
 
         # Unpack fetch result (FetchResult frozen struct)
         # Sprint F170D: also read failure_stage for accessibility truth
@@ -900,7 +911,7 @@ async def _fetch_and_process_page(
                 error="fetch_text_none_or_empty",
                 extracted_text_len=0,
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url, fetched=True, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
                 error="fetch_text_none_or_empty",
@@ -917,6 +928,9 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
             )
+            # Sprint F206AC: attach raw FetchResult for verdict telemetry
+            ppr._fetch_result = result  # type: ignore[attr-defined]
+            return ppr
 
         # ---- Extract ---------------------------------------------------------
         loop = asyncio.get_running_loop()
@@ -932,7 +946,7 @@ async def _fetch_and_process_page(
                 error=f"html_extract_failed:{exc}",
                 extracted_text_len=0,
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url, fetched=True, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
                 error=f"html_extract_failed:{exc}",
@@ -949,6 +963,8 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
             )
+            ppr._fetch_result = result  # type: ignore[attr-defined]
+            return ppr
 
         # Hard cap
         if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
@@ -976,7 +992,7 @@ async def _fetch_and_process_page(
                 error=None,
                 extracted_text_len=len(extracted_text),
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url, fetched=True, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
                 error=None, quality_reason=quality_reason,
@@ -993,6 +1009,8 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
             )
+            ppr._fetch_result = result  # type: ignore[attr-defined]
+            return ppr
 
         # Sprint F150I: enrich extracted text with discovery metadata
         # This gives pattern scanner better signal (title/snippet hints present)
@@ -1028,7 +1046,7 @@ async def _fetch_and_process_page(
                 error=None,
                 extracted_text_len=len(extracted_text),
             )
-            return PipelinePageResult(
+            ppr = PipelinePageResult(
                 url=hit_url, fetched=True, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
                 quality_reason=quality_reason,
@@ -1045,6 +1063,8 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
             )
+            ppr._fetch_result = result  # type: ignore[attr-defined]
+            return ppr
 
         # ---- Per-page dedup: (label, pattern, value) exact dedup -----------
         # F182D: Order changed from (value,label,pattern) to match feed pipeline (label,pattern,value)
@@ -1237,7 +1257,7 @@ async def _fetch_and_process_page(
             error=None,
             extracted_text_len=len(extracted_text),
         )
-        return PipelinePageResult(
+        ppr = PipelinePageResult(
             url=hit_url,
             fetched=True,
             matched_patterns=matched_count,
@@ -1257,6 +1277,8 @@ async def _fetch_and_process_page(
             redirected=fetched_redirected,
             redirect_target=fetched_redirect_target,
         )
+        ppr._fetch_result = result  # type: ignore[attr-defined]
+        return ppr
 
 
 # -----------------------------------------------------------------------------
@@ -2583,6 +2605,30 @@ async def async_run_live_public_pipeline(
     public_branch_verdict["fetch_attempted"] = _fetch_attempted
     public_branch_verdict["fetch_success"] = _fetch_success
     public_branch_verdict["fetch_error"] = _fetch_error
+
+    # Sprint F206AC: fetch error taxonomy — per-URL classification with bounded samples
+    _fetch_error_types: dict[str, int] = {}
+    _fetch_error_samples: list[dict] = []
+    for p in all_page_results:
+        pfr = getattr(p, "_fetch_result", None)
+        err_type = classify_fetch_error(pfr) if pfr is not None else classify_fetch_error(p.error)
+        _fetch_error_types[err_type] = _fetch_error_types.get(err_type, 0) + 1
+        if err_type != "none" and len(_fetch_error_samples) < 5:
+            sample: dict = {
+                "url": p.url,
+                "selected_transport": getattr(pfr, "selected_transport", None) if pfr is not None else None,
+                "status_code": getattr(pfr, "status_code", None) if pfr is not None else None,
+                "error_type": err_type,
+                "error": p.error,
+                "failure_stage": p.failure_stage,
+                "network_error_kind": getattr(pfr, "network_error_kind", None) if pfr is not None else None,
+                "transport_policy_reason": getattr(pfr, "transport_policy_reason", None) if pfr is not None else None,
+                "transport_fallback_reason": getattr(pfr, "transport_fallback_reason", None) if pfr is not None else None,
+                "content_type": getattr(pfr, "content_type", None) if pfr is not None else None,
+            }
+            _fetch_error_samples.append(sample)
+    public_branch_verdict["fetch_error_types"] = _fetch_error_types
+    public_branch_verdict["fetch_error_samples"] = _fetch_error_samples
 
     # Sprint F206AB: admission and pattern hit counters
     # admitted_urls: URL count after deduplication, before fetch

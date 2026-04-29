@@ -1,0 +1,39 @@
+{
+  "artifact_type": "public_fetch_stage_diagnosis_f206ac",
+  "timestamp": "2026-04-30T01:10:27Z",
+  "query": "ransomware attack ioc indicators",
+  "urls_tested": 2,
+  "results": [
+    {
+      "ok": true,
+      "sample": {
+        "url": "https://www.bleepingcomputer.com/news/security/lockbit-ransomware-infrastructure-compromised-by-law-enforcement/",
+        "selected_transport": "aiohttp",
+        "status_code": 404,
+        "error_type": "http_404",
+        "error": null,
+        "failure_stage": null,
+        "network_error_kind": null,
+        "transport_policy_reason": "clearnet_default",
+        "transport_fallback_reason": null,
+        "content_type": "text/html; charset=UTF-8"
+      }
+    },
+    {
+      "ok": true,
+      "sample": {
+        "url": "https://www.bleepingcomputer.com/feed/",
+        "selected_transport": "aiohttp",
+        "status_code": 200,
+        "error_type": "none",
+        "error": null,
+        "failure_stage": null,
+        "network_error_kind": null,
+        "transport_policy_reason": "clearnet_default",
+        "transport_fallback_reason": null,
+        "content_type": "text/xml; charset=utf-8"
+      }
+    }
+  ],
+  "methodology": "isolated async_fetch_public_text with 15s timeout, no store write"
+}

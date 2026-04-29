@@ -6,8 +6,12 @@ Sprint 48: Async LMDB operations via executor, orjson serialization
 
 import asyncio
 import concurrent.futures
+import hashlib
 import json
 import logging
+import os
+import secrets
+import sys
 from typing import Dict, Optional
 import time
 
@@ -21,7 +25,79 @@ except ImportError:
     USE_ORJSON = False
     import json
 
+# F206L: Fernet encryption for cookies (P25 - Cookies stored unencrypted)
+try:
+    from cryptography.fernet import Fernet
+    FERNET_AVAILABLE = True
+except ImportError:
+    FERNET_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+# F206L: Encryption key storage key in LMDB
+_ENCRYPTION_KEY_KEY = b"session:_encryption_key"
+
+
+def _derive_encryption_key() -> bytes:
+    """
+    Derive a machine-specific Fernet key from unique machine identifiers.
+    Uses multiple sources to ensure same machine produces same key across reinstalls.
+    This allows decryption of existing sessions after app reinstall on same machine.
+
+    Falls back to random key if machine ID cannot be determined.
+    """
+    import base64
+
+    # Collect machine-specific data
+    key_material = []
+
+    # Machine identifier from hostname
+    try:
+        key_material.append(os.environ.get('HOSTNAME', ''))
+        key_material.append(os.environ.get('COMPUTERNAME', ''))
+    except Exception:
+        pass
+
+    # User-specific data
+    key_material.append(os.environ.get('USER', ''))
+    key_material.append(os.environ.get('USERNAME', ''))
+
+    # Platform-specific data
+    key_material.append(sys.platform)
+
+    # Try to get a unique machine ID (common on Linux/Mac)
+    machine_id = ''
+    try:
+        if sys.platform == 'darwin':
+            import subprocess
+            result = subprocess.run(
+                ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+                capture_output=True, text=True, timeout=2
+            )
+            for line in result.stdout.split('\n'):
+                if 'IOPlatformUUID' in line:
+                    machine_id = line.split('"')[-2] if '"' in line else ''
+                    break
+        elif sys.platform == 'linux':
+            for mpath in ['/etc/machine-id', '/var/lib/dbus/machine-id']:
+                if os.path.exists(mpath):
+                    with open(mpath, 'r') as f:
+                        machine_id = f.read().strip()
+                    break
+    except Exception:
+        pass
+
+    if machine_id:
+        key_material.append(machine_id)
+    else:
+        # Fallback: random key - sessions will be lost on reinstall
+        return Fernet.generate_key() if FERNET_AVAILABLE else secrets.token_bytes(32)
+
+    # Derive 32-byte key and encode as Fernet-compatible (URL-safe base64)
+    combined = ''.join(key_material)
+    derived = hashlib.sha256(combined.encode()).digest()
+    fernet_key = base64.urlsafe_b64encode(derived)
+    return fernet_key
 
 
 class SessionManager:
@@ -59,20 +135,63 @@ class SessionManager:
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         # F300K: explicit closed state — guards post-close truthfulness
         self._closed: bool = False
+        # F206L: Fernet cipher for cookie encryption (P25)
+        self._fernet: Optional[Fernet] = None
+        self._encryption_key: Optional[bytes] = None
+        if FERNET_AVAILABLE:
+            self._encryption_key = self._get_encryption_key()
+            self._fernet = Fernet(self._encryption_key)
 
     def _get_key(self, domain: str) -> bytes:
         return f"session:{domain}".encode()
 
-    # S48-P8: Fast serialization
+    def _get_encryption_key(self) -> bytes:
+        """
+        F206L: Load existing encryption key from LMDB or derive a new one (P25).
+
+        Key is stored in LMDB with a special reserved key. On first use,
+        generates a machine-specific key using _derive_encryption_key().
+        """
+        with self._env.begin() as txn:
+            key_data = txn.get(_ENCRYPTION_KEY_KEY)
+            if key_data:
+                return key_data
+
+        # First time: derive and store key
+        key = _derive_encryption_key()
+        with self._env.begin(write=True) as txn:
+            txn.put(_ENCRYPTION_KEY_KEY, key)
+        return key
+
+    def _encrypt(self, data: bytes) -> bytes:
+        """F206L: Encrypt data using Fernet (P25)."""
+        if self._fernet is None:
+            return data  # Fallback: no encryption
+        return self._fernet.encrypt(data)
+
+    def _decrypt(self, data: bytes) -> bytes:
+        """
+        F206L: Decrypt data using Fernet (P25).
+
+        Backward compatibility: if decryption fails (old unencrypted data),
+        return data as-is for plain deserialization.
+        """
+        if self._fernet is None:
+            return data  # Fallback: no decryption
+        try:
+            return self._fernet.decrypt(data)
+        except Exception:
+            # Backward compatibility: data stored before encryption was added
+            return data
+
+    # S48-P8: Fast serialization with F206L encryption (P25)
     def _serialize(self, data: Dict) -> bytes:
-        if USE_ORJSON:
-            return orjson.dumps(data)
-        return json.dumps(data).encode()
+        serialized = orjson.dumps(data) if USE_ORJSON else json.dumps(data).encode()
+        return self._encrypt(serialized)
 
     def _deserialize(self, data: bytes) -> Dict:
-        if USE_ORJSON:
-            return orjson.loads(data)
-        return json.loads(data.decode())
+        decrypted = self._decrypt(data)
+        return orjson.loads(decrypted) if USE_ORJSON else json.loads(decrypted.decode())
 
     # S49-B: Sync LMDB operations for executor
     def _sync_get(self, key: bytes) -> Optional[Dict]:
