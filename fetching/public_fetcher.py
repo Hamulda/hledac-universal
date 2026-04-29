@@ -1096,46 +1096,12 @@ async def async_fetch_public_text(
                         # --- Retryable status → wait and retry once ---
                         if _circuit_breaker and _is_retryable_status(last_status_code):
                             _circuit_breaker.record_failure(failure_kind=str(last_status_code))
-                        last_error = _build_retry_error(last_status_code, retry_after)
-                        if attempt < MAX_RETRIES:
-                            retry_after = _extract_retry_after(resp.headers)
-                            backoff = _compute_backoff_seconds(retry_after, attempt)
-                            await asyncio.sleep(backoff)
-                            continue
-                        # Exhausted retries — return with error prefix
-                        elapsed_ms = (time.monotonic() - t0) * 1000
-                        redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                        # --- F206N: Transport counter for aiohttp/Tor/I2P path ---
-                        if _httpx_reason == "httpx_h2_fallback":
-                            _tc.httpx_h2_fallback_to_aiohttp_count += 1
-                            _tc.fallback_count += 1
-                        elif _curl_fallback_reason is not None:
-                            # curl_cffi fallback counter already set above, add fallback_count only
-                            _tc.fallback_count += 1
-                        elif use_tor:
-                            _tc.tor_aiohttp_socks_count += 1
-                        elif use_i2p:
-                            _tc.i2p_aiohttp_socks_count += 1
-                        else:
-                            _tc.aiohttp_count += 1
-                        return FetchResult(
-                            url=url,
-                            final_url=final_url,
-                            status_code=last_status_code,
-                            content_type=content_type,
-                            text=None,
-                            fetched_bytes=0,
-                            declared_length=-1,
-                            elapsed_ms=elapsed_ms,
-                            error=last_error,
-                            redirected=redirected,
-                            redirect_target=redirect_target,
-                            failure_stage="http",
-                            selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-                            transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-                            transport_counters=_tc,
-                        )
-
+                            last_error = _build_retry_error(last_status_code, retry_after)
+                            if attempt < MAX_RETRIES:
+                                retry_after = _extract_retry_after(resp.headers)
+                                backoff = _compute_backoff_seconds(retry_after, attempt)
+                                await asyncio.sleep(backoff)
+                                continue
                         # --- Content-type gate with XML-ish body recovery (Feed ingress hardening F164A) ---
                         xml_recovered = False
                         rejected_ct = raw_content_type not in ACCEPTED_CONTENT_TYPES

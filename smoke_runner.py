@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import cProfile
+import importlib.util
 import logging
 import os
 import pstats
@@ -270,7 +271,11 @@ def run_sprint_import_test() -> bool:
     errors = []
     for mod in modules:
         try:
-            __import__(mod)
+            # CR-003 FIX: Use find_spec to validate module exists before importing
+            if importlib.util.find_spec(mod) is None:
+                errors.append(f"{mod}: module not found")
+                continue
+            importlib.import_module(mod)
             log.debug(f"✓ {mod}")
         except Exception as e:
             errors.append(f"{mod}: {e}")

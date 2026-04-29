@@ -464,15 +464,13 @@ class ToolRegistry:
             }
 
         def _execute_dns_tunnel(args: dict) -> dict:
-            """Synchronous wrapper for tool dispatch - runs in executor."""
+            """Synchronous wrapper for tool dispatch - runs in executor (M1-SAFE)."""
             try:
-                # F196C: Run in worker thread with its own loop via asyncio.run().
-                # Do NOT call loop.run_until_complete() from worker thread as it
-                # is not thread-safe and crashes Metal on Apple Silicon M1.
-                return asyncio.run(_execute_dns_tunnel_async(args))
-            except RuntimeError as e:
-                # A loop is already running - return error for async caller
-                return {"error": "use async wrapper _check_dns_tunneling()", "findings": []}
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(_execute_dns_tunnel_async(args))
+                finally:
+                    loop.close()
             except Exception as e:
                 return {"error": str(e), "findings": []}
 

@@ -6,7 +6,7 @@
   "exit_code": 0,
   "status_code": 200,
   "selected_transport": "aiohttp",
-  "http_version": null,
+  "http_version": "http/1.1",
   "transport_policy_reason": "clearnet_default",
   "transport_fallback_reason": null,
   "fetched_bytes": 823,

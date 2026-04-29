@@ -269,6 +269,35 @@ OBSERVED(finding_id, source_type, first_seen, last_seen)
 3. **Kuzu only for IOC graph truth store** - Not for embeddings
 4. **DuckDB only for sprint analytics** - Not for primary IOC storage
 
+### ADR-001: DuckDB / LanceDB Write Boundary (P1-10)
+
+**Decision**: DuckDB is the **canonical write path** for all findings. LanceDB-backed stores (SemanticStore, LanceDBIdentityStore) are **read-side optimizations only**.
+
+**Boundary Rule**: DuckDB must NOT directly write to LanceDB stores. LanceDB indices are populated by:
+- **Rebuilding from DuckDB** at startup or periodically (dedicated rebuild job)
+- **Event-driven population** via a separate consumer, not as part of DuckDB's write pipeline
+
+**Current Implementation (Acknowledged Debt)**:
+- `DuckDBShadowStore.inject_semantic_store()` allows DuckDB → SemanticStore coupling
+- `_semantic_buffer_findings()` is called after `async_ingest_findings_batch()` as a sidecar
+- This creates a dual-write pattern: findings go to DuckDB (canonical) AND SemanticStore (read optimization)
+
+**Why This Violates the Boundary But Is Acceptable**:
+- SemanticStore buffering is **fail-open**: any exception is caught and logged, never blocks storage
+- Findings are **not lost** if SemanticStore fails — DuckDB remains the source of truth
+- The SemanticStore is a **best-effort optimization** for semantic pivot queries
+
+**Recommended Fix** (Future Sprint):
+```
+Sprint N: Extract SemanticStore flush to a separate consumer
+1. DuckDB writes findings (canonical)
+2. A separate async consumer reads from DuckDB and populates SemanticStore
+3. DuckDB.remove inject_semantic_store() call
+4. SemanticStore becomes a pure read-side index rebuilt from DuckDB
+```
+
+**Status**: DOCUMENTED (ADR-001) — architectural debt tracked for future resolution
+
 ---
 
 ## Migration Notes

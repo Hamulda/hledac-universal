@@ -100,7 +100,6 @@ def _is_api_like_url(url: str) -> bool:
     try:
         parsed = urllib.parse.urlparse(url)
         host = parsed.hostname or ""
-        path = parsed.path
 
         # Check hostname patterns
         if not host:
@@ -226,7 +225,7 @@ def should_use_httpx_h2(
 async def fetch_via_httpx_h2(
     url: str,
     timeout_s: float = 20.0,
-    _max_bytes: int = 2 * 1024 * 1024,  # reserved for future size enforcement
+    _max_bytes: int = 2 * 1024 * 1024,  # noqa: F841  # reserved for future size enforcement
     _max_redirects: int = 10,
 ) -> "httpx.Response":  # type: ignore[name-defined]  # httpx imported lazily inside
     """
@@ -257,10 +256,17 @@ async def fetch_via_httpx_h2(
 
     client = await async_get_httpx_client()
 
-    # Build request headers (minimal — no UA rotation for API calls)
+    # SEC-08: Standardized browser-like headers to avoid client fingerprinting
     headers = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
     }
 
     # P1-5: Manual redirect handling with SSRF validation

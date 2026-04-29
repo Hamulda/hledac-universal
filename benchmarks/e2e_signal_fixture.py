@@ -6,9 +6,9 @@ Sprint F206X — Deterministic Signal Fixture Benchmark
 Hermetic local HTTP fixture with OSINT pattern payload.
 Non-empty acquisition signal: fetched_bytes > 0 + pattern content.
 
-httpx and curl_cffi are confirmed working against localhost (aiohttp has
-pre-existing bug: status 200 gets "retryable:200" error + body never read).
+httpx and curl_cffi are confirmed working against localhost.
 httpx_h2 and curl_cffi transport paths are exercised via their direct APIs.
+Baseline uses async_fetch_public_text (production aiohttp path, F206Y fix).
 
 No live internet, no external services, no Docker.
 Output: probe_e2e_readiness/e2e_signal_fixture_{run_name}.json
@@ -31,6 +31,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from patterns.pattern_matcher import get_pattern_matcher
+from fetching.public_fetcher import async_fetch_public_text
 
 
 # ============================================================================
@@ -121,7 +122,7 @@ def extract_pattern_hits(text: str) -> tuple[int, list[dict[str, Any]]]:
 
 
 # ============================================================================
-# Fetch via httpx (bypasses broken aiohttp path in async_fetch_public_text)
+# Fetch via httpx (explicit HTTPX/H2 transport lane)
 # ============================================================================
 
 async def fetch_via_httpx(url: str, timeout: float = 10.0) -> dict[str, Any]:
@@ -205,6 +206,27 @@ async def fetch_via_aiohttp_raw(url: str, timeout: float = 10.0) -> dict[str, An
             }
 
 
+async def fetch_via_async_fetch_public_text(url: str, timeout: float = 10.0) -> dict[str, Any]:
+    """Fetch via production async_fetch_public_text (baseline lane, F206Y fix)."""
+    result = await async_fetch_public_text(
+        url=url,
+        timeout_s=timeout,
+        use_stealth=False,
+        use_js=False,
+        use_doh=False,
+    )
+    return {
+        "status_code": result.status_code,
+        "text": result.text,
+        "fetched_bytes": result.fetched_bytes,
+        "selected_transport": result.selected_transport,
+        "http_version": result.http_version,
+        "transport_policy_reason": result.transport_policy_reason,
+        "transport_fallback_reason": result.transport_fallback_reason,
+        "error": result.error,
+    }
+
+
 # ============================================================================
 # Server with free port
 # ============================================================================
@@ -233,7 +255,7 @@ async def run_signal_fixture(
     Args:
         run_name: e.g. "baseline", "httpx_h2_on", "curl_cffi_on"
         env: environment variables to log (for artifact metadata)
-        fetch_fn_name: "httpx", "curl_cffi", or "aiohttp_raw"
+        fetch_fn_name: "httpx", "curl_cffi", "aiohttp_raw", or "async_fetch_public_text"
         port: specific port to use (auto-allocated if None)
         output_dir: output directory for JSON artifact
     """
@@ -261,6 +283,8 @@ async def run_signal_fixture(
             result = await fetch_via_curl_cffi(target_url, timeout=10.0)
         elif fetch_fn_name == "aiohttp_raw":
             result = await fetch_via_aiohttp_raw(target_url, timeout=10.0)
+        elif fetch_fn_name == "async_fetch_public_text":
+            result = await fetch_via_async_fetch_public_text(target_url, timeout=10.0)
         else:
             raise ValueError(f"Unknown fetch_fn: {fetch_fn_name}")
 
@@ -302,7 +326,7 @@ async def run_signal_fixture(
 
     # Transport counters
     transport_counters = {
-        "aiohttp_count": 1 if fetch_fn_name == "aiohttp_raw" else 0,
+        "aiohttp_count": 1 if fetch_fn_name in ("aiohttp_raw", "async_fetch_public_text") else 0,
         "httpx_h2_count": 1 if fetch_fn_name == "httpx" else 0,
         "curl_cffi_count": 1 if fetch_fn_name == "curl_cffi" else 0,
         "tor_aiohttp_socks_count": 0,
@@ -357,7 +381,7 @@ async def run_signal_fixture(
 # ============================================================================
 
 async def run_baseline() -> dict[str, Any]:
-    """Baseline: use raw aiohttp (no httpx, no curl_cffi env)."""
+    """Baseline: use async_fetch_public_text (production aiohttp path, F206Y fix)."""
     return await run_signal_fixture(
         run_name="baseline",
         env={
@@ -365,7 +389,7 @@ async def run_baseline() -> dict[str, Any]:
             "HLEDAC_ENABLE_CURL_CFFI": None,
             "HLEDAC_ENABLE_HTTPX_H2": None,
         },
-        fetch_fn_name="aiohttp_raw",
+        fetch_fn_name="async_fetch_public_text",
         port=18100,
     )
 
