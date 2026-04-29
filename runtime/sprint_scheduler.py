@@ -427,6 +427,9 @@ class SprintSchedulerResult:
     sidecars_skipped: tuple[str, ...] = ()  # heavy sidecars skipped due to RAM pressure
     peak_rss_gib: float = 0.0  # peak RSS observed during sprint
     budget_violations: int = 0  # number of times RSS exceeded MISSION_PEAK_RSS_GIB
+    # Sprint F193B: CommonCrawl + academic discovery additive truth
+    cc_archive_injected: int = 0
+    academic_findings_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -5824,7 +5827,8 @@ class SprintScheduler:
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
         self._governor = None  # Will be re-initialized on next run()
         # Sprint F205F: Reset sidecar dispatcher tracking
-        if self._sidecar_dispatcher is not None:
+        # F206S: hasattr guard needed — _sidecar_dispatcher is set in run() after _reset_result() is called
+        if hasattr(self, "_sidecar_dispatcher") and self._sidecar_dispatcher is not None:
             self._sidecar_dispatcher.reset()
         # Sprint F204J: Mission budget tracking
         # F205F: sidecars_skipped written by SidecarDispatcher via result_sink.

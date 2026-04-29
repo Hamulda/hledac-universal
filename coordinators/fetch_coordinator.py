@@ -451,7 +451,6 @@ class FetchCoordinator(UniversalCoordinator):
             'total_failures': 0,
             # P1-13: Circuit breaker metrics
             'circuit_breaker_blocks': 0,
-            'circuit_breaker_unblocks': 0,
             'circuit_breaker_active': 0,
         }
 
@@ -470,11 +469,13 @@ class FetchCoordinator(UniversalCoordinator):
         self._domain_failure_timestamps[domain] = time.time()
 
         if failures >= self._failure_threshold:
+            # P1-13: Check if NEW block (not refresh of existing blocked domain)
+            is_new_block = domain not in self._domain_blocked_until
             backoff = min(60.0 * (2 ** (failures - self._failure_threshold)), 3600.0)
             self._domain_blocked_until[domain] = time.time() + backoff
-            # P1-13: Update circuit breaker metrics
-            if domain not in self._domain_blocked_until:  # New block, not refresh
-                self._telemetry['circuit_breaker_blocks'] += 1
+            if is_new_block:
+                # Use .get() for backward compat with manually-constructed objects
+                self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
             self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
             logger.warning(
                 f"[CIRCUIT] Domain {domain} blocked after {failures} failures "

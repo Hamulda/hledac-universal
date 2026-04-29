@@ -67,11 +67,9 @@ async def get_mlx_model(model_name: str) -> Tuple[Any, Any]:
         # Check cache first
         if model_name in _MLX_CACHE:
             _MLX_CACHE.move_to_end(model_name)
-            global _CACHE_HITS
             _CACHE_HITS += 1
             logger.debug(f"MLX cache hit: {model_name}")
             return _MLX_CACHE[model_name]
-        global _CACHE_MISSES
         _CACHE_MISSES += 1
 
         # Try to load model

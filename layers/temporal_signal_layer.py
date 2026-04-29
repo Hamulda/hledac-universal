@@ -400,9 +400,13 @@ class TemporalSignalLayer:
     # ─── Top scores ─────────────────────────────────────────────────────────
 
     def get_top_scores(self, k: int = 20) -> list[TemporalScore]:
-        all_scores = [s for s in self._states.values() if s.last_score is not None]
-        all_scores.sort(key=lambda s: s.last_score.anomaly_score, reverse=True)
-        return [s.last_score for s in all_scores[:k]]
+        scored: list[tuple[float, TemporalScore]] = []
+        for s in self._states.values():
+            ls = s.last_score
+            if ls is not None:
+                scored.append((ls.anomaly_score, ls))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [score for _, score in scored[:k]]
 
     def get_edge_candidates(self, k: int = 50) -> list[TemporalEdgeCandidate]:
         sorted_candidates = sorted(self._edge_candidates, key=lambda c: c.score, reverse=True)
@@ -413,6 +417,7 @@ class TemporalSignalLayer:
     def snapshot(self) -> dict[str, Any]:
         states_serializable = {}
         for k, v in self._states.items():
+            ls = v.last_score
             states_serializable[k] = {
                 "last_ts": v.last_ts,
                 "event_count": v.event_count,
@@ -427,6 +432,21 @@ class TemporalSignalLayer:
                 "ph_mean": v.ph_mean,
                 "bocpd_run_length": v.bocpd_run_length,
                 "bocpd_log_odds": v.bocpd_log_odds,
+                "last_score": {
+                    "key": ls.key,
+                    "family": ls.family,
+                    "event_count": ls.event_count,
+                    "anomaly_score": ls.anomaly_score,
+                    "burst_score": ls.burst_score,
+                    "periodicity_score": ls.periodicity_score,
+                    "change_point_score": ls.change_point_score,
+                    "source_synchrony_score": ls.source_synchrony_score,
+                    "rate_score": ls.rate_score,
+                    "cv_isi": ls.cv_isi,
+                    "mean_gap_s": ls.mean_gap_s,
+                    "autocorr_lag1": ls.autocorr_lag1,
+                    "reason": ls.reason,
+                } if ls else None,
             }
 
         edge_candidates_serializable = [
@@ -482,8 +502,25 @@ class TemporalSignalLayer:
                 bocpd_run_length=state_data.get("bocpd_run_length", 0),
                 bocpd_log_odds=state_data.get("bocpd_log_odds", 0.0),
             )
-            # Rebuild last_score
-            if state.event_count > 0:
+            # Rebuild last_score from serialized data
+            ls_data = state_data.get("last_score")
+            if ls_data is not None:
+                state.last_score = TemporalScore(
+                    key=ls_data["key"],
+                    family=ls_data.get("family", ""),
+                    event_count=ls_data["event_count"],
+                    anomaly_score=ls_data["anomaly_score"],
+                    burst_score=ls_data["burst_score"],
+                    periodicity_score=ls_data["periodicity_score"],
+                    change_point_score=ls_data["change_point_score"],
+                    source_synchrony_score=ls_data["source_synchrony_score"],
+                    rate_score=ls_data["rate_score"],
+                    cv_isi=ls_data["cv_isi"],
+                    mean_gap_s=ls_data["mean_gap_s"],
+                    autocorr_lag1=ls_data["autocorr_lag1"],
+                    reason=ls_data.get("reason", "restored"),
+                )
+            elif state.event_count > 0:
                 state.last_score = TemporalScore(
                     key=key,
                     family="",
@@ -549,6 +586,8 @@ class TemporalSignalLayer:
                     continue
                 if other_state.last_score and other_state.last_score.burst_score > 0.4:
                     # Co-burst in similar time window
+                    if not state.last_score:
+                        continue
                     window_start = ts - self._synchrony_window_s
                     candidate = TemporalEdgeCandidate(
                         src_key=state.last_score.key,

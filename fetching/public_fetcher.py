@@ -24,6 +24,8 @@ from typing import Final, Optional
 
 import psutil
 
+import aiohttp
+
 import msgspec
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
