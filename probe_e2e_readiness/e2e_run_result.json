@@ -1,0 +1,47 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "hledac.universal",
+    "--sprint",
+    "ransomware infrastructure leak",
+    "360"
+  ],
+  "env_flags": {
+    "HLEDAC_ENABLE_TEMPORAL_STORE": "1",
+    "HLEDAC_ENABLE_CURL_CFFI": "0",
+    "HLEDAC_ENABLE_HTTPX_H2": "0"
+  },
+  "python_executable": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/bin/python",
+  "cwd": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
+  "started_at": "2026-04-29T16:05:50+00:00",
+  "duration_requested_s": 360.0,
+  "duration_actual_s": 220.0,
+  "exit_code": 0,
+  "report_paths_found": [
+    "/Users/vojtechhamada/.hledac/reports/8sa_1777471591021_c84333_report.json"
+  ],
+  "accepted_findings": 0,
+  "public_accepted_findings": 0,
+  "feed_findings": 0,
+  "ct_findings": 0,
+  "cycles_started": 17,
+  "cycles_completed": 17,
+  "temporal_summary_present": true,
+  "temporal_priority_hints_present": true,
+  "transport_counters_present": true,
+  "runtime_truth_present": true,
+  "timing_truth_present": false,
+  "errors": [],
+  "status": "COMPLETED",
+  "report_content_keys": [
+    "synthesis_engine_used",
+    "gnn_predicted_links",
+    "top_graph_nodes",
+    "phase_duration_seconds",
+    "identity_candidates_found",
+    "identity_findings_produced",
+    "product_value_summary",
+    "analyst_brief"
+  ]
+}
