@@ -85,6 +85,12 @@ from .temporal_signal_runtime import (
     get_temporal_signal_layer,
     reset_temporal_signal_layer,
     get_temporal_signal_summary,
+    is_temporal_store_enabled,
+    get_temporal_signal_store,
+    load_temporal_signal_snapshot,
+    save_temporal_signal_snapshot,
+    close_temporal_signal_store,
+    build_temporal_priority_hints,
 )
 
 __all__ = [
@@ -153,8 +159,14 @@ __all__ = [
     "UnifiedCapabilitiesManager",
     "create_capabilities_manager",
     "get_capabilities_manager",
-    # Temporal Signal Runtime (Sprint F206P)
+    # Temporal Signal Runtime (Sprint F206P/F206Q)
     "get_temporal_signal_layer",
     "reset_temporal_signal_layer",
     "get_temporal_signal_summary",
+    "is_temporal_store_enabled",
+    "get_temporal_signal_store",
+    "load_temporal_signal_snapshot",
+    "save_temporal_signal_snapshot",
+    "close_temporal_signal_store",
+    "build_temporal_priority_hints",
 ]

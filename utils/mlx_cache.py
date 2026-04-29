@@ -26,6 +26,10 @@ _MLX_SEMAPHORE: Optional[asyncio.Semaphore] = None
 # Synchronní lock pro evict_all (nezávislý na asyncio lock)
 _MLX_EVICT_LOCK = threading.Lock()
 
+# Sprint F206J: P1-14 - Cache hit/miss metrics
+_CACHE_HITS = 0
+_CACHE_MISSES = 0
+
 
 def _get_cache_lock() -> asyncio.Lock:
     """Get or create the cache lock (lazy initialization)."""
@@ -63,8 +67,12 @@ async def get_mlx_model(model_name: str) -> Tuple[Any, Any]:
         # Check cache first
         if model_name in _MLX_CACHE:
             _MLX_CACHE.move_to_end(model_name)
+            global _CACHE_HITS
+            _CACHE_HITS += 1
             logger.debug(f"MLX cache hit: {model_name}")
             return _MLX_CACHE[model_name]
+        global _CACHE_MISSES
+        _CACHE_MISSES += 1
 
         # Try to load model
         try:
@@ -108,12 +116,25 @@ def evict_all() -> None:
 
 
 def get_cache_stats() -> dict:
-    """Get cache statistics."""
+    """Get cache statistics including hit/miss metrics."""
+    total = _CACHE_HITS + _CACHE_MISSES
+    hit_rate = _CACHE_HITS / total if total > 0 else 0.0
     return {
         "size": len(_MLX_CACHE),
         "max": _MLX_CACHE_MAX,
         "models": list(_MLX_CACHE.keys()),
+        "hits": _CACHE_HITS,
+        "misses": _CACHE_MISSES,
+        "total": total,
+        "hit_rate": hit_rate,
     }
+
+
+def reset_cache_stats() -> None:
+    """Reset cache hit/miss statistics."""
+    global _CACHE_HITS, _CACHE_MISSES
+    _CACHE_HITS = 0
+    _CACHE_MISSES = 0
 
 
 # =============================================================================

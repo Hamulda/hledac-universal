@@ -187,15 +187,18 @@ class LMDBKVStore:
                             serialized = orjson.dumps(value)
                             txn.put(key.encode("utf-8"), serialized)
                 except Exception as batch_err:
-                    logger.warning(f"Batch write failed, falling back to individual writes: {batch_err}")
-                    # Fallback: write individually
-                    for key, value in batch:
-                        try:
-                            with self._env.begin(write=True) as txn:
-                                serialized = orjson.dumps(value)
-                                txn.put(key.encode("utf-8"), serialized)
-                        except Exception as single_err:
-                            logger.error(f"Individual write failed for {key}: {single_err}")
+                    logger.warning(f"Batch write failed, falling back to single transaction: {batch_err}")
+                    # Fallback: single transaction for all items in batch (P2-7 fix)
+                    try:
+                        with self._env.begin(write=True) as txn:
+                            for key, value in batch:
+                                try:
+                                    serialized = orjson.dumps(value)
+                                    txn.put(key.encode("utf-8"), serialized)
+                                except Exception as single_err:
+                                    logger.error(f"Individual write failed for {key}: {single_err}")
+                    except Exception as fallback_err:
+                        logger.error(f"Fallback transaction failed: {fallback_err}")
             return True
         except Exception as e:
             logger.error(f"LMDB put_many failed: {e}")

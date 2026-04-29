@@ -449,6 +449,10 @@ class FetchCoordinator(UniversalCoordinator):
             'active_fetches': 0,
             'total_successes': 0,
             'total_failures': 0,
+            # P1-13: Circuit breaker metrics
+            'circuit_breaker_blocks': 0,
+            'circuit_breaker_unblocks': 0,
+            'circuit_breaker_active': 0,
         }
 
     async def _record_domain_failure(self, domain: str) -> None:
@@ -468,6 +472,10 @@ class FetchCoordinator(UniversalCoordinator):
         if failures >= self._failure_threshold:
             backoff = min(60.0 * (2 ** (failures - self._failure_threshold)), 3600.0)
             self._domain_blocked_until[domain] = time.time() + backoff
+            # P1-13: Update circuit breaker metrics
+            if domain not in self._domain_blocked_until:  # New block, not refresh
+                self._telemetry['circuit_breaker_blocks'] += 1
+            self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
             logger.warning(
                 f"[CIRCUIT] Domain {domain} blocked after {failures} failures "
                 f"for {backoff:.0f}s (until {self._domain_blocked_until[domain]:.0f})"
@@ -1036,6 +1044,8 @@ class FetchCoordinator(UniversalCoordinator):
                 domain = urlparse(url).netloc
                 now = time.time()
                 if domain in self._domain_blocked_until and now < self._domain_blocked_until[domain]:
+                    # P1-13: Update active count on each circuit breaker hit
+                    self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
                     logger.debug(f"Circuit breaker open for domain: {domain}")
                     trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
                     result = None

@@ -313,6 +313,52 @@ class UmaWatchdogCallbacks:
         """Called when UMA enters EMERGENCY state (>= 7.0 GB)."""
 
 
+class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
+    """
+    Default auto-action callbacks for memory pressure responses.
+
+    P2-12: Built-in auto-actions when memory pressure is detected.
+
+    Actions:
+    - WARN: Log warning
+    - CRITICAL: Trigger MLX cache cleanup + log
+    - EMERGENCY: Trigger aggressive MLX cleanup + log + alert
+    """
+
+    def on_warn(self, snapshot: dict) -> None:
+        """Log warning on WARN state."""
+        logger.warning(
+            f"[UMA-AUTO] WARN: UMA at {snapshot.get('uma_used_mb', 0):,} MB "
+            f"({snapshot.get('uma_usage_pct', 0)}%)"
+        )
+
+    def on_critical(self, snapshot: dict) -> None:
+        """Trigger MLX cache cleanup on CRITICAL state."""
+        logger.warning(
+            f"[UMA-AUTO] CRITICAL: UMA at {snapshot.get('uma_used_mb', 0):,} MB "
+            f"({snapshot.get('uma_usage_pct', 0)}%) - triggering MLX cache cleanup"
+        )
+        try:
+            from hledac.universal.utils import mlx_cache
+            mlx_cache.mlx_cleanup_sync()
+            logger.info("[UMA-AUTO] MLX cache cleanup completed")
+        except Exception as e:
+            logger.error(f"[UMA-AUTO] MLX cache cleanup failed: {e}")
+
+    def on_emergency(self, snapshot: dict) -> None:
+        """Trigger aggressive cleanup on EMERGENCY state."""
+        logger.warning(
+            f"[UMA-AUTO] EMERGENCY: UMA at {snapshot.get('uma_used_mb', 0):,} MB "
+            f"({snapshot.get('uma_usage_pct', 0)}%) - triggering aggressive cleanup"
+        )
+        try:
+            from hledac.universal.utils import mlx_cache
+            mlx_cache.mlx_cleanup_aggressive()
+            logger.info("[UMA-AUTO] Aggressive MLX cleanup completed")
+        except Exception as e:
+            logger.error(f"[UMA-AUTO] Aggressive cleanup failed: {e}")
+
+
 class UmaWatchdog:
     """
     Async UMA memory watchdog with state-change debounce.

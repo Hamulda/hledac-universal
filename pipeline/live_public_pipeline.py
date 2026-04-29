@@ -1924,6 +1924,20 @@ async def async_run_live_public_pipeline(
     from hledac.universal.layers import reset_temporal_signal_layer
     reset_temporal_signal_layer()
 
+    # Sprint F206Q: Restore from persistent snapshot if store is enabled
+    persistence_enabled = False
+    persistence_restored = False
+    try:
+        from hledac.universal.layers import (
+            is_temporal_store_enabled,
+            load_temporal_signal_snapshot,
+        )
+        persistence_enabled = is_temporal_store_enabled()
+        if persistence_enabled:
+            persistence_restored = load_temporal_signal_snapshot()
+    except Exception:
+        pass
+
     # Ensure hot-path imports are resolved
     _ensure_patched()
 
@@ -2365,6 +2379,21 @@ async def async_run_live_public_pipeline(
     except Exception:
         temporal_signal_summary = {}
 
+    # Sprint F206R: temporal priority hints (advisory, bounded top-10, fail-soft)
+    try:
+        from hledac.universal.layers import build_temporal_priority_hints
+        temporal_priority_hints = build_temporal_priority_hints(k=10)
+    except Exception:
+        temporal_priority_hints = []
+
+    # Sprint F206Q: save snapshot at pipeline end (fail-soft)
+    persistence_saved = False
+    try:
+        from hledac.universal.layers import save_temporal_signal_snapshot
+        persistence_saved = save_temporal_signal_snapshot()
+    except Exception:
+        pass
+
     public_branch_verdict = {
         "waste_ratio": waste_ratio,
         "value_ratio": value_ratio,
@@ -2380,6 +2409,12 @@ async def async_run_live_public_pipeline(
         "public_next_action": public_next_action,
         "public_confidence_note": public_confidence_note,
         "temporal_signal_summary": temporal_signal_summary,
+        # Sprint F206R: temporal priority hints (advisory, no scheduler mutation)
+        "temporal_priority_hints": temporal_priority_hints,
+        # Sprint F206Q: persistence flags
+        "persistence_enabled": persistence_enabled,
+        "persistence_restored": persistence_restored,
+        "persistence_saved": persistence_saved,
     }
 
     # Sprint F150L: usable-value run-level aggregates
