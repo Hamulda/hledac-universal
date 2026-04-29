@@ -54,6 +54,66 @@ async def _iter_chunks(chunks: list[bytes]):
         yield chunk
 
 
+class _MockAiohttpContent:
+    """Mock for aiohttp ResponseContent — iter_chunked is a callable returning async iterator."""
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = chunks
+
+    def iter_chunked(self, size: int):
+        """Called by aiohttp as: async for chunk in resp.content.iter_chunked(8192)."""
+        return _iter_chunks(self._chunks)
+
+
+class _MockAiohttpResponse:
+    """Mock for aiohttp ClientResponse."""
+
+    def __init__(self, status: int, content_type: str, chunks: list[bytes], url: str):
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+        self.content = _MockAiohttpContent(chunks)
+        self.url = url
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+class _MockGetContextManager:
+    """Mimics aiohttp ClientSession.get() — async context manager that yields the response.
+
+    In aiohttp, session.get(url) returns ClientResponseContextManager (an async CM).
+    When entered, it issues the request and yields the ClientResponse.
+    """
+
+    def __init__(self, response: _MockAiohttpResponse):
+        self._response = response
+
+    async def __aenter__(self) -> _MockAiohttpResponse:
+        return self._response
+
+    async def __aexit__(self, *args) -> None:
+        pass
+
+
+class _MockAiohttpSession:
+    """Minimal mock for aiohttp.ClientSession — get() returns async context manager."""
+
+    def __init__(self, response: _MockAiohttpResponse):
+        self._response = response
+
+    def get(self, url: str, **kwargs) -> _MockGetContextManager:
+        return _MockGetContextManager(self._response)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
 class TestCircuitBreakerSnapshot:
     """F204B-1: CircuitBreakerSnapshot dataclass has all required fields."""
 
@@ -252,28 +312,20 @@ class TestPublicFetcherWiring:
             cb.record_failure()
         assert cb.get_state() == CBState.OPEN.value
 
-        # Mock httpx.AsyncClient
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.headers = {"Content-Type": "text/html"}
-        mock_response.content.iter_chunked = _iter_chunks([b"<html></html>"])
-        mock_response.url = "https://blocked-domain.com/"
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=None)
-
-        mock_get_context = MagicMock()
-        mock_get_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_get_context.__aexit__ = AsyncMock(return_value=None)
-        mock_client = MagicMock()
-        mock_client.get = MagicMock(return_value=mock_get_context)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+        # Build proper mock response
+        mock_response = _MockAiohttpResponse(
+            status=200,
+            content_type="text/html",
+            chunks=[b"<html></html>"],
+            url="https://blocked-domain.com/",
+        )
+        mock_session = _MockAiohttpSession(mock_response)
 
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
         with patch("hledac.universal.fetching.public_fetcher.get_breaker", return_value=cb):
             with patch("hledac.universal.fetching.public_fetcher.get_clearnet_semaphore", return_value=asyncio.Semaphore(1)):
-                with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session", new_callable=AsyncMock, return_value=mock_client):
+                with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
                     result = await async_fetch_public_text("https://blocked-domain.com/page")
                     # Should return circuit_breaker_open error
                     assert result.error is not None
@@ -286,27 +338,20 @@ class TestPublicFetcherWiring:
         clear_all_breakers()
         cb = get_breaker("success-domain.com")
 
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.headers = {"Content-Type": "text/html"}
-        mock_response.content.iter_chunked = _iter_chunks([b"<html><body>OK</body></html>"])
-        mock_response.url = "https://success-domain.com/"
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=None)
-
-        mock_get_context = MagicMock()
-        mock_get_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_get_context.__aexit__ = AsyncMock(return_value=None)
-        mock_client = MagicMock()
-        mock_client.get = MagicMock(return_value=mock_get_context)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+        # Build proper mock response
+        mock_response = _MockAiohttpResponse(
+            status=200,
+            content_type="text/html",
+            chunks=[b"<html><body>OK</body></html>"],
+            url="https://success-domain.com/",
+        )
+        mock_session = _MockAiohttpSession(mock_response)
 
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 
         with patch("hledac.universal.fetching.public_fetcher.get_breaker", return_value=cb):
             with patch("hledac.universal.fetching.public_fetcher.get_clearnet_semaphore", return_value=asyncio.Semaphore(1)):
-                with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session", new_callable=AsyncMock, return_value=mock_client):
+                with patch("hledac.universal.fetching.public_fetcher.async_get_aiohttp_session", new_callable=AsyncMock, return_value=mock_session):
                     result = await async_fetch_public_text("https://success-domain.com/page")
                     assert result.status_code == 200
                     # Success should reset failure_count

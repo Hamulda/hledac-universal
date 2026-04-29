@@ -29,8 +29,13 @@ from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
 )
 
+# Backend: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
+# Both provide DDGS.text() — async via asyncio.to_thread compatibility wrapper
 if TYPE_CHECKING:
-    from duckduckgo_search import DDGS  # noqa: F401
+    try:
+        from ddgs import DDGS  # noqa: F401
+    except ImportError:
+        from duckduckgo_search import DDGS  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +100,7 @@ class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
 # Status helpers (O(1), no network calls)
 # ---------------------------------------------------------------------------
 
-_backend_name: str = "duckduckgo_search"
+_backend_name: str = "ddgs"
 _backend_version: str | None = None
 _last_error: str | None = None
 
@@ -108,11 +113,14 @@ def backend_version() -> str:  # noqa: D102
     global _backend_version
     if _backend_version is None:
         try:
-            import duckduckgo_search
-
-            _backend_version = getattr(duckduckgo_search, "__version__", "unknown")
-        except Exception:  # pragma: no cover — defensive
-            _backend_version = "unknown"
+            import ddgs
+            _backend_version = getattr(ddgs, "__version__", "unknown")
+        except Exception:
+            try:
+                import duckduckgo_search
+                _backend_version = getattr(duckduckgo_search, "__version__", "unknown")
+            except Exception:  # pragma: no cover — defensive
+                _backend_version = "unknown"
     return _backend_version  # type: ignore[return-value]
 
 
@@ -504,21 +512,23 @@ async def _ddgs_text_search(
     global _last_error
 
     def _sync_search() -> list[dict]:
-        # Lazy import so that import-time of this module has zero network effect
-        from duckduckgo_search import DDGS  # noqa: T1009
+        # Lazy import: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
+        # Both provide DDGS.text() — uses asyncio.to_thread for async compat
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS  # noqa: T1009
 
         # timeout_s bounds the *entire* DDGS init + request lifecycle inside
         # this thread.  Without it, httpx uses its default ~10s connect +
         # indefinite read, meaning a hung network can outlive the asyncio
         # timeout and leave a zombie thread occupying the pool.
-        backend: DDGS = DDGS(timeout=timeout_s)
+        # int() cast: DDGS timeout param is int|None in ddgs v9+
+        backend: DDGS = DDGS(timeout=int(timeout_s))
         try:
-            results = list(
-                backend.text(
-                    query, max_results=max_results, proxy=proxy,
-                    timeout=timeout_s  # per-request read/write timeout
-                )
-            )
+            # ddgs v9+: DDGS.text(query, max_results=...) — query is positional
+            # duckduckgo_search v8.x: DDGS.text(query, max_results=...) — same signature
+            results = list(backend.text(query, max_results=max_results))
             return results
         finally:
             try:
@@ -680,7 +690,7 @@ async def async_search_public_web(
     max_from_host = max(1, int(max_results * MAX_HOST_SHARE_RATIO))
 
     for raw in raw_hits:
-        raw_url = raw.get("url") or ""
+        raw_url = raw.get("href") or raw.get("url") or ""
         title = (raw.get("title") or "").strip()
         snippet = (raw.get("body") or raw.get("snippet") or "").strip()
 

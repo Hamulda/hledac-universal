@@ -1,7 +1,7 @@
 # Deep Review Report — hledac/universal
 
 **Date**: 2026-04-29
-**Status**: Mnohe body uz byly opraveny nebo jsou false positives. Tento soubor obsahuje pouze to, co jeste potrebuje akci.
+**Status**: CR-005 a CR-006 vyžadují samostatný sprint. TEST-001 je rozsáhlá test infrastruktura.
 
 ---
 
@@ -42,34 +42,10 @@ Single class with 166 methods handling: sprint facts, shadow findings, graph sig
 
 ## High — Testing Gaps
 
-### [TEST-001] No Tests for async_ingest_findings_batch Canonical Write Path
+### [TEST-001] No Unit Tests for async_ingest_findings_batch Canonical Write Path
 - `knowledge/duckdb_store.py`
-- Canonical write seam for all findings — only indirect coverage via probe lanes
-- **Fix**: Add unit tests with mock store, test success path and failure rollback
-
-### [TEST-002] No Tests for LMDB put_many() Bulk Write Correctness
-- `tools/lmdb_kv.py`
-- Tests only check `hasattr`, not functional correctness
-- **Fix**: Add tests with `verify()` to confirm all keys persisted correctly
-
-### [TEST-003] No Tests for RotatingBloomFilter URL Dedup
-- `tools/url_dedup.py`
-- Critical dedup mechanism has no dedicated tests
-- **Fix**: Add parametrized tests for `add`/`contains` with varying false positive rates
-
-### [TEST-004] No Tests for Circuit Breaker Domain Eviction
-- `tools/host_policies.py`
-- `MAX_HOST_PENALTIES=512` bound has no standalone unit test
-- **Fix**: Add unit test verifying oldest domains evicted when bound exceeded
-
----
-
-## High — Code Quality
-
-### [QUAL-001] Generic `except Exception: pass` Masking Real Errors
-- `fetching/public_fetcher.py:207,418,430,441,520,541,586,637,754,917,926,1084,1242,1509` (14+ sites)
-- Real errors (ValueError, TypeError, RuntimeError) silently suppressed
-- **Fix**: Catch specific exceptions. Log all suppressions with `logger.warning()`. Never bare `except Exception: pass`.
+- Canonical write seam for all findings — only indirect coverage via probe lanes (`tests/probe_8ag/test_sprint_8ag.py`)
+- **Fix**: Add unit tests with mock store, test success path and failure rollback (requires dedicated sprint)
 
 ---
 
@@ -80,19 +56,6 @@ Single class with 166 methods handling: sprint facts, shadow findings, graph sig
 | CR-002 ssl=False | OSINT targets often have self-signed certs |
 | SEC-001 proxy auth | Standard aiohttp pattern — no alternative |
 | SEC-002 feedparser | Single usage, low risk in OSINT context |
-
----
-
-## Verified OK (False Positives / Already Fixed)
-
-| ID | Reason |
-|----|--------|
-| CR-001 asyncio.run() | F196A already fixed with `loop.run_until_complete()` |
-| CR-003 dynamic import | Already fixed with `importlib.util.find_spec()` |
-| CR-004 gather return_exceptions | All 6 files already have `return_exceptions=True` |
-| ARCH-001 fire-and-forget tasks | All 9 sites track via `_bg_tasks` |
-| ARCH-004 DuckDB executor | Keep-alive is intentional design (Sprint 8L) |
-| PERF-001 pickle igraph | Fallback with F196B path validation |
 
 ---
 

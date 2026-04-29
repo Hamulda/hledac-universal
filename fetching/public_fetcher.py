@@ -204,7 +204,8 @@ def _validate_url(url: str) -> str | None:
         return "url_empty"
     try:
         parsed = urllib.parse.urlparse(url)
-    except Exception:
+    except (ValueError, AttributeError) as e:
+        logger.warning("URL parse error for %s: %s", url, e)
         return "url_malformed"
     scheme = parsed.scheme.lower()
     if not scheme:
@@ -415,7 +416,8 @@ def _is_onion_url(url: str) -> bool:
     try:
         parsed = urllib.parse.urlparse(url)
         return parsed.hostname.lower().endswith(".onion") if parsed.hostname else False
-    except Exception:
+    except (ValueError, AttributeError) as e:
+        logger.warning("URL parse error in _is_onion_url for %s: %s", url, e)
         return False
 
 
@@ -427,7 +429,8 @@ def _is_i2p_url(url: str) -> bool:
         parsed = urllib.parse.urlparse(url)
         hostname = parsed.hostname.lower() if parsed.hostname else ""
         return hostname.endswith(".i2p") or hostname.endswith(".b32.i2p")
-    except Exception:
+    except (ValueError, AttributeError) as e:
+        logger.warning("URL parse error in _is_i2p_url for %s: %s", url, e)
         return False
 
 
@@ -438,7 +441,8 @@ def _is_freenet_url(url: str) -> bool:
     try:
         parsed = urllib.parse.urlparse(url)
         return parsed.hostname.lower().endswith(".freenet") if parsed.hostname else False
-    except Exception:
+    except (ValueError, AttributeError) as e:
+        logger.warning("URL parse error in _is_freenet_url for %s: %s", url, e)
         return False
 
 
@@ -517,8 +521,8 @@ def _close_tor_session_sync() -> None:
     if _tor_session is not None and not _tor_session.closed:
         try:
             _tor_session.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error closing Tor session: %s", e)
         _tor_session = None
 
 
@@ -538,8 +542,8 @@ def _close_i2p_session_sync() -> None:
     if _i2p_session is not None and not _i2p_session.closed:
         try:
             _i2p_session.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error closing I2P session: %s", e)
         _i2p_session = None
 
 
@@ -583,8 +587,8 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
                 f"— skipping Camoufox for {url}"
             )
             return ""
-    except Exception:
-        pass  # Fail-open: if import fails, proceed with caution
+    except Exception as e:
+        logger.warning("Error checking renderer policy, proceeding with caution: %s", e)
 
     try:
         from camoufox.async_api import AsyncCamoufox
@@ -1205,7 +1209,8 @@ async def async_fetch_public_text(
                                 body_bytes = b"".join(body_chunks)
                                 # F178E: detect decode quality — replacement count for truth
                                 text, decode_replaced, decode_replacement_count = _try_decode(body_bytes)
-                            except Exception:
+                            except Exception as e:
+                                logger.warning("Decode error in _try_decode: %s", e)
                                 text = None
                                 decode_replaced = False
                                 decode_replacement_count = 0
@@ -1472,7 +1477,8 @@ def _sync_process_html(html: str) -> tuple[str, list]:
         import markdownify as _md
 
         text = _md.markdownify(html, strip=["script", "style"], heading_style="ATX")
-    except Exception:
+    except Exception as e:
+        logger.warning("markdownify failed, using regex fallback: %s", e)
         import html as _html
 
         text = re.sub(r"<[^>]+>", " ", _html.unescape(html))

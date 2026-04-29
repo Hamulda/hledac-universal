@@ -19,6 +19,9 @@ pyzipper>=0.4.0        # security/vault_manager.py encryption
 lancedb>=0.2.5
 psutil>=5.9.0
 
+# F206Z: Public discovery — DuckDuckGo primary search (ddgs v9+ primary, duckduckgo-search v8.x fallback)
+duckduckgo-search>=8.0.0
+
 # Sprint F195: Fast JSON serialization (required - used throughout codebase)
 orjson>=3.9.0
 
