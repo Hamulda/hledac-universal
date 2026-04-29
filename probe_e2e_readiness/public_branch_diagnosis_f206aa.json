@@ -1,0 +1,106 @@
+{
+  "sprint": "F206AA",
+  "query": "ransomware infrastructure leak",
+  "timestamp": "2026-04-29T21:50:00Z",
+  "phase": "PHASE_5_DIAGNOSTIC_ARTIFACT",
+  "discovery_adapter": "duckduckgo_adapter.async_search_public_web",
+  "discovery_import_ok": true,
+  "discovery_attempted": true,
+  "discovery_result_count": 4,
+  "discovery_error_type": null,
+  "discovery_error_message": null,
+  "admission_count": null,
+  "fetch_attempted": null,
+  "fixture_fetch_ok": true,
+  "pattern_match_ok": null,
+  "resource_governor_blocked": false,
+  "resource_governor_state": "warn",
+  "resource_governor_io_only": true,
+  "resource_governor_swap_detected": true,
+  "resource_governor_system_used_gib": 6.2,
+  "circuit_breaker_blocked": null,
+  "suspected_root_cause": "UNKNOWN_BUT_LIKELY_NOT_DISCOVERY — DDGS returns hits under isolation. UMA is warn (not emergency). Pipeline with mocked discovery reaches fetch stage. Actual live run counters are 0 — possible cause: store=duckdb_store is None in the actual run, causing early returns or no-op storage. Another possibility: concurrent feed branch timeout cancels public branch before it completes.",
+  "recommended_next_patch": "1. Verify duckdb_store is not None when _run_public_discovery_in_cycle is called in canonical live run. 2. Add additive counters for discovery_attempted/discovery_error at pipeline top level (PipelineRunResult) so they appear in result even on early return. 3. Add logging at line 2008 (discovery_result = await ...) to capture discovery_result.error and discovery_result.hits count before processing. 4. Check if asyncio.TaskGroup public_task gets cancelled by feed branch timeout (line 1591-1613) before discovery completes.",
+  "stage_map": {
+    "1_discovery": {
+      "active": true,
+      "adapter": "duckduckgo_adapter.async_search_public_web",
+      "ddgs_version": "9.14.1",
+      "hits_returned": 4,
+      "error": null,
+      "counter_discovery_attempted": "MISSING",
+      "counter_discovery_error": "MISSING",
+      "early_return_triggered": false
+    },
+    "2_admission": {
+      "active": true,
+      "circuit_breaker": "not checked at discovery stage",
+      "counter_admitted_urls": "MISSING"
+    },
+    "3_fetch": {
+      "active": true,
+      "async_fetch_public_text": "wired, circuit_breaker per-domain",
+      "counter_fetch_attempted": "MISSING",
+      "counter_fetch_success": "MISSING",
+      "counter_fetch_error": "MISSING"
+    },
+    "4_extraction": {
+      "active": true,
+      "counter_extracted_chars": "MISSING"
+    },
+    "5_pattern_match": {
+      "active": true,
+      "PatternMatcher": "wired via _SYNC_MATCH_TEXT",
+      "counter_pattern_hits": "MISSING"
+    },
+    "6_canonical_finding": {
+      "active": true,
+      "CanonicalFinding": "wired",
+      "source_type": "public_discovery"
+    },
+    "7_storage": {
+      "active": true,
+      "DuckDBShadowStore": "store param passed from scheduler",
+      "counter_stored_findings": "MISSING",
+      "storage_writes_to_lmdb": true
+    }
+  },
+  "missing_counters": [
+    "discovery_attempted",
+    "discovery_error",
+    "discovered_urls",
+    "admitted_urls",
+    "fetch_attempted",
+    "fetch_success",
+    "fetch_error",
+    "extracted_chars",
+    "pattern_hits",
+    "accepted_findings",
+    "stored_findings"
+  ],
+  "key_findings": [
+    "DDGS 9.14.1 works under isolation — 4 hits returned for 'ransomware infrastructure leak'",
+    "UMA state is warn (6.2GiB) — NOT emergency, won't abort before discovery",
+    "io_only=True but io_only does NOT gate discovery (only affects concurrency level)",
+    "_ASYNC_DISCOVERY_SEARCH seam exists and is properly patched at module load",
+    "Pipeline with mocked discovery REACHES fetch stage (test_06_pipeline_with_mocked_discovery_reaches_fetch PASS)",
+    "public_branch_verdict does NOT return backend_error when discovery succeeds",
+    "Circuit breaker is per-domain in fetcher, NOT blocking all discovery",
+    "SprintResult has NO counter for 'public_stored_findings' being 0 vs never-written",
+    "No logging at discovery stage entry to capture discovery_result in canonical run"
+  ],
+  "probe_test_results": {
+    "probe_public_branch_diagnosis": "7 passed",
+    "probe_public_fetcher_retry": "49 passed",
+    "probe_e2e_signal_fixture": "PASS (combined with probe_public_fetcher_retry)",
+    "probe_e2e_readiness": "15 passed",
+    "probe_transport_cap_2026": "65 passed"
+  },
+  "notes": [
+    "The 'backend_error_no_fallback' verdict appears when discovery_error is not None AND fallback_triggered is None.",
+    "The actual live run shows public_discovered=0 — likely means public_result.discovered==0.",
+    "If discovery returns hits but pipeline returns discovered=0, bug is AFTER discovery (injection, fetch, or storage).",
+    "Counter stage map shows all per-stage counters are MISSING from PipelineRunResult — only final counts exist.",
+    "F169E getattr(public_result, 'backend_degraded', False) reads top-level field, which IS set correctly."
+  ]
+}

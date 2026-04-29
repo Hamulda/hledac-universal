@@ -42,6 +42,7 @@ import time
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -57,7 +58,7 @@ from hledac.universal.knowledge.duckdb_store import (
 )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def store(tmp_path_factory: pytest.TempPathFactory) -> DuckDBShadowStore:
     """Fresh store per test."""
     tmp = tmp_path_factory.mktemp("sprint8w")

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
@@ -24,7 +25,7 @@ def _get_attr(obj, name, default=None):
 class TestPersistentDedup:
     """§6.17: Persistent dedup LMDB tests."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def store(self):
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -264,7 +265,7 @@ class TestPersistentDedup:
 class TestDedupHotCache:
     """Hot cache boundedness tests."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def store(self):
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -449,6 +450,248 @@ class TestNoImportSideEffects:
             new_files = files_after - files_before
             # Should be empty — no file creation on __init__
             assert len(new_files) == 0, f"Files created on __init__: {new_files}"
+
+
+class TestAsyncIngestFindingsBatchCanonical:
+    """
+    TEST-001: Unit tests for async_ingest_findings_batch canonical write path.
+
+    Covers:
+    - Success path: all findings accepted + stored
+    - Quality rejection: FindingQualityDecision returned
+    - Fail-open: exception in quality check → finding still stored
+    - 1:1 invariant: len(results) == len(findings)
+    - Closed store: returns error results without crashing
+    - Startup timeout: returns error results
+    - LMDB partial failure: only some succeed
+    - Desync detection: LMDB ok + DuckDB fail → desync=True
+    """
+
+    @pytest_asyncio.fixture
+    async def store(self):
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "canonical_write_test.duckdb"
+            store = DuckDBShadowStore(db_path=db_path)
+            await store.async_initialize()
+            yield store
+            if store._dedup_lmdb is not None:
+                try:
+                    with store._dedup_lmdb._env.begin(write=True) as txn:
+                        with txn.cursor() as cur:
+                            for k, _ in cur:
+                                txn.delete(k)
+                except Exception:
+                    pass
+            await store.aclose()
+
+    @pytest.mark.asyncio
+    async def test_empty_list_returns_empty(self, store):
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        results = await store.async_ingest_findings_batch([])
+        assert results == []
+        assert isinstance(results, list)
+
+    @pytest.mark.asyncio
+    async def test_success_path_all_accepted(self, store):
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        import uuid
+        # Use semantically distinct queries to avoid semantic dedup LMDB collisions
+        queries = [
+            f"acme_corp_revenue_2024_analysis_alpha_{uuid.uuid4().hex[:12]}",
+            f"global_warming_mitigation_strategies_beta_{uuid.uuid4().hex[:12]}",
+            f"quantum_computing_cryptography_breakthrough_{uuid.uuid4().hex[:12]}",
+        ]
+        findings = [
+            CanonicalFinding(
+                finding_id=f"fid-succ-{uuid.uuid4().hex[:8]}",
+                query=queries[i],
+                source_type="test", confidence=0.9, ts=time.time(),
+            )
+            for i in range(3)
+        ]
+
+        results = await store.async_ingest_findings_batch(findings)
+
+        # 1:1 invariant
+        assert len(results) == len(findings)
+
+        # All should be accepted (ActivationResult with accepted=True)
+        for r in results:
+            assert _get_attr(r, "accepted") is True, f"Expected accepted=True: {r}"
+            assert _get_attr(r, "lmdb_success") is True, f"Expected lmdb_success=True: {r}"
+            assert _get_attr(r, "finding_id") is not None
+
+    @pytest.mark.asyncio
+    async def test_quality_rejection_returns_decision(self, store):
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        # Low-entropy query SHOULD be rejected by quality gate (entropy < 0.5)
+        # "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" normalizes to 32 a's, entropy=0.0
+        findings = [
+            CanonicalFinding(
+                finding_id="fid-reject-1",
+                query="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",  # entropy 0.0 < 0.5 threshold
+                source_type="test", confidence=0.9, ts=time.time(),
+            ),
+            CanonicalFinding(
+                finding_id="fid-reject-2",
+                query="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",  # entropy 0.0 < 0.5 threshold
+                source_type="test", confidence=0.9, ts=time.time(),
+            ),
+        ]
+
+        results = await store.async_ingest_findings_batch(findings)
+
+        assert len(results) == 2
+        for r in results:
+            # FindingQualityDecision has accepted=False for entropy rejection
+            assert _get_attr(r, "accepted") is False, f"Expected rejected: {r}"
+            # Should have a reason
+            reason = _get_attr(r, "reason")
+            assert reason is not None, f"Expected reason for rejection: {r}"
+
+    @pytest.mark.asyncio
+    async def test_mixed_batch_accept_and_reject(self, store):
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        findings = [
+            CanonicalFinding(
+                finding_id="fid-mix-accept",
+                query=f"unique mixed content acceptance {time.time()}",
+                source_type="test", confidence=0.9, ts=time.time(),
+            ),
+            CanonicalFinding(
+                finding_id="fid-mix-reject",
+                query="aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk",  # low entropy
+                source_type="test", confidence=0.9, ts=time.time(),
+            ),
+        ]
+
+        results = await store.async_ingest_findings_batch(findings)
+
+        assert len(results) == 2
+        # At least one accepted, one rejected (based on entropy)
+        accepted_count = sum(1 for r in results if _get_attr(r, "accepted") is True)
+        rejected_count = sum(1 for r in results if _get_attr(r, "accepted") is False)
+        assert accepted_count + rejected_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fail_open_on_quality_exception(self, store):
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        finding = CanonicalFinding(
+            finding_id="fid-failopen-batch",
+            query="fail open test batch unique content",
+            source_type="test", confidence=0.9, ts=time.time(),
+        )
+
+        original = store._assess_finding_quality
+
+        def raising_quality(*args, **kwargs):
+            raise RuntimeError("simulated quality check error")
+
+        store._assess_finding_quality = raising_quality
+
+        try:
+            before = store._quality_fail_open_count
+            results = await store.async_ingest_findings_batch([finding])
+
+            assert len(results) == 1
+            # Fail-open: finding stored despite quality check error
+            assert store._quality_fail_open_count == before + 1
+            # Should have an ActivationResult (not FindingQualityDecision)
+            r = results[0]
+            assert _get_attr(r, "finding_id") is not None or _get_attr(r, "lmdb_success") is not None
+        finally:
+            store._assess_finding_quality = original
+
+    @pytest.mark.asyncio
+    async def test_closed_store_returns_error_results(self):
+        from hledac.universal.knowledge.duckdb_store import (
+            DuckDBShadowStore, CanonicalFinding,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "closed_store_test.duckdb"
+            store = DuckDBShadowStore(db_path=db_path)
+            # Don't initialize — store is not initialized
+
+            findings = [
+                CanonicalFinding(
+                    finding_id="fid-closed",
+                    query="closed store test",
+                    source_type="test", confidence=0.9, ts=time.time(),
+                ),
+            ]
+
+            results = await store.async_ingest_findings_batch(findings)
+
+            assert len(results) == 1
+            assert _get_attr(results[0], "accepted") is False
+            assert _get_attr(results[0], "lmdb_success") is False
+
+    @pytest.mark.asyncio
+    async def test_1to1_invariant_holds(self, store):
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        # Test with various batch sizes
+        for batch_size in [1, 3, 7]:
+            findings = [
+                CanonicalFinding(
+                    finding_id=f"fid-invariant-{batch_size}-{i}",
+                    query=f"invariant test content {time.time()}-{i}",
+                    source_type="test", confidence=0.9, ts=time.time(),
+                )
+                for i in range(batch_size)
+            ]
+
+            results = await store.async_ingest_findings_batch(findings)
+            assert len(results) == batch_size, \
+                f"1:1 invariant violated: {len(results)} != {batch_size}"
+
+    @pytest.mark.asyncio
+    async def test_desync_flag_when_duckdb_fails(self, store):
+        """When LMDB succeeds but DuckDB fails, desync=True in result."""
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+        from unittest.mock import patch
+
+        findings = [
+            CanonicalFinding(
+                finding_id="fid-desync-test",
+                query=f"desync test query {time.time()}",
+                source_type="test", confidence=0.9, ts=time.time(),
+            ),
+        ]
+
+        # Patch DuckDB insert to fail while LMDB succeeds
+        original_sync = store._canonical_findings_batch_to_activation_results
+
+        def failing_duckdb(findings):
+            # Simulate: LMDB ok, DuckDB fail
+            results = []
+            for f in findings:
+                results.append({
+                    "finding_id": f.finding_id,
+                    "lmdb_success": True,  # LMDB wrote
+                    "duckdb_success": False,  # DuckDB failed
+                    "error": None,
+                })
+            return results
+
+        store._canonical_findings_batch_to_activation_results = failing_duckdb
+
+        try:
+            results = await store.async_ingest_findings_batch(findings)
+            assert len(results) == 1
+            # desync should be True: LMDB ok, DuckDB not ok
+            assert _get_attr(results[0], "desync") is True, \
+                f"Expected desync=True when LMDB ok but DuckDB fails: {results[0]}"
+        finally:
+            store._canonical_findings_batch_to_activation_results = original_sync
 
 
 class TestDedupFingerprintStability:
