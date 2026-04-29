@@ -99,4 +99,4 @@ All findings written to persistent storage flow through `DuckDBShadowStore.async
 
 ---
 
-*Last updated: Sprint F201B (2026-04-24)*
+*Last updated: Sprint F205J (2026-04-29) — verified all invariants still current*

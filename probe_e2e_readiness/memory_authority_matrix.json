@@ -1,0 +1,79 @@
+[
+  {
+    "component": "core/resource_governor.py",
+    "role": "canonical_governor",
+    "canonical_path": true,
+    "e2e_seen": true,
+    "notes": "UMA policy/hysteresis/io_only — canonical sprint path imports sample_uma_status/evaluate_uma_state"
+  },
+  {
+    "component": "utils/uma_budget.py",
+    "role": "raw_sampler",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "get_uma_snapshot/get_uma_pressure_level — raw sampler only; social_identity_miner and legacy AO use it"
+  },
+  {
+    "component": "utils/mlx_cache.py",
+    "role": "mlx_cache_helper",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "MLX cache helper, not policy owner; resource_governor reads metal limits via get_metal_limits_status"
+  },
+  {
+    "component": "layers/memory_layer.py",
+    "role": "layer_system",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "Layer-system memory surface; not canonical Uma policy owner; not imported by core/__main__.py or sprint_scheduler.py"
+  },
+  {
+    "component": "layers/layer_manager.py::M1MemoryOptimizer",
+    "role": "layer_memory",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "Layer cleanup utility only; not canonical Uma governor; aggressive_cleanup() not in canonical path"
+  },
+  {
+    "component": "coordinators/memory_coordinator.py",
+    "role": "allocator",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "aggressive_cleanup() is its own operation; not imported by core/__main__.py or sprint_scheduler.py"
+  },
+  {
+    "component": "legacy/autonomous_orchestrator.py::_MemoryManager",
+    "role": "legacy_ao",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "Legacy/AO-only; used internally within legacy AO execution context; not in canonical sprint path"
+  },
+  {
+    "component": "legacy/autonomous_orchestrator.py::_MemoryCoordinator",
+    "role": "legacy_ao",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "Legacy/AO-only; not in canonical sprint path"
+  },
+  {
+    "component": "autonomous_orchestrator.py (facade)",
+    "role": "facade_only",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "No memory classes; legacy compatibility shim only; sys.modules guard prevents legacy loading"
+  },
+  {
+    "component": "coordinators/coordinator_registry.py",
+    "role": "registry_only",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "Name→class registry only; not a memory authority"
+  },
+  {
+    "component": "utils/intelligent_cache.py::IntelligentCache",
+    "role": "cache_helper",
+    "canonical_path": false,
+    "e2e_seen": false,
+    "notes": "Not referenced in canonical path audit"
+  }
+]

@@ -14,6 +14,7 @@ fetch logic to this coordinator.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -143,13 +144,25 @@ AIMD_MIN_CONCURRENCY = 1      # floor
 AIMD_MAX_CONCURRENCY = 25     # ceiling (matches GLOBAL_MAX)
 AIMD_SUCCESS_THRESHOLD = 3    # count successes before increase
 
+# LOW-2 fix: URL priority constants (lower = higher priority)
+_PRIORITY_API = 0           # API endpoints (highest priority)
+_PRIORITY_JSON = 5           # Structured data (JSON/XML/RSS)
+_PRIORITY_CLEARNET_HTML = 15 # Standard clearnet HTML
+_PRIORITY_TOR = 30           # Tor hidden services
+_PRIORITY_I2P = 40           # I2P hidden services
+_PRIORITY_OTHER = 50         # Fallback for exotic TLDs
+
 # Maximum evidence IDs to return per step (bounded output)
 MAX_EVIDENCE_IDS_PER_STEP = 10
 
 # Darwin F_NOCACHE constants for large file downloads (>50MB)
 # F_NOCACHE = 48 tells the kernel not to cache the file data (optimization for large downloads)
+# LOW-6/LOW-7 fix: moved fcntl import to module level with platform check
+import platform
+import fcntl
+
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
-F_NOCACHE = 48
+F_NOCACHE = 48 if platform.system() == "Darwin" else None
 
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
@@ -166,11 +179,15 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     if content_length is None or content_length <= NOCACHE_THRESHOLD_BYTES:
         return
 
+    # LOW-7 fix: F_NOCACHE is Darwin-only
+    if F_NOCACHE is None:
+        return
+
     try:
-        import fcntl
         fcntl.fcntl(fd, F_NOCACHE, 1)
-    except Exception:
+    except OSError:
         # Fail-safe: never let fcntl failure abort the write
+        # Catches: platform not supported, invalid fd, etc.
         pass
 
 
@@ -268,8 +285,25 @@ class LightpandaManager:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
                     if resp.status == 200:
+                        content = await resp.read()
+                        # P3-7 fix: compute hash for security auditing
+                        # Expected hash from trusted source stored in LIGHTPANDA_SHA256 env var
+                        actual_hash = hashlib.sha256(content).hexdigest()
+                        expected_hash = os.environ.get('LIGHTPANDA_SHA256')
+                        if expected_hash:
+                            if actual_hash != expected_hash:
+                                raise ValueError(
+                                    f"[LIGHTPANDA] Hash mismatch! "
+                                    f"expected={expected_hash}, actual={actual_hash}"
+                                )
+                            logger.info(f"[LIGHTPANDA] Hash verified: {actual_hash[:16]}...")
+                        else:
+                            logger.warning(
+                                f"[LIGHTPANDA] Downloaded binary hash (for audit only): "
+                                f"{actual_hash} - set LIGHTPANDA_SHA256 env var to verify"
+                            )
                         with open(self._bin_path, 'wb') as f:
-                            f.write(await resp.read())
+                            f.write(content)
                         os.chmod(self._bin_path, 0o755)
                     else:
                         logger.warning(f"[LIGHTPANDA] Download failed: {resp.status}")
@@ -710,6 +744,21 @@ class FetchCoordinator(UniversalCoordinator):
     # Sprint 76: Tor Connection Pooling
     # =============================================================================
 
+    @staticmethod
+    def _mask_cookies_for_log(cookies: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """
+        P3-5 fix: Mask cookie values for safe logging.
+
+        Args:
+            cookies: Raw cookie dict {name: value}
+
+        Returns:
+            Masked dict {name: '***'} preserving structure but hiding values
+        """
+        if not cookies:
+            return {}
+        return {k: '***' for k in cookies}
+
     async def _get_tor_session(self, domain: str) -> Optional[Any]:
         """Get or create Tor session with connection pooling."""
         async with self._tor_lock:
@@ -735,7 +784,9 @@ class FetchCoordinator(UniversalCoordinator):
             if domain not in self._tor_sessions:
                 try:
                     import aiohttp_socks
-                    connector = aiohttp_socks.SocksConnector.from_url('socks5://127.0.0.1:9050', rdns=True)
+                    # P3-6 fix: Use environment variable for Tor proxy, default to localhost:9050
+                    tor_proxy = os.environ.get('TOR_PROXY', 'socks5://127.0.0.1:9050')
+                    connector = aiohttp_socks.SocksConnector.from_url(tor_proxy, rdns=True)
                     # Sprint 4B: Use TIMEOUT_TOR matrix constant
                     session = aiohttp.ClientSession(
                         connector=connector,
@@ -862,18 +913,27 @@ class FetchCoordinator(UniversalCoordinator):
         """
         Sprint 5B: Lightweight priority scoring for frontier intake.
         Lower score = higher priority (processed first).
-        Priority: API > HTML > Tor > I2P
+        Priority: API > JSON > HTML > Tor > I2P
+
+        LOW-2 fix: Use named constants instead of magic numbers.
         """
         lower = url.lower()
-        if '.onion' in lower or '.i2p' in lower:
-            return 30 if '.onion' in lower else 40
+        # Tor hidden services (lower priority than clearnet)
+        if '.onion' in lower:
+            return _PRIORITY_TOR
+        if '.i2p' in lower:
+            return _PRIORITY_I2P
+        # API endpoints (highest priority)
         if '/api/' in lower or 'api.' in lower or lower.endswith('/json'):
-            return 0
+            return _PRIORITY_API
+        # Structured data (JSON/XML/RSS)
         if lower.endswith('.json') or lower.endswith('.xml') or lower.endswith('.rss'):
-            return 5
+            return _PRIORITY_JSON
+        # Standard clearnet HTML
         if '.onion' not in lower and '.i2p' not in lower:
-            return 15  # clearnet HTML
-        return 50
+            return _PRIORITY_CLEARNET_HTML
+        # Fallback for other exotic TLDs
+        return _PRIORITY_OTHER
 
     async def _do_step(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1103,6 +1163,7 @@ class FetchCoordinator(UniversalCoordinator):
                         break
 
                 # Sprint 46: Session injection - get cookies before fetch
+                # P3-5 fix: Never log raw session cookies - use _mask_cookies_for_log()
                 session_cookies = None
                 if self._session_manager:
                     session = await self._session_manager.get_session(domain)

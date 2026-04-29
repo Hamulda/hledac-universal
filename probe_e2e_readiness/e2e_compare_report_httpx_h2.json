@@ -1,0 +1,105 @@
+{
+  "baseline_path": "probe_e2e_readiness/e2e_baseline_truth_repeat_1.json",
+  "new_path": "probe_e2e_readiness/e2e_run_result.json",
+  "verdict": "BROKEN",
+  "verdict_reason": "required truth surfaces missing: ['runtime_truth', 'timing_truth', 'canonical_run_summary']",
+  "baseline_truth_surfaces": {
+    "runtime_truth": true,
+    "timing_truth": true,
+    "canonical_run_summary": true,
+    "_signal_quality_classification": false,
+    "temporal_signal_summary": false,
+    "temporal_priority_hints": false,
+    "transport_counters": false,
+    "memory_truth": false
+  },
+  "new_truth_surfaces": {
+    "runtime_truth": false,
+    "timing_truth": false,
+    "canonical_run_summary": false,
+    "_signal_quality_classification": false,
+    "temporal_signal_summary": false,
+    "temporal_priority_hints": false,
+    "transport_counters": false,
+    "memory_truth": false
+  },
+  "baseline_comparable": {
+    "exit_code": null,
+    "duration_actual_s": null,
+    "actual_duration_s": null,
+    "cycles_started": null,
+    "cycles_completed": null,
+    "accepted_findings": null,
+    "public_accepted_findings": null,
+    "feed_findings": null,
+    "ct_findings": null,
+    "errors": null
+  },
+  "new_comparable": {
+    "exit_code": 0,
+    "duration_actual_s": 196.22959000000083,
+    "actual_duration_s": null,
+    "cycles_started": 0,
+    "cycles_completed": 0,
+    "accepted_findings": 0,
+    "public_accepted_findings": 0,
+    "feed_findings": 0,
+    "ct_findings": 0,
+    "errors": []
+  },
+  "field_diffs": [
+    {
+      "field": "exit_code",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "duration_actual_s",
+      "baseline": null,
+      "new": 196.22959000000083
+    },
+    {
+      "field": "cycles_started",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "cycles_completed",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "accepted_findings",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "public_accepted_findings",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "feed_findings",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "ct_findings",
+      "baseline": null,
+      "new": 0
+    },
+    {
+      "field": "errors",
+      "baseline": null,
+      "new": []
+    }
+  ],
+  "new_added_surfaces": [],
+  "new_missing_surfaces": [
+    "runtime_truth",
+    "timing_truth",
+    "canonical_run_summary"
+  ],
+  "new_artifact_type": "probe_aggregate",
+  "baseline_artifact_type": "canonical_report"
+}

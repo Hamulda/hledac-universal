@@ -73,11 +73,12 @@ class LootManager:
             )
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
+        # SEC-06: OWASP 2023 minimum is 310,000 iterations for PBKDF2-HMAC-SHA256
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=100000,
+            iterations=310000,
         )
         key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
         return key
