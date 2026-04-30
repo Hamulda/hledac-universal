@@ -1,0 +1,580 @@
+{
+  "audit": "F206AL Providerless Discovery Mesh Audit",
+  "date": "2026-04-30",
+  "status": "SEALED",
+  "scope": "read-only audit, no production code changes",
+  "must_not_edit": [
+    "runtime/sprint_scheduler.py",
+    "core/__main__.py",
+    "pipeline/live_public_pipeline.py",
+    "discovery/duckduckgo_adapter.py (core fallback logic)",
+    "transport/*",
+    "storage/export schema"
+  ],
+
+  "discovery_modules": {
+    "active": [
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "DiscoveryHit, DiscoveryBatchResult",
+        "status": "active",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "primary_contract"
+      },
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "async_search_public_web",
+        "status": "active",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "primary_discovery"
+      },
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "_scrape_mojeek",
+        "status": "active_fallback",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "secondary"
+      },
+      {
+        "module": "discovery/rss_atom_adapter.py",
+        "function": "FeedDiscoveryHit, FeedDiscoveryBatchResult",
+        "status": "active",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "active_separate_contract"
+      },
+      {
+        "module": "tools/content_miner.py",
+        "function": "FeedDiscoveryResult, discover_feeds",
+        "status": "active",
+        "dependency_cost_mb": 0,
+        "network": false,
+        "m1_ram_risk": "none",
+        "osint_value": "donor"
+      }
+    ],
+    "dormant": [
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "_search_wayback_cdx",
+        "line": 889,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH",
+        "returns": "list[dict]",
+        "note": "compat wrapper around intelligence/archive_discovery.wayback_cdx_lookup"
+      },
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "_search_commoncrawl_cdx",
+        "line": 914,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH",
+        "returns": "list[dict]",
+        "api": "https://index.commoncrawl.org/CC-MAIN-2024-51-index"
+      },
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "_search_commoncrawl_domain",
+        "line": 1022,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM",
+        "returns": "list[dict]",
+        "note": "domain-only, uses CommonCrawlAdapter"
+      },
+      {
+        "module": "discovery/duckduckgo_adapter.py",
+        "function": "search_multi_engine",
+        "line": 1063,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM",
+        "returns": "list[dict] (NOT DiscoveryBatchResult)",
+        "note": "F192E parallel DDG+Mojeek+CC — type incompatible with pipeline"
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "search_crtsh",
+        "line": 590,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH",
+        "returns": "list[dict]",
+        "timeout_s": 30,
+        "max_results": 100
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "NvdApiAdapter",
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "LOW",
+        "returns": "CanonicalFindings"
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "CisaKevAdapter",
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "LOW",
+        "returns": "CanonicalFindings"
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "search_github_gists",
+        "line": 775,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM",
+        "returns": "list[dict]",
+        "timeout_s": 15,
+        "max_results": 10
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "_query_shodan_internetdb",
+        "line": 961,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM",
+        "returns": "dict",
+        "api": "https://internetdb.shodan.io"
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "_query_rdap",
+        "line": 991,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM",
+        "returns": "dict",
+        "api": "https://rdap.org"
+      },
+      {
+        "module": "discovery/ti_feed_adapter.py",
+        "function": "WaybackArchiveAdapter",
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM"
+      },
+      {
+        "module": "intelligence/archive_discovery.py",
+        "function": "wayback_cdx_lookup",
+        "line": 1791,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH",
+        "returns": "list[dict]",
+        "note": "canonical Wayback CDX implementation; _search_wayback_cdx is compat wrapper"
+      },
+      {
+        "module": "intelligence/archive_discovery.py",
+        "function": "ArchiveDiscovery",
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM",
+        "note": "bs4 optional import"
+      },
+      {
+        "module": "deep_probe.py",
+        "function": "WaybackCDXClient",
+        "line": 481,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH"
+      },
+      {
+        "module": "deep_probe.py",
+        "function": "DeepProbeScanner.scan_s3_buckets",
+        "line": 731,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH"
+      },
+      {
+        "module": "deep_probe.py",
+        "function": "scan_ipfs",
+        "line": 1144,
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM"
+      },
+      {
+        "module": "tools/commoncrawl_adapter.py",
+        "function": "CommonCrawlAdapter",
+        "status": "dormant",
+        "dependency_cost_mb": 0,
+        "network": true,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH"
+      }
+    ],
+    "donor": [
+      {
+        "module": "intelligence/relationship_discovery.py",
+        "function": "RelationshipDiscoveryEngine",
+        "status": "donor",
+        "dependency_cost_mb": 0,
+        "network": "scipy_opt",
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM"
+      },
+      {
+        "module": "intelligence/academic_discovery.py",
+        "function": "module",
+        "status": "donor",
+        "dependency_cost_mb": 0,
+        "network": false,
+        "m1_ram_risk": "none",
+        "osint_value": "LOW"
+      },
+      {
+        "module": "knowledge/duckdb_store.py",
+        "function": "get_sprint_pivot_candidates",
+        "line": 2608,
+        "status": "donor",
+        "dependency_cost_mb": 0,
+        "network": false,
+        "m1_ram_risk": "none",
+        "osint_value": "HIGH",
+        "returns": "list[dict]",
+        "note": "entity candidates from prior sprint findings — DuckDB historical frontier seam"
+      },
+      {
+        "module": "knowledge/ioc_graph.py",
+        "function": "upsert_ioc, upsert_ioc_batch, graph_stats",
+        "status": "donor",
+        "dependency_cost_mb": 0,
+        "network": false,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM"
+      },
+      {
+        "module": "knowledge/graph_service.py",
+        "function": "upsert_ioc, graph_stats",
+        "status": "donor",
+        "dependency_cost_mb": 0,
+        "network": false,
+        "m1_ram_risk": "none",
+        "osint_value": "MEDIUM"
+      }
+    ],
+    "test_only": [
+      {
+        "module": "tests/probe_8ac/test_sprint_8ac.py",
+        "function": "TestDiscoveryHitContract, TestDiscoveryBatchResultContract",
+        "status": "test_only"
+      },
+      {
+        "module": "tests/probe_8aj/test_sprint_8aj.py",
+        "function": "TestDiscoveryRSSLink",
+        "status": "test_only"
+      },
+      {
+        "module": "tests/probe_public_branch_diagnosis/",
+        "function": "TestF206AADiscovery*",
+        "status": "test_only"
+      }
+    ]
+  },
+
+  "discovery_batch_result": {
+    "current_fields": {
+      "hits": {"exists": true, "type": "tuple[DiscoveryHit, ...]"},
+      "error": {"exists": true, "type": "str | None"},
+      "fallback_triggered": {"exists": true, "type": "str | None"}
+    },
+    "missing_fields": [
+      {"field": "provider_name", "type": "str | None", "purpose": "which provider returned hits"},
+      {"field": "provider_chain", "type": "tuple[str, ...]", "purpose": "all providers in cascade"},
+      {"field": "source_family", "type": "str | None", "purpose": "archive|feed|ct|search|seed taxonomy"},
+      {"field": "elapsed_s", "type": "float | None", "purpose": "provider call time"},
+      {"field": "error_type", "type": "str | None", "purpose": "structured error taxonomy"}
+    ],
+    "breaking_change": false,
+    "recommendation": "add all missing fields as optional with None defaults — frozen struct can be extended"
+  },
+
+  "providerless_cascade": [
+    {
+      "layer": 0,
+      "provider": "DDG primary",
+      "function": "_ddgs_text_search",
+      "status": "active",
+      "max_candidates": 20,
+      "timeout_s": 15,
+      "dedup_key": "url_fp",
+      "provider_name": "ddg",
+      "failure_taxonomy": ["empty_query", "rate_limited", "timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"],
+      "fallback_triggered_semantics": "none",
+      "m1_ram_mb": 0,
+      "network": true
+    },
+    {
+      "layer": "0b",
+      "provider": "Mojeek scrape",
+      "function": "_scrape_mojeek",
+      "status": "active",
+      "max_candidates": 20,
+      "timeout_s": 20,
+      "dedup_key": "url_fp",
+      "provider_name": "mojeek",
+      "failure_taxonomy": ["scrape_failed", "empty_results"],
+      "fallback_triggered_semantics": "primary_backend_failed_fallback_succeeded | primary_backend_failed_fallback_failed",
+      "m1_ram_mb": 0,
+      "network": true
+    },
+    {
+      "layer": 1,
+      "provider": "DuckDB historical frontier",
+      "function": "_search_duckdb_frontier (NEW)",
+      "status": "dormant_proposed",
+      "max_candidates": 50,
+      "timeout_s": 0,
+      "dedup_key": "entity_fp",
+      "provider_name": "duckdb_frontier",
+      "failure_taxonomy": ["no_candidates", "read_error"],
+      "fallback_triggered_semantics": "duckdb_frontier_exhausted",
+      "m1_ram_mb": 0,
+      "network": false,
+      "source": "duckdb_store.get_sprint_pivot_candidates",
+      "env_gate": "HLEDAC_ENABLE_DUCKDBl_FRONTIER"
+    },
+    {
+      "layer": 2,
+      "provider": "Feed-derived pivots",
+      "function": "_search_feed_pivot (NEW)",
+      "status": "dormant_proposed",
+      "max_candidates": 30,
+      "timeout_s": 0,
+      "dedup_key": "url_fp",
+      "provider_name": "feed_pivot",
+      "failure_taxonomy": ["no_feeds", "no_entities"],
+      "fallback_triggered_semantics": "feed_pivot_exhausted",
+      "m1_ram_mb": 0,
+      "network": false,
+      "source": "FeedDiscoveryHit entities → Wayback CDX",
+      "note": "F206AN — defer after F206AM",
+      "env_gate": "HLEDAC_ENABLE_FEED_PIVOT"
+    },
+    {
+      "layer": 3,
+      "provider": "CT/crtsh pivots",
+      "function": "_search_ct_pivot (NEW wrapper)",
+      "status": "dormant_proposed",
+      "max_candidates": 100,
+      "timeout_s": 30,
+      "dedup_key": "cert_fp",
+      "provider_name": "crtsh",
+      "failure_taxonomy": ["ct_lookup_failed", "timeout", "empty"],
+      "fallback_triggered_semantics": "ct_pivot_exhausted",
+      "m1_ram_mb": 0,
+      "network": true,
+      "source": "ti_feed_adapter.search_crtsh",
+      "api": "https://crt.sh",
+      "env_gate": "HLEDAC_ENABLE_CRTSH_PIVOT"
+    },
+    {
+      "layer": 4,
+      "provider": "Wayback CDX",
+      "function": "_search_wayback_cdx (wrap existing)",
+      "status": "dormant_existing",
+      "max_candidates": 50,
+      "timeout_s": 20,
+      "dedup_key": "url_fp",
+      "provider_name": "wayback_cdx",
+      "failure_taxonomy": ["cdx_timeout", "cdx_error", "empty"],
+      "fallback_triggered_semantics": "wayback_exhausted",
+      "m1_ram_mb": 0,
+      "network": true,
+      "source": "archive_discovery.wayback_cdx_lookup",
+      "api": "https://web.archive.org/cdx/search/cdx",
+      "env_gate": "HLEDAC_ENABLE_WAYBACK_CDX"
+    },
+    {
+      "layer": 5,
+      "provider": "Common Crawl CDX",
+      "function": "_search_commoncrawl_cdx (wrap existing)",
+      "status": "dormant_existing",
+      "max_candidates": 50,
+      "timeout_s": 25,
+      "dedup_key": "url_fp",
+      "provider_name": "commoncrawl_cdx",
+      "failure_taxonomy": ["cc_timeout", "cc_error", "empty"],
+      "fallback_triggered_semantics": "cc_exhausted",
+      "m1_ram_mb": 0,
+      "network": true,
+      "api": "https://index.commoncrawl.org/CC-MAIN-2024-51-index",
+      "env_gate": "HLEDAC_ENABLE_CC_CDX"
+    },
+    {
+      "layer": 6,
+      "provider": "Static seeds",
+      "function": "_search_static_seeds (NEW)",
+      "status": "dormant_proposed",
+      "max_candidates": 20,
+      "timeout_s": 0,
+      "dedup_key": "url_fp",
+      "provider_name": "static_seed",
+      "failure_taxonomy": ["no_seeds", "exhausted"],
+      "fallback_triggered_semantics": "static_seed_exhausted",
+      "m1_ram_mb": 0,
+      "network": false,
+      "source": "DuckDB CT findings → Wayback CDX",
+      "env_gate": "HLEDAC_ENABLE_STATIC_SEED_FALLBACK"
+    }
+  ],
+
+  "excluded_providers": [
+    {"name": "Brave Search", "reason": "cloud-only, requires API key, not self-hosted"},
+    {"name": "SearXNG", "reason": "M1 8GB RAM prohibitive (300MB), requires Docker/service"},
+    {"name": "Docker/Podman", "reason": "M1 8GB cannot run containerized services"},
+    {"name": "cloud API keys", "reason": "providerless strategy excludes cloud dependencies"},
+    {"name": "new search provider", "reason": "DDG/Mojeek already provide search layer"}
+  ],
+
+  "m1_resource_budget": {
+    "per_layer_ram_mb": 0,
+    "total_additional_mb": 0,
+    "new_dependencies": [],
+    "network_budget": "existing FetchCoordinator transport (curl_cffi)",
+    "disk_budget": "0 MB — no new storage"
+  },
+
+  "implementation_order": [
+    {
+      "step": 1,
+      "priority": "P0",
+      "task": "provider_name field in DiscoveryBatchResult",
+      "file": "discovery/duckduckgo_adapter.py",
+      "change": "Add provider_name: str | None = None, propagate to DDG and Mojeek",
+      "env_gate": "N/A",
+      "rationale": "Every downstream decision depends on provider identity"
+    },
+    {
+      "step": 2,
+      "priority": "P1",
+      "task": "DuckDB Historical Frontier",
+      "file": "discovery/duckduckgo_adapter.py",
+      "change": "New _search_duckdb_frontier() wrapping get_sprint_pivot_candidates",
+      "env_gate": "HLEDAC_ENABLE_DUCKDBl_FRONTIER",
+      "rationale": "Cheapest layer — zero network, zero cost, uses existing seam"
+    },
+    {
+      "step": 3,
+      "priority": "P1",
+      "task": "Wayback CDX wiring",
+      "file": "discovery/duckduckgo_adapter.py",
+      "change": "Wrap _search_wayback_cdx output to DiscoveryBatchResult",
+      "env_gate": "HLEDAC_ENABLE_WAYBACK_CDX",
+      "rationale": "Infrastructure-independent from DDG/Mojeek — survives Cloudflare blocks"
+    },
+    {
+      "step": 4,
+      "priority": "P2",
+      "task": "Common Crawl CDX wiring",
+      "file": "discovery/duckduckgo_adapter.py",
+      "change": "Wrap _search_commoncrawl_cdx output to DiscoveryBatchResult",
+      "env_gate": "HLEDAC_ENABLE_CC_CDX",
+      "rationale": "Larger recall than Wayback, complementary coverage"
+    },
+    {
+      "step": 5,
+      "priority": "P2",
+      "task": "CT/crtsh pivot",
+      "file": "discovery/ti_feed_adapter.py",
+      "change": "New _search_ct_pivot() wrapping search_crtsh → DiscoveryBatchResult",
+      "env_gate": "HLEDAC_ENABLE_CRTSH_PIVOT",
+      "rationale": "Passive infra discovery, no search engine dependency"
+    },
+    {
+      "step": 6,
+      "priority": "P3",
+      "task": "Static seed expansion",
+      "file": "discovery/duckduckgo_adapter.py or new discovery/static_seed_adapter.py",
+      "change": "DuckDB CT findings → Wayback CDX seed expansion",
+      "env_gate": "HLEDAC_ENABLE_STATIC_SEED_FALLBACK",
+      "rationale": "Curated seeds from prior sprint data"
+    }
+  ],
+
+  "next_sprint": {
+    "id": "F206AM",
+    "title": "Providerless Discovery Mesh — Phase 1 (provider_name + DuckDB frontier + Wayback CDX)",
+    "edit_scope": [
+      "hledac/universal/discovery/duckduckgo_adapter.py",
+      "hledac/universal/discovery/ti_feed_adapter.py"
+    ],
+    "tasks": [
+      "Add provider_name: str | None to DiscoveryBatchResult",
+      "Wire _search_duckdb_frontier() as Layer 1 (HLEDAC_ENABLE_DUCKDBl_FRONTIER=1)",
+      "Wire _search_wayback_cdx() as Layer 4 (HLEDAC_ENABLE_WAYBACK_CDX=1)",
+      "Wire _search_ct_pivot() as Layer 3 (HLEDAC_ENABLE_CRTSH_PIVOT=1)",
+      "Add hermetic probe tests in tests/probe_discovery_mesh/"
+    ],
+    "not_in_scope": [
+      "runtime/sprint_scheduler.py",
+      "core/__main__.py",
+      "pipeline/live_public_pipeline.py",
+      "FeedDiscoveryHit → DiscoveryHit coercion (F206AN)",
+      "search_multi_engine type fix (separate sprint)",
+      "Common Crawl CDX wiring (P2 — F206AN)"
+    ]
+  },
+
+  "success_verification": {
+    "brave_excluded": true,
+    "searxng_excluded": true,
+    "dormant_modules_mapped": true,
+    "dormant_count": 17,
+    "donor_count": 5,
+    "test_only_count": 3,
+    "providerless_cascade_concrete": true,
+    "cascade_layers": 7,
+    "m1_budget_explicit": true,
+    "no_production_code_changed": true,
+    "report_exists": true,
+    "json_exists": true
+  }
+}

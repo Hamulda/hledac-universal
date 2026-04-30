@@ -1,0 +1,376 @@
+{
+  "audit": "F206AH Discovery Provider Fallback Strategy Audit",
+  "date": "2026-04-30",
+  "status": "SEALED",
+  "providers": {
+    "active_primary": {
+      "name": "DuckDuckGo",
+      "adapter": "discovery.duckduckgo_adapter.async_search_public_web",
+      "entry_point": "pipeline.live_public_pipeline._ASYNC_DISCOVERY_SEARCH",
+      "fallback_builtin": "Mojeek scrape (_scrape_mojeek)",
+      "fallback_triggered_field": true,
+      "error_taxonomy": [
+        "empty_query",
+        "rate_limited",
+        "timeout",
+        "proxy_error",
+        "network_error",
+        "server_error",
+        "unknown_backend_error"
+      ]
+    },
+    "dormant": [
+      {
+        "name": "search_multi_engine",
+        "adapter": "discovery.duckduckgo_adapter.search_multi_engine",
+        "description": "Parallel DDG + Mojeek + CommonCrawl domain (F192E)",
+        "wired_to_pipeline": false,
+        "returns": "list[dict] (not DiscoveryBatchResult)"
+      },
+      {
+        "name": "Wayback CDX",
+        "adapter": "discovery.duckduckgo_adapter._search_wayback_cdx",
+        "description": "Archive.org CDX API",
+        "wired_to_pipeline": false,
+        "returns": "list[dict]"
+      },
+      {
+        "name": "CommonCrawl CDX",
+        "adapter": "discovery.duckduckgo_adapter._search_commoncrawl_cdx",
+        "description": "CommonCrawl index API",
+        "wired_to_pipeline": false,
+        "returns": "list[dict]"
+      },
+      {
+        "name": "CommonCrawl domain",
+        "adapter": "discovery.duckduckgo_adapter._search_commoncrawl_domain",
+        "description": "CommonCrawl CDX domain-specific",
+        "wired_to_pipeline": false,
+        "returns": "list[dict]"
+      },
+      {
+        "name": "NVD API",
+        "adapter": "discovery.ti_feed_adapter.NvdApiAdapter",
+        "description": "Vulnerability feed",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "CISA KEV",
+        "adapter": "discovery.ti_feed_adapter.CisaKevAdapter",
+        "description": "Known exploited vulnerabilities",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "crtsh",
+        "adapter": "discovery.ti_feed_adapter.search_crtsh",
+        "description": "Certificate transparency",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "GitHub Gists",
+        "adapter": "discovery.ti_feed_adapter.search_github_gists",
+        "description": "Paste/content leak",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "Ahmia (I2P)",
+        "adapter": "discovery.ti_feed_adapter.search_ahmia",
+        "description": "I2P network",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "Wayback Archive",
+        "adapter": "discovery.ti_feed_adapter.WaybackArchiveAdapter",
+        "description": "Full archive crawler",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "IPFS",
+        "adapter": "discovery.ti_feed_adapter.search_ipfs",
+        "description": "IPFS network",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "Usenet",
+        "adapter": "discovery.ti_feed_adapter.search_usenet",
+        "description": "Usenet search",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "MalwareBazaar",
+        "adapter": "discovery.ti_feed_adapter._handle_malwarebazaar_search",
+        "description": "Malware IoC",
+        "wired_to_pipeline": false
+      },
+      {
+        "name": "RSS/Atom",
+        "adapter": "discovery.rss_atom_adapter",
+        "description": "Feed discovery",
+        "wired_to_pipeline": false
+      }
+    ]
+  },
+  "discovery_batch_result_fields": {
+    "hits": {"exists": true, "type": "tuple[DiscoveryHit, ...]"},
+    "error": {"exists": true, "type": "str | None"},
+    "fallback_triggered": {"exists": true, "type": "str | None"},
+    "provider_name": {"exists": false, "type": null},
+    "error_type": {"exists": false, "type": null}
+  },
+  "fallback_triggered_states": [
+    {
+      "value": "primary_backend_failed_fallback_succeeded",
+      "meaning": "DDG failed, Mojeek returned hits"
+    },
+    {
+      "value": "primary_backend_failed_fallback_failed",
+      "meaning": "DDG failed, Mojeek also returned empty"
+    }
+  ],
+  "unknown_backend_error_analysis": {
+    "root_cause": "environmental",
+    "environmental_causes": [
+      "Cloudflare challenge (non-standard response, no 'cloudflare' in message)",
+      "DDG backend outage (non-5xx error or connection reset)",
+      "Geographic block (filtered by region)",
+      "Header anomaly (missing/changed DDG headers)",
+      "Proxy filtering (same as network_error but no 'proxy' in message)"
+    ],
+    "key_insight": "Fallback IS triggered correctly. Both primary (DDG) AND fallback (Mojeek) can be affected by same environmental condition. This is NOT a code bug — it's an environmental constraint.",
+    "fixable_in_30min": false,
+    "requires": "HTML error page parsing, CAPTCHA detection, separate infrastructure for fallback (Wayback CDX is separate from DDG/Mojeek)"
+  },
+  "fallback_options_comparison": {
+    "A_ddg_retry_backoff": {
+      "reliability": 3,
+      "stealth": 4,
+      "api_key_required": false,
+      "self_hosted_compatible": true,
+      "ram_cost_mb": 0,
+      "maintenance_cost": "low",
+      "rate_limit_risk": "high",
+      "legal_tos_risk": "low",
+      "fit_for_sprint": "already_implemented",
+      "implementation_complexity": "not_applicable",
+      "notes": "Environmental failures won't be fixed by retry"
+    },
+    "B_brave_search": {
+      "reliability": 4,
+      "stealth": 2,
+      "api_key_required": true,
+      "self_hosted_compatible": false,
+      "ram_cost_mb": 0,
+      "maintenance_cost": "low",
+      "rate_limit_risk": "low",
+      "legal_tos_risk": "medium",
+      "fit_for_sprint": "low",
+      "implementation_complexity": "medium",
+      "notes": "Cloud-only, requires HLEDAC_BRAVE_API_KEY"
+    },
+    "C_searxng_local": {
+      "reliability": 4,
+      "stealth": 5,
+      "api_key_required": false,
+      "self_hosted_compatible": true,
+      "ram_cost_mb": 300,
+      "maintenance_cost": "high",
+      "rate_limit_risk": "none",
+      "legal_tos_risk": "none",
+      "fit_for_sprint": "low",
+      "implementation_complexity": "medium",
+      "notes": "RAM prohibitive on M1 8GB. OFF DEVICE if enabled."
+    },
+    "D_ddgs_multi_backend": {
+      "reliability": 4,
+      "stealth": 3,
+      "api_key_required": false,
+      "self_hosted_compatible": true,
+      "ram_cost_mb": 0,
+      "maintenance_cost": "low",
+      "rate_limit_risk": "same_as_ddg",
+      "legal_tos_risk": "same_as_ddg",
+      "fit_for_sprint": "already_covered",
+      "implementation_complexity": "not_applicable",
+      "notes": "duckduckgo_search is already ddgs equivalent"
+    },
+    "E_static_seed_feeds": {
+      "reliability": 3,
+      "stealth": 5,
+      "api_key_required": false,
+      "self_hosted_compatible": true,
+      "ram_cost_mb": 0,
+      "maintenance_cost": "medium",
+      "rate_limit_risk": "none",
+      "legal_tos_risk": "none",
+      "fit_for_sprint": "high",
+      "implementation_complexity": "low",
+      "notes": "Best fit — TI adapters exist, just need pipeline wiring"
+    },
+    "F_wayback_commoncrawl_cdx": {
+      "reliability": 4,
+      "stealth": 5,
+      "api_key_required": false,
+      "self_hosted_compatible": true,
+      "ram_cost_mb": 0,
+      "maintenance_cost": "low",
+      "rate_limit_risk": "low",
+      "legal_tos_risk": "none",
+      "fit_for_sprint": "high",
+      "implementation_complexity": "low",
+      "notes": "Already implemented in duckduckgo_adapter.py, needs pipeline wiring"
+    }
+  },
+  "recommended_cascade": [
+    {
+      "layer": 1,
+      "provider": "DDG primary",
+      "trigger": "always",
+      "ram_cost_mb": 0,
+      "status": "active"
+    },
+    {
+      "layer": 2,
+      "provider": "DDG retry",
+      "trigger": "backend_error only",
+      "wait": "5s + jitter",
+      "ram_cost_mb": 0,
+      "status": "check_if_present"
+    },
+    {
+      "layer": 3,
+      "provider": "Mojeek scrape",
+      "trigger": "timeout, proxy_error, network_error, server_error, unknown_backend_error",
+      "ram_cost_mb": 0,
+      "status": "active"
+    },
+    {
+      "layer": 4,
+      "provider": "Wayback CDX",
+      "trigger": "unknown_backend_error after Layer 3 fails",
+      "ram_cost_mb": 0,
+      "status": "dormant — needs wiring"
+    },
+    {
+      "layer": 5,
+      "provider": "CommonCrawl CDX domain",
+      "trigger": "Layer 4 fails",
+      "ram_cost_mb": 0,
+      "status": "dormant — needs wiring"
+    },
+    {
+      "layer": 6,
+      "provider": "Static seed expansion",
+      "trigger": "all above fail",
+      "source": "CT findings, prior sprint URLs, archive seeds",
+      "ram_cost_mb": 0,
+      "status": "dormant — needs wiring"
+    },
+    {
+      "layer": "opt-in",
+      "provider": "SearXNG",
+      "trigger": "HLEDAC_ENABLE_SEARXNG=1",
+      "ram_cost_mb": 0,
+      "off_device": true,
+      "status": "not_implemented"
+    },
+    {
+      "layer": "opt-in",
+      "provider": "Brave Search",
+      "trigger": "HLEDAC_ENABLE_BRAVE_SEARCH=1 + HLEDAC_BRAVE_API_KEY",
+      "ram_cost_mb": 0,
+      "status": "not_implemented"
+    }
+  ],
+  "env_gates_design": {
+    "HLEDAC_ENABLE_SEARXNG": {"default": "0", "description": "Enable SearXNG fallback (off-device)"},
+    "HLEDAC_SEARXNG_URL": {"default": "http://127.0.0.1:8888", "description": "SearXNG instance URL"},
+    "HLEDAC_ENABLE_BRAVE_SEARCH": {"default": "0", "description": "Enable Brave Search fallback"},
+    "HLEDAC_BRAVE_API_KEY": {"default": null, "description": "Brave Search API key"},
+    "HLEDAC_ENABLE_STATIC_SEED_FALLBACK": {"default": "0", "description": "Enable static seed expansion fallback"},
+    "HLEDAC_DISCOVERY_FALLBACK_ORDER": {"default": "ddg,mojeek,wayback,commoncrawl,static_seed", "description": "Override fallback chain order"},
+    "HLEDAC_FORCE_DISCOVERY_FALLBACK": {"default": "0", "description": "Force fallback chain always (benchmarking)"}
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "HIGH",
+      "type": "architecture_gap",
+      "description": "search_multi_engine() (DDG+Mojeek+CC parallel) exists since F192E but is NOT wired to public pipeline",
+      "location": "discovery/duckduckgo_adapter.py:1063"
+    },
+    {
+      "id": "F2",
+      "severity": "MEDIUM",
+      "type": "schema_gap",
+      "description": "DiscoveryBatchResult lacks provider_name field — cannot identify which provider returned hits",
+      "location": "discovery/duckduckgo_adapter.py:78"
+    },
+    {
+      "id": "F3",
+      "severity": "MEDIUM",
+      "type": "design_limitation",
+      "description": "unknown_backend_error is environmental catch-all — Mojeek fallback may fail for same reason",
+      "location": "discovery/duckduckgo_adapter.py:129",
+      "fixable_in_sprint": false
+    },
+    {
+      "id": "F4",
+      "severity": "HIGH",
+      "type": "architecture_gap",
+      "description": "Wayback CDX and CommonCrawl CDX exist but dormant — not used as discovery fallback",
+      "location": "discovery/duckduckgo_adapter.py:889-1022"
+    },
+    {
+      "id": "F5",
+      "severity": "MEDIUM",
+      "type": "unused_capability",
+      "description": "All TI feed adapters in ti_feed_adapter.py are dormant — could provide static seed expansion",
+      "location": "discovery/ti_feed_adapter.py"
+    },
+    {
+      "id": "F6",
+      "severity": "MEDIUM",
+      "type": "type_gap",
+      "description": "search_multi_engine() returns list[dict] not DiscoveryBatchResult — incompatible with pipeline",
+      "location": "discovery/duckduckgo_adapter.py:1063"
+    },
+    {
+      "id": "F7",
+      "severity": "LOW",
+      "type": "configuration_gap",
+      "description": "No env gates for SearXNG or Brave — no opt-in mechanism exists",
+      "location": "N/A"
+    }
+  ],
+  "next_sprint": {
+    "id": "F206AI",
+    "title": "Discovery Fallback Cascade — Wayback/CommonCrawl Wire + Static Seed",
+    "tasks": [
+      "Add provider_name: str | None field to DiscoveryBatchResult",
+      "Wire _search_wayback_cdx() as fallback Layer 4",
+      "Wire _search_commoncrawl_cdx() as fallback Layer 5",
+      "Add static seed expansion from CT findings via DuckDB read",
+      "Add HLEDAC_ENABLE_STATIC_SEED_FALLBACK=1 env gate",
+      "Add probe tests for fallback cascade"
+    ],
+    "not_in_scope": [
+      "runtime/sprint_scheduler.py",
+      "pipeline/live_public_pipeline.py",
+      "discovery/duckduckgo_adapter.py core fallback logic",
+      "storage/export schema"
+    ]
+  },
+  "abort_conditions": [
+    "Any change to runtime/sprint_scheduler.py",
+    "Any change to pipeline/live_public_pipeline.py",
+    "Any change to discovery/duckduckgo_adapter.py core fallback logic",
+    "Any change to storage/export schema",
+    "Any new production behavior without env gate",
+    "Any introduction of blocking operations in async contexts"
+  ],
+  "smoke_results": {
+    "searxng": "not_configured",
+    "brave_search": "not_configured",
+    "static_seed_sources": "available — ti_feed_adapter.py dormant adapters, wayback/cdx dormant"
+  }
+}

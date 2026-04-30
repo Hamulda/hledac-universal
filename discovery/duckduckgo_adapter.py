@@ -89,11 +89,23 @@ class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
       - None                     : no fallback needed or used
       - "primary_backend_failed_fallback_succeeded"  : fallback returned hits
       - "primary_backend_failed_fallback_failed"    : fallback also returned empty
+
+    provider_name: canonical name of the provider that produced hits (F206AM).
+    provider_chain: ordered tuple of providers consulted (F206AM).
+    source_family: logical family — "search" | "archive" | "historical" | None (F206AM).
+    elapsed_s: wall-clock seconds for this call (F206AM).
+    error_type: F206AB taxonomy category (F206AM).
     """
 
     hits: tuple[DiscoveryHit, ...]
     error: str | None = None
     fallback_triggered: str | None = None
+    # F206AM: additive fields for providerless mesh
+    provider_name: str | None = None
+    provider_chain: tuple[str, ...] = ()
+    source_family: str | None = None
+    elapsed_s: float | None = None
+    error_type: str | None = None
 
 
 # ---------------------------------------------------------------------------

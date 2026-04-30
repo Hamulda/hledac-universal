@@ -99,3 +99,4 @@ tests/probe_f*/
 .chunkhoundignore
 .claude-flow/
 .claude_consciousness.m8
+.temporal_store/

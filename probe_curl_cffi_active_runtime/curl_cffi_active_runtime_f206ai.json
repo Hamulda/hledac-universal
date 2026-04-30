@@ -1,0 +1,47 @@
+{
+  "sprint": "F206AI",
+  "date": "2026-04-30",
+  "status": "SEALED",
+  "curl_cffi_policy_ok": true,
+  "active_callsite_present": true,
+  "explicit_stealth_wired": true,
+  "status_403_429_escalation_wired": false,
+  "protection_hint_escalation_wired": false,
+  "fallback_to_aiohttp_wired": true,
+  "teardown_wired": true,
+  "lock_close_during_eviction": true,
+  "recommended_next_patch": "F206AJ: Pass prior_status and protection_hint from aiohttp fetch result to should_use_curl_cffi at line 1075 of public_fetcher.py. Add retry-on-403/429 escalation: aiohttp first fetch → if status 403/429 and curl_cffi not yet tried → call fetch_via_curl_cffi as second attempt.",
+  "verdict": "PASS_WITH_NOTES",
+  "notes": [
+    "should_use_curl_cffi supports prior_status and protection_hint parameters (lines 39-41, 76-82 of curl_cffi_transport.py)",
+    "async_fetch_public_text never passes prior_status or protection_hint to should_use_curl_cffi — only use_stealth and use_js",
+    "status_403_or_429 and protection_detected escalation paths are defined but unreachable in canonical path",
+    "curl_cffi failure falls back to aiohttp (lines 1125-1130) but this is NOT a retry on 403/429 — it's a catch-all exception fallback",
+    "LRU eviction at line 123 awaits aclose() inside _curl_cffi_lock — violates the 'await aclose() outside lock' invariant declared at line 9",
+    "close_curl_cffi_sessions_async correctly awaits aclose() outside lock at line 160"
+  ],
+  "session_lifecycle_audit": {
+    "lazy_import": "PASS — all imports inside functions",
+    "max_profiles": "PASS — _MAX_CURL_CFFI_PROFILES = 3",
+    "lru_eviction": "PASS — deque.popleft() O(1)",
+    "lock_close_during_eviction": "FAIL — line 123 awaits aclose() inside lock",
+    "close_idempotent": "PASS — close_curl_cffi_sessions_async is idempotent",
+    "cancelled_error_raised": "PASS — lines 70-71 and 161-162 re-raise CancelledError",
+    "profile_fallback_order": "PASS — chrome136 → chrome120 → chrome110 → safari17_0",
+    "availability_cache_resettable": "PARTIAL — _CURL_CFFI_AVAILABLE is module-level cached, reset only via module reload"
+  },
+  "escalation_truth": {
+    "aiohttp_first_then_curl_on_403_429": "NOT_WIRED",
+    "description": "async_fetch_public_text has no retry logic. aiohttp fetch is the final step, not an first attempt. curl_cffi lane runs BEFORE aiohttp (line 1075), not after. No code path exists where aiohttp returns 403/429 and then curl_cffi is attempted.",
+    "required_for_escalation": [
+      "async_fetch_public_text needs prior_status parameter",
+      "async_fetch_public_text needs to try aiohttp first (not curl_cffi before aiohttp)",
+      "On aiohttp 403/429 response, call should_use_curl_cffi(prior_status=403/429) and retry via curl_cffi if True",
+      "Or: restructure so aiohttp is tried first, then curl_cffi escalation on 403/429"
+    ]
+  },
+  "tests_passed": {
+    "probe_curl_cffi_stealth_lane": "57/57",
+    "probe_transport_cap_2026 + probe_e2e_signal_fixture + probe_public_fetcher_retry": "139/139"
+  }
+}
