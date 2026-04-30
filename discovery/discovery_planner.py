@@ -33,8 +33,10 @@ from hledac.universal.discovery.duckduckgo_adapter import (
 from hledac.universal.discovery.provider_stats import (
     PROVIDER_NAMES,
     PROVIDER_COST_ESTIMATE,
+    PROVIDER_CAPABILITIES,
     ProviderStatsRegistry,
     get_provider_stats_registry,
+    is_production_provider,
 )
 
 # ---------------------------------------------------------------------------
@@ -239,6 +241,7 @@ class DiscoveryPlanner:
         min_reliability: float = _MIN_RELIABILITY,
         max_providers: int = _MAX_PROVIDERS_PER_CALL,
         cost_multiplier: float = _COST_MULTIPLIER,
+        include_stub_providers: bool = False,
     ) -> None:
         self._registry = registry or get_provider_stats_registry()
         self._rng = random.Random(seed)
@@ -246,6 +249,7 @@ class DiscoveryPlanner:
         self._min_reliability = min_reliability
         self._max_providers = max_providers
         self._cost_multiplier = cost_multiplier
+        self._include_stub_providers = include_stub_providers
 
     # -------------------------------------------------------------------------
     # Planning
@@ -283,12 +287,15 @@ class DiscoveryPlanner:
             for name in PROVIDER_NAMES
         ]
 
-        # Filter to healthy + scored
+        # Filter to healthy + scored + production-enabled (stub quarantine)
         scored = []
         for stats, cost_est in all_providers:
             if stats is None:
                 continue
             if not stats.is_healthy:
+                continue
+            # Stub quarantine: exclude non-production providers by default
+            if not self._include_stub_providers and not is_production_provider(stats.name):
                 continue
             # Estimated call cost (with safety margin)
             est_cost = cost_est * self._cost_multiplier

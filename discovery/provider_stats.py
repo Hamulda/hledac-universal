@@ -236,6 +236,62 @@ PROVIDER_COST_ESTIMATE: dict[str, float] = {
     "commoncrawl_cdx": 1200.0,
 }
 
+# ---------------------------------------------------------------------------
+# Provider capability metadata — controls which providers are production-safe
+# ---------------------------------------------------------------------------
+
+PROVIDER_CAPABILITIES: dict[str, dict[str, object]] = {
+    "ddg_mojeek": {
+        "production_enabled": True,
+        "is_stub": False,
+        "requires_context": False,
+    },
+    "historical_frontier": {
+        "production_enabled": True,
+        "is_stub": False,
+        "requires_context": False,
+    },
+    "wayback_cdx": {
+        "production_enabled": True,
+        "is_stub": False,
+        "requires_context": False,
+    },
+    "commoncrawl_cdx": {
+        "production_enabled": False,
+        "is_stub": True,
+        "requires_context": False,
+        "disabled_reason": "adapter_not_implemented",
+    },
+    "feed_pivots": {
+        "production_enabled": False,
+        "is_stub": True,
+        "requires_context": True,
+        "disabled_reason": "pipeline_context_not_wired",
+    },
+    "ct_pivots": {
+        "production_enabled": False,
+        "is_stub": True,
+        "requires_context": True,
+        "disabled_reason": "ct_context_not_wired",
+    },
+}
+
+
+def is_production_provider(name: str) -> bool:
+    """True if provider is production-enabled (not a quarantined stub)."""
+    cap = PROVIDER_CAPABILITIES.get(name)
+    if cap is None:
+        return False
+    return bool(cap.get("production_enabled", False))
+
+
+def is_stub_provider(name: str) -> bool:
+    """True if provider is explicitly marked as stub/not-implemented."""
+    cap = PROVIDER_CAPABILITIES.get(name)
+    if cap is None:
+        return False
+    return bool(cap.get("is_stub", False))
+
 
 class ProviderStatsRegistry:
     """

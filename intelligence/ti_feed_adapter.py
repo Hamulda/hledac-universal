@@ -435,7 +435,7 @@ async def fetch_threatfox_recent(
         if age_h < max_age_hours:
             logger.debug(f"ThreatFox mirror fresh ({age_h:.1f}h old)")
             try:
-                return json.loads(out_path.read_text())
+                return await asyncio.to_thread(lambda: json.loads(out_path.read_text()))
             except Exception:
                 pass
 
@@ -448,7 +448,7 @@ async def fetch_threatfox_recent(
             if resp.status == 200:
                 data = await resp.json(content_type=None)
                 if isinstance(data, list):
-                    out_path.write_text(json.dumps(data))
+                    await asyncio.to_thread(out_path.write_text, json.dumps(data))
                     logger.info(f"ThreatFox mirror updated: {len(data)} entries")
                     return data
                 logger.warning(f"ThreatFox unexpected response type: {type(data)}")
@@ -460,7 +460,7 @@ async def fetch_threatfox_recent(
     # Fallback to stale
     if out_path.exists():
         try:
-            return json.loads(out_path.read_text())
+            return await asyncio.to_thread(lambda: json.loads(out_path.read_text()))
         except Exception:
             pass
     return []

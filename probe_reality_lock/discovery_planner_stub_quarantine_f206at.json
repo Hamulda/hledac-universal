@@ -1,0 +1,35 @@
+{
+  "sprint": "F206AT",
+  "created": "2026-05-01",
+  "production_providers": [
+    "ddg_mojeek",
+    "historical_frontier",
+    "wayback_cdx"
+  ],
+  "stub_providers": [
+    {
+      "name": "commoncrawl_cdx",
+      "disabled_reason": "adapter_not_implemented",
+      "current_behavior": "calls Wayback adapter, pretends to be Common Crawl",
+      "quarantined": true
+    },
+    {
+      "name": "feed_pivots",
+      "disabled_reason": "pipeline_context_not_wired",
+      "current_behavior": "returns error_type=not_wired",
+      "quarantined": true
+    },
+    {
+      "name": "ct_pivots",
+      "disabled_reason": "ct_context_not_wired",
+      "current_behavior": "returns error_type=not_wired",
+      "quarantined": true
+    }
+  ],
+  "planner_selects_stubs_by_default": false,
+  "include_stub_providers_test_mode": true,
+  "commoncrawl_fake_wayback_disabled": true,
+  "recommended_next_sprint": "F206AU real Common Crawl CDX adapter or F206AV CT/crtsh pivot",
+  "capabilities_metadata_verified": true,
+  "quarantine_enforced_at_plan_level": true
+}
