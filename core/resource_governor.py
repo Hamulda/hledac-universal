@@ -173,7 +173,7 @@ class ResourceGovernor:
         self.high_water = memory_high_water_mb
         self.thermal_threshold = thermal_threshold
         self._active_tasks = 0
-        self.__lock = None  # lazy init for Python 3.12 compatibility
+        self.__lock = None  # lazy init for Python 3.14 compatibility
         self._cost_model = None
 
         # Faktor priority pro toleranci

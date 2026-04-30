@@ -8,9 +8,11 @@ pytesseract>=0.3.10
 stem>=1.8.0
 dnspython>=2.4.0
 aiobtcdht>=0.1.0
+pydantic>=2.0.0
+beautifulsoup4>=4.12.0
 
 # F196A pre-review fixes: missing runtime dependencies
-probables>=4.0.0        # url_dedup.py RotatingBloomFilter import
+pyprobables>=4.0.0        # url_dedup.py RotatingBloomFilter import
 httpx>=0.27.0          # fetching/public_fetcher.py HTTP client
 pyzipper>=0.4.0        # security/vault_manager.py encryption
 

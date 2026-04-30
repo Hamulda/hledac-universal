@@ -860,7 +860,7 @@ def _record_runtime_truth() -> None:
     import os
 
     _interpreter_executable = sys.executable
-    _interpreter_version = sys.version_info[:2] == (3, 12) and "3.12" or sys.version
+    _interpreter_version = sys.version_info[:2] == (3, 14) and "3.14" or sys.version
 
     try:
         import ahocorasick as _

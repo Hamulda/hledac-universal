@@ -1,5 +1,104 @@
 # Hledač — Real Architecture (aktualizováno 2026-04-28, F206J)
 
+## Architecture Overview
+
+```mermaid
+flowchart TB
+    subgraph Entrypoints["Entry Points"]
+        __main__["__main__.py<br/>(2.7k lines, ACTIVE)"]
+        smoke["smoke_runner.py<br/>(8.7k, ACTIVE)"]
+        facade["autonomous_orchestrator.py<br/>(98 lines, DEPRECATED FACADE)"]
+    end
+
+    subgraph RuntimeA["Runtime A — ACTIVE (Sprint 8AE/8SA)"]
+        pipeline["pipeline/<br/>live_public_pipeline.py<br/>live_feed_pipeline.py"]
+        duckdb["duckdb_store.py<br/>(canonical store)"]
+        lifecycle["runtime/sprint_lifecycle.py<br/>(SprintLifecycleManager)"]
+        scheduler["runtime/sprint_scheduler.py<br/>(2.7k, TIER-AWARE)"]
+    end
+
+    subgraph RuntimeB["Runtime B — LEGACY (31k God Object)"]
+        legacy["legacy/autonomous_orchestrator.py<br/>(31k lines)"]
+        coordinators20["20+ coordinators"]
+    end
+
+    subgraph Brain["brain/ — LLM Inference"]
+        hermes["hermes3_engine.py<br/>(75k, PRIMARY LLM)"]
+        hypothesis["hypothesis_engine.py<br/>(98k)"]
+        synthesis["synthesis_runner.py<br/>(41k)"]
+        gnn["gnn_predictor.py<br/>(32k)"]
+    end
+
+    subgraph Coordinators["coordinators/ — 20 Active"]
+        fetch["fetch_coordinator.py"]
+        research["research_coordinator.py"]
+        execution["execution_coordinator.py"]
+        security["security_coordinator.py"]
+        memory["memory_coordinator.py"]
+        monitoring["monitoring_coordinator.py"]
+        multimodal["multimodal_coordinator.py"]
+        archive["archive_coordinator.py"]
+    end
+
+    subgraph Storage["Storage (4 Systems BY DESIGN)"]
+        duckdbstore["DuckDB<br/>(structured analytics)"]
+        lancedb["LanceDB<br/>(vector similarity)"]
+        lmdb["LMDB<br/>(fast KV cache)"]
+        kuzu["Kuzu<br/>(IOC graph, STIX)"]
+    end
+
+    subgraph Tools["tools/"]
+        http["http_client.py<br/>(curl_cffi stealth)"]
+        url_dedup["url_dedup.py<br/>(RotatingBloomFilter)"]
+        host_policies["host_policies.py"]
+        lmdb_kv["lmdb_kv.py"]
+        checkpoint["checkpoint.py"]
+    end
+
+    subgraph Knowledge["knowledge/"]
+        atomic["atomic_storage.py"]
+        graph_service["graph_service.py<br/>(DuckPGQ)"]
+    end
+
+    __main__ -->|_run_boot_guard| pipeline
+    __main__ -->|_async_main| lifecycle
+    pipeline --> duckdb
+    lifecycle --> scheduler
+    scheduler --> pipeline
+
+    smoke -->|FullyAutonomousOrchestrator| legacy
+    facade -.->|sys.modules patch| legacy
+
+    legacy --> coordinators20
+    coordinators20 --> Brain
+
+    Brain -->|mlx inference| hermes
+    hermes --> hypothesis
+    hypothesis --> synthesis
+
+    Coordinators -->|async_ingest_findings_batch| duckdbstore
+    Coordinators -->|upsert_ioc| kuzu
+    Coordinators -->|vector search| lancedb
+    Coordinators -->|fast cache| lmdb
+
+    Tools --> Coordinators
+    Knowledge --> Coordinators
+
+    classDef active fill:#bbf3bb,stroke:#2d7d2d,stroke-width:2px
+    classDef legacy fill:#fdd,stroke:#900,stroke-width:2px
+    classDef storage fill:#ddf,stroke:#339,stroke-width:2px
+
+    class __main__,smoke,pipeline,duckdb,lifecycle,scheduler active
+    class legacy,facade legacy
+    class duckdbstore,lancedb,lmdb,kuzu storage
+```
+
+**Legend:** Green = ACTIVE, Red = DEPRECATED/LEGACY, Blue = Storage
+
+**Two Independent Runtimes:**
+- **Runtime A** (`__main__.py`): pipeline/ → duckdb_store (Sprint 8AE/8SA, ACTIVE)
+- **Runtime B** (`autonomous_orchestrator.py`): legacy/ God Object (DEPRECATED, used by smoke tests)
+
 ## F206A — Reproducible Baseline Runner + Test Taxonomy (2026-04-27)
 
 **Cíl:** Vytvořit reprodukovatelný baseline runner pro F204/F205/F206 probe lanes s known-failure reporting. Zajistit konzistentní CLI pro kontinuální regressní monitoring.

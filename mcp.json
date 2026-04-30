@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "CodeGraphContext": {
-      "command": "/Users/vojtechhamada/.pyenv/versions/3.12.12/bin/cgc",
+      "command": "/Users/vojtechhamada/.pyenv/shims/cgc",
       "args": [
         "mcp",
         "start"

@@ -2784,10 +2784,17 @@ class MemoryPressurePoller:
         self._interval = interval
         self._level = 0.1
         self._task: Optional[asyncio.Task] = None
+        self._shutdown = asyncio.Event()
 
     async def start(self):
         """Start polling."""
         self._task = asyncio.create_task(self._poll_loop())
+
+    async def aclose(self):
+        """Gracefully stop the poller."""
+        self._shutdown.set()
+        if self._task is not None:
+            await self._task
 
     async def _poll_loop(self):
         """Polling loop."""
@@ -2818,9 +2825,11 @@ class MemoryPressurePoller:
                     )
                     if ret == 0:
                         self._level = {0: 0.1, 2: 0.6, 4: 0.95}.get(val.value, 0.1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"MemoryPressurePoller error: {e}")
             await asyncio.sleep(self._interval)
+            if self._shutdown.is_set():
+                break
 
     def get_level(self) -> float:
         """Get current memory pressure level (0.0 - 1.0)."""

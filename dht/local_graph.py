@@ -1,14 +1,16 @@
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import TYPE_CHECKING, Dict, List, Optional, Any
 
 import lmdb
 import orjson
 import numpy as np
-import mlx.core as mx
 
 from hledac.universal.security import encrypt_aes_gcm, decrypt_aes_gcm
 from hledac.universal.security.key_manager import KeyManager
+
+if TYPE_CHECKING:
+    import mlx.core as mx
 
 MAX_NODES_FOR_SCAN = 10_000
 
@@ -36,7 +38,7 @@ class LocalGraphStore:
             self._mxg = None
             self.graph = None
 
-    async def put_node(self, node_id: str, features: mx.array, neighbors: List[str]) -> None:
+    async def put_node(self, node_id: str, features: "mx.array", neighbors: List[str]) -> None:
         arr = np.array(features, dtype=np.float16)
         node_data = {"features": arr.tobytes().hex(), "shape": list(arr.shape)}
         plaintext = orjson.dumps(node_data)
@@ -54,6 +56,8 @@ class LocalGraphStore:
 
         if self.graph is not None:
             # Best-effort: store float32 features
+            import mlx.core as mx
+
             self.graph.add_node(node_id, x=mx.array(features, dtype=mx.float32))
 
     async def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
@@ -95,6 +99,8 @@ class LocalGraphStore:
         plaintext = decrypt_aes_gcm(bucket_key, blob, associated_data=node_id.encode())
         node_data = orjson.loads(plaintext)
         arr = np.frombuffer(bytes.fromhex(node_data["features"]), dtype=np.float16).reshape(node_data["shape"])
+        import mlx.core as mx
+
         return {"node_id": node_id, "features": mx.array(arr.astype(np.float32)), "neighbors": neighbors}
 
     async def get_all_nodes(self, limit: int = MAX_NODES_FOR_SCAN) -> List[Dict[str, str]]:

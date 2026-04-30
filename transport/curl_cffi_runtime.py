@@ -105,37 +105,49 @@ async def _get_or_create_session(profile: str) -> Optional[Any]:
         # Session was closed — remove from cache
         del _curl_cffi_sessions[profile]
 
-    # Need to create new session
-    async with _curl_cffi_lock:
-        # Re-check after acquiring lock
-        if profile in _curl_cffi_sessions:
-            return _curl_cffi_sessions[profile]
+    # Sessions to close after releasing lock (evicted during creation)
+    _sessions_to_close: list[Any] = []
 
-        # Evict oldest if at capacity
-        if len(_curl_cffi_sessions) >= _MAX_CURL_CFFI_PROFILES:
-            if _curl_cffi_profiles_order:
-                oldest = _curl_cffi_profiles_order.popleft()  # O(1) vs list.pop(0) O(n)
-                if oldest in _curl_cffi_sessions:
-                    old_session = _curl_cffi_sessions.pop(oldest)
-                    # Close outside lock scope is handled by caller
+    try:
+        # Need to create new session
+        async with _curl_cffi_lock:
+            # Re-check after acquiring lock
+            if profile in _curl_cffi_sessions:
+                return _curl_cffi_sessions[profile]
+
+            # Evict oldest if at capacity — extract sessions to close OUTSIDE lock
+            if len(_curl_cffi_sessions) >= _MAX_CURL_CFFI_PROFILES:
+                if _curl_cffi_profiles_order:
+                    oldest = _curl_cffi_profiles_order.popleft()  # O(1) vs list.pop(0) O(n)
+                    if oldest in _curl_cffi_sessions:
+                        _sessions_to_close.append(_curl_cffi_sessions.pop(oldest))
+
+            # Create new session
+            from curl_cffi.requests import AsyncSession
+
+            new_session = AsyncSession(
+                impersonate=profile,
+                timeout=10.0,
+                max_clients=15,
+            )
+            _curl_cffi_sessions[profile] = new_session
+            _curl_cffi_profiles_order.append(profile)
+            logger.debug(f"curl_cffi session created for profile: {profile}")
+            return new_session
+    finally:
+        # F206AJ: Close evicted sessions AFTER releasing lock.
+        # await inside try/finally would still hold the lock during await,
+        # blocking all other coroutines. Use create_task to defer.
+        if _sessions_to_close:
+            async def _close_evicted():
+                for _sess in _sessions_to_close:
                     try:
-                        if hasattr(old_session, "aclose"):
-                            await old_session.aclose()
+                        if hasattr(_sess, "aclose"):
+                            await _sess.aclose()
                     except Exception as e:
-                        logger.debug(f"Failed to close evicted session for {oldest}: {e}")
+                        logger.debug(f"Failed to close evicted session: {e}")
 
-        # Create new session
-        from curl_cffi.requests import AsyncSession
-
-        new_session = AsyncSession(
-            impersonate=profile,
-            timeout=10.0,
-            max_clients=15,
-        )
-        _curl_cffi_sessions[profile] = new_session
-        _curl_cffi_profiles_order.append(profile)
-        logger.debug(f"curl_cffi session created for profile: {profile}")
-        return new_session
+            asyncio.create_task(_close_evicted())
 
 
 async def close_curl_cffi_sessions_async() -> None:

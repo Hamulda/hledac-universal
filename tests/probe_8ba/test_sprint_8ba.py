@@ -479,8 +479,8 @@ class TestPython3RuntimeTruth:
         assert isinstance(interpreter_executable, str)
         assert isinstance(interpreter_version, str)
         assert isinstance(ahocorasick_available, bool)
-        # Should be python3 3.12
-        assert interpreter_version.startswith("3.12"), f"Expected 3.12, got {interpreter_version}"
+        # Should be python3 3.14
+        assert interpreter_version.startswith("3.14"), f"Expected 3.14, got {interpreter_version}"
 
 
 class TestMatcherProbeFields:

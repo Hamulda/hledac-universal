@@ -393,7 +393,7 @@ def test_formatter_contains_matcher_truth_and_next_sprint():
     """format_observed_run_summary includes all required 8BH fields."""
     report_dict = {
         "interpreter_executable": "/usr/bin/python3",
-        "interpreter_version": "3.12",
+        "interpreter_version": "3.14",
         "ahocorasick_available": True,
         "actual_live_run_executed": True,
         "bootstrap_pack_version": 2,

@@ -33,47 +33,80 @@ from ..utils.async_helpers import async_getaddrinfo
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# HTTPX H2 Per-Process State — bounded failure tracking
+# HTTPX H2 Circuit Breaker — instance-based (S-02 fix)
 # =============================================================================
 
-_httpx_h2_auto_disabled: bool = False  # True after _MAX_FAILURES consecutive
-_httpx_h2_failure_count: int = 0       # resets on auto-disable
 _MAX_HTTPX_H2_FAILURES: int = 3       # [H2-A1] bounded
+
+class H2CircuitBreaker:
+    """Per-instance httpx H2 circuit breaker state.
+
+    Tracks failure count and auto-disable per broker instance.
+    Default singleton `_default_breaker` provides backward-compatible
+    global-state behavior for existing callers.
+    """
+
+    __slots__ = ("_auto_disabled", "_failure_count")
+
+    def __init__(self) -> None:
+        self._auto_disabled: bool = False
+        self._failure_count: int = 0
+
+    @property
+    def is_auto_disabled(self) -> bool:
+        return self._auto_disabled
+
+    @property
+    def failure_count(self) -> int:
+        return self._failure_count
+
+    def record_failure(self) -> None:
+        """Record a failure; auto-disable after MAX_FAILURES."""
+        if self._auto_disabled:
+            return
+        self._failure_count += 1
+        if self._failure_count >= _MAX_HTTPX_H2_FAILURES:
+            self._auto_disabled = True
+            logger.warning(
+                f"[HTTPX] httpx_h2 auto-disabled after {self._failure_count} failures "
+                f"(threshold={_MAX_HTTPX_H2_FAILURES})"
+            )
+
+    def reset(self) -> None:
+        """Reset state — for tests only."""
+        self._auto_disabled = False
+        self._failure_count = 0
+
+
+# Default singleton (backward-compatible global state)
+_default_breaker = H2CircuitBreaker()
+
 
 # Exposed for tests — not for general public use
 def get_httpx_h2_auto_disable() -> bool:
-    return _httpx_h2_auto_disabled
+    return _default_breaker.is_auto_disabled
+
 
 def get_httpx_h2_failure_count() -> int:
-    return _httpx_h2_failure_count
+    return _default_breaker.failure_count
 
 
 def reset_httpx_h2_state() -> None:
     """Reset httpx_h2 failure counter and auto-disable flag. For tests only."""
-    global _httpx_h2_auto_disabled, _httpx_h2_failure_count
-    _httpx_h2_auto_disabled = False
-    _httpx_h2_failure_count = 0
+    _default_breaker.reset()
     logger.debug("[HTTPX] httpx_h2 state reset (failures=0, auto-disable=False)")
 
 
-def record_httpx_h2_failure() -> None:
+def record_httpx_h2_failure(_breaker: "H2CircuitBreaker | None" = None) -> None:
     """
     Record a httpx_h2 failure and auto-disable if threshold reached.
 
-    Invariants:
-      [H2-A1] After _MAX_FAILURES failures, auto-disable for rest of process
-      [H2-A2] Disabled state is permanent for this process (no re-enable)
+    Args:
+        _breaker: Optional circuit breaker instance. Defaults to module singleton.
+                  Pass a dedicated instance to isolate state per FetchCoordinator.
     """
-    global _httpx_h2_auto_disabled, _httpx_h2_failure_count
-    if _httpx_h2_auto_disabled:
-        return  # Already disabled, no-op
-    _httpx_h2_failure_count += 1
-    if _httpx_h2_failure_count >= _MAX_HTTPX_H2_FAILURES:
-        _httpx_h2_auto_disabled = True
-        logger.warning(
-            f"[HTTPX] httpx_h2 auto-disabled after {_httpx_h2_failure_count} failures "
-            f"(threshold={_MAX_HTTPX_H2_FAILURES})"
-        )
+    breaker = _breaker if _breaker is not None else _default_breaker
+    breaker.record_failure()
 
 
 def classify_httpx_h2_error(exc_or_result) -> str:
@@ -245,6 +278,7 @@ def should_use_httpx_h2(
     url: str,
     use_stealth: bool = False,
     use_js: bool = False,
+    _breaker: "H2CircuitBreaker | None" = None,
 ) -> tuple[bool, str]:
     """
     Determine if URL should use HTTPX H2 lane.
@@ -258,6 +292,8 @@ def should_use_httpx_h2(
     Args:
         url: Target URL
         use_stealth: Stealth mode flag (from async_fetch_public_text)
+        use_js: JS rendering flag (from async_fetch_public_text)
+        _breaker: Optional circuit breaker instance. Defaults to module singleton.
         use_js: JS rendering flag (from async_fetch_public_text)
 
     Returns:
@@ -284,7 +320,8 @@ def should_use_httpx_h2(
         return False, "httpx_h2_disabled_env"
 
     # F206AF: Auto-disable check — after 3 failures, disable for rest of process
-    if _httpx_h2_auto_disabled:
+    breaker = _breaker if _breaker is not None else _default_breaker
+    if breaker.is_auto_disabled:
         return False, "httpx_h2_auto_disabled"
 
     # P3: Darknet URLs — route via aiohttp_socks

@@ -1235,6 +1235,75 @@ async def async_fetch_public_text(
                         content_type = resp.headers.get("Content-Type", "")
                         raw_content_type = content_type.split(";")[0].strip().lower()
 
+                        # --- F206AJ: 403/429 one-shot curl_cffi escalation ---
+                        # One-shot: aiohttp got 403/429 → try curl_cffi once before retry/body.
+                        # Protected: darknet/JS/Freenet already handled upstream.
+                        # No loop: escalation only on first attempt (attempt==0).
+                        _escalated_to_curl = False
+                        if last_status_code in (403, 429) and attempt == 0:
+                            _env_curl = os.environ.get("HLEDAC_ENABLE_CURL_CFFI", "")
+                            if _env_curl == "1":
+                                _esc_use_curl, _esc_curl_reason = should_use_curl_cffi(
+                                    url, use_stealth=use_stealth, use_js=use_js, prior_status=last_status_code
+                                )
+                                if _esc_use_curl:
+                                    try:
+                                        _esc_result = await fetch_via_curl_cffi(
+                                            url=url,
+                                            headers=None,
+                                            timeout_s=timeout_s,
+                                            max_bytes=max_bytes,
+                                            profile="chrome110",
+                                        )
+                                        if _esc_result.get("status_code", 0) // 100 == 2:
+                                            # curl succeeded with 2xx → return immediately
+                                            _escalated_to_curl = True
+                                            _tc.curl_cffi_count += 1
+                                            _esc_bytes = _esc_result.get("content", b"")
+                                            _esc_text: str | None
+                                            _esc_decode_replaced = False
+                                            _esc_decode_replacement_count = 0
+                                            if _esc_bytes:
+                                                _esc_text, _esc_decode_replaced, _esc_decode_replacement_count = _try_decode(_esc_bytes)
+                                            else:
+                                                _esc_text = None
+                                            _esc_elapsed_ms = (time.monotonic() - t0) * 1000
+                                            _esc_final_url = _esc_result.get("final_url", url)
+                                            _esc_redirected, _esc_redirect_target = _derive_redirect_fields(url, _esc_final_url)
+                                            return FetchResult(
+                                                url=url,
+                                                final_url=_esc_final_url,
+                                                status_code=_esc_result.get("status_code", 0),
+                                                content_type=_esc_result.get("content_type", ""),
+                                                text=_esc_text,
+                                                fetched_bytes=len(_esc_bytes),
+                                                declared_length=-1,
+                                                elapsed_ms=_esc_elapsed_ms,
+                                                error=_esc_result.get("error", None),
+                                                decode_replaced=_esc_decode_replaced,
+                                                decode_replacement_count=_esc_decode_replacement_count,
+                                                redirected=_esc_redirected,
+                                                redirect_target=_esc_redirect_target,
+                                                failure_stage=_esc_result.get("failure_stage", None),
+                                                network_error_kind=_esc_result.get("network_error_kind", None),
+                                                selected_transport="curl_cffi",
+                                                http_version=None,
+                                                transport_policy_reason=_esc_curl_reason,
+                                                transport_fallback_reason="aiohttp_status_403_or_429_to_curl_cffi",
+                                                transport_counters=_tc,
+                                            )
+                                        else:
+                                            # curl returned non-2xx → fall through to aiohttp retry
+                                            _curl_fallback_reason = f"curl_cffi_status_{_esc_result.get('status_code', 0)}_to_aiohttp"
+                                            _tc.curl_cffi_fallback_to_aiohttp_count += 1
+                                            _tc.fallback_count += 1
+                                    except asyncio.CancelledError:
+                                        raise
+                                    except Exception as _esc_e:
+                                        _curl_fallback_reason = f"curl_cffi_failed:{type(_esc_e).__name__}"
+                                        _tc.curl_cffi_fallback_to_aiohttp_count += 1
+                                        _tc.fallback_count += 1
+
                         # --- Retryable status → wait and retry once ---
                         if _circuit_breaker and _is_retryable_status(last_status_code):
                             _circuit_breaker.record_failure(failure_kind=str(last_status_code))

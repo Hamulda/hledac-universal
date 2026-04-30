@@ -40,6 +40,12 @@ Work only within `hledac/universal/`. Do not reference modules, configs, or path
 - MLX cache cleared between phases (`mx.clear_cache()`)
 - New features: <100MB additional RAM
 
+### HTTP Transport Seams
+- `curl_cffi` — primary stealth HTTP (JA3 fingerprint, FetchCoordinator only)
+- `httpx` with HTTP/2 — optional transport lane (gated by `HLEDAC_ENABLE_HTTPX_H2`, F206K)
+- `aiohttp` — fallback for direct fetches, pastebin_monitor internal session
+- Never use aiohttp in FetchCoordinator — only curl_cffi and httpx transport layers
+
 ---
 
 ## Development Rules

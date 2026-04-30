@@ -1,5 +1,8 @@
 # Known Issues
 
+**Last Updated**: 2026-04-30
+**Status**: Partial — some issues from F196A-F206AE not yet reflected
+
 ## Pre-Existing (Not Fixed in F196A-PRE)
 
 ### Smoke Test Failures — AdaptiveSemaphore Proxy
@@ -31,9 +34,9 @@ Pytest collects 0 items from these directories — they're isolated and not in a
 ---
 
 ### Pastebin Monitor HTTP Seam Violation
-**Status**: Deferred to F198x
+**Status**: Deferred — no active sprint scheduled
 
-`pastebin_monitor.py` creates its own `aiohttp.ClientSession`, bypassing `FetchCoordinator` (circuit breaker, rate limiting). TODO comment added at line 25.
+`pastebin_monitor.py` creates its own `aiohttp.ClientSession`, bypassing `FetchCoordinator` (circuit breaker, rate limiting). TODO comment added at line 25. F198x was never completed for this item.
 
 ---
 
