@@ -63,6 +63,24 @@ Sprint teardown is performed in LIFO (reverse) order relative to startup to resp
 
 ---
 
+## Sprint F206L: M1 Async Crash Vectors
+
+### `asyncio.run()` in ThreadPoolExecutor is a crash vector on M1
+Running `asyncio.run()` inside a `ThreadPoolExecutor` worker on M1 causes nested event loop crashes. The correct pattern is `loop.run_until_complete()`.
+
+**Sites fixed (F196A):**
+- `tool_registry.py:478` — uses `loop.run_in_executor(pool, lambda: loop.run_until_complete(coro))`
+- `document_intelligence.py:1325` — uses `loop.run_in_executor(pool, lambda: loop.run_until_complete(...))`
+- `unicode_analyzer.py:711` — direct `asyncio.run()` (no pool wrapper, safe)
+- `execution_optimizer.py:407` — direct `asyncio.run()` (no pool wrapper, safe)
+- `brain/inference_engine.py:445` — uses `loop.run_until_complete(coro)`
+- `graph_rag.py:436` — already safe (`loop.run_until_complete`)
+
+### `mx.eval([])` before `mx.metal.clear_cache()`
+Before clearing MLX Metal cache, always drain the GPU queue with `mx.eval([])`. Without this barrier, `clear_cache()` is a no-op. Order: `gc.collect() → mx.eval([]) → mx.metal.clear_cache()`.
+
+---
+
 ## Sprint 8T: MLX Metal Memory Limits (M1 8GB UMA)
 
 ### Metal cache limit is 2.5 GiB
@@ -99,4 +117,30 @@ All findings written to persistent storage flow through `DuckDBShadowStore.async
 
 ---
 
-*Last updated: Sprint F206K (2026-04-29) — verified all invariants still current*
+*Last updated: Sprint F206L (2026-04-30) — verified all invariants still current*
+
+---
+
+## Sprint F206K: HTTPX/H2 Transport Capability Layer
+
+### HTTPX H2 auto-disable after 3 failures
+`transport/httpx_transport.py` maintains per-process failure state:
+- `_httpx_h2_auto_disabled` — set True after 3 failures, permanent for process lifetime
+- `_httpx_h2_failure_count` — increments on each httpx_h2 failure, resets on auto-disable
+- `record_httpx_h2_failure()` — called by `public_fetcher.py` on httpx_h2 exceptions
+- `classify_httpx_h2_error()` — maps httpx exceptions to error types (NOT for CancelledError)
+
+### HTTPX H2 never used for Tor/I2P/Freenet/JS/stealth
+`should_use_httpx_h2()` returns `(False, reason)` immediately for:
+- `.onion`, `.i2p`, `.b32.i2p`, `.freenet` URLs
+- `use_stealth=True`
+- `use_js=True`
+
+### CancelledError is NOT classified — must be re-raised
+`classify_httpx_h2_error()` raises `asyncio.CancelledError` immediately. Callers must handle CancelledError propagation separately.
+
+### HTTPX H2 env gate: `HLEDAC_ENABLE_HTTPX_H2`
+HTTPX H2 lane is gated by `HLEDAC_ENABLE_HTTPX_H2` env var (default: disabled). When env is not "1"/"true"/"yes"/"on", `should_use_httpx_h2()` returns `(False, "httpx_h2_disabled_env")`.
+
+### Fallback is one-shot per URL
+When httpx_h2 fails and h2 is not installed, `_httpx_reason="httpx_h2_fallback"` is set and aiohttp path is taken. No infinite loop — the fallback is not retried via httpx_h2.

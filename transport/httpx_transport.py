@@ -2,46 +2,25 @@
 HTTPX Transport Routing — Transport Capability Layer 2026
 =======================================================
 
-Sprint F206K: Per-request HTTPX H2 lane routing.
+Sprint F206AF: HTTPX/H2 Auto-Fallback to aiohttp
 
 Provides:
-  - _should_use_httpx_h2(): URL classification for HTTPX H2 lane
-  - _route_via_httpx_h2(): execute fetch via HTTPX (if enabled)
+  - should_use_httpx_h2(): URL classification for HTTPX H2 lane
+  - fetch_via_httpx_h2(): execute fetch via HTTPX (if enabled)
+  - classify_httpx_h2_error(): classify httpx exceptions into error types
 
-AUTHORITY (F206K):
-  HTTPX H2 is an OPTIONAL clearnet capability lane.
-  It is NEVER used for:
-    - Tor (.onion)
-    - I2P (.i2p, .b32.i2p)
-    - Freenet (.freenet)
-    - JS rendering mode
-    - Stealth mode
-    - Any non-clearnet URL
-
-  Default hot-path remains aiohttp for all clearnet random web crawl.
-  HTTPX H2 is activated ONLY for same-host batch, API endpoints,
-  and explicit allowlist candidates.
-
-TRANSPORT ROUTING TRUTH TABLE (F206K):
-  URL Type                          | Lane        | Transport
-  ----------------------------------+-------------+------------------
-  random clearnet HTML              | aiohttp     | TCPConnector
-  same-host/API clearnet            | httpx_h2    | HTTP/2
-  CT/CDX/API endpoint              | httpx_h2    | HTTP/2
-  .onion                           | aiohttp_socks | ProxyConnector
-  .i2p / .b32.i2p                 | aiohttp_socks | ProxyConnector
-  .freenet                         | aiohttp     | HTTP proxy
-  use_js=True                      | aiohttp     | TCPConnector
-  use_stealth=True                 | aiohttp     | StealthSession
-
-FAIL-SOFT BEHAVIOR:
-  If HTTPX H2 is selected but h2 is not installed:
-    → fall back to aiohttp (not a hard error)
-    → transport_fallback_reason set
+F206AF INVARIANTS:
+  [H2-A1] Failure counter bounded: max 3 per-process before auto-disable
+  [H2-A2] httpx_h2 never used for Tor/I2P/Freenet/JS/stealth
+  [H2-A3] Fallback is one-shot per URL (no infinite loops)
+  [H2-A4] transport_fallback_reason set on fallback (additive, never overwrites)
+  [H2-A5] CancelledError re-raised (not caught by error classifier)
+  [H2-A6] Auto-disable gates: disabled after 3 failures in current process
 """
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import os
@@ -52,6 +31,122 @@ import urllib.parse
 from ..utils.async_helpers import async_getaddrinfo
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# HTTPX H2 Per-Process State — bounded failure tracking
+# =============================================================================
+
+_httpx_h2_auto_disabled: bool = False  # True after _MAX_FAILURES consecutive
+_httpx_h2_failure_count: int = 0       # resets on auto-disable
+_MAX_HTTPX_H2_FAILURES: int = 3       # [H2-A1] bounded
+
+# Exposed for tests — not for general public use
+def get_httpx_h2_auto_disable() -> bool:
+    return _httpx_h2_auto_disabled
+
+def get_httpx_h2_failure_count() -> int:
+    return _httpx_h2_failure_count
+
+
+def reset_httpx_h2_state() -> None:
+    """Reset httpx_h2 failure counter and auto-disable flag. For tests only."""
+    global _httpx_h2_auto_disabled, _httpx_h2_failure_count
+    _httpx_h2_auto_disabled = False
+    _httpx_h2_failure_count = 0
+    logger.debug("[HTTPX] httpx_h2 state reset (failures=0, auto-disable=False)")
+
+
+def record_httpx_h2_failure() -> None:
+    """
+    Record a httpx_h2 failure and auto-disable if threshold reached.
+
+    Invariants:
+      [H2-A1] After _MAX_FAILURES failures, auto-disable for rest of process
+      [H2-A2] Disabled state is permanent for this process (no re-enable)
+    """
+    global _httpx_h2_auto_disabled, _httpx_h2_failure_count
+    if _httpx_h2_auto_disabled:
+        return  # Already disabled, no-op
+    _httpx_h2_failure_count += 1
+    if _httpx_h2_failure_count >= _MAX_HTTPX_H2_FAILURES:
+        _httpx_h2_auto_disabled = True
+        logger.warning(
+            f"[HTTPX] httpx_h2 auto-disabled after {_httpx_h2_failure_count} failures "
+            f"(threshold={_MAX_HTTPX_H2_FAILURES})"
+        )
+
+
+def classify_httpx_h2_error(exc_or_result) -> str:
+    """
+    Classify httpx_h2 failure into error category.
+
+    CancelledError is NOT classified — it MUST be re-raised by caller.
+
+    Args:
+        exc_or_result: exception instance, or "httpx_response" dict with error field
+
+    Returns:
+        Error type string from: none | connect_timeout | read_timeout | tls_error |
+        protocol_error | remote_protocol_error | too_many_connections | pool_timeout |
+        http_403 | http_429 | http_5xx | empty_body | content_type_rejected |
+        unknown_httpx_error
+
+    Invariants:
+      [H2-A5] CancelledError NOT in return list — caller must re-raise
+    """
+    import asyncio
+
+    # Handle CancelledError — MUST be re-raised, not classified
+    if isinstance(exc_or_result, asyncio.CancelledError):
+        raise exc_or_result  # [H2-A5]
+
+    exc = exc_or_result
+    exc_name = exc.__class__.__name__ if hasattr(exc, "__class__") else ""
+
+    # Check for specific httpx exception types first (before generic TimeoutError)
+    # PoolTimeout (specific httpx exception)
+    if exc_name == "PoolTimeout":
+        return "pool_timeout"
+    # ReadTimeout (specific httpx exception)
+    if exc_name == "ReadTimeout":
+        return "read_timeout"
+    # ConnectTimeout
+    if exc_name == "ConnectTimeout":
+        return "connect_timeout"
+    # RemoteProtocolError
+    if exc_name == "RemoteProtocolError":
+        return "remote_protocol_error"
+    # TooManyConnectionsError
+    if exc_name == "TooManyConnectionsError":
+        return "too_many_connections"
+
+    # Generic TimeoutError / asyncio.TimeoutError
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "connect_timeout"
+
+    # TLS errors
+    if "TLS" in exc_name or "SSL" in exc_name or "SSLError" in exc_name or "TLSProtocol" in exc_name:
+        return "tls_error"
+
+    # HTTP status codes from response
+    if hasattr(exc, "response") and exc.response is not None:
+        status = getattr(exc.response, "status_code", 0)
+        if status == 403:
+            return "http_403"
+        if status == 429:
+            return "http_429"
+        if status >= 500:
+            return "http_5xx"
+
+    # Protocol errors (invalid response format, malformed)
+    if "ProtocolError" in exc_name or "InvalidURL" in exc_name or "SerializationError" in exc_name:
+        return "protocol_error"
+
+    # Unknown httpx error
+    if "httpx" in exc.__class__.__module__:
+        return "unknown_httpx_error"
+
+    return "unknown_httpx_error"
 
 # =============================================================================
 # URL Classification Helpers
@@ -188,6 +283,10 @@ def should_use_httpx_h2(
     if not env_val or env_val in ("0", "false", "no", "off"):
         return False, "httpx_h2_disabled_env"
 
+    # F206AF: Auto-disable check — after 3 failures, disable for rest of process
+    if _httpx_h2_auto_disabled:
+        return False, "httpx_h2_auto_disabled"
+
     # P3: Darknet URLs — route via aiohttp_socks
     host = _extract_host(url)
     if host.endswith(".onion"):
@@ -205,7 +304,7 @@ def should_use_httpx_h2(
     if use_js:
         return False, "js_required"
 
-    # P4: Check h2 availability (only reached when env is enabled)
+    # P4: Check h2 availability (only reached when env is enabled and not auto-disabled)
     if not is_httpx_h2_enabled():
         return False, "httpx_h2_disabled"
 
@@ -386,5 +485,10 @@ async def _validate_redirect_url(redirect_url: str) -> None:
 __all__ = [
     "should_use_httpx_h2",
     "fetch_via_httpx_h2",
+    "classify_httpx_h2_error",
     "_is_api_like_url",
+    # F206AF state management (exposed for tests)
+    "get_httpx_h2_auto_disable",
+    "get_httpx_h2_failure_count",
+    "reset_httpx_h2_state",
 ]

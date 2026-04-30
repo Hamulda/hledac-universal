@@ -1926,6 +1926,49 @@ CREATE TABLE IF NOT EXISTS hypothesis_feedback (
 
 ---
 
+## F206L — Lightpanda Browser Pool Lifecycle (2026-04-30)
+
+**Cíl:** Dokumentovat Lightpanda headless browser pool lifecycle v transport capability vrstvě.
+
+**Komponenty** (`coordinators/fetch_coordinator.py`):
+
+**`LightpandaManager`** — single browser instance manager (Sprint 44):
+- `_bin_path` — `DB_ROOT/bin/lightpanda` (aarch64 macOS binary)
+- `_endpoint` — `ws://127.0.0.1:9222` (WebSocket debugger endpoint)
+- `_download_if_missing()` — downloads binary from GitHub releases; requires `LIGHTPANDA_SHA256` env var for hash verification before writing disk
+- `ensure_running()` — starts Lightpanda subprocess on port 9222; waits up to 5s for port availability
+- `fetch_js(url, proxy)` — renders URL via nodriver; calls `ensure_running()` first; uses `tab.evaluate()` with SEC-07 static string guard
+
+**`LightpandaPool`** — pool of 2 concurrent instances (Sprint 45):
+- `_size = 2` — fixed pool size (M1 RAM constraint)
+- `asyncio.Queue` for instance allocation
+- `start()` — initializes pool: starts all instances, adds available to queue
+- `get_instance()` — acquires available instance (waits if none free)
+- `release(instance)` — returns instance to pool
+
+**Pool lifecycle in FetchCoordinator:**
+- Pool initialized at construction: `self._lightpanda_pool = LightpandaPool(size=2)`
+- Pool started lazily on first `get_instance()` call
+- `_lightpanda_pool_started` flag prevents double-start
+- `asyncio.Lock` (`_lightpanda_lock`) guards pool initialization (P1-1 double-check fix)
+
+**Security (SEC-07):**
+- JS expression validated against `^[a-zA-Z0-9_.\[\]]+$` before `tab.evaluate()`
+- Binary download requires `LIGHTPANDA_SHA256` env var — hash mismatch blocks write
+- `LIGHTPANDA_SHA256` must be set BEFORE download attempts
+
+**Integration seam** (`coordinators/fetch_coordinator.py`):
+- `_fetch_with_lightpanda()` called when URL passes JS-heavy heuristic
+- Used for: dynamic content that aiohttp cannot fetch (SPA, lazy-load, etc.)
+- NOT used when: `use_stealth=True` or `use_js=False` or M1 model context active
+
+**Known issues / limitations:**
+- Lightpanda binary download requires GitHub network access
+- Binary is platform-specific (aarch64 macOS) — no Linux fallback in same binary
+- nodriver must be installed alongside Lightpanda for `fetch_js()` to work
+
+---
+
 ## Architectural verdict
 
 ### What is real today

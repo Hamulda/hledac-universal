@@ -1018,10 +1018,25 @@ async def async_fetch_public_text(
             raise
         except Exception as _e:
             elapsed_ms = (time.monotonic() - t0) * 1000
+            # F206AF: Record httpx_h2 failure and classify
+            try:
+                from hledac.universal.transport.httpx_transport import (
+                    record_httpx_h2_failure,
+                    classify_httpx_h2_error,
+                )
+                _httpx_err_type = classify_httpx_h2_error(_e)
+                record_httpx_h2_failure()
+            except asyncio.CancelledError:
+                # F206AF: CancelledError MUST be re-raised, not caught
+                raise
+            except Exception:
+                _httpx_err_type = "unknown_httpx_error"
             # HTTPX H2 failed — fallback to aiohttp with telemetry
-            logger.warning(f"[HTTPX] H2 lane failed for {url}, falling back to aiohttp: {_e}")
+            logger.warning(f"[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}")
             _use_httpx_h2 = False
             _httpx_reason = "httpx_h2_fallback"
+            # F206AF: Set transport_fallback_reason for this URL
+            # (will be set on the FetchResult from the aiohttp fallback path)
 
     # Apply longer timeout for anonymized networks (Tor/I2P)
     if use_tor or use_i2p:
@@ -1285,6 +1300,7 @@ async def async_fetch_public_text(
                                         failure_stage="http",
                                         selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                                         transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                        transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
                                         transport_counters=_tc,
                                     )
 
@@ -1322,6 +1338,7 @@ async def async_fetch_public_text(
                                     failure_stage="size",
                                     selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                                     transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                    transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
                                     transport_counters=_tc,
                                 )
                             body_chunks.append(chunk)
@@ -1467,6 +1484,7 @@ async def async_fetch_public_text(
                 network_error_kind="timeout",
                 selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                 transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
                 transport_counters=_tc,
             )
         except asyncio.CancelledError:
@@ -1508,6 +1526,7 @@ async def async_fetch_public_text(
                 network_error_kind=network_error_kind,
                 selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
                 transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
                 transport_counters=_tc,
             )
 
@@ -1543,6 +1562,7 @@ async def async_fetch_public_text(
         network_error_kind=network_error_kind,
         selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
         transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+        transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
         transport_counters=_tc,
     )
 

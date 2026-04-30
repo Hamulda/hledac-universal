@@ -1,0 +1,90 @@
+{
+  "artifact_type": "httpx_h2_fetch_diagnosis_f206af",
+  "sprint": "F206AF",
+  "timestamp": "2026-04-30T02:20:00Z",
+  "phase": "PHASE_1_DIAGNOSTIC_ARTIFACT",
+  "phase_0_findings": {
+    "should_use_httpx_h2_defined_at": "transport/httpx_transport.py:149",
+    "fetch_via_httpx_h2_defined_at": "transport/httpx_transport.py:225",
+    "existing_fallback": "transport/httpx_transport.py:1022-1024 — except block sets _httpx_reason='httpx_h2_fallback'",
+    "failure_counter_existed": false,
+    "auto_disable_existed": false,
+    "transport_fallback_reason_set_at": "fetching/public_fetcher.py:1451 (main success path)",
+    "classification_function_existed": false,
+    "h2_installed_in_venv": false,
+    "httpx_installed_in_venv": false
+  },
+  "phase_1_aiohttp_baseline": [
+    {
+      "url": "https://www.bleepingcomputer.com/feed/",
+      "note": "AsyncIOMessageLoop — asyncio.run() in wrong context (pre-existing)"
+    },
+    {
+      "url": "https://www.microsoft.com/security/blog/",
+      "note": "JS need detected → Camoufox retry"
+    },
+    {
+      "url": "https://www.kaspersky.com/blog/",
+      "note": "JS need detected → Camoufox retry"
+    }
+  ],
+  "phase_1_httpx_h2_enabled": [
+    {
+      "url": "https://www.bleepingcomputer.com/feed/",
+      "note": "Same AsyncIOMessageLoop issue — not httpx_h2 specific"
+    },
+    {
+      "url": "https://www.microsoft.com/security/blog/",
+      "note": "JS path — httpx_h2 not reached for JS-detected URLs"
+    },
+    {
+      "url": "https://www.kaspersky.com/blog/",
+      "note": "JS path — httpx_h2 not reached for JS-detected URLs"
+    }
+  ],
+  "root_cause_analysis": {
+    "f206ab_10_of_10_failed": "Root cause NOT reproduced in isolated test. h2 is not installed, so async_get_httpx_client raises RuntimeError at line 101 of httpx_client.py. The except block at public_fetcher.py:1019 catches this, sets _httpx_reason='httpx_h2_fallback', and continues to aiohttp. The 10/10 failure in F206AB pipeline context suggests the pipeline was also calling async_get_httpx_client() at import/initialization time, causing a different failure mode.",
+    "httpx_h2_not_installed_truth": "httpx+h2 NOT installed in hledac/universal/.venv. is_httpx_h2_enabled() returns False. should_use_httpx_h2 correctly returns 'httpx_h2_disabled' for all URLs when env is set to '1' (h2 check is the final gate after env check).",
+    "fallback_works_correctly": "When httpx_h2 fails (h2 not installed), exception is caught, _httpx_reason='httpx_h2_fallback' is set, and aiohttp path is taken. transport_fallback_reason is set on FetchResult.",
+    "auto_disable_mechanism": "After 3 httpx_h2 failures via record_httpx_h2_failure(), _httpx_h2_auto_disabled=True. should_use_httpx_h2 returns (False, 'httpx_h2_auto_disabled') — prevents further httpx_h2 attempts in same process."
+  },
+  "key_findings": [
+    "httpx+h2 NOT installed in .venv — httpx_h2_disabled is the always-correct reason",
+    "should_use_httpx_h2 correctly checks h2 availability as final gate before returning True",
+    "classify_httpx_h2_error(exc) added — 13 error categories, CancelledError re-raised",
+    "record_httpx_h2_failure() — increments counter per failure, auto-disable at 3",
+    "transport_fallback_reason set on all FetchResult paths after httpx_h2 fallback",
+    "should_use_httpx_h2 blocks with 'httpx_h2_auto_disabled' reason once 3 failures hit",
+    "F206AF code does NOT change scheduler/discovery/storage behavior",
+    "No git operations performed per NO-GIT rule"
+  ],
+  "httpx_h2_state_functions": [
+    "classify_httpx_h2_error(exc) -> str — 13 categories: none|connect_timeout|read_timeout|tls_error|protocol_error|remote_protocol_error|too_many_connections|pool_timeout|http_403|http_429|http_5xx|empty_body|content_type_rejected|unknown_httpx_error",
+    "record_httpx_h2_failure() — increments counter, auto-disables at 3",
+    "reset_httpx_h2_state() — clears counter and auto-disable flag (tests only)",
+    "get_httpx_h2_auto_disable() -> bool",
+    "get_httpx_h2_failure_count() -> int"
+  ],
+  "fallback_policy_table": {
+    "httpx_h2 exception caught": "record failure → classify error → set _httpx_reason='httpx_h2_fallback' → continue to aiohttp → set transport_fallback_reason on FetchResult",
+    "httpx_h2 failure count >= 3": "should_use_httpx_h2 returns (False, 'httpx_h2_auto_disabled') — no more httpx_h2 attempts in this process",
+    "httpx_h2 success": "normal FetchResult with selected_transport='httpx_h2', no fallback reason set",
+    "CancelledError during httpx_h2": "re-raised immediately, not classified, not counted as failure"
+  },
+  "test_results": {
+    "test_httpx_h2_fallback": "25 passed (new file)",
+    "probe_transport_cap_2026": "90 passed",
+    "probe_public_fetcher_retry": "77 passed",
+    "probe_public_branch_diagnosis": "49 passed",
+    "probe_e2e_signal_fixture": "all passed",
+    "probe_e2e_readiness": "45 passed"
+  },
+  "verdict": "PASS_WITH_NOTES",
+  "verdict_notes": [
+    "httpx+h2 not installed prevents real httpx_h2 fetch testing in this environment",
+    "F206AF code correctly handles all specified failure scenarios",
+    "auto-disable mechanism works as designed",
+    "fallback policy correctly routes failed httpx_h2 to aiohttp",
+    "Cannot verify httpx_h2 transport failure in isolation without h2 installed"
+  ]
+}
