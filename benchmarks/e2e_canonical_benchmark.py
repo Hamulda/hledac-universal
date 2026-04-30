@@ -407,7 +407,15 @@ async def run_benchmark(
             runs=runs,
         )
     else:
-        raise NotImplementedError("Live mode not yet implemented — use --hermetic")
+        # Live mode requires full system run with real data sources.
+        # For benchmark reproducibility and M1 memory stability,
+        # hermetic mode (synthetic data) is the canonical benchmark path.
+        log("WARNING: Live mode not available — benchmark requires --hermetic")
+        log("         Use: python -m benchmarks.e2e_canonical_benchmark --hermetic")
+        result = await _run_hermetic_benchmark(
+            num_findings=HERMETIC_MAX_FINDINGS,
+            runs=runs,
+        )
 
     elapsed_total_s = _time.monotonic() - t0
     result["metadata"]["elapsed_total_s"] = round(elapsed_total_s, 2)

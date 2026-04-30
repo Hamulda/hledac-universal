@@ -217,16 +217,23 @@ class PredictivePlanner:
             Seznam predikcí
         """
         predictions = []
-        
-        # Jednoduchá heuristická predikce
+
+        # Jednoduchá heuristická predikce — history-aware
         current_step = context.get("current_step", 0)
-        history = context.get("history", [])
-        
-        # Predikovat další kroky na základě historie
+        history: List[Dict[str, Any]] = context.get("history", [])
+
+        # §7.4: frequency-based action selection from history (model deferred to MLX phase)
+        action_counts: Dict[str, int] = {}
+        for h in history:
+            a = h.get("action") or h.get("predicted_action", "search")
+            action_counts[a] = action_counts.get(a, 0) + 1
+        preferred_action = (
+            max(action_counts, key=lambda a: action_counts[a]) if action_counts else "search"
+        )
+
         for i in range(max_steps):
-            # TODO: Lepší predikce pomocí modelu
             prediction = Prediction(
-                action="search",  # Default
+                action=preferred_action,
                 params={"query": context.get("query", "")},
                 confidence=0.7 - (i * 0.1),  # Klesající confidence
             )

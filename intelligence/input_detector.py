@@ -554,56 +554,42 @@ class IntelligentInputDetector:
         """
         base_confidence = 0.7
 
-        if pattern_type == "hash":
-            # Validate hash length
-            valid_lengths = [32, 40, 64, 128]
-            if len(match) in valid_lengths:
-                base_confidence += 0.2
-            # Check for hex characters only
-            if re.match(r"^[0-9a-fA-F]+$", match):
-                base_confidence += 0.1
-
-        elif pattern_type == "base64":
-            # Check padding
-            if len(match) % 4 == 0:
-                base_confidence += 0.15
-            # Length check
-            if len(match) >= 40:
-                base_confidence += 0.1
-
-        elif pattern_type == "ip":
-            # Validate IP octets
-            try:
-                octets = match.split(".")
-                if all(0 <= int(o) <= 255 for o in octets):
-                    base_confidence += 0.25
-                else:
-                    base_confidence -= 0.3
-            except ValueError:
-                base_confidence -= 0.3
-
-        elif pattern_type == "email":
-            # Check for valid domain
-            if "@" in match:
-                parts = match.split("@")
-                if len(parts) == 2 and "." in parts[1]:
+        match pattern_type:
+            case "hash":
+                valid_lengths = [32, 40, 64, 128]
+                if len(match) in valid_lengths:
                     base_confidence += 0.2
-
-        elif pattern_type == "url":
-            # Check for valid URL structure
-            if "://" in match:
-                base_confidence += 0.2
-            if match.startswith(("http://", "https://")):
-                base_confidence += 0.1
-
-        elif pattern_type == "uuid":
-            # UUID has fixed format
-            base_confidence = 0.95
-
-        elif pattern_type == "mac_address":
-            # Validate format
-            if re.match(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$", match):
-                base_confidence = 0.9
+                if re.match(r"^[0-9a-fA-F]+$", match):
+                    base_confidence += 0.1
+            case "base64":
+                if len(match) % 4 == 0:
+                    base_confidence += 0.15
+                if len(match) >= 40:
+                    base_confidence += 0.1
+            case "ip":
+                try:
+                    octets = match.split(".")
+                    if all(0 <= int(o) <= 255 for o in octets):
+                        base_confidence += 0.25
+                    else:
+                        base_confidence -= 0.3
+                except ValueError:
+                    base_confidence -= 0.3
+            case "email":
+                if "@" in match:
+                    parts = match.split("@")
+                    if len(parts) == 2 and "." in parts[1]:
+                        base_confidence += 0.2
+            case "url":
+                if "://" in match:
+                    base_confidence += 0.2
+                if match.startswith(("http://", "https://")):
+                    base_confidence += 0.1
+            case "uuid":
+                base_confidence = 0.95
+            case "mac_address":
+                if re.match(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$", match):
+                    base_confidence = 0.9
 
         return min(max(base_confidence, 0.0), 1.0)
 

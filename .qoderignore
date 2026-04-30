@@ -1,0 +1,87 @@
+# Python/runtime
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Build/dist
+dist/
+build/
+*.egg-info/
+
+# Secrets/env
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets/
+private/
+credentials/
+config.local.*
+*.token
+
+# Logs/artifacts
+*.log
+logs/
+artifacts/
+reports/
+tmp/
+temp/
+.cache/
+
+# DB / vector / cache stores
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.lmdb
+*.mdb
+*.parquet
+*.arrow
+*.lance
+lancedb/
+.lancedb/
+vector/
+vectors/
+embeddings/
+index/
+indexes/
+
+# ML/model caches
+models/
+checkpoints/
+*.safetensors
+*.gguf
+*.bin
+*.onnx
+*.mlpackage
+*.mlmodel
+mlx-cache/
+huggingface/
+.huggingface/
+
+# OSINT/runtime scratch
+/Volumes/ghost_tmp/
+ghost_tmp/
+crawl_cache/
+fetch_cache/
+wayback_cache/
+commoncrawl_cache/
+tor_cache/
+
+# IDE/system
+.git/
+.idea/
+.vscode/.ropeproject/
+.DS_Store

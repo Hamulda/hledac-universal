@@ -749,7 +749,7 @@ class HTNPlanner:
             finding_id=request.task_id,
             query=request.prompt[:256],
             source_type=sys.intern("planner_bridge"),
-            confidence=0.8,  # TODO §7.4/§5.15: nahradit quality/corroboration score
+            confidence=self._cost_model_confidence(),
             ts=time.time(),
             provenance=(
                 sys.intern(request.task_id),
@@ -758,6 +758,19 @@ class HTNPlanner:
             ),
             payload_text=result.hermes_output,
         )
+
+    def _cost_model_confidence(self) -> float:
+        """
+        Sprint 8S §7.4/§5.15: derive confidence from cost_model sample count.
+        More update samples → higher confidence in model's quality signal.
+        Sigmoid scaling: min 0.5 (no samples) → max 0.95 (many samples).
+        """
+        MIN_SAMPLES = 10
+        TARGET = 0.95
+        SCALE = 50.0  # steepness
+        if self._update_count < MIN_SAMPLES:
+            return 0.5
+        return TARGET - (TARGET - 0.5) / (1.0 + (self._update_count / SCALE) ** 1.5)
 
     async def _store_canonical_findings(
         self,

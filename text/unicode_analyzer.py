@@ -706,9 +706,9 @@ class UnicodeAttackAnalyzer:
                     # M1-SAFE: Loop exists but not running - use run_until_complete on
                     # the existing loop from this worker thread. This avoids creating
                     # a nested event loop with asyncio.run() which crashes Metal on M1.
-                    import concurrent.futures
-                    _sync_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                    _sync_exec.submit(loop.run_until_complete, self.cleanup())
+                    # F206AE: Fixed - use run_in_executor with default executor instead
+                    # of creating a new ThreadPoolExecutor that is never shut down.
+                    loop.run_in_executor(None, lambda: loop.run_until_complete(self.cleanup()))
             except RuntimeError:
                 # No running loop - asyncio.run() directly is safe (no existing loop).
                 # F196A: Do NOT wrap in ThreadPoolExecutor.submit() - that creates

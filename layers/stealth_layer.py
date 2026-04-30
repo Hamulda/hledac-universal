@@ -2297,7 +2297,52 @@ class StealthLayer:
             
             if detected_type == CaptchaType.IMAGE:
                 logger.info("🧩 Image CAPTCHA detected")
-                # TODO: Extract image and solve
+                # Extract image URL from HTML
+                import re
+                img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>', html, re.IGNORECASE)
+                if img_match:
+                    img_url = img_match.group(1)
+                    # Resolve relative URLs
+                    if img_url.startswith('/'):
+                        from urllib.parse import urljoin
+                        img_url = urljoin(url, img_url)
+                    # Fetch image bytes
+                    try:
+                        if img_url.startswith('data:'):
+                            # Handle data URL: data:image/png;base64,...
+                            import base64
+                            img_data = img_url.split(',', 1)[1]
+                            image_bytes = base64.b64decode(img_data)
+                        else:
+                            # Fetch via page context or direct request
+                            try:
+                                img_response = await page.evaluate(
+                                    '(async () => { const resp = await fetch(arguments[0]); return resp.ok ? await resp.arrayBuffer() : null; })()',
+                                    img_url
+                                )
+                                if img_response:
+                                    image_bytes = bytes(img_response)
+                                else:
+                                    image_bytes = None
+                            except Exception:
+                                image_bytes = None
+
+                        if image_bytes:
+                            result = await self.solve_captcha(
+                                captcha_type=CaptchaType.IMAGE,
+                                image_data=image_bytes
+                            )
+                            if result.success:
+                                self._captchas_solved += 1
+                                return CaptchaSolution(
+                                    solution=result.solution or "",
+                                    solved_at=time.time(),
+                                    cost=0.0,
+                                    confidence=result.confidence,
+                                    provider="internal_ocr"
+                                )
+                    except Exception as e:
+                        logger.warning(f"Image CAPTCHA fetch/solve failed: {e}")
                 return None
             elif detected_type in (CaptchaType.RECAPTCHA_V2, CaptchaType.RECAPTCHA_V3):
                 logger.info("🧩 reCAPTCHA detected")

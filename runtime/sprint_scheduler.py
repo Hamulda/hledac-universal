@@ -764,43 +764,31 @@ class SprintScheduler:
         is_cold = signal_stage in cold_stages or feed_conf == 0
 
         # Sprint posture derived from pipeline signals
-        if signal_stage == "prestore_findings_present":
-            econ.recent_health_posture = "hot"
-            econ.last_signal_cycle = current_cycle
-            econ.silent_streak = 0
-            econ.cooldown_until_cycle = None
-        elif feed_conf >= 60:
-            econ.recent_health_posture = "warm"
-            econ.last_signal_cycle = current_cycle
-            econ.silent_streak = 0
-            econ.cooldown_until_cycle = None
-        elif feed_conf >= 20:
-            econ.recent_health_posture = "lukewarm"
-            if econ.silent_streak > 0:
-                econ.silent_streak += 1
-            else:
-                econ.silent_streak = 1
-            # Cooldown only if cold for 2+ consecutive cycles — guard against re-entry
-            if econ.cooldown_until_cycle is None and econ.silent_streak >= 2:
-                econ.cooldown_until_cycle = current_cycle + 3
-        elif is_cold:
-            econ.recent_health_posture = "cold"
-            if econ.cooldown_until_cycle is not None:
-                # Already in cooldown — freeze streak, do not extend
-                pass
-            else:
-                # First cold hit or already warming — increment streak
-                econ.silent_streak += 1
-                # Enter cooldown after 2 consecutive cold cycles
-                if econ.silent_streak >= 2:
+        match ():
+            case _ if signal_stage == "prestore_findings_present":
+                econ.recent_health_posture = "hot"
+                econ.last_signal_cycle = current_cycle
+                econ.silent_streak = 0
+                econ.cooldown_until_cycle = None
+            case _ if feed_conf >= 60:
+                econ.recent_health_posture = "warm"
+                econ.last_signal_cycle = current_cycle
+                econ.silent_streak = 0
+                econ.cooldown_until_cycle = None
+            case _ if feed_conf >= 20:
+                econ.recent_health_posture = "lukewarm"
+                econ.silent_streak = (econ.silent_streak + 1) if econ.silent_streak > 0 else 1
+                if econ.cooldown_until_cycle is None and econ.silent_streak >= 2:
                     econ.cooldown_until_cycle = current_cycle + 3
-        else:
-            # Marginal signal — reset but watch
-            econ.recent_health_posture = "marginal"
-            if econ.silent_streak > 0:
-                econ.silent_streak += 1
-            else:
-                econ.silent_streak = 1
+            case _ if is_cold:
+                econ.recent_health_posture = "cold"
+                if econ.cooldown_until_cycle is None:
+                    econ.silent_streak += 1
+                    if econ.silent_streak >= 2:
+                        econ.cooldown_until_cycle = current_cycle + 3
+            case _:
+                econ.recent_health_posture = "marginal"
+                econ.silent_streak = (econ.silent_streak + 1) if econ.silent_streak > 0 else 1
 
         # Winning source analysis — if feed_native dominates, source is self-sufficient
         feed_native_hits = winning.get("feed_native", 0)
@@ -1297,29 +1285,37 @@ class SprintScheduler:
         # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
         _r = self._result
         # dominant_public_blocker: backend_degraded takes priority, else error string
-        if _r.public_backend_degraded:
-            _r.dominant_public_blocker = "backend_degraded"
-        elif _r.public_error and _r.public_error not in ("", "null"):
-            # Truncate long error strings to first 80 chars
-            _r.dominant_public_blocker = _r.public_error[:80]
+        match ():
+            case _ if _r.public_backend_degraded:
+                _r.dominant_public_blocker = "backend_degraded"
+            case _ if _r.public_error and _r.public_error not in ("", "null"):
+                _r.dominant_public_blocker = _r.public_error[:80]
+            case _:
+                pass
         # dominant_feed_blocker: first non-empty feed blocker type
-        if _r.feed_inaccessible_detected:
-            _r.dominant_feed_blocker = "feed_inaccessible"
-        elif _r.feed_content_empty_detected:
-            _r.dominant_feed_blocker = "feed_content_empty"
-        elif _r.feed_no_pattern_with_content:
-            _r.dominant_feed_blocker = "feed_no_pattern_with_content"
-        elif _r.findings_build_loss_detected:
-            _r.dominant_feed_blocker = "findings_build_loss"
-        elif _r.feed_zero_yield_detected:
-            _r.dominant_feed_blocker = "feed_zero_yield"
+        match ():
+            case _ if _r.feed_inaccessible_detected:
+                _r.dominant_feed_blocker = "feed_inaccessible"
+            case _ if _r.feed_content_empty_detected:
+                _r.dominant_feed_blocker = "feed_content_empty"
+            case _ if _r.feed_no_pattern_with_content:
+                _r.dominant_feed_blocker = "feed_no_pattern_with_content"
+            case _ if _r.findings_build_loss_detected:
+                _r.dominant_feed_blocker = "findings_build_loss"
+            case _ if _r.feed_zero_yield_detected:
+                _r.dominant_feed_blocker = "feed_zero_yield"
+            case _:
+                pass
         # dominant_branch_blocker: whichever branch had a non-empty blocker first
-        if _r.dominant_public_blocker and not _r.dominant_feed_blocker:
-            _r.dominant_branch_blocker = "public"
-        elif _r.dominant_feed_blocker and not _r.dominant_public_blocker:
-            _r.dominant_branch_blocker = "feed"
-        elif _r.dominant_public_blocker and _r.dominant_feed_blocker:
-            _r.dominant_branch_blocker = "both"
+        match ():
+            case _ if _r.dominant_public_blocker and not _r.dominant_feed_blocker:
+                _r.dominant_branch_blocker = "public"
+            case _ if _r.dominant_feed_blocker and not _r.dominant_public_blocker:
+                _r.dominant_branch_blocker = "feed"
+            case _ if _r.dominant_public_blocker and _r.dominant_feed_blocker:
+                _r.dominant_branch_blocker = "both"
+            case _:
+                pass
         # branch_degradation_summary: descriptive tag combining all detected conditions
         _tags: list[str] = []
         if _r.public_backend_degraded:
@@ -1378,10 +1374,11 @@ class SprintScheduler:
 
         # Filter: skip lower tiers if lifecycle is pruning
         mode = lifecycle.recommended_tool_mode(now_monotonic)
-        if mode == "prune":
-            work_items = self._prune_work_items(work_items)
-        elif mode == "panic":
-            work_items = [w for w in work_items if w.tier == SourceTier.SURFACE]
+        match mode:
+            case "prune":
+                work_items = self._prune_work_items(work_items)
+            case "panic":
+                work_items = [w for w in work_items if w.tier == SourceTier.SURFACE]
 
         if not work_items:
             return True  # nothing to do this cycle
@@ -1596,29 +1593,20 @@ class SprintScheduler:
 
         # Wait for all branches with overall timeout
         # Use shield so cancellation of one branch doesn't affect others
-        done, pending = await _asyncio.wait(
-            [feed_branch, public_branch, ct_branch],
-            timeout=timeout_s,
-            return_when=_asyncio.ALL_COMPLETED,
-        )
-
-        # Cancel any pending (slow) branches and log degradation
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except _asyncio.CancelledError:
-                pass  # Expected
-
-        # Sprint F195B: Track which branches timed out for diagnostics
-        if public_branch in pending:
-            log.debug("[aggressive] Public branch did not complete within %ss", timeout_s)
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    feed_branch, public_branch, ct_branch,
+                    return_exceptions=True,
+                ),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            log.debug("[aggressive] Branch(es) did not complete within %ss", timeout_s)
             self._result.public_branch_timed_out = True
-            self._result.branch_timeout_count += 1
-        if ct_branch in pending:
-            log.debug("[aggressive] CT branch did not complete within %ss", timeout_s)
             self._result.ct_branch_timed_out = True
-            self._result.branch_timeout_count += 1
+            self._result.branch_timeout_count += 2
+            results = []
 
         return True
 
@@ -3569,15 +3557,16 @@ class SprintScheduler:
         _stage = getattr(result, 'signal_stage', 'unknown')
         if _zsr:
             self._result.feed_zero_yield_detected = True
-            if _zsr == "empty_fetch":
-                self._result.feed_inaccessible_detected = True
-            elif _zsr == "content_empty":
-                self._result.feed_content_empty_detected = True
-            elif _zsr == "no_pattern_hits_with_content":
-                self._result.feed_no_pattern_with_content = True
-            elif _zsr == "findings_build_loss":
-                self._result.findings_build_loss_detected = True
-                self._result.feed_no_signal_sources.append(feed_url)
+            match _zsr:
+                case "empty_fetch":
+                    self._result.feed_inaccessible_detected = True
+                case "content_empty":
+                    self._result.feed_content_empty_detected = True
+                case "no_pattern_hits_with_content":
+                    self._result.feed_no_pattern_with_content = True
+                case "findings_build_loss":
+                    self._result.findings_build_loss_detected = True
+                    self._result.feed_no_signal_sources.append(feed_url)
             # Bounded: max 20 sources in blocker list
             if len(self._result.feed_no_signal_sources) < 20:
                 if feed_url not in self._result.feed_no_signal_sources:

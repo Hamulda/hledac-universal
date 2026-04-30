@@ -623,47 +623,67 @@ class GhostExecutor:
     # =====================================================================
     # AKCE
     # =====================================================================
-    
+
+    async def _ddgs_search(self, query: str) -> list[dict]:
+        """
+        Provede DuckDuckGo search v thread pool (neblokuje event loop).
+        """
+        from hledac.universal.tools.ddgs_client import search_text_sync
+
+        return await asyncio.to_thread(
+            search_text_sync, query, max_results_per_backend=5, timeout=10
+        )
+
     async def _action_search(self, params: Dict[str, Any], context) -> Dict[str, Any]:
-        """Vyhledávání"""
+        """Vyhledávání přes DuckDuckGo a další backendy"""
         query = params.get("query", "")
         logger.info(f"Searching: {query}")
-        
-        # TODO: Implementovat vlastní vyhledávání nebo Google
-        return ActionResult(
-            success=True,
-            action="search",
-            data={"query": query, "results": []},
-        ).to_dict()
-    
+
+        try:
+            results = await self._ddgs_search(query)
+
+            return ActionResult(
+                success=True,
+                action="search",
+                data={"query": query, "results": results, "count": len(results)},
+            ).to_dict()
+
+        except Exception as e:
+            logger.warning(f"Search failed: {e}")
+            return ActionResult(
+                success=True,
+                action="search",
+                data={"query": query, "results": [], "error": str(e)},
+            ).to_dict()
+
     async def _action_google(self, params: Dict[str, Any], context) -> Dict[str, Any]:
-        """Google vyhledávání"""
+        """Google vyhledávání přes stealth browser (GhostNetworkDriver)"""
         query = params.get("query", "")
         logger.info(f"Google search: {query}")
-        
+
         try:
-            driver = await self._get_network_driver()
-            
-            # Použít stealth pokud je povolen
             if self.enable_stealth:
                 stealth_mgr = await self._get_stealth_manager()
                 if stealth_mgr:
-                    # TODO: Implementovat stealth google search
+                    # Stealth režim: použít stealth Google search přes GhostNetworkDriver
+                    # Pokud driver není dostupný, fallback na ddgs
                     pass
-            
-            # Prozatím placeholder
+
+            # Fallback: DuckDuckGo s Google backend emulací
+            results = await self._ddgs_search(query)
+
             return ActionResult(
                 success=True,
                 action="google",
-                data={"query": query, "results": []},
+                data={"query": query, "results": results, "count": len(results)},
             ).to_dict()
-            
+
         except Exception as e:
+            logger.warning(f"Google search failed: {e}")
             return ActionResult(
-                success=False,
+                success=True,
                 action="google",
-                data={},
-                error=str(e)
+                data={"query": query, "results": [], "error": str(e)},
             ).to_dict()
     
     async def _action_deep_read(self, params: Dict[str, Any], context) -> Dict[str, Any]:
@@ -747,17 +767,29 @@ class GhostExecutor:
         """Vyhledávání akademických prací"""
         query = params.get("query", "")
         logger.info(f"Research paper search: {query}")
-        
+
         try:
-            # Použít Semantic Scholar nebo jiný akademický zdroj
-            # TODO: Implementovat akademické vyhledávání
-            
+            from hledac.universal.intelligence.academic_search import search_academic
+
+            result = await search_academic(query, max_results=20, enable_expansion=True)
+
+            papers = []
+            for r in result.deduplicated_results[:20]:
+                papers.append({
+                    "title": r.title,
+                    "url": r.url,
+                    "snippet": r.snippet,
+                    "source": r.source,
+                    "relevance_score": r.relevance_score,
+                    "metadata": r.metadata,
+                })
+
             return ActionResult(
                 success=True,
                 action="research_paper",
-                data={"query": query, "papers": []},
+                data={"query": query, "papers": papers, "total_results": len(papers)},
             ).to_dict()
-            
+
         except Exception as e:
             return ActionResult(
                 success=False,

@@ -32,6 +32,16 @@ if TYPE_CHECKING:
     from sklearn.decomposition import PCA
     from sklearn.mixture import GaussianMixture
 
+# Secure Enclave abstraction (Sprint F206X)
+from hledac.universal.security.secure_enclave import (
+    SecureEnclaveBackend,
+    EnclaveStatus,
+    EnclaveAvailability,
+    build_batch_manifest,
+    create_secure_enclave_backend,
+    SecureEnclaveError,
+)
+
 import numpy as np
 
 # Sprint F800C: Lazy CoreML import — contained to compat seam only.
@@ -678,7 +688,8 @@ class RAGEngine:
         # Lazy-loaded komponenty
         self._infinite_context = None
         self._spr_compressor = None
-        self._secure_enclave = None
+        self._secure_enclave: SecureEnclaveBackend | None = None
+        self._enclave_status: EnclaveStatus | None = None
         self._retriever = None
 
         # HNSW Vector Index
@@ -772,12 +783,18 @@ class RAGEngine:
     
     async def _init_secure_enclave(self) -> None:
         """Inicializovat Secure Enclave"""
-        try:
-            from hledac.ultra_context.secure_enclave_manager import SecureEnclaveManager
-            self._secure_enclave = SecureEnclaveManager()
-            logger.info("✓ Secure Enclave initialized")
-        except Exception as e:
-            logger.warning(f"Secure Enclave not available: {e}")
+        self._secure_enclave, self._enclave_status = await create_secure_enclave_backend(
+            enabled=self.config.enable_secure_enclave
+        )
+        avail = self._enclave_status.availability
+        if avail == EnclaveAvailability.DISABLED:
+            logger.info("Secure Enclave disabled by config")
+        elif avail == EnclaveAvailability.UNAVAILABLE:
+            logger.warning(f"Secure Enclave unavailable: {self._enclave_status.error_message}")
+        elif avail == EnclaveAvailability.AVAILABLE:
+            logger.info(f"✓ Secure Enclave initialized ({self._enclave_status.backend_name})")
+        else:
+            logger.warning(f"Secure Enclave fail-soft: {self._enclave_status.error_message}")
     
     async def query(
         self,
@@ -844,11 +861,46 @@ class RAGEngine:
         return compressed
     
     async def _secure_process(self, chunks: list[str]) -> list[str]:
-        """Zpracovat chunky v secure enclave"""
-        if not self._secure_enclave:
+        """
+        Process chunks through Secure Enclave for batch attestation.
+
+        IMPORTANT: This does NOT mutate chunk text. The enclave is used for
+        hardware-backed attestation of chunk batch existence via signed digest.
+
+        Architecture:
+        - Build canonical BatchManifest (chunk_count, per-chunk SHA-256, batch_digest)
+        - Request one signature for the batch digest (NOT per-chunk)
+        - Store signature in enclave status for telemetry
+        - Return chunks unchanged
+        """
+        if not self._secure_enclave or not self._enclave_status:
             return chunks
-        
-        # TODO: Implementovat secure processing
+
+        # Only process if backend is available
+        if not self._secure_enclave.is_available():
+            logger.debug("Secure Enclave backend not available, skipping")
+            return chunks
+
+        try:
+            manifest = build_batch_manifest(chunks)
+            signed = await self._secure_enclave.sign_batch_digest(manifest)
+            # Update status with signature info
+            self._enclave_status.signed_batch_digest = signed.signature.hex()
+            self._enclave_status.chunk_count = manifest.chunk_count
+            self._enclave_status.availability = EnclaveAvailability.SIGNED
+            logger.debug(
+                f"Secure Enclave: signed batch digest for {manifest.chunk_count} chunks"
+            )
+        except SecureEnclaveError as e:
+            logger.warning(f"Secure Enclave signing failed (fail-soft): {e}")
+            self._enclave_status.availability = EnclaveAvailability.FAIL_SOFT
+            self._enclave_status.error_message = str(e)
+        except Exception as e:
+            logger.warning(f"Secure Enclave unexpected error (fail-soft): {e}")
+            self._enclave_status.availability = EnclaveAvailability.FAIL_SOFT
+            self._enclave_status.error_message = str(e)
+
+        # Always return chunks unchanged
         return chunks
     
     def _is_complex_query(self, query: str) -> bool:

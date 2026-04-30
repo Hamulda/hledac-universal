@@ -53,12 +53,16 @@ class TestCurlCffiActiveRuntime:
     """Phase 2: Active callsite probe — verifies runtime behavior with mocks."""
 
     @pytest.fixture(autouse=True)
-    def _setup_env(self):
-        """Ensure curl_cffi env is enabled for all tests in this class."""
-        self._env_patch = patch.dict(os.environ, {"HLEDAC_ENABLE_CURL_CFFI": "1"})
-        self._env_patch.start()
-        yield
-        self._env_patch.stop()
+    def _setup_env(self, monkeypatch):
+        """Ensure curl_cffi env is enabled for all tests in this class.
+
+        Uses pytest's monkeypatch (not patch.dict) for guaranteed cleanup via addfinalizer.
+        patch.dict with clear=True in other test files can leave os.environ in a
+        state where env restoration fails between tests (ordering-dependent pollution).
+        """
+        original_env = dict(os.environ)
+        os.environ["HLEDAC_ENABLE_CURL_CFFI"] = "1"
+        monkeypatch.addfinalizer(lambda: os.environ.clear() or os.environ.update(original_env))
 
     # --- Test 1: use_stealth=True + env=1 → curl_cffi called once ---
     def test_uses_curl_when_explicit_stealth(self):

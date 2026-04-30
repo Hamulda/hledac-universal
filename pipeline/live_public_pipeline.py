@@ -1488,27 +1488,21 @@ async def _generate_and_store_report(
     # Generate report based on routed model
     report_text = ""
     try:
-        if model_choice == "vision":
-            # Vision encoder placeholder (P15) - return placeholder text
-            # In P15 this would call actual vision encoder
-            report_text = "[image description] " + "\n".join(context_items[:3])
-            logger.info("[P14] Using vision encoder placeholder")
-
-        elif model_choice == "modernbert":
-            # ModernBERT summarizer - use ModernBERT for summarization
-            # Try to use modernbert summarizer if available
-            try:
-                from hledac.universal.brain.modernbert_engine import ModernBertEngine
-                modernbert = ModernBertEngine()
-                report_text = await modernbert.summarize(context_items)
-                logger.info("[P14] Using ModernBERT summarizer")
-            except Exception as e:
-                # Fallback to Hermes if ModernBERT unavailable
-                logger.warning(f"[P14] ModernBERT failed, falling back to Hermes: {e}")
+        match model_choice:
+            case "vision":
+                report_text = "[image description] " + "\n".join(context_items[:3])
+                logger.info("[P14] Using vision encoder placeholder")
+            case "modernbert":
+                try:
+                    from hledac.universal.brain.modernbert_engine import ModernBertEngine
+                    modernbert = ModernBertEngine()
+                    report_text = await modernbert.summarize(context_items)
+                    logger.info("[P14] Using ModernBERT summarizer")
+                except Exception as e:
+                    logger.warning(f"[P14] ModernBERT failed, falling back to Hermes: {e}")
+                    report_text = await hermes_engine.generate_report(query, context_items)
+            case _:
                 report_text = await hermes_engine.generate_report(query, context_items)
-        else:
-            # Default: Hermes3 for general text generation
-            report_text = await hermes_engine.generate_report(query, context_items)
 
     except Exception as e:
         import logging
@@ -2589,6 +2583,23 @@ async def async_run_live_public_pipeline(
     public_branch_verdict["discovery_error_type"] = discovery_error_type  # F206AB taxonomy string
     public_branch_verdict["discovery_fallback_triggered"] = fallback_triggered  # raw adapter string
 
+    # Sprint F206AO: provider metadata from DiscoveryBatchResult
+    _dbr_provider_name = getattr(discovery_result, "provider_name", None)
+    _dbr_provider_chain = getattr(discovery_result, "provider_chain", None)
+    _dbr_source_family = getattr(discovery_result, "source_family", None)
+    _dbr_elapsed_s = getattr(discovery_result, "elapsed_s", None)
+    _dbr_error_type = getattr(discovery_result, "error_type", None)
+    if _dbr_provider_name is not None:
+        public_branch_verdict["discovery_provider_name"] = _dbr_provider_name
+    if _dbr_provider_chain is not None:
+        public_branch_verdict["discovery_provider_chain"] = _dbr_provider_chain
+    if _dbr_source_family is not None:
+        public_branch_verdict["discovery_source_family"] = _dbr_source_family
+    if _dbr_elapsed_s is not None:
+        public_branch_verdict["discovery_provider_elapsed_s"] = _dbr_elapsed_s
+    if _dbr_error_type is not None:
+        public_branch_verdict["discovery_provider_error_type"] = _dbr_error_type
+
     # Sprint F206AB: fetch stage counters — collected from all_page_results
     # Success: p.fetched=True AND p.error=None (per PipelinePageResult construction pattern)
     _fetch_attempted = 0
@@ -3077,10 +3088,21 @@ def _patch_discovery(search_fn: Any) -> None:
 def _ensure_discovery_patched() -> None:
     global _ASYNC_DISCOVERY_SEARCH
     if _ASYNC_DISCOVERY_SEARCH is None:
-        from hledac.universal.discovery.duckduckgo_adapter import (
-            async_search_public_web,
-        )
-        _ASYNC_DISCOVERY_SEARCH = async_search_public_web
+        # Sprint F206AO: env-gated providerless cascade wiring
+        # HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1 → use cascade (DDG→Historical→Wayback)
+        # Default (0/false/off) → use direct DDG (unchanged behavior)
+        _env = os.environ.get("HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY", "0").strip().lower()
+        _providerless = _env in ("1", "true", "yes", "on")
+        if _providerless:
+            from hledac.universal.discovery.cascade import (
+                async_search_providerless,
+            )
+            _ASYNC_DISCOVERY_SEARCH = async_search_providerless
+        else:
+            from hledac.universal.discovery.duckduckgo_adapter import (
+                async_search_public_web,
+            )
+            _ASYNC_DISCOVERY_SEARCH = async_search_public_web
 
 
 # Ensure discovery is patched on module import

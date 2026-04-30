@@ -67,6 +67,39 @@ try:
 except ImportError:
     GHOST_AVAILABLE = False
 
+# Secure Enclave (Sprint F206X)
+try:
+    from .secure_enclave import (
+        EnclaveAvailability,
+        EnclaveStatus,
+        SignedDigest,
+        BatchManifest,
+        SecureEnclaveBackend,
+        SecureEnclaveError,
+        NullSecureEnclaveBackend,
+        build_batch_manifest,
+        create_secure_enclave_backend,
+    )
+    ENCLAVE_AVAILABLE = True
+except ImportError:
+    ENCLAVE_AVAILABLE = False
+
+# Post-Quantum (Sprint F206Z)
+try:
+    from .pq_crypto import (
+        PQAvailability,
+        PQStatus,
+        PQSignature,
+        HybridSignatureSet,
+        PostQuantumBackend,
+        PostQuantumError,
+        NullPostQuantumBackend,
+        create_post_quantum_backend,
+    )
+    PQ_AVAILABLE = True
+except ImportError:
+    PQ_AVAILABLE = False
+
 __all__ = [
     # PII Gate
     'SecurityGate',
@@ -102,4 +135,25 @@ __all__ = [
     'RecoveredContent',
     'detect_digital_ghosts',
     'GHOST_AVAILABLE',
+    # Secure Enclave
+    'EnclaveAvailability',
+    'EnclaveStatus',
+    'SignedDigest',
+    'BatchManifest',
+    'SecureEnclaveBackend',
+    'SecureEnclaveError',
+    'NullSecureEnclaveBackend',
+    'build_batch_manifest',
+    'create_secure_enclave_backend',
+    'ENCLAVE_AVAILABLE',
+    # Post-Quantum
+    'PQAvailability',
+    'PQStatus',
+    'PQSignature',
+    'HybridSignatureSet',
+    'PostQuantumBackend',
+    'PostQuantumError',
+    'NullPostQuantumBackend',
+    'create_post_quantum_backend',
+    'PQ_AVAILABLE',
 ]

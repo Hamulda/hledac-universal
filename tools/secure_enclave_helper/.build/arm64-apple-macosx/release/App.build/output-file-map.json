@@ -1,0 +1,25 @@
+{
+  "": {
+    "dependencies": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/App.d",
+    "object": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/App.o",
+    "swift-dependencies": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/master.swiftdeps"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/Sources/Commands.swift": {
+    "object": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/Commands.swift.o",
+    "swiftmodule": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/Commands~partial.swiftmodule",
+    "swift-dependencies": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/Commands.swiftdeps",
+    "diagnostics": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/Commands.dia"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/Sources/EnclaveSigner.swift": {
+    "object": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/EnclaveSigner.swift.o",
+    "swiftmodule": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/EnclaveSigner~partial.swiftmodule",
+    "swift-dependencies": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/EnclaveSigner.swiftdeps",
+    "diagnostics": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/EnclaveSigner.dia"
+  },
+  "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/Sources/main.swift": {
+    "object": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/main.swift.o",
+    "swiftmodule": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/main.swiftdeps",
+    "diagnostics": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/arm64-apple-macosx/release/App.build/main.dia"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "artifact_type": "curl_cffi_protected_fixture",
+  "sprint": "F206AK2",
+  "verdict": "CURL_CFFI_SIGNAL_RECOVERED",
+  "verdict_reason": "curl_cffi recovered from aiohttp 403 with 24 pattern hits",
+  "fixture_url": "http://127.0.0.1:54506",
+  "fixture_port": 54506,
+  "baseline": {
+    "status_code": 403,
+    "selected_transport": "aiohttp",
+    "fetched_bytes": 0,
+    "pattern_hits": 0
+  },
+  "curl_cffi_recovery": {
+    "status_code": 200,
+    "selected_transport": "curl_cffi",
+    "fetched_bytes": 823,
+    "pattern_hits": 24,
+    "transport_fallback_reason": null,
+    "tls_impersonate": "chrome110",
+    "fixture_hits": 1,
+    "public_fetched": 1
+  },
+  "fixture_hits": 1,
+  "pattern_hits": 24,
+  "transport_counters": {
+    "curl_cffi_count": 1
+  },
+  "errors": []
+}

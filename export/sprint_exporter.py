@@ -748,70 +748,69 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
     Willing to SKIP: není false-positive seed generation.
     """
     # Normalize ioc_type lowercase for matching
-    t = ioc_type.lower()
-
-    if t == "domain":
-        return [
-            {
-                "task_type": "rdap_lookup",
-                "value": value,
-                "priority": 0.85,
-                "reason": f"{reason}/{ioc_type}",
-            },
-            {
-                "task_type": "domain_to_ct",
-                "value": value,
-                "priority": 0.80,
-                "reason": f"{reason}/{ioc_type}",
-            },
-        ]
-    elif t in ("ip", "ipv4", "ipv6"):
-        return [
-            {
-                "task_type": "rdap_lookup",
-                "value": value,
-                "priority": 0.85,
-                "reason": f"{reason}/{ioc_type}",
-            },
-        ]
-    elif t == "url":
-        # URL has host component — RDAP lookup makes sense
-        # domain_to_ct makes NO sense (URL is not a domain)
-        return [
-            {
-                "task_type": "rdap_lookup",
-                "value": value,
-                "priority": 0.80,
-                "reason": f"{reason}/{ioc_type}",
-            },
-        ]
-    elif t == "infohash":
-        return [
-            {
-                "task_type": "dht_infohash_lookup",
-                "value": value,
-                "priority": 0.90,
-                "reason": f"{reason}/{ioc_type}",
-            },
-        ]
-    elif t == "onion":
-        # Onion is not a DNS domain — no domain_to_ct
-        # DHT lookup is marginally relevant (some Tor research uses DHT)
-        # but skip entirely to be safe — no strong signal
-        return []
-    elif t in ("cve", "md5", "sha1", "sha256", "sha512", "sha384",
-               "md6", "ripemd160", "unknown", "email", "phone",
-               "ipv4_addr", "ipv6_addr", "mac_addr", "btc", "eth",
-               "xmpp", "jabber"):
-        # Truthful skip — these types have no meaningful follow-up seed
-        # CVE: vuln ID not a network observable
-        # Hashes: not domains, not infohashes, not IPs
-        # Unknown: no valid seeds possible
-        return []
-    else:
-        # Catch-all for any other type not explicitly handled:
-        # generate NO seeds — better to skip than to generate falsy task
-        return []
+    match ioc_type.lower():
+        case "domain":
+            return [
+                {
+                    "task_type": "rdap_lookup",
+                    "value": value,
+                    "priority": 0.85,
+                    "reason": f"{reason}/{ioc_type}",
+                },
+                {
+                    "task_type": "domain_to_ct",
+                    "value": value,
+                    "priority": 0.80,
+                    "reason": f"{reason}/{ioc_type}",
+                },
+            ]
+        case "ip" | "ipv4" | "ipv6":
+            return [
+                {
+                    "task_type": "rdap_lookup",
+                    "value": value,
+                    "priority": 0.85,
+                    "reason": f"{reason}/{ioc_type}",
+                },
+            ]
+        case "url":
+            # URL has host component — RDAP lookup makes sense
+            # domain_to_ct makes NO sense (URL is not a domain)
+            return [
+                {
+                    "task_type": "rdap_lookup",
+                    "value": value,
+                    "priority": 0.80,
+                    "reason": f"{reason}/{ioc_type}",
+                },
+            ]
+        case "infohash":
+            return [
+                {
+                    "task_type": "dht_infohash_lookup",
+                    "value": value,
+                    "priority": 0.90,
+                    "reason": f"{reason}/{ioc_type}",
+                },
+            ]
+        case "onion":
+            # Onion is not a DNS domain — no domain_to_ct
+            # DHT lookup is marginally relevant (some Tor research uses DHT)
+            # but skip entirely to be safe — no strong signal
+            return []
+        case ("cve" | "md5" | "sha1" | "sha256" | "sha512" | "sha384"
+              | "md6" | "ripemd160" | "unknown" | "email" | "phone"
+              | "ipv4_addr" | "ipv6_addr" | "mac_addr" | "btc" | "eth"
+              | "xmpp" | "jabber"):
+            # Truthful skip — these types have no meaningful follow-up seed
+            # CVE: vuln ID not a network observable
+            # Hashes: not domains, not infohashes, not IPs
+            # Unknown: no valid seeds possible
+            return []
+        case _:
+            # Catch-all for any other type not explicitly handled:
+            # generate NO seeds — better to skip than to generate falsy task
+            return []
 
 
 def _build_product_value_summary(
@@ -1055,54 +1054,54 @@ def _derive_focus_expand(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
     recs: list[dict[str, Any]] = []
 
-    if signal == "high_density":
-        # Good results — focus on what works
-        recs.append({
-            "task_type": "focus_recommendation",
-            "suggested_action": "focus_on_high_density",
-            "priority": 0.80,
-            "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
-        })
-        recs.append({
-            "task_type": "expand_recommendation",
-            "suggested_action": "expand_sources",
-            "priority": 0.70,
-            "reason": "high_density_means_room_to_broaden",
-        })
-    elif signal == "medium_density":
-        recs.append({
-            "task_type": "focus_recommendation",
-            "suggested_action": "narrow_scope",
-            "priority": 0.75,
-            "reason": "medium_density_mixed_signal_narrow_focus",
-        })
-    elif signal == "slow_novelty":
-        recs.append({
-            "task_type": "focus_recommendation",
-            "suggested_action": "accelerate_existing",
-            "priority": 0.65,
-            "reason": "slow_novelty_means_queries_work_just_slow",
-        })
-        recs.append({
-            "task_type": "expand_recommendation",
-            "suggested_action": "new_timing_strategy",
-            "priority": 0.60,
-            "reason": "temporal_patterns_may_unlock_findings",
-        })
-    elif signal == "depleted":
-        recs.append({
-            "task_type": "focus_recommendation",
-            "suggested_action": "abandon_current_approach",
-            "priority": 0.85,
-            "reason": "depleted_signal_switch_approach",
-        })
-        if dedup_effective:
+    match signal:
+        case "high_density":
+            recs.append({
+                "task_type": "focus_recommendation",
+                "suggested_action": "focus_on_high_density",
+                "priority": 0.80,
+                "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
+            })
             recs.append({
                 "task_type": "expand_recommendation",
-                "suggested_action": "completely_new_sources",
-                "priority": 0.75,
-                "reason": "dedup_effective_sources_exhausted",
+                "suggested_action": "expand_sources",
+                "priority": 0.70,
+                "reason": "high_density_means_room_to_broaden",
             })
+        case "medium_density":
+            recs.append({
+                "task_type": "focus_recommendation",
+                "suggested_action": "narrow_scope",
+                "priority": 0.75,
+                "reason": "medium_density_mixed_signal_narrow_focus",
+            })
+        case "slow_novelty":
+            recs.append({
+                "task_type": "focus_recommendation",
+                "suggested_action": "accelerate_existing",
+                "priority": 0.65,
+                "reason": "slow_novelty_means_queries_work_just_slow",
+            })
+            recs.append({
+                "task_type": "expand_recommendation",
+                "suggested_action": "new_timing_strategy",
+                "priority": 0.60,
+                "reason": "temporal_patterns_may_unlock_findings",
+            })
+        case "depleted":
+            recs.append({
+                "task_type": "focus_recommendation",
+                "suggested_action": "abandon_current_approach",
+                "priority": 0.85,
+                "reason": "depleted_signal_switch_approach",
+            })
+            if dedup_effective:
+                recs.append({
+                    "task_type": "expand_recommendation",
+                    "suggested_action": "completely_new_sources",
+                    "priority": 0.75,
+                    "reason": "dedup_effective_sources_exhausted",
+                })
 
     return recs[:2]
 
@@ -1121,30 +1120,28 @@ def _derive_branch_seeds(branch_value: dict[str, Any]) -> list[dict[str, Any]]:
     verdict = branch_value.get("branch_verdict", "")
     seeds: list[dict[str, Any]] = []
 
-    if verdict == "feed_dominant":
-        # Feed branch is winning — suggest expanding it
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "expand_feed_branch",
-            "priority": 0.78,
-            "reason": f"feed_dominant/{verdict}",
-        })
-    elif verdict == "public_dominant":
-        # Public branch is winning — suggest expanding it
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "expand_public_branch",
-            "priority": 0.78,
-            "reason": f"public_dominant/{verdict}",
-        })
-    elif verdict == "balanced":
-        # Both branches contribute — suggest balancing effort
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "balance_branches",
-            "priority": 0.70,
-            "reason": "balanced_both_branches_contribute",
-        })
+    match verdict:
+        case "feed_dominant":
+            seeds.append({
+                "task_type": "query_suggestion",
+                "suggested_action": "expand_feed_branch",
+                "priority": 0.78,
+                "reason": f"feed_dominant/{verdict}",
+            })
+        case "public_dominant":
+            seeds.append({
+                "task_type": "query_suggestion",
+                "suggested_action": "expand_public_branch",
+                "priority": 0.78,
+                "reason": f"public_dominant/{verdict}",
+            })
+        case "balanced":
+            seeds.append({
+                "task_type": "query_suggestion",
+                "suggested_action": "balance_branches",
+                "priority": 0.70,
+                "reason": "balanced_both_branches_contribute",
+            })
 
     # If one side had zero findings, flag it explicitly
     feed_f = branch_value.get("feed_findings", 0)

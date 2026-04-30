@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
+    from ..coordinators.fetch_coordinator import FetchCoordinator
 
-# TODO F198x: migrate to FetchCoordinator.fetch() — circuit breaker bypass
+# F206AE: migrate to FetchCoordinator.fetch() — circuit breaker bypass
 # pastebin_monitor creates its own aiohttp.ClientSession bypassing FetchCoordinator,
 # which means rate limiting and circuit breaker are not applied to paste scraping.
 

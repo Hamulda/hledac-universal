@@ -19121,6 +19121,8 @@ class _BrainManager:
             self.hermes = Hermes3Engine(sanitize_for_llm=sanitize_callback)
             await self.hermes.initialize()
             self._hermes_initialized = True
+            # Wire hermes into decision engine for LLM fallback
+            self.decision_engine._hermes = self.hermes
             logger.info("✅ BrainManager initialized (Hermes ready)")
 
         # MoE Router inicializace

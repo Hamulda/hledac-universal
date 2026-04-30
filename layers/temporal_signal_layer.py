@@ -159,7 +159,7 @@ class TemporalSignalLayer:
         self._bocpd_max_run = bocpd_max_run
 
         self._states: dict[str, _KeyState] = {}
-        self._lru_order: list[str] = []  # simple list for LRU eviction
+        self._lru_order: deque[str] = deque()  # deque for O(1) popleft
         self._edge_candidates: deque[TemporalEdgeCandidate] = deque(maxlen=256)
 
         # Source synchrony window — sliding window of source → set(keys)
@@ -538,7 +538,7 @@ class TemporalSignalLayer:
                 )
             layer._states[key] = state
 
-        layer._lru_order = list(snapshot.get("lru_order", []))
+        layer._lru_order = deque(snapshot.get("lru_order", []))
         layer._edge_candidates = deque(
             [
                 TemporalEdgeCandidate(
@@ -573,7 +573,7 @@ class TemporalSignalLayer:
 
     def _ensure_capacity(self) -> None:
         while len(self._states) >= self._max_keys and self._lru_order:
-            oldest = self._lru_order.pop(0)
+            oldest = self._lru_order.popleft()
             self._states.pop(oldest, None)
 
     def _update_edge_candidates(

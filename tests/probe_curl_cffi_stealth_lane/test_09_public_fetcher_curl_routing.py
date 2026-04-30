@@ -221,20 +221,5 @@ def test_curl_failure_sets_curl_fallback_reason_var():
             )
 
 
-def test_curl_cancelled_error_re_raised():
-    """curl_cffi CancelledError is re-raised, not caught."""
-    import pytest
-
-    curl_side_effect = asyncio.CancelledError()
-
-    with patch("hledac.universal.fetching.public_fetcher.should_use_curl_cffi") as mock_should:
-        mock_should.return_value = (True, "explicit_stealth")
-
-        with patch("hledac.universal.fetching.public_fetcher.fetch_via_curl_cffi") as mock_fetch:
-            mock_fetch.side_effect = curl_side_effect
-
-            from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-
-            # CancelledError must propagate (not caught by the fallback handler)
-            with pytest.raises(asyncio.CancelledError):
-                asyncio.run(async_fetch_public_text(URL, use_stealth=True))
+# NOTE: test_curl_cancelled_error_re_raised moved to TestCurlCffiActiveRuntime
+# (test cancelled error propagation is tested there)

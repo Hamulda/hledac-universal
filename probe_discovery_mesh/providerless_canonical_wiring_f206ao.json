@@ -1,0 +1,60 @@
+{
+  "sprint": "F206AO",
+  "created": "2026-04-30",
+  "phase": "providerless_canonical_wiring",
+  "verdict": "WIRED",
+  "files_changed": [
+    "pipeline/live_public_pipeline.py (wiring patch + verdict propagation)",
+    "tests/probe_providerless_discovery/test_providerless_wiring_truth.py (new)"
+  ],
+  "backup_created": [
+    "pipeline/live_public_pipeline.py.bak_F206AO_PROVIDERLESS_WIRE",
+    "tests/probe_providerless_discovery/test_providerless_wiring_truth.py.bak_F206AO_PROVIDERLESS_WIRE"
+  ],
+  "wiring_patch_summary": {
+    "patch_location": "pipeline/live_public_pipeline.py _ensure_discovery_patched() lines ~3077-3095",
+    "mechanism": "env-gated branch at module init — no runtime conditional at call-site",
+    "env_var": "HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY",
+    "env_default": "0 (disabled)",
+    "when_env_1": "_ASYNC_DISCOVERY_SEARCH = async_search_providerless (cascade: DDG→Historical→Wayback)",
+    "when_env_0": "_ASYNC_DISCOVERY_SEARCH = async_search_public_web (direct DDG, unchanged)",
+    "import_strategy": "lazy import — cascade imported only when env=1"
+  },
+  "verdict_fields_added": [
+    "discovery_provider_name",
+    "discovery_provider_chain",
+    "discovery_source_family",
+    "discovery_provider_elapsed_s",
+    "discovery_provider_error_type"
+  ],
+  "propagation_mechanism": "getattr() on discovery_result — safe when result is old DiscoveryBatchResult (missing new fields return None → not set in verdict)",
+  "default_behavior_unchanged": true,
+  "providerless_cascade_wired": true,
+  "provider_chain_propagates": true,
+  "source_family_propagates": true,
+  "fallback_triggered_propagates": true,
+  "no_scheduler_mutation": true,
+  "no_transport_change": true,
+  "no_storage_schema_change": true,
+  "test_results": {
+    "probe_providerless_discovery_total": "13 passed (existing) + 12 passed (new) = 25 total",
+    "probe_public_branch_diagnosis": "pre-existing failure (live DDG API)",
+    "probe_e2e_readiness": "passed",
+    "probe_public_fetcher_retry": "passed",
+    "probe_e2e_signal_fixture": "passed",
+    "probe_transport_cap_2026": "passed",
+    "probe_curl_cffi_protected_fixture": "passed",
+    "total": "245 passed, 1 pre-existing failure"
+  },
+  "env_truth_table": [
+    {"env_value": "unset / 0 / false / off / no", "providerless_enabled": false, "_ASYNC_DISCOVERY_SEARCH": "async_search_public_web", "cascade_active": false, "behavior": "DDG direct (unchanged from pre-F206AO)"},
+    {"env_value": "1 / true / yes / on", "providerless_enabled": true, "_ASYNC_DISCOVERY_SEARCH": "async_search_providerless", "cascade_active": true, "behavior": "DDG → Historical Frontier → Wayback CDX"}
+  ],
+  "source_family_by_layer": [
+    {"layer": "DDG primary", "source_family": "search", "provider_name": "duckduckgo", "provider_chain": "('duckduckgo',)"},
+    {"layer": "Historical Frontier fallback", "source_family": "historical", "provider_name": "historical_frontier", "provider_chain": "('duckduckgo', 'historical_frontier')"},
+    {"layer": "Wayback CDX fallback", "source_family": "archive", "provider_name": "wayback_cdx", "provider_chain": "('duckduckgo', 'historical_frontier', 'wayback_cdx')"}
+  ],
+  "status": "WIRED",
+  "recommended_next_patch": "F206AP — verify providerless cascade with live integration test (env=1, check verdict has correct source_family)"
+}

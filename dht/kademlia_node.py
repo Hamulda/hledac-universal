@@ -434,24 +434,18 @@ class KademliaNode:
             if not futures:
                 break
 
-            done, pending = await asyncio.wait(futures, timeout=3.0)
-            # cleanup pending
-            for fut in pending:
-                fut.cancel()
-
+            results = await asyncio.wait_for(
+                asyncio.gather(*futures, return_exceptions=True),
+                timeout=3.0,
+            )
             # remove all rpcs
             for rid in rpc_ids:
                 self._pending_rpcs.pop(rid, None)
                 self._pending_rpcs_created.pop(rid, None)
 
-            for fut in done:
-                if fut.cancelled():
+            for res in results:
+                if isinstance(res, BaseException):
                     continue
-                try:
-                    res = fut.result()
-                except Exception:
-                    continue
-
                 if isinstance(res, dict) and "value" in res:
                     self._local_put(key, res["value"])
                     return res["value"]

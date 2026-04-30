@@ -238,8 +238,54 @@ class I2PTransport(Transport):
         pass
 
     async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str = None):
-        """Send message via I2P SAM session."""
-        raise NotImplementedError("I2P SAM messaging not yet implemented")
+        """
+        Send message via I2P SAM session.
+
+        Uses HTTP POST through I2P SOCKS5 or HTTP proxy to target's /message endpoint.
+        This is the standard way to send messages over I2P — similar to Tor's messaging.
+
+        Args:
+            target: I2P destination address (Base32 destination or .i2p address)
+            msg_type: Message type identifier
+            payload: Message content as dict
+            signature: Digital signature for message authentication
+            msg_id: Optional message ID for tracking
+
+        Returns:
+            Response text from target's message endpoint
+        """
+        # Build the message URL — target is I2P destination
+        url = f"http://{target}/message"
+        data = {
+            'sender': self.i2p_address,
+            'type': msg_type,
+            'payload': payload,
+            'signature': signature,
+            'msg_id': msg_id
+        }
+
+        # Try to get appropriate session based on transport mode
+        session = None
+        if self.transport_mode == "socks" and self._session_socks:
+            session = self._session_socks
+        elif self.transport_mode == "http" and self._session_http:
+            session = self._session_http
+        else:
+            # Fallback: try to create a session
+            try:
+                session = await self.get_session()
+            except I2PUnavailableError:
+                logger.warning(f"No I2P session available for message to {target}")
+                raise I2PUnavailableError(
+                    f"No I2P session available (transport_mode={self.transport_mode})"
+                )
+
+        try:
+            async with session.post(url, json=data, timeout=self._aiohttp.ClientTimeout(total=30)) as resp:
+                return await resp.text()
+        except Exception as e:
+            logger.error(f"I2P message send failed to {target}: {e}")
+            raise I2PUnavailableError(f"Message send failed: {e}")
 
     async def get_session(self, scheme: str = "http") -> "aiohttp.ClientSession":
         """

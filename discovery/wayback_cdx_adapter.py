@@ -16,39 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-import msgspec
 
-
-# ---------------------------------------------------------------------------
-# DTO — mirrors duckduckgo_adapter DTOs
-# ---------------------------------------------------------------------------
-
-
-class _DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
-    """Local DTO — mirrors duckduckgo_adapter.DiscoveryHit."""
-
-    query: str
-    title: str
-    url: str
-    snippet: str
-    source: str
-    rank: int
-    retrieved_ts: float
-    score: float = 0.0
-    reason: str | None = None
-
-
-class _DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
-    """Local DTO — mirrors duckduckgo_adapter.DiscoveryBatchResult."""
-
-    hits: tuple[_DiscoveryHit, ...]
-    error: str | None = None
-    fallback_triggered: str | None = None
-    provider_name: str | None = None
-    provider_chain: tuple[str, ...] = ()
-    source_family: str | None = None
-    elapsed_s: float | None = None
-    error_type: str | None = None
+from hledac.universal.discovery.duckduckgo_adapter import (
+    DiscoveryHit,
+    DiscoveryBatchResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +34,7 @@ async def async_search_wayback_cdx(
     query: str,
     max_results: int = 10,
     timeout_s: float = 5.0,
-) -> _DiscoveryBatchResult:
+) -> DiscoveryBatchResult:
     """
     Wayback CDX API — historical snapshots matching query.
 
@@ -72,7 +44,7 @@ async def async_search_wayback_cdx(
         timeout_s:   HTTP timeout in seconds (default 5.0).
 
     Returns:
-        _DiscoveryBatchResult with archive.org snapshot URLs.
+        DiscoveryBatchResult with archive.org snapshot URLs.
 
     Fail-soft: returns empty hits on any error.
     """
@@ -83,7 +55,7 @@ async def async_search_wayback_cdx(
         max_results = 10
     query = query.strip() if query else ""
     if not query:
-        return _DiscoveryBatchResult(hits=(), error="empty_query")
+        return DiscoveryBatchResult(hits=(), error="empty_query")
 
     start = time.monotonic()
 
@@ -91,7 +63,7 @@ async def async_search_wayback_cdx(
         import aiohttp
     except ImportError:
         elapsed = time.monotonic() - start
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="import_error",
             elapsed_s=elapsed,
@@ -119,7 +91,7 @@ async def async_search_wayback_cdx(
                 ) as resp:
                     if resp.status != 200:
                         elapsed = time.monotonic() - start
-                        return _DiscoveryBatchResult(
+                        return DiscoveryBatchResult(
                             hits=(),
                             error_type="server_error",
                             elapsed_s=elapsed,
@@ -130,7 +102,7 @@ async def async_search_wayback_cdx(
                     data = await resp.json()
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="timeout",
             elapsed_s=elapsed,
@@ -141,7 +113,7 @@ async def async_search_wayback_cdx(
         )
     except Exception:
         elapsed = time.monotonic() - start
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="provider_exception",
             elapsed_s=elapsed,
@@ -154,7 +126,7 @@ async def async_search_wayback_cdx(
     elapsed = time.monotonic() - start
 
     if not data or not isinstance(data, list):
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="provider_empty",
             elapsed_s=elapsed,
@@ -167,7 +139,7 @@ async def async_search_wayback_cdx(
     rows = data[1:] if data and data[0] == ["url", "timestamp", "original", "mimetype", "statuscode"] else data
 
     seen_urls: set[str] = set()
-    hits_list: list[_DiscoveryHit] = []
+    hits_list: list[DiscoveryHit] = []
     now_ts = time.time()
 
     for row in rows:
@@ -189,7 +161,7 @@ async def async_search_wayback_cdx(
         wayback_url = f"https://web.archive.org/web/{timestamp}/{original_url}"
 
         hits_list.append(
-            _DiscoveryHit(
+            DiscoveryHit(
                 query=query,
                 title=f"Wayback: {original_url[:80]}",
                 url=wayback_url,
@@ -205,7 +177,7 @@ async def async_search_wayback_cdx(
         if len(hits_list) >= max_results:
             break
 
-    return _DiscoveryBatchResult(
+    return DiscoveryBatchResult(
         hits=tuple(hits_list),
         provider_name="wayback_cdx",
         provider_chain=("wayback_cdx",),

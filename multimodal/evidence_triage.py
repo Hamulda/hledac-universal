@@ -262,29 +262,20 @@ class EvidenceTriageCoordinator:
                 self._extract_ocr_with_timeout(path)
             )
 
-            done, pending = await asyncio.wait(
-                [metadata_task, ocr_task],
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    metadata_task, ocr_task,
+                    return_exceptions=True,
+                ),
                 timeout=METADATA_TIMEOUT_S + OCR_TIMEOUT_S,
             )
+            md_result, ocr_text = results
 
-            # Cancel any still-running tasks
-            for t in pending:
-                t.cancel()
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
+            if md_result and not isinstance(md_result, BaseException):
+                self._apply_metadata_to_facets(md_result, path, facets)
 
-            # Collect results from completed tasks
-            if metadata_task in done and not metadata_task.cancelled():
-                md_result = metadata_task.result()
-                if md_result:
-                    self._apply_metadata_to_facets(md_result, path, facets)
-
-            if ocr_task in done and not ocr_task.cancelled():
-                ocr_text = ocr_task.result()
-                if ocr_text:
-                    self._apply_ocr_to_facets(ocr_text, facets)
+            if ocr_text and not isinstance(ocr_text, BaseException):
+                self._apply_ocr_to_facets(ocr_text, facets)
 
             facets.triage_complete = True
 

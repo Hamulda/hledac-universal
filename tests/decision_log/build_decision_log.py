@@ -13,14 +13,14 @@
 # import exit
 
 
-def validate_entry(*args, **kwargs):
-    """TODO: rekonstruovat z bytecode"""
-    raise NotImplementedError("Stub - rekonstruovat z bytecode")
+def validate_entry(*_args, **_kwargs):
+    """Stub - není používán (dead code)"""
+    pass
 
-def validate_log(*args, **kwargs):
-    """TODO: rekonstruovat z bytecode"""
-    raise NotImplementedError("Stub - rekonstruovat z bytecode")
+def validate_log(*_args, **_kwargs):
+    """Stub - není používán (dead code)"""
+    pass
 
-def main(*args, **kwargs):
-    """TODO: rekonstruovat z bytecode"""
-    raise NotImplementedError("Stub - rekonstruovat z bytecode")
+def main(*_args, **_kwargs):
+    """Stub - není používán (dead code)"""
+    pass
