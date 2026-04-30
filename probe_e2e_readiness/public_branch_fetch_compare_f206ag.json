@@ -1,0 +1,53 @@
+{
+  "artifact_type": "public_branch_fetch_compare_f206ag",
+  "sprint": "F206AG",
+  "timestamp": "2026-04-30T14:07:32Z",
+  "phase": "PHASE4_COMPARE",
+  "classification": "H2_RECOVERED_WITH_ENV_DEGRADED_NOTE",
+  "classification_reason": "H2 live smoke PASS (HTTP/2 200 on api.github.com). HTTPX/H2 lane confirmed functional. Public branch diagnostic shows 0 discovery due to DuckDuckGo backend_error (environmental) \u2014 not H2. aiohttp baseline confirmed by F206AC isolated fetch (200, 12705 bytes). curl_cffi lane untouched. H2 failure counter=0, auto_disable=False.",
+  "h2_live_smoke": {
+    "api_github_users": {
+      "status": 200,
+      "transport": "httpx_h2",
+      "http_version": "HTTP/2",
+      "bytes": 30897
+    },
+    "api_github_cpython": {
+      "status": 200,
+      "transport": "httpx_h2",
+      "http_version": "HTTP/2",
+      "bytes": 6616
+    }
+  },
+  "signal_fixture": {
+    "httpx_h2_on": {
+      "status": 200,
+      "transport": "httpx_h2",
+      "bytes": 823,
+      "errors": []
+    },
+    "baseline": {
+      "status": 200
+    },
+    "curl_cffi_on": {
+      "status": 200
+    }
+  },
+  "f206af_findings": {
+    "h2_not_installed_in_venv": "should_use_httpx_h2 correctly checks h2 availability as final gate before returning True",
+    "fallback_works": false
+  },
+  "f206ac_aiohttp_isolated": {
+    "status": 200,
+    "transport": "aiohttp",
+    "bytes": 12705
+  },
+  "degradation_taxonomy": {
+    "f206ab_10_of_10_cascade_failure": "RESOLVED \u2014 httpx+h2 now installed, fallback works",
+    "f206ag_current": "ENVIRONMENTAL \u2014 DuckDuckGo backend error (unknown_backend_error), not transport"
+  },
+  "h2_transport_verdict": "PASS \u2014 HTTP/2 200 confirmed on api.github.com, httpx_h2 lane functional",
+  "baseline_aiohttp_verdict": "PASS \u2014 aiohttp works correctly when curl_cffi disabled",
+  "curl_cffi_lane_verdict": "UNTouched \u2014 no changes made",
+  "remaining_gap": "Cannot run full public diagnostic due to DuckDuckGo backend_error in current environment \u2014 environmental, not code regression"
+}

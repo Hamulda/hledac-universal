@@ -1,0 +1,26 @@
+{
+  "artifact_type": "public_branch_fetch_diagnosis_post_f206af_h2_on",
+  "sprint": "F206AG",
+  "query": "ransomware attack ioc indicators",
+  "timestamp": "2026-04-30T14:04:03Z",
+  "phase": "PHASE3_LIVE_PUBLIC_DIAGNOSTIC_H2_ENABLED",
+  "discovered": 0,
+  "fetched": 0,
+  "matched_patterns": 0,
+  "accepted_findings": 0,
+  "public_branch_verdict": {},
+  "elapsed_s": 0.06,
+  "h2_enabled": true,
+  "httpx_h2_auto_disabled": false,
+  "httpx_h2_failure_count": 0,
+  "should_use_httpx_h2_samples": {
+    "api.github.com": [
+      true,
+      "api_like"
+    ],
+    "bleepingcomputer": [
+      false,
+      "clearnet_default"
+    ]
+  }
+}

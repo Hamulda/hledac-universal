@@ -1,0 +1,28 @@
+{
+  "phase": "phase2_httpx_h2_live_smoke",
+  "sprint": "f206ag",
+  "timestamp": "2026-04-30T14:00:44Z",
+  "smoke_results": [
+    {
+      "url": "https://api.github.com/users",
+      "status_code": 200,
+      "fetched_bytes": 30897,
+      "selected_transport": "httpx_h2",
+      "http_version": "HTTP/2",
+      "content_type": "application/json; charset=utf-8",
+      "error": null,
+      "error_type": null
+    },
+    {
+      "url": "https://api.github.com/repos/python/cpython",
+      "status_code": 200,
+      "fetched_bytes": 6616,
+      "selected_transport": "httpx_h2",
+      "http_version": "HTTP/2",
+      "content_type": "application/json; charset=utf-8",
+      "error": null,
+      "error_type": null
+    }
+  ],
+  "h2_enabled": true
+}
