@@ -60,7 +60,7 @@ async def async_search_historical_frontier(
         timeout_s:    Query timeout in seconds (default 2.0).
 
     Returns:
-        _DiscoveryBatchResult with hits from DuckDB shadow_findings.
+        DiscoveryBatchResult with hits from DuckDB shadow_findings.
 
     Fail-soft: returns empty hits on any error (import, SQL, timing).
     """
@@ -71,7 +71,7 @@ async def async_search_historical_frontier(
         max_results = 10
     query = query.strip() if query else ""
     if not query:
-        return _DiscoveryBatchResult(hits=(), error="empty_query")
+        return DiscoveryBatchResult(hits=(), error="empty_query")
 
     start = time.monotonic()
 
@@ -85,7 +85,7 @@ async def async_search_historical_frontier(
             # Tokenize query — match tokens against stored query + title + url
             tokens = {t.lower().strip(".,;:!?()[]{}-_") for t in query.split() if len(t) > 1}
             if not tokens:
-                return _DiscoveryBatchResult(hits=(), error="empty_query")
+                return DiscoveryBatchResult(hits=(), error="empty_query")
 
             # Build LIKE pattern from most significant token (first substantial word)
             primary = next((t for t in query.split() if len(t) > 2), query.split()[0] if query.split() else "")
@@ -113,7 +113,7 @@ async def async_search_historical_frontier(
             conn.close()
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="timeout",
             elapsed_s=elapsed,
@@ -121,7 +121,7 @@ async def async_search_historical_frontier(
         )
     except Exception:
         elapsed = time.monotonic() - start
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="provider_exception",
             elapsed_s=elapsed,
@@ -130,7 +130,7 @@ async def async_search_historical_frontier(
 
     if not rows:
         elapsed = time.monotonic() - start
-        return _DiscoveryBatchResult(
+        return DiscoveryBatchResult(
             hits=(),
             error_type="provider_empty",
             elapsed_s=elapsed,
@@ -141,7 +141,7 @@ async def async_search_historical_frontier(
 
     # Build hits — score by token overlap
     seen_urls: set[str] = set()
-    hits_list: list[_DiscoveryHit] = []
+    hits_list: list[DiscoveryHit] = []
     now_ts = time.time()
 
     for row in rows:
@@ -168,7 +168,7 @@ async def async_search_historical_frontier(
             reason = reason or "url_match"
 
         hits_list.append(
-            _DiscoveryHit(
+            DiscoveryHit(
                 query=query,
                 title=title or "",
                 url=url,
@@ -185,7 +185,7 @@ async def async_search_historical_frontier(
             break
 
     elapsed = time.monotonic() - start
-    return _DiscoveryBatchResult(
+    return DiscoveryBatchResult(
         hits=tuple(hits_list),
         provider_name="historical_frontier",
         provider_chain=("historical_frontier",),
