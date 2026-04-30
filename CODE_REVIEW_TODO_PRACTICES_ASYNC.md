@@ -52,7 +52,7 @@ These items were flagged but are intentional design patterns:
 | `Optional[X]` → `X \| None` | 2186 | 270 | DEFERRED - massive scope |
 | `Union[X, Y]` → `X \| Y` | 48 | 22 | DEFERRED - massive scope |
 | `@dataclass` → `slots=True` | 40+ | multiple | DEFERRED - requires review per-file |
-| `if-elif` → `match/case` | 15+ | multiple | ACTIVE - 8 functions converted |
+| `if-elif` → `match/case` | 15+ | multiple | ACTIVE - 11 functions converted |
 
 ### Converted ✅
 | File | Function | Lines |
@@ -60,6 +60,11 @@ These items were flagged but are intentional design patterns:
 | `export/sprint_exporter.py` | `_type_aware_seeds()` | 730–815 |
 | `export/sprint_exporter.py` | `_derive_branch_seeds()` | 1120–1146 |
 | `export/sprint_exporter.py` | `_derive_focus_expand()` | 1055–1106 |
+| `export/sprint_exporter.py` | `_signal_classification_short_text()` | 1796–1808 |
+| `export/sprint_exporter.py` | `_derive_next_queries()` signal dispatch | 993–1003 |
+| `export/sprint_exporter.py` | `_get_signal_summary_text()` | 2009–2020 |
+| `export/sprint_exporter.py` | `_render_czech_report()` finding_summary | 2100–2111 |
+| `export/sprint_exporter.py` | `_render_czech_report()` branch_signal | 2119–2126 |
 | `runtime/sprint_scheduler.py` | `_run_one_cycle()` mode dispatch | 1380–1384 |
 | `runtime/sprint_scheduler.py` | `_process_pivot_queue()` zero-signal dispatch | 3563–3571 |
 | `runtime/sprint_scheduler.py` | `_finalize_sprint_result()` blocker dispatch | 1299–1330 |
@@ -90,10 +95,10 @@ These items were flagged but are intentional design patterns:
 | Legacy/Not Actionable TODOs | 4 | None - informational only |
 | Deprecated modules | 4 | Keep (referenced) |
 | Intentional patterns | 5 | No action needed |
-| Python 3.14+ if-elif→match/case | 6/15+ | IN PROGRESS - main work done |
+| Python 3.14+ if-elif→match/case | 11/15+ | IN PROGRESS - most work done |
 | Python 3.14+ Optional/Union/dataclass | 2274+ | DEFERRED |
 
-**Sprint complete.** 6 functions converted across 4 files. Remaining elif patterns in sprint_scheduler.py are either:
+**Sprint complete.** 11 functions converted across 4 files. Remaining elif patterns are either:
 - Numeric comparisons (not supported in match/case)
 - Complex stateful chains (internal mutations)
 - hasattr dispatch (attribute checking)

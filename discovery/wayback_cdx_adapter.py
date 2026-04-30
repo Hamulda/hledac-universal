@@ -2,6 +2,7 @@
 Wayback CDX — Internet Archive CDX API fallback.
 
 Sprint F206AM: Providerless Discovery Mesh Phase 1
+Sprint F206AS: Transport Alignment — uses shared aiohttp session + circuit breaker.
 
 Rules:
 - HTTP API only
@@ -21,6 +22,8 @@ from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryHit,
     DiscoveryBatchResult,
 )
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 
 # ---------------------------------------------------------------------------
@@ -80,26 +83,112 @@ async def async_search_wayback_cdx(
         "to": "2026",
     }
 
+    session = await async_get_aiohttp_session()
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+
     try:
         async with asyncio.timeout(timeout_s):
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    _WAYBACK_CDX_URL,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=timeout_s),
-                    headers={"User-Agent": "Hledac/1.0 (research bot)"},
-                ) as resp:
-                    if resp.status != 200:
-                        elapsed = time.monotonic() - start
-                        return DiscoveryBatchResult(
-                            hits=(),
-                            error_type="server_error",
-                            elapsed_s=elapsed,
-                            provider_name="wayback_cdx",
-                            provider_chain=("wayback_cdx",),
-                            source_family="archive",
-                        )
-                    data = await resp.json()
+            resp, err = await checked_aiohttp_get(
+                session,
+                _WAYBACK_CDX_URL,
+                params=params,
+                headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                timeout=timeout,
+                failure_kind="wayback_cdx",
+            )
+            if err:
+                elapsed = time.monotonic() - start
+                # Map circuit_breaker error strings to taxonomy
+                if err.startswith("circuit_breaker_open:"):
+                    return DiscoveryBatchResult(
+                        hits=(),
+                        error_type="circuit_breaker_open",
+                        elapsed_s=elapsed,
+                        provider_name="wayback_cdx",
+                        provider_chain=("wayback_cdx",),
+                        source_family="archive",
+                        error=err,
+                    )
+                if err == "timeout":
+                    return DiscoveryBatchResult(
+                        hits=(),
+                        error_type="timeout",
+                        elapsed_s=elapsed,
+                        provider_name="wayback_cdx",
+                        provider_chain=("wayback_cdx",),
+                        source_family="archive",
+                        error="wayback_cdx_timeout",
+                    )
+                if err == "client_error":
+                    return DiscoveryBatchResult(
+                        hits=(),
+                        error_type="network_error",
+                        elapsed_s=elapsed,
+                        provider_name="wayback_cdx",
+                        provider_chain=("wayback_cdx",),
+                        source_family="archive",
+                        error="wayback_cdx_network_error",
+                    )
+                # Any other err
+                return DiscoveryBatchResult(
+                    hits=(),
+                    error_type="network_error",
+                    elapsed_s=elapsed,
+                    provider_name="wayback_cdx",
+                    provider_chain=("wayback_cdx",),
+                    source_family="archive",
+                    error=f"wayback_cdx_fetch_error:{err}",
+                )
+
+            # checked_aiohttp_get returns resp on any status (including 4xx/5xx)
+            status = resp.status
+            if status == 403:
+                elapsed = time.monotonic() - start
+                return DiscoveryBatchResult(
+                    hits=(),
+                    error_type="http_403",
+                    elapsed_s=elapsed,
+                    provider_name="wayback_cdx",
+                    provider_chain=("wayback_cdx",),
+                    source_family="archive",
+                    error="wayback_cdx_forbidden",
+                )
+            if status == 429:
+                elapsed = time.monotonic() - start
+                return DiscoveryBatchResult(
+                    hits=(),
+                    error_type="http_429",
+                    elapsed_s=elapsed,
+                    provider_name="wayback_cdx",
+                    provider_chain=("wayback_cdx",),
+                    source_family="archive",
+                    error="wayback_cdx_rate_limited",
+                )
+            if status >= 500:
+                elapsed = time.monotonic() - start
+                return DiscoveryBatchResult(
+                    hits=(),
+                    error_type="http_5xx",
+                    elapsed_s=elapsed,
+                    provider_name="wayback_cdx",
+                    provider_chain=("wayback_cdx",),
+                    source_family="archive",
+                    error=f"wayback_cdx_server_error_{status}",
+                )
+            if status != 200:
+                elapsed = time.monotonic() - start
+                return DiscoveryBatchResult(
+                    hits=(),
+                    error_type="server_error",
+                    elapsed_s=elapsed,
+                    provider_name="wayback_cdx",
+                    provider_chain=("wayback_cdx",),
+                    source_family="archive",
+                    error=f"wayback_cdx_http_{status}",
+                )
+
+            data = await resp.json()
+
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
@@ -111,6 +200,8 @@ async def async_search_wayback_cdx(
             source_family="archive",
             error="wayback_cdx_timeout",
         )
+    except asyncio.CancelledError:
+        raise  # Re-raise CancelledError — do not swallow
     except Exception:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(

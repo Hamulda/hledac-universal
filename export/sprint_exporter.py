@@ -610,47 +610,43 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     low_info_rejected = reject_breakdown.get("low_information", 0)
     low_info_ratio = low_info_rejected / total_rejected if total_rejected > 0 else 0.0
 
-    if signal == "high_density":
-        # Good sprint: suggest refining current query approach
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "refine",
-            "priority": 0.75,
-            "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
-        })
-    elif signal == "medium_density":
-        if low_info_ratio > 0.5:
-            # Many low-info rejects → queries are too broad, suggest narrowing
+    match signal:
+        case "high_density":
             seeds.append({
                 "task_type": "query_suggestion",
-                "suggested_action": "narrow_scope",
-                "priority": 0.70,
-                "reason": f"low_info_ratio={low_info_ratio:.2f}/broad_queries",
+                "suggested_action": "refine",
+                "priority": 0.75,
+                "reason": f"signal=high_density/accepted={accepted}/ioc_density={ioc_density:.2f}",
             })
-        else:
-            # Mixed signal → suggest broadening
+        case "medium_density":
+            if low_info_ratio > 0.5:
+                seeds.append({
+                    "task_type": "query_suggestion",
+                    "suggested_action": "narrow_scope",
+                    "priority": 0.70,
+                    "reason": f"low_info_ratio={low_info_ratio:.2f}/broad_queries",
+                })
+            else:
+                seeds.append({
+                    "task_type": "query_suggestion",
+                    "suggested_action": "broaden",
+                    "priority": 0.65,
+                    "reason": f"signal=medium_density/ioc_density={ioc_density:.2f}",
+                })
+        case "slow_novelty":
             seeds.append({
                 "task_type": "query_suggestion",
-                "suggested_action": "broaden",
-                "priority": 0.65,
-                "reason": f"signal=medium_density/ioc_density={ioc_density:.2f}",
+                "suggested_action": "accelerate",
+                "priority": 0.60,
+                "reason": f"signal=slow_novelty/fpm={findings_per_minute:.2f}",
             })
-    elif signal == "slow_novelty":
-        # Few findings but they exist — suggest faster queries or different sources
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "accelerate",
-            "priority": 0.60,
-            "reason": f"signal=slow_novelty/fpm={findings_per_minute:.2f}",
-        })
-    elif signal == "depleted":
-        # Exhausted this query space — suggest fundamentally different queries
-        seeds.append({
-            "task_type": "query_suggestion",
-            "suggested_action": "new_approach",
-            "priority": 0.80,
-            "reason": "signal=depleted/exhausted_query_space",
-        })
+        case "depleted":
+            seeds.append({
+                "task_type": "query_suggestion",
+                "suggested_action": "new_approach",
+                "priority": 0.80,
+                "reason": "signal=depleted/exhausted_query_space",
+            })
 
     return seeds[:3]  # Hard cap: max 3 query suggestions
 
@@ -994,16 +990,17 @@ def _derive_hypothesis_queries(
     findings: list[str] = []
     signal = pvs.get("_signal_quality_classification", "unknown")
 
-    if signal == "high_density":
-        accepted = pvs.get("accepted", 0)
-        ioc_density = pvs.get("ioc_density", 0.0)
-        findings.append(f"high_value_findings: {accepted} entities at density {ioc_density:.2f}")
-    elif signal == "medium_density":
-        findings.append(f"mixed_results: investigate_correlations")
-    elif signal == "slow_novelty":
-        findings.append(f"slow_but_real: verify_and_expand")
-    elif signal == "depleted":
-        findings.append(f"exhausted_space: new_approach_needed")
+    match signal:
+        case "high_density":
+            accepted = pvs.get("accepted", 0)
+            ioc_density = pvs.get("ioc_density", 0.0)
+            findings.append(f"high_value_findings: {accepted} entities at density {ioc_density:.2f}")
+        case "medium_density":
+            findings.append(f"mixed_results: investigate_correlations")
+        case "slow_novelty":
+            findings.append(f"slow_but_real: verify_and_expand")
+        case "depleted":
+            findings.append(f"exhausted_space: new_approach_needed")
 
     # Dedup status context
     dedup = pvs.get("reject_breakdown")
@@ -1797,19 +1794,21 @@ def _derive_run_truth_note(
     signal = pvs.get("_signal_quality_classification", "unknown")
     accepted = pvs.get("accepted", 0)
 
-    if signal == "high_density":
-        return "meaningful_run: high density signal"
-    elif signal == "medium_density":
-        return "mixed_run: signal present but noisy"
-    elif signal == "depleted":
-        return "smoke_run: depleted, no actionable signal"
-    elif signal == "slow_novelty":
-        return "slow_signal_run: signal exists, low rate"
-    elif signal == "unknown" and accepted > 0:
-        return "findings_run: signal unclear, findings exist"
-    elif signal == "unknown":
-        return "unknown_run: no signal characterization"
-    return "unknown_run"
+    match signal:
+        case "high_density":
+            return "meaningful_run: high density signal"
+        case "medium_density":
+            return "mixed_run: signal present but noisy"
+        case "depleted":
+            return "smoke_run: depleted, no actionable signal"
+        case "slow_novelty":
+            return "slow_signal_run: signal exists, low rate"
+        case "unknown" if accepted > 0:
+            return "findings_run: signal unclear, findings exist"
+        case "unknown":
+            return "unknown_run: no signal characterization"
+        case _:
+            return "unknown_run"
 
 
 def _derive_branch_truth(
@@ -1918,14 +1917,15 @@ def _derive_best_first_move(
 
     # 5. pvs signal guidance
     signal = pvs.get("_signal_quality_classification", "unknown") if pvs else "unknown"
-    if signal == "depleted":
-        return "new approach: current query space exhausted"
-    elif signal == "high_density":
-        return "expand: broaden successful query approach"
-    elif signal == "medium_density":
-        return "narrow: reduce query scope to reduce low-info noise"
-    elif signal == "slow_novelty":
-        return "accelerate: real signal exists, speed up sources"
+    match signal:
+        case "depleted":
+            return "new approach: current query space exhausted"
+        case "high_density":
+            return "expand: broaden successful query approach"
+        case "medium_density":
+            return "narrow: reduce query scope to reduce low-info noise"
+        case "slow_novelty":
+            return "accelerate: real signal exists, speed up sources"
 
     # 6. Correlation operator shortlist
     if correlation:
@@ -2007,17 +2007,19 @@ def _derive_why_this_run_matters(
         return "no actionable signal — sprint produced no useful leads"
     signal = pvs.get("_signal_quality_classification", "unknown")
     accepted = pvs.get("accepted", 0)
-    if signal == "high_density" and accepted > 0:
-        return f"{accepted} quality findings confirmed at high density"
-    elif signal == "depleted":
-        return "exhausted space — strategic pivot needed"
-    elif signal == "slow_novelty":
-        return "real but slow signal — rate vs quality tradeoff"
-    elif signal == "medium_density" and accepted > 0:
-        return f"{accepted} findings present, signal mixed quality"
-    elif accepted > 0:
-        return f"{accepted} findings found, signal quality unclear"
-    return "no actionable signal — sprint produced no useful leads"
+    match signal:
+        case "high_density" if accepted > 0:
+            return f"{accepted} quality findings confirmed at high density"
+        case "depleted":
+            return "exhausted space — strategic pivot needed"
+        case "slow_novelty":
+            return "real but slow signal — rate vs quality tradeoff"
+        case "medium_density" if accepted > 0:
+            return f"{accepted} findings present, signal mixed quality"
+        case _ if accepted > 0:
+            return f"{accepted} findings found, signal quality unclear"
+        case _:
+            return "no actionable signal — sprint produced no useful leads"
 
 
 def _get_branch_value(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]
@@ -2095,17 +2097,18 @@ def _build_operator_brief(
             high_risk_branch = [r for r in raw_risks if isinstance(r, dict)]
 
     # --- Co sprint pravděpodobně našel ---
-    if signal == "high_density":
-        finding_summary = f"dobrý sprint: {accepted} kvalitních IOC při density {ioc_density:.2f}"
-    elif signal == "medium_density":
-        finding_summary = f"smíšený sprint: {accepted} IOC, {total_rejected} rejectů, density {ioc_density:.2f}"
-    elif signal == "slow_novelty":
-        fpm = pvs.get("findings_per_minute", 0.0)
-        finding_summary = f"pomalý ale existující signál: {accepted} IOC při {fpm:.2f} finds/min"
-    elif signal == "depleted":
-        finding_summary = "sprint nic nepřinesl — vyčerpaný prostor nebo nedostupné zdroje"
-    else:
-        finding_summary = f"nedefinovaný stav: accepted={accepted}"
+    match signal:
+        case "high_density":
+            finding_summary = f"dobrý sprint: {accepted} kvalitních IOC při density {ioc_density:.2f}"
+        case "medium_density":
+            finding_summary = f"smíšený sprint: {accepted} IOC, {total_rejected} rejectů, density {ioc_density:.2f}"
+        case "slow_novelty":
+            fpm = pvs.get("findings_per_minute", 0.0)
+            finding_summary = f"pomalý ale existující signál: {accepted} IOC při {fpm:.2f} finds/min"
+        case "depleted":
+            finding_summary = "sprint nic nepřinesl — vyčerpaný prostor nebo nedostupné zdroje"
+        case _:
+            finding_summary = f"nedefinovaný stav: accepted={accepted}"
 
     # --- Která branch nesla nejlepší signál ---
     branch_signal = None
@@ -2113,14 +2116,15 @@ def _build_operator_brief(
         verdict = branch_value.get("branch_verdict", "")
         feed_pct = branch_value.get("feed_pct", 0)
         public_pct = branch_value.get("public_pct", 0)
-        if verdict == "feed_dominant":
-            branch_signal = f"feed branch dominantí ({feed_pct:.0f}% nálezů) — veřejné zdroje slabé"
-        elif verdict == "public_dominant":
-            branch_signal = f"veřejné zdroje dominantní ({public_pct:.0f}% nálezů) — feed branch podprůměrná"
-        elif verdict == "balanced":
-            branch_signal = f"vyvážený přínos: feed {feed_pct:.0f}% / public {public_pct:.0f}%"
-        else:
-            branch_signal = None
+        match verdict:
+            case "feed_dominant":
+                branch_signal = f"feed branch dominantí ({feed_pct:.0f}% nálezů) — veřejné zdroje slabé"
+            case "public_dominant":
+                branch_signal = f"veřejné zdroje dominantní ({public_pct:.0f}% nálezů) — feed branch podprůměrná"
+            case "balanced":
+                branch_signal = f"vyvážený přínos: feed {feed_pct:.0f}% / public {public_pct:.0f}%"
+            case _:
+                branch_signal = None
     else:
         branch_signal = None
 
