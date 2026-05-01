@@ -75,6 +75,8 @@ from hledac.universal.knowledge.target_memory import (
     MAX_MEMORY_PIVOTS,
 )
 from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
+# Sprint F206BG: Canonical acquisition strategy layer
+from hledac.universal.runtime.acquisition_strategy import build_acquisition_plan
 
 if TYPE_CHECKING:
     pass
@@ -693,6 +695,8 @@ class SprintScheduler:
         self._correlation_cache: Optional[dict] = None
         self._hypothesis_pack_cache: Optional[dict] = None
         self._branch_value_summary: Optional[dict] = None
+        # Sprint F206BG: Acquisition strategy plan — built at sprint start, diagnostic only
+        self._acquisition_plan: Any = None
         # Sprint 8VN §C: Feed + public branch verdict accumulators (additive, fail-soft)
         # Capped at 10 entries to stay M1 8GB safe
         self._feed_verdicts: list[tuple[str, int, int, int, int]] = []  # (verdict_tag, s, f, w, q)
@@ -1111,6 +1115,29 @@ class SprintScheduler:
         self._result.pre_loop_elapsed_s = _pre_loop_elapsed
         # entered_active_at_monotonic: first observation of ACTIVE (loop guard)
         self._result.entered_active_at_monotonic = _pre_loop_elapsed
+
+        # Sprint F206BG: Build acquisition strategy plan at sprint start
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+            uma = sample_uma_status()
+            _uma_state = "ok"
+            if uma.is_emergency:
+                _uma_state = "emergency"
+            elif uma.is_critical:
+                _uma_state = "critical"
+            elif uma.is_warn:
+                _uma_state = "warn"
+            self._acquisition_plan = build_acquisition_plan(
+                query=query,
+                duration_s=self._config.sprint_duration_s,
+                aggressive_mode=self._config.aggressive_mode,
+                uma_state=_uma_state,
+                swap_detected=uma.swap_detected,
+                accepted_findings_so_far=self._result.accepted_findings,
+                branch_timeout_count=self._result.branch_timeout_count,
+            )
+        except Exception:
+            self._acquisition_plan = None
 
         try:
             # Sprint 8VD §C: Start memory pressure monitoring loop
@@ -4247,6 +4274,27 @@ class SprintScheduler:
         circuit_state = self._get_circuit_breaker_summary()
         if circuit_state:
             report["circuit_breaker_state"] = circuit_state
+        # Sprint F206BG: Append acquisition strategy snapshot (read-only, built at sprint start)
+        if self._acquisition_plan is not None:
+            report["acquisition_strategy"] = {
+                "uma_state": self._acquisition_plan.uma_state,
+                "swap_detected": self._acquisition_plan.swap_detected,
+                "aggressive_mode": self._acquisition_plan.aggressive_mode,
+                "stealth_ready": self._acquisition_plan.stealth_ready,
+                "transport_degraded": self._acquisition_plan.transport_degraded,
+                "lanes": [
+                    {
+                        "lane": p.lane,
+                        "enabled": p.enabled,
+                        "reason": p.reason,
+                        "max_items": p.max_items,
+                        "timeout_s": p.timeout_s,
+                        "concurrency": p.concurrency,
+                        "risk_level": p.risk_level,
+                    }
+                    for p in self._acquisition_plan.plans
+                ],
+            }
         return report
 
     # ── Sprint 8RC: IOC-aware prioritisation ───────────────────────────────

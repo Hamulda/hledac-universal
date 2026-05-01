@@ -44,9 +44,9 @@ from ..layers.stealth_layer import FingerprintRandomizer, FingerprintConfig, Bro
 
 logger = logging.getLogger(__name__)
 
-# Sprint F206BA: Phase 1 Telemetry — Verdict constants (do NOT change transport authority yet)
+# Sprint F206BE: Phase 2 Circuit Breaker Seam — Verdict constants
 STEALTH_MANAGER_TRANSPORT_AUTHORITY = "local_stealth_pool_until_transport_unified"
-STEALTH_MANAGER_PHASE = "phase1_telemetry_only"
+STEALTH_MANAGER_PHASE = "phase2_breaker_seam"
 
 # Sprint F206BA: Hard caps (explicit bounds — do NOT increase)
 MAX_STEALTH_PROFILES = len(_IMPERSONATE_PROFILES)  # 2 profiles
@@ -156,6 +156,12 @@ class StealthManager:
         self._success_count = 0
         self._failure_count = 0
         self._domain_stats: Dict[str, Dict[str, Any]] = {}
+
+        # Sprint F206BE: Circuit breaker telemetry
+        self._cb_blocks = 0
+        self._cb_fallbacks = 0
+        self._cb_last_reason: Optional[str] = None
+        self._cb_available: Optional[bool] = None  # lazily determined
     
     async def initialize(self) -> bool:
         """Initialize stealth manager"""
@@ -376,7 +382,69 @@ class StealthManager:
             "MAX_CLIENTS_PER_PROFILE": MAX_CLIENTS_PER_PROFILE,
             "MAX_SESSION_POOL_SIZE": MAX_SESSION_POOL_SIZE,
             "MAX_ETAG_CACHE_ENTRIES": MAX_ETAG_CACHE_ENTRIES,
+            # Sprint F206BE: Circuit breaker telemetry
+            "circuit_breaker_used": self._cb_available is True,
+            "circuit_breaker_blocks": self._cb_blocks,
+            "circuit_breaker_fallbacks": self._cb_fallbacks,
+            "last_circuit_breaker_reason": self._cb_last_reason,
         }
+
+    def _stealth_domain_allowed(self, url_or_domain: str) -> Tuple[bool, Optional[str]]:
+        """
+        Sprint F206BE: Check if domain is allowed by circuit breaker.
+
+        Lazily imports transport.circuit_breaker.domain_breaker_check.
+        Fail-soft: returns (True, None) if breaker unavailable or on error.
+        No network calls. No session creation at import time.
+
+        Returns:
+            (allowed: bool, reason: str | None)
+            - (True, None) = allowed to proceed
+            - (False, reason) = blocked by circuit breaker
+        """
+        # Extract domain from URL if needed
+        domain = url_or_domain
+        try:
+            parsed = urlparse(url_or_domain)
+            if parsed.netloc:
+                domain = parsed.netloc
+                # Strip tor-portal prefix
+                if domain.startswith("tor:"):
+                    domain = domain[4:]
+            elif parsed.path and ".onion" in parsed.path:
+                domain = parsed.path
+        except Exception:
+            pass
+
+        if not domain:
+            return (True, None)  # skip check for empty
+
+        # Lazily determine breaker availability and import
+        if self._cb_available is None:
+            try:
+                from transport.circuit_breaker import domain_breaker_check
+                self._cb_available = True
+            except ImportError:
+                self._cb_available = False
+                return (True, None)  # fail-soft: breaker unavailable
+
+        if not self._cb_available:
+            return (True, None)  # fail-soft: breaker not available
+
+        # Perform the check
+        try:
+            from transport.circuit_breaker import domain_breaker_check
+            decision = domain_breaker_check(domain)
+            if decision.allowed:
+                return (True, None)
+            else:
+                self._cb_blocks += 1
+                self._cb_last_reason = decision.reason
+                return (False, decision.reason)
+        except Exception:
+            # Fail-soft: any error means allow
+            self._cb_fallbacks += 1
+            return (True, None)
 
     async def close(self):
         """Cleanup resources"""
@@ -391,6 +459,17 @@ class StealthManager:
                     logger.debug(f"Failed to close session during cleanup: {e}")
             self._sessions.clear()
         logger.info("✓ StealthManager closed")
+
+
+class SkipFetch(Exception):
+    """
+    Sprint F206BE: Raised when circuit breaker blocks a fetch.
+
+    This is NOT a network error — it indicates the circuit breaker
+    prevented the attempt. Fail-soft callers should catch and handle
+    without incrementing failure counters.
+    """
+    pass
 
 
 @dataclass
@@ -620,6 +699,11 @@ class StealthSession:
                         truncated=truncated
                     )
                 # HTTP/3 failed - fall through to aiohttp
+
+        # Sprint F206BE: Circuit breaker preflight — fail-soft, not a network error
+        allowed, reason = self.manager._stealth_domain_allowed(url)
+        if not allowed:
+            raise SkipFetch(f"circuit_breaker_open:{reason}")
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
             # P7: Human-like jitter before each request (anti-correlation)

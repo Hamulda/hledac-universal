@@ -53,7 +53,92 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 STEALTH_CRAWLER_TRANSPORT_AUTHORITY = "multi_layer_local_until_transport_unified"
-STEALTH_CRAWLER_PHASE = "phase1_telemetry_only"
+STEALTH_CRAWLER_PHASE = "phase2_breaker_seam"
+
+# =============================================================================
+# STEALTH CRAWLER PHASE 2 — BREAKER SEAM (F206BF)
+# =============================================================================
+# Phase 2: central breaker preflight helper _crawler_domain_allowed() used by
+# all reachable fetch surfaces. Fail-soft: allowed=True on import/error.
+# Central telemetry tracks checks/blocks/fallbacks per surface.
+# =============================================================================
+
+# Central breaker telemetry — module-level state for Phase 2
+_TRANSPORT_BREAKER_CHECKS: int = 0
+_TRANSPORT_BREAKER_BLOCKS: int = 0
+_TRANSPORT_BREAKER_FALLBACKS: int = 0
+_TRANSPORT_SURFACE_BLOCKS: dict[str, int] = {}  # surface_name -> block count
+
+# Surface patch map — updated by _mark_surface_patched() called from each wired surface
+_PATCHED_SURFACES: set[str] = set()  # surface names that have breaker preflight
+_UNPATCHED_SURFACES: set[str] = set()  # surface names that could not be safely patched
+
+
+def _mark_surface_patched(surface_name: str) -> None:
+    """Mark a surface as breaker-patched (called by each wired surface)."""
+    _PATCHED_SURFACES.add(surface_name)
+    _UNPATCHED_SURFACES.discard(surface_name)
+
+
+def _mark_surface_unpatched(surface_name: str) -> None:
+    """Mark a surface as unpatched (failed or too risky to modify)."""
+    _UNPATCHED_SURFACES.add(surface_name)
+
+
+def _crawler_domain_allowed(
+    url_or_domain: str, surface: str
+) -> tuple[bool, str | None]:
+    """
+    Central breaker preflight helper — lazily imports transport.circuit_breaker.
+
+    Checks domain circuit breaker before making a network request.
+    Fail-soft: returns allowed=True, block_reason=None on any error (import, parse, etc.)
+    Records telemetry: checks, blocks, fallbacks, per-surface blocks.
+
+    Args:
+        url_or_domain: URL string or bare domain to check
+        surface: surface name from STEALTH_CRAWLER_NETWORK_SURFACES (e.g. "_fetch_with_curl_cffi")
+
+    Returns:
+        (allowed: bool, block_reason: str|None)
+        - (True, None) → circuit closed or fail-soft, fetch may proceed
+        - (False, str) → circuit open, fetch should skip/block
+    """
+    global _TRANSPORT_BREAKER_CHECKS, _TRANSPORT_BREAKER_BLOCKS
+    global _TRANSPORT_BREAKER_FALLBACKS, _TRANSPORT_SURFACE_BLOCKS
+
+    _TRANSPORT_BREAKER_CHECKS += 1
+
+    try:
+        from urllib.parse import urlparse
+        # Extract domain from URL, or use bare domain
+        if "://" in url_or_domain or url_or_domain.startswith("."):
+            parsed = urlparse(url_or_domain if "://" in url_or_domain else f"http://{url_or_domain}")
+            domain = parsed.netloc
+            if not domain and parsed.scheme == "tor":
+                domain = parsed.path
+        else:
+            domain = url_or_domain
+
+        if not domain:
+            _TRANSPORT_BREAKER_FALLBACKS += 1
+            return True, None
+
+        # Lazily import — no session at import time
+        from transport.circuit_breaker import domain_breaker_check
+        decision = domain_breaker_check(domain)
+
+        if not decision.allowed:
+            _TRANSPORT_BREAKER_BLOCKS += 1
+            _TRANSPORT_SURFACE_BLOCKS[surface] = _TRANSPORT_SURFACE_BLOCKS.get(surface, 0) + 1
+            return False, f"circuit_breaker_open:{decision.reason}"
+
+        return True, None
+
+    except Exception:
+        # Fail-soft: any error → allow the fetch to proceed via normal path
+        _TRANSPORT_BREAKER_FALLBACKS += 1
+        return True, None
 
 # Static call-site metadata — 17 surfaces across 3 classes
 STEALTH_CRAWLER_NETWORK_SURFACES = (
@@ -117,20 +202,28 @@ STEALTH_CRAWLER_NETWORK_SURFACES = (
 
 def get_stealth_crawler_transport_telemetry() -> dict:
     """
-    Phase 1 telemetry — no transport changes, just visibility.
+    Phase 2 telemetry — circuit breaker seam active on major surfaces.
 
     Returns:
         dict with:
         - authority: STEALTH_CRAWLER_TRANSPORT_AUTHORITY
         - phase: STEALTH_CRAWLER_PHASE
         - network_surface_count: len(STEALTH_CRAWLER_NETWORK_SURFACES)
-        - circuit_breaker_used: False (Phase 1 — not integrated)
+        - circuit_breaker_used: True (Phase 2 — breaker seam exists)
         - canonical_transport_used: False (no single canonical transport)
         - transport_layers: set of unique transport types
         - import_time_sessions: False (all sessions are per-request)
         - m1_memory_risk: "low" | "medium" | "high"
-        - next_phase: "breaker_seam" (circuit breaker integration at FetchCoordinator)
+        - next_phase: None (Phase 2 is current, no planned follow-up in this sprint)
         - surface_breakdown: per-transport counts
+        - patched_surface_count: number of surfaces with breaker preflight wired
+        - unpatched_surface_count: number of surfaces not patched (too risky or not reached)
+        - patched_surfaces: list of surface names with breaker preflight
+        - unpatched_surfaces: list of surface names not patched
+        - breaker_checks: total _crawler_domain_allowed() calls (from module state)
+        - breaker_blocks: total blocked requests by breaker
+        - breaker_fallbacks: total fail-soft allowances (import error or empty domain)
+        - surface_blocks: dict mapping surface_name -> block count
     """
     layers = set(s["transport"] for s in STEALTH_CRAWLER_NETWORK_SURFACES)
 
@@ -150,15 +243,24 @@ def get_stealth_crawler_transport_telemetry() -> dict:
         "authority": STEALTH_CRAWLER_TRANSPORT_AUTHORITY,
         "phase": STEALTH_CRAWLER_PHASE,
         "network_surface_count": len(STEALTH_CRAWLER_NETWORK_SURFACES),
-        "circuit_breaker_used": False,
+        "circuit_breaker_used": True,
         "canonical_transport_used": False,
         "transport_layers": sorted(layers),
         "import_time_sessions": False,
         "m1_memory_risk": m1_risk,
-        "next_phase": "breaker_seam",
+        "next_phase": None,
         "surface_breakdown": transport_counts,
         "high_risk_surfaces": [s["name"] for s in high_risk],
         "bypass_states": list(set(s["bypass_state"] for s in STEALTH_CRAWLER_NETWORK_SURFACES)),
+        # Phase 2 additions
+        "patched_surface_count": len(_PATCHED_SURFACES),
+        "unpatched_surface_count": len(_UNPATCHED_SURFACES),
+        "patched_surfaces": sorted(list(_PATCHED_SURFACES)),
+        "unpatched_surfaces": sorted(list(_UNPATCHED_SURFACES)),
+        "breaker_checks": _TRANSPORT_BREAKER_CHECKS,
+        "breaker_blocks": _TRANSPORT_BREAKER_BLOCKS,
+        "breaker_fallbacks": _TRANSPORT_BREAKER_FALLBACKS,
+        "surface_blocks": dict(_TRANSPORT_SURFACE_BLOCKS),
     }
 
 
@@ -1061,6 +1163,13 @@ class StealthCrawler:
 
     async def _fetch_with_curl(self, url: str, headers: Dict[str, str]) -> Optional[str]:
         """Fetch using curl_cffi with TLS fingerprinting."""
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_curl")
+        if not allowed:
+            logger.debug(f"[_fetch_with_curl] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_curl")
+            return None
+        _mark_surface_patched("_fetch_with_curl")
         try:
             if curl_requests is None:
                 return await self._fetch_with_requests_async(url, headers)
@@ -1080,6 +1189,13 @@ class StealthCrawler:
 
     async def _fetch_with_requests_async(self, url: str, headers: Dict[str, str]) -> Optional[str]:
         """Fetch using aiohttp (fallback)."""
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_requests_async")
+        if not allowed:
+            logger.debug(f"[_fetch_with_requests_async] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_requests_async")
+            return None
+        _mark_surface_patched("_fetch_with_requests_async")
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
@@ -1093,6 +1209,13 @@ class StealthCrawler:
 
     def _fetch_with_curl_cffi(self, url: str, headers: Dict[str, str]) -> Optional[str]:
         """Fetch using curl_cffi with TLS fingerprinting."""
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_curl_cffi")
+        if not allowed:
+            logger.debug(f"[_fetch_with_curl_cffi] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_curl_cffi")
+            return None
+        _mark_surface_patched("_fetch_with_curl_cffi")
         try:
             from curl_cffi import requests as curl_requests
             
@@ -1126,6 +1249,13 @@ class StealthCrawler:
                 raise TorUnavailableError(
                     f"Cannot fetch .onion URL without Tor: {url}")
 
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_requests")
+        if not allowed:
+            logger.debug(f"[_fetch_with_requests] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_requests")
+            return None
+        _mark_surface_patched("_fetch_with_requests")
         try:
             import requests
             import socks
@@ -1168,6 +1298,14 @@ class StealthCrawler:
                 raise TorUnavailableError(
                     f"Cannot fetch .onion URL without Tor: {url}")
 
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_requests_async_tor")
+        if not allowed:
+            logger.debug(f"[_fetch_with_requests_async_tor] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_requests_async_tor")
+            return None
+        _mark_surface_patched("_fetch_with_requests_async_tor")
+
         def _sync_fetch() -> Optional[str]:
             """Sync fetch v threadu s thread-local socket patch."""
             import requests
@@ -1194,6 +1332,13 @@ class StealthCrawler:
 
     def _fetch_with_subprocess_curl(self, url: str, headers: Dict[str, str]) -> Optional[str]:
         """Fetch using subprocess curl with Brotli support (Sprint 8R fallback)."""
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_subprocess_curl")
+        if not allowed:
+            logger.debug(f"[_fetch_with_subprocess_curl] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_subprocess_curl")
+            return None
+        _mark_surface_patched("_fetch_with_subprocess_curl")
         try:
             import subprocess
 
@@ -1219,6 +1364,13 @@ class StealthCrawler:
         Sprint 8X: Async wrapper for subprocess curl.
         Uses asyncio.to_thread to avoid blocking the event loop.
         """
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "_fetch_with_subprocess_curl_async")
+        if not allowed:
+            logger.debug(f"[_fetch_with_subprocess_curl_async] circuit breaker blocked: {reason}")
+            _mark_surface_patched("_fetch_with_subprocess_curl_async")
+            return None
+        _mark_surface_patched("_fetch_with_subprocess_curl_async")
         try:
             import subprocess
 
@@ -1895,6 +2047,27 @@ class StealthWebScraper:
             proxy.last_used = datetime.now()
         
         try:
+            # Phase 2 breaker preflight
+            allowed, reason = _crawler_domain_allowed(url, "StealthWebScraper._try_direct_request")
+            if not allowed:
+                _mark_surface_patched("StealthWebScraper._try_direct_request")
+                return ScrapingResult(
+                    request_id=request_id,
+                    url=url,
+                    success=False,
+                    content=None,
+                    status_code=0,
+                    protection_detected=ProtectionType.NONE,
+                    bypass_method_used=BypassMethod.DIRECT,
+                    headers={},
+                    cookies={},
+                    timestamp=datetime.now(),
+                    duration=time.time() - start_time,
+                    proxy_used=proxy_url,
+                    error=f"circuit_breaker_blocked:{reason}"
+                )
+            _mark_surface_patched("StealthWebScraper._try_direct_request")
+
             async with self._session.get(
                 url,
                 headers=headers,
@@ -2008,6 +2181,13 @@ class StealthWebScraper:
         proxy: Optional[ProxyConfig]
     ) -> Optional[ScrapingResult]:
         """Try using cloudscraper library"""
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(url, "StealthWebScraper._try_cloudscraper")
+        if not allowed:
+            logger.debug(f"[StealthWebScraper._try_cloudscraper] circuit breaker blocked: {reason}")
+            _mark_surface_patched("StealthWebScraper._try_cloudscraper")
+            return None
+        _mark_surface_patched("StealthWebScraper._try_cloudscraper")
         try:
             import cloudscraper
             
@@ -2414,6 +2594,12 @@ class StreamingMonitor:
 
         M1 8GB Optimization: Avoids downloading full content if not needed.
         """
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._head_check_changed")
+        if not allowed:
+            _mark_surface_patched("StreamingMonitor._head_check_changed")
+            return False  # treat blocked as unchanged (skip fetch)
+        _mark_surface_patched("StreamingMonitor._head_check_changed")
         try:
             async with self._session.head(
                 source.url,
@@ -2447,6 +2633,12 @@ class StreamingMonitor:
             # Fallback to raw fetch
             return await self._fetch_url(source)
 
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_rss")
+        if not allowed:
+            _mark_surface_patched("StreamingMonitor._fetch_rss")
+            return None
+        _mark_surface_patched("StreamingMonitor._fetch_rss")
         try:
             import feedparser
 
@@ -2483,6 +2675,13 @@ class StreamingMonitor:
             if 'headers' in source.metadata:
                 headers.update(source.metadata['headers'])
 
+            # Phase 2 breaker preflight
+            allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_api")
+            if not allowed:
+                _mark_surface_patched("StreamingMonitor._fetch_api")
+                return None
+            _mark_surface_patched("StreamingMonitor._fetch_api")
+
             async with self._session.get(source.url, headers=headers) as response:
                 content = await response.text()
 
@@ -2499,6 +2698,12 @@ class StreamingMonitor:
 
     async def _fetch_url(self, source: MonitoredSource) -> Optional[str]:
         """Fetch URL content"""
+        # Phase 2 breaker preflight
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_url")
+        if not allowed:
+            _mark_surface_patched("StreamingMonitor._fetch_url")
+            return None
+        _mark_surface_patched("StreamingMonitor._fetch_url")
         try:
             async with self._session.get(source.url) as response:
                 return await response.text()
