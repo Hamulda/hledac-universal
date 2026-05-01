@@ -44,6 +44,19 @@ from ..layers.stealth_layer import FingerprintRandomizer, FingerprintConfig, Bro
 
 logger = logging.getLogger(__name__)
 
+# Sprint F206BA: Phase 1 Telemetry — Verdict constants (do NOT change transport authority yet)
+STEALTH_MANAGER_TRANSPORT_AUTHORITY = "local_stealth_pool_until_transport_unified"
+STEALTH_MANAGER_PHASE = "phase1_telemetry_only"
+
+# Sprint F206BA: Hard caps (explicit bounds — do NOT increase)
+MAX_STEALTH_PROFILES = len(_IMPERSONATE_PROFILES)  # 2 profiles
+MAX_CLIENTS_PER_PROFILE = 15  # per AsyncSession max_clients
+MAX_SESSION_POOL_SIZE = 5  # _max_sessions LRU bound
+MAX_ETAG_CACHE_ENTRIES = 500  # BoundedHostState(maxlen=500)
+MAX_HOST_TELEMETRY_ENTRIES = 500  # BoundedHostState(maxlen=500)
+# Estimated max connections: MAX_SESSION_POOL_SIZE × MAX_CLIENTS_PER_PROFILE = 5 × 15 = 75
+ESTIMATED_MAX_CONNECTIONS = MAX_SESSION_POOL_SIZE * MAX_CLIENTS_PER_PROFILE  # 75
+
 # M1 8GB: Hard limity pro HTTP fetchování
 DEFAULT_MAX_BYTES = 256 * 1024  # 256KB preview limit
 DEFAULT_CONNECT_TIMEOUT = 10.0
@@ -320,7 +333,51 @@ class StealthManager:
             stats['fingerprint'] = self.fingerprint_randomizer.get_statistics()
         
         return stats
-    
+
+    def get_stealth_transport_telemetry(self) -> Dict[str, Any]:
+        """
+        Sprint F206BA Phase 1: Get truthful telemetry about stealth transport layer.
+
+        Returns bounded telemetry WITHOUT altering transport behavior.
+        No live network calls. No session creation.
+        """
+        # Session pool telemetry
+        session_count = len(self._sessions) if hasattr(self, '_sessions') else 0
+        max_sessions = getattr(self, '_max_sessions', MAX_SESSION_POOL_SIZE)
+
+        # Cache telemetry (BoundedHostState)
+        cache_count = len(self._cache) if hasattr(self, '_cache') and isinstance(self._cache, dict) else 0
+
+        # Estimated cache bytes (rough: avg 50KB per text entry)
+        estimated_cache_bytes = cache_count * 50 * 1024
+
+        # M1 memory risk assessment
+        # ETag cache stores full response text — at 500 entries × 50KB avg = ~25MB
+        # This is bounded by BoundedHostState(maxlen=500) — eviction always available
+        m1_memory_risk = "medium" if estimated_cache_bytes > 20 * 1024 * 1024 else "low"
+
+        return {
+            "phase": STEALTH_MANAGER_PHASE,
+            "transport_authority": STEALTH_MANAGER_TRANSPORT_AUTHORITY,
+            "profile_count": MAX_STEALTH_PROFILES,
+            "max_clients_per_profile": MAX_CLIENTS_PER_PROFILE,
+            "session_pool_size_current": session_count,
+            "session_pool_size_max": max_sessions,
+            "estimated_max_connections": ESTIMATED_MAX_CONNECTIONS,
+            "circuit_breaker_used": False,  # Not integrated yet — Phase 2
+            "canonical_curl_runtime_used": False,  # FetchCoordinator not wired — later sprint
+            "cache_entry_count": cache_count,
+            "cache_entries_max": MAX_ETAG_CACHE_ENTRIES,
+            "estimated_cache_bytes": estimated_cache_bytes,
+            "m1_memory_risk": m1_memory_risk,
+            "fallback_reason": "stealth_manager has independent session pool; not wired to FetchCoordinator transport seam",
+            # Constants for verification
+            "MAX_STEALTH_PROFILES": MAX_STEALTH_PROFILES,
+            "MAX_CLIENTS_PER_PROFILE": MAX_CLIENTS_PER_PROFILE,
+            "MAX_SESSION_POOL_SIZE": MAX_SESSION_POOL_SIZE,
+            "MAX_ETAG_CACHE_ENTRIES": MAX_ETAG_CACHE_ENTRIES,
+        }
+
     async def close(self):
         """Cleanup resources"""
         logger.info("Closing StealthManager...")

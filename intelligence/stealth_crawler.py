@@ -40,6 +40,128 @@ from urllib.parse import quote, unquote, urlparse, urljoin
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# STEALTH CRAWLER PHASE 1 — TELEMETRY MAP (F206BB)
+# =============================================================================
+# Authority: transport is multi_layer_local_until_transport_unified
+#   - 4 distinct transport layers: curl_cffi, aiohttp, requests, subprocess curl
+#   - Tor proxy via SOCKS5 (thread-local socket patch, not circuit breaker)
+#   - No circuit breaker integration anywhere in crawler
+#   - No import-time session creation (sessions are per-request)
+# Phase 1: telemetry and classification only — no behavior change
+# Phase 2: circuit breaker seam at FetchCoordinator boundary
+# =============================================================================
+
+STEALTH_CRAWLER_TRANSPORT_AUTHORITY = "multi_layer_local_until_transport_unified"
+STEALTH_CRAWLER_PHASE = "phase1_telemetry_only"
+
+# Static call-site metadata — 17 surfaces across 3 classes
+STEALTH_CRAWLER_NETWORK_SURFACES = (
+    # StealthCrawler._fetch_html sync path
+    {"name": "_fetch_with_curl_cffi", "lineno": 972, "api": "curl_cffi",
+     "transport": "curl_cffi", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "fallback_chain", "risk": "medium"},
+    {"name": "_fetch_with_requests", "lineno": 991, "api": "requests",
+     "transport": "requests+socks", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "tor_fallback", "risk": "high"},  # Tor proxy thread-local patch
+    {"name": "_fetch_with_subprocess_curl", "lineno": 1073, "api": "subprocess",
+     "transport": "subprocess_curl", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "last_resort", "risk": "medium"},
+
+    # StealthCrawler._fetch_html_async path
+    {"name": "_fetch_with_curl", "lineno": 940, "api": "curl_cffi",
+     "transport": "curl_cffi_async", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "async_primary", "risk": "medium"},
+    {"name": "_fetch_with_requests_async", "lineno": 959, "api": "aiohttp",
+     "transport": "aiohttp", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "async_fallback", "risk": "medium"},
+    {"name": "_fetch_with_requests_async_tor", "lineno": 1036, "api": "requests",
+     "transport": "requests+tor_thread", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "tor_async", "risk": "high"},  # thread-local socket patch
+    {"name": "_fetch_with_subprocess_curl_async", "lineno": 1095, "api": "subprocess",
+     "transport": "async_subprocess_curl", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "async_last_resort", "risk": "medium"},
+
+    # StealthWebScraper — aiohttp session-based
+    {"name": "StealthWebScraper.initialize", "lineno": 1520, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "session_per_init", "risk": "medium"},
+    {"name": "StealthWebScraper._try_direct_request", "lineno": 1749, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "direct_proxy", "risk": "medium"},
+    {"name": "StealthWebScraper._proxy_health_check", "lineno": 1580, "api": "asyncio",
+     "transport": "asyncio_open_connection", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "tcp_health_check", "risk": "low"},
+    {"name": "StealthWebScraper._try_cloudscraper", "lineno": 1881, "api": "cloudscraper",
+     "transport": "cloudscraper", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "cloudflare_bypass", "risk": "high"},  # cloudscraper has its own retry logic
+
+    # StreamingMonitor — aiohttp session-based
+    {"name": "StreamingMonitor.initialize", "lineno": 2040, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "session_per_init", "risk": "medium"},
+    {"name": "StreamingMonitor._head_check_changed", "lineno": 2289, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "head_request", "risk": "low"},
+    {"name": "StreamingMonitor._fetch_rss", "lineno": 2322, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "feedparser_source", "risk": "medium"},
+    {"name": "StreamingMonitor._fetch_api", "lineno": 2353, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "api_polling", "risk": "medium"},
+    {"name": "StreamingMonitor._fetch_url", "lineno": 2378, "api": "aiohttp",
+     "transport": "aiohttp_session", "circuit_breaker": False, "canonical_transport": False,
+     "bypass_state": "url_fetch", "risk": "medium"},
+)
+
+
+def get_stealth_crawler_transport_telemetry() -> dict:
+    """
+    Phase 1 telemetry — no transport changes, just visibility.
+
+    Returns:
+        dict with:
+        - authority: STEALTH_CRAWLER_TRANSPORT_AUTHORITY
+        - phase: STEALTH_CRAWLER_PHASE
+        - network_surface_count: len(STEALTH_CRAWLER_NETWORK_SURFACES)
+        - circuit_breaker_used: False (Phase 1 — not integrated)
+        - canonical_transport_used: False (no single canonical transport)
+        - transport_layers: set of unique transport types
+        - import_time_sessions: False (all sessions are per-request)
+        - m1_memory_risk: "low" | "medium" | "high"
+        - next_phase: "breaker_seam" (circuit breaker integration at FetchCoordinator)
+        - surface_breakdown: per-transport counts
+    """
+    layers = set(s["transport"] for s in STEALTH_CRAWLER_NETWORK_SURFACES)
+
+    # M1 risk: subprocess curl + cloudscraper are highest memory consumers
+    high_risk = [s for s in STEALTH_CRAWLER_NETWORK_SURFACES if s["risk"] == "high"]
+    medium_risk = [s for s in STEALTH_CRAWLER_NETWORK_SURFACES if s["risk"] == "medium"]
+
+    m1_risk = "high" if len(high_risk) > 0 else ("medium" if len(medium_risk) > 3 else "low")
+
+    # Per-transport breakdown
+    transport_counts = {}
+    for s in STEALTH_CRAWLER_NETWORK_SURFACES:
+        t = s["transport"]
+        transport_counts[t] = transport_counts.get(t, 0) + 1
+
+    return {
+        "authority": STEALTH_CRAWLER_TRANSPORT_AUTHORITY,
+        "phase": STEALTH_CRAWLER_PHASE,
+        "network_surface_count": len(STEALTH_CRAWLER_NETWORK_SURFACES),
+        "circuit_breaker_used": False,
+        "canonical_transport_used": False,
+        "transport_layers": sorted(layers),
+        "import_time_sessions": False,
+        "m1_memory_risk": m1_risk,
+        "next_phase": "breaker_seam",
+        "surface_breakdown": transport_counts,
+        "high_risk_surfaces": [s["name"] for s in high_risk],
+        "bypass_states": list(set(s["bypass_state"] for s in STEALTH_CRAWLER_NETWORK_SURFACES)),
+    }
+
+
 # Optional curl_cffi for TLS fingerprinting
 try:
     from curl_cffi import requests as curl_requests
