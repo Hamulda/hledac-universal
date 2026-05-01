@@ -22,10 +22,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .pq_export_encryption import (
+    Decryptability,
     ExportEncryptionEnvelope,
     HPKEAvailability,
     HPKEStatus,
     PostQuantumExportBackend,
+    TestOnlyHPKERoundtripMaterial,
     compute_aad_hash,
 )
 
@@ -118,33 +120,36 @@ class HPKEExportBackend:
             decrypted_count=self._decrypted_count,
         )
 
-    def generate_recipient_key(self, key_id: str) -> tuple[str, str] | None:
+    def generate_recipient_key(self, key_id: str) -> tuple[str, str, str] | None:
         """
-        Generate a recipient keypair via the helper.
+        Generate a recipient keypair and store in keychain.
 
         Args:
             key_id: Key identifier for the recipient key
 
         Returns:
-            Tuple of (public_key_b64, private_key_ref) or None on failure
+            Tuple of (public_key_b64, key_id, fingerprint) or None on failure.
+            The private key is stored in the keychain and referenced by key_id.
         """
         result = _run_helper(["hpke-generate-recipient-key", "--key-id", key_id])
         if result is None or not result.get("ok", False):
             return None
 
         public_key_b64 = result.get("data", {}).get("public_key_b64", "")
-        private_key_b64 = result.get("data", {}).get("private_key_b64", "")
+        returned_key_id = result.get("data", {}).get("key_id", key_id)
+        fingerprint = result.get("data", {}).get("fingerprint", "")
 
         if not public_key_b64:
             return None
 
-        return public_key_b64, private_key_b64
+        return public_key_b64, returned_key_id, fingerprint
 
     def encrypt_hpke(
         self,
         plaintext: bytes,
         aad: bytes,
         recipient_public_key_b64: str,
+        recipient_key_id: str = "",
     ) -> ExportEncryptionEnvelope | None:
         """
         Encrypt plaintext using HPKE X-Wing via the helper.
@@ -153,11 +158,13 @@ class HPKEExportBackend:
             plaintext: Raw bytes to encrypt
             aad: Additional authenticated data for integrity binding
             recipient_public_key_b64: Recipient's public key
+            recipient_key_id: Optional key identifier for persistent keychain key
 
         Returns:
             ExportEncryptionEnvelope or None on failure
         """
         import base64
+        import hashlib
 
         result = _run_helper([
             "hpke-encrypt",
@@ -175,6 +182,13 @@ class HPKEExportBackend:
         if not encapsulated_key or not ciphertext:
             return None
 
+        # Compute public key fingerprint (SHA-256 hex of raw public key bytes)
+        try:
+            pubkey_bytes = base64.b64decode(recipient_public_key_b64)
+            fingerprint = hashlib.sha256(pubkey_bytes).hexdigest()
+        except Exception:
+            fingerprint = ""
+
         envelope = ExportEncryptionEnvelope(
             mode="PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256",
             encapsulated_key_b64=encapsulated_key,
@@ -182,6 +196,10 @@ class HPKEExportBackend:
             aad_b64=base64.b64encode(aad).decode("ascii"),
             ciphertext_b64=ciphertext,
             recipient_public_key_b64=recipient_public_key_b64,
+            recipient_key_id=recipient_key_id,
+            recipient_public_key_fingerprint=fingerprint,
+            decryptability=Decryptability.PERSISTENT_KEYCHAIN if recipient_key_id else Decryptability.UNSUPPORTED,
+            pq=True,
             created_at=datetime.now(timezone.utc).isoformat(),
             backend=self.name,
         )
@@ -192,30 +210,50 @@ class HPKEExportBackend:
         self,
         envelope: ExportEncryptionEnvelope,
         plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
     ) -> bytes | None:
         """
         Decrypt HPKE-encrypted envelope via the helper.
 
-        Note: For local/self-contained envelopes, the recipient_private_key_b64
-        travels in the envelope. For distributed HPKE, the private key should be
-        stored in a secrets manager and referenced by key_id instead.
+        Production path: requires persistent keychain via envelope.recipient_key_id.
+        Test path: requires explicit test_material with ephemeral private key.
 
         Args:
-            envelope: Encrypted export envelope
+            envelope: Encrypted export envelope (production-safe, no private key)
             plaintext_placeholder: Expected plaintext size hint (for validation)
+            test_material: Test-only roundtrip material for ephemeral decryption.
 
         Returns:
             Decrypted bytes or None on failure
         """
         import base64
 
-        result = _run_helper([
+        # Determine which private key to use
+        if test_material is not None:
+            # Test path: ephemeral private key from explicit test material
+            private_key_b64 = test_material.private_key_b64
+        else:
+            # Production path: persistent keychain via recipient_key_id
+            # The helper resolves recipient_key_id internally
+            private_key_b64 = None
+
+        # Build decrypt command
+        cmd = [
             "hpke-decrypt",
             "--encapsulated-key-b64", envelope.encapsulated_key_b64,
             "--ciphertext-b64", envelope.ciphertext_b64,
             "--aad-b64", envelope.aad_b64,
-            "--recipient-private-key-b64", envelope.recipient_private_key_b64,
-        ])
+        ]
+
+        if private_key_b64 is not None:
+            cmd.extend(["--recipient-private-key-b64", private_key_b64])
+        elif envelope.recipient_key_id:
+            cmd.extend(["--recipient-key-id", envelope.recipient_key_id])
+        else:
+            # No key source available — cannot decrypt
+            return None
+
+        result = _run_helper(cmd)
         if result is None or not result.get("ok", False):
             return None
 

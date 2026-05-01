@@ -17,11 +17,13 @@ import base64
 import hashlib
 
 from hledac.universal.security.pq_export_encryption import (
+    Decryptability,
     ExportEncryptionEnvelope,
     ExportPolicy,
     HPKEAvailability,
     HPKEStatus,
     NullPostQuantumExportBackend,
+    TestOnlyHPKERoundtripMaterial,
     compute_aad_hash,
 )
 
@@ -37,7 +39,10 @@ class TestExportEncryptionEnvelope:
         assert envelope.aad_b64 == ""
         assert envelope.ciphertext_b64 == ""
         assert envelope.recipient_public_key_b64 == ""
-        assert envelope.recipient_private_key_b64 == ""
+        assert envelope.recipient_key_id == ""
+        assert envelope.recipient_public_key_fingerprint == ""
+        assert envelope.decryptability == Decryptability.UNSUPPORTED
+        assert envelope.pq is False
         assert envelope.created_at == ""
         assert envelope.backend == "null"
 
@@ -49,7 +54,10 @@ class TestExportEncryptionEnvelope:
             aad_b64="aGR0",
             ciphertext_b64="ghi789",
             recipient_public_key_b64="jkl012",
-            recipient_private_key_b64="mno345",
+            recipient_key_id="key-123",
+            recipient_public_key_fingerprint="fp456",
+            decryptability=Decryptability.PERSISTENT_KEYCHAIN,
+            pq=True,
             created_at="2026-04-30T00:00:00Z",
             backend="test-backend",
         )
@@ -60,9 +68,15 @@ class TestExportEncryptionEnvelope:
         assert d["aad_b64"] == "aGR0"
         assert d["ciphertext_b64"] == "ghi789"
         assert d["recipient_public_key_b64"] == "jkl012"
-        assert d["recipient_private_key_b64"] == "mno345"
+        assert d["recipient_key_id"] == "key-123"
+        assert d["recipient_public_key_fingerprint"] == "fp456"
+        assert d["decryptability"] == "persistent_keychain"
+        assert d["pq"] is True
         assert d["created_at"] == "2026-04-30T00:00:00Z"
         assert d["backend"] == "test-backend"
+        # Safety: no private key fields
+        private_fields = [k for k in d if "private" in k.lower()]
+        assert private_fields == [], f"to_dict must not contain private fields: {private_fields}"
 
     def test_envelope_from_dict(self):
         d = {
@@ -72,7 +86,10 @@ class TestExportEncryptionEnvelope:
             "aad_b64": "aGR0",
             "ciphertext_b64": "ghi789",
             "recipient_public_key_b64": "jkl012",
-            "recipient_private_key_b64": "mno345",
+            "recipient_key_id": "key-123",
+            "recipient_public_key_fingerprint": "fp456",
+            "decryptability": "persistent_keychain",
+            "pq": True,
             "created_at": "2026-04-30T00:00:00Z",
             "backend": "test-backend",
         }
@@ -80,7 +97,10 @@ class TestExportEncryptionEnvelope:
         assert envelope.mode == "PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256"
         assert envelope.encapsulated_key_b64 == "abc123"
         assert envelope.aad_b64 == "aGR0"
-        assert envelope.recipient_private_key_b64 == "mno345"
+        assert envelope.recipient_key_id == "key-123"
+        assert envelope.recipient_public_key_fingerprint == "fp456"
+        assert envelope.decryptability == Decryptability.PERSISTENT_KEYCHAIN
+        assert envelope.pq is True
         assert envelope.is_encrypted() is True
 
     def test_envelope_is_encrypted(self):
@@ -146,7 +166,9 @@ class TestNullBackend:
             aad_hash="ghi",
             aad_b64="YZRp",
             recipient_public_key_b64="jkl",
-            recipient_private_key_b64="mno",
+            recipient_key_id="",
+            decryptability=Decryptability.UNSUPPORTED,
+            pq=True,
         )
         result = backend.decrypt_hpke(
             envelope=envelope,
@@ -173,23 +195,34 @@ class FakePostQuantumExportBackend:
     def hpke_status(self) -> HPKEStatus:
         return self._status
 
-    def generate_recipient_key(self, key_id: str) -> tuple[str, str]:
+    def generate_recipient_key(self, key_id: str) -> tuple[str, str, str]:
         import base64
+        import hashlib
         public_key = base64.b64encode(self._recipient_key).decode("ascii")
-        return public_key, f"{key_id}:ref"
+        fingerprint = hashlib.sha256(self._recipient_key).hexdigest()
+        return public_key, key_id, fingerprint
 
     def encrypt_hpke(
         self,
         plaintext: bytes,
         aad: bytes,
         recipient_public_key_b64: str,
+        recipient_key_id: str = "",
     ) -> ExportEncryptionEnvelope:
         import base64
+        import hashlib
         from datetime import datetime, timezone
 
         # Simple XOR encryption for fake
         key = self._recipient_key
         ciphertext = bytes(p ^ k for p, k in zip(plaintext, key * (len(plaintext) // len(key) + 1)))
+
+        # Compute fingerprint of public key
+        try:
+            pub_bytes = base64.b64decode(recipient_public_key_b64)
+            fingerprint = hashlib.sha256(pub_bytes).hexdigest()
+        except Exception:
+            fingerprint = ""
 
         envelope = ExportEncryptionEnvelope(
             mode="PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256",
@@ -198,7 +231,10 @@ class FakePostQuantumExportBackend:
             aad_b64=base64.b64encode(aad).decode("ascii"),
             ciphertext_b64=base64.b64encode(ciphertext).decode("ascii"),
             recipient_public_key_b64=recipient_public_key_b64,
-            recipient_private_key_b64=base64.b64encode(self._recipient_key).decode("ascii"),
+            recipient_key_id=recipient_key_id or "test-key",
+            recipient_public_key_fingerprint=fingerprint,
+            decryptability=Decryptability.PERSISTENT_KEYCHAIN,
+            pq=True,
             created_at=datetime.now(timezone.utc).isoformat(),
             backend=self.name,
         )
@@ -210,7 +246,10 @@ class FakePostQuantumExportBackend:
             aad_b64=envelope.aad_b64,
             ciphertext_b64=envelope.ciphertext_b64,
             recipient_public_key_b64=envelope.recipient_public_key_b64,
-            recipient_private_key_b64=envelope.recipient_private_key_b64,
+            recipient_key_id=envelope.recipient_key_id,
+            recipient_public_key_fingerprint=envelope.recipient_public_key_fingerprint,
+            decryptability=envelope.decryptability,
+            pq=envelope.pq,
             created_at=envelope.created_at,
             backend=envelope.backend,
         )
@@ -222,6 +261,7 @@ class FakePostQuantumExportBackend:
         self,
         envelope: ExportEncryptionEnvelope,
         plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
     ) -> bytes | None:
         import base64
 

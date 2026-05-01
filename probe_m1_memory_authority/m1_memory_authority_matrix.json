@@ -1,0 +1,650 @@
+{
+  "census_version": "F206AJ",
+  "target": "M1 MacBook Air 8GB UMA",
+  "compiled": "2026-05-01",
+  "methodology": "static_scan",
+  "aborted": ["runtime_behavior", "model_load", "network", "live_sprint"],
+
+  "uma_thresholds": {
+    "WARN_threshold_MB": 6144,
+    "CRITICAL_threshold_MB": 6656,
+    "EMERGENCY_threshold_MB": 7168,
+    "UMA_total_MB": 8192,
+    "source": "utils/uma_budget.py"
+  },
+
+  "mlx_memory": {
+    "set_wired_limit_bytes": 2500000000,
+    "set_wired_limit_GB": 2.5,
+    "set_wired_limit_source": "core/__main__.py:234",
+    "_METAL_WIRED_LIMIT_BYTES": 2684354560,
+    "_METAL_CACHE_LIMIT_BYTES": 2684354560,
+    "_MLX_WIRED_LIMIT": 2684354560,
+    "_MLX_CACHE_LIMIT": 2684354560,
+    "cache_limit_actual": 2684354560,
+    "wired_limit_actual": 2684354560,
+    "mlx_cache_source": "utils/mlx_cache.py:171-176",
+    "mlx_lifetime_cache_max": 2,
+    "configure_mlx_limits_default_cache_mb": 1536
+  },
+
+  "resource_governor_runtime": {
+    "source": "runtime/resource_governor.py",
+    "DEFAULT_FETCH_LIMIT": 25,
+    "MODEL_LOADED_FETCH_LIMIT": 3,
+    "WARN_fetch_reduced": 12,
+    "MAX_BUDGET_EVENTS": 100,
+    "SIDECAR_DEFAULT_ESTIMATE_MB": 128,
+    "MISSION_PEAK_RSS_GIB": 5.5,
+    "sidecar_heavy_RAM_guard_pct": 0.85,
+    "heavy_sidecar_blocked_on_critical_emergency": true
+  },
+
+  "resource_allocator": {
+    "source": "resource_allocator.py",
+    "MAX_RAM_GB": 5.5,
+    "EMERGENCY_RAM_GB": 6.2,
+    "FALLBACK_RAM_ESTIMATE_MB": 500.0,
+    "pressure_memory_ceiling_GB": 5.5,
+    "CONCURRENCY_FLOOR": 1,
+    "CONCURRENCY_DEFAULT": 6
+  },
+
+  "embedding_batch": {
+    "embedding_pipeline_BATCH_SIZE": 16,
+    "streaming_embedder_MAX_EMBEDDING_BATCH": 16,
+    "semantic_dedup_BATCH_SIZE": 16,
+    "embedding_dim": 256,
+    "embedding_model_size_GB": 0.5,
+    "streaming_embedder_source": "intelligence/streaming_embedder.py",
+    "semantic_dedup_source": "semantic_deduplicator.py",
+    "embedding_pipeline_source": "embedding_pipeline.py"
+  },
+
+  "semantic_dedup_cache": {
+    "MAX_CACHE_ITEMS": 512,
+    "MAX_CACHE_MEMORY_MB": 256,
+    "_BATCH_SIZE": 16,
+    "_EMBEDDING_DIM": 256,
+    "source": "semantic_deduplicator.py"
+  },
+
+  "concurrency": {
+    "FETCH_SEMAPHORE_default": 25,
+    "MODEL_LOADED_FETCH_LIMIT": 3,
+    "intelligence_max_parallel_modules": 4,
+    "tool_registry_max_parallel_by_tool": {
+      "dns": 1,
+      "whois": 5,
+      "jarm": 10,
+      "crawl": 20,
+      "scrape": 5,
+      "submit": 1
+    },
+    "execution_coordinator_default_concurrent": 10,
+    "social_identity_miner_semaphore": 4,
+    "RIR_CONCURRENCY": 4,
+    "slm_decomposer_max_parallel": 2,
+    "source_concurrency": "utils/concurrency.py",
+    "source_fetch": "fetching/public_fetcher.py"
+  },
+
+  "m1_memory_optimizer_layer": {
+    "memory_limit_mb": 5500,
+    "source": "layers/layer_manager.py"
+  },
+
+  "config_presets": {
+    "MEMORY_LIMIT_MB": 5500.0,
+    "THERMAL_THRESHOLD_C": 85.0,
+    "MAX_CONCURRENT_AGENTS": 6,
+    "CIRCUIT_BREAKER_THRESHOLD": 3,
+    "enable_knowledge_layer_default": false,
+    "enable_rag_pipeline_default": false,
+    "source": "config.py"
+  },
+
+  "vlm_analyzer": {
+    "skip_RSS_threshold_GB": 5.0,
+    "source": "tools/vlm_analyzer.py"
+  },
+
+  "hermes3_engine": {
+    "configure_mlx_limits_cache_mb": 1536,
+    "source": "brain/hermes3_engine.py:1997"
+  },
+
+  "m1_sustained_sprint_benchmark": {
+    "M1_8GB_CEILING_MB": 6656,
+    "source": "benchmarks/m1_sustained_sprint.py:49"
+  },
+
+  "mlx_utils": {
+    "WARNING_threshold_pct": 80,
+    "CRITICAL_threshold_pct": 90,
+    "source": "utils/mlx_memory.py:16-17"
+  },
+
+  "high_water_guard_pct": 0.85,
+
+  "high_water_guard_sources": [
+    "intelligence/streaming_embedder.py:140",
+    "intelligence/social_identity_miner.py:211",
+    "intelligence/rir_correlator.py (implicit via governor)",
+    "runtime/resource_governor.py:262",
+    "multimodal/analyzer.py:434",
+    "layers/layer_manager.py (M1MemoryOptimizer check_memory_pressure)"
+  ],
+
+  "ram_guard_summary": {
+    "streaming_embedder": "skip if RSS > 85% high_water",
+    "social_identity_miner": "skip if RSS > 85% high_water",
+    "rir_correlator": "skip via governor",
+    "multimodal_enricher": "skip if RAM usage > 85% high_water",
+    "vlm_analyzer": "skip if RSS > 5.0 GB",
+    "runtime_governor_sidecar": "heavy sidecars blocked if high_water > 0.85 OR uma_state critical/emergency",
+    "layer_manager_m1_optimizer": "skip if used_mb > 5500 MB"
+  },
+
+  "matrix": [
+    {
+      "component": "UMA_WARN_threshold",
+      "file": "utils/uma_budget.py",
+      "constant": "_WARN_THRESHOLD_MB",
+      "value": 6144,
+      "unit": "MB",
+      "owner": "utils/uma_budget",
+      "hot_path": true,
+      "conflict_group": "uma_threshold"
+    },
+    {
+      "component": "UMA_CRITICAL_threshold",
+      "file": "utils/uma_budget.py",
+      "constant": "_CRITICAL_THRESHOLD_MB",
+      "value": 6656,
+      "unit": "MB",
+      "owner": "utils/uma_budget",
+      "hot_path": true,
+      "conflict_group": "uma_threshold"
+    },
+    {
+      "component": "UMA_EMERGENCY_threshold",
+      "file": "utils/uma_budget.py",
+      "constant": "_EMERGENCY_THRESHOLD_MB",
+      "value": 7168,
+      "unit": "MB",
+      "owner": "utils/uma_budget",
+      "hot_path": true,
+      "conflict_group": "uma_threshold"
+    },
+    {
+      "component": "UMA_total",
+      "file": "utils/uma_budget.py",
+      "constant": "_UMA_TOTAL_MB",
+      "value": 8192,
+      "unit": "MB",
+      "owner": "utils/uma_budget",
+      "hot_path": false,
+      "conflict_group": "uma_capacity"
+    },
+    {
+      "component": "MLX_wired_limit_boot",
+      "file": "core/__main__.py",
+      "constant": "mx.metal.set_wired_limit(2_500_000_000)",
+      "value": 2500000000,
+      "unit": "bytes",
+      "owner": "core/__main__",
+      "hot_path": true,
+      "conflict_group": "mlx_wired_limit"
+    },
+    {
+      "component": "MLX_wired_limit_mlx_cache",
+      "file": "utils/mlx_cache.py",
+      "constant": "_METAL_WIRED_LIMIT_BYTES",
+      "value": 2684354560,
+      "unit": "bytes",
+      "owner": "utils/mlx_cache",
+      "hot_path": true,
+      "conflict_group": "mlx_wired_limit"
+    },
+    {
+      "component": "MLX_cache_limit",
+      "file": "utils/mlx_cache.py",
+      "constant": "_METAL_CACHE_LIMIT_BYTES",
+      "value": 2684354560,
+      "unit": "bytes",
+      "owner": "utils/mlx_cache",
+      "hot_path": true,
+      "conflict_group": "mlx_cache_limit"
+    },
+    {
+      "component": "MLX_lifetime_cache_max_models",
+      "file": "utils/mlx_cache.py",
+      "constant": "_MLX_CACHE_MAX",
+      "value": 2,
+      "unit": "models",
+      "owner": "utils/mlx_cache",
+      "hot_path": false,
+      "conflict_group": "mlx_model_cache"
+    },
+    {
+      "component": "MLX_configure_default_cache",
+      "file": "brain/hermes3_engine.py",
+      "constant": "configure_mlx_limits(cache_limit_mb=1536)",
+      "value": 1536,
+      "unit": "MB",
+      "owner": "brain/hermes3_engine",
+      "hot_path": true,
+      "conflict_group": "mlx_cache_limit"
+    },
+    {
+      "component": "RuntimeGovernor_DEFAULT_FETCH_LIMIT",
+      "file": "runtime/resource_governor.py",
+      "constant": "DEFAULT_FETCH_LIMIT",
+      "value": 25,
+      "unit": "concurrent_fetches",
+      "owner": "runtime/resource_governor",
+      "hot_path": true,
+      "conflict_group": "fetch_concurrency"
+    },
+    {
+      "component": "RuntimeGovernor_MODEL_LOADED_FETCH_LIMIT",
+      "file": "runtime/resource_governor.py",
+      "constant": "MODEL_LOADED_FETCH_LIMIT",
+      "value": 3,
+      "unit": "concurrent_fetches",
+      "owner": "runtime/resource_governor",
+      "hot_path": true,
+      "conflict_group": "fetch_concurrency"
+    },
+    {
+      "component": "RuntimeGovernor_WARN_fetch",
+      "file": "runtime/resource_governor.py",
+      "constant": "max(3, DEFAULT_FETCH_LIMIT // 2)",
+      "value": 12,
+      "unit": "concurrent_fetches",
+      "owner": "runtime/resource_governor",
+      "hot_path": true,
+      "conflict_group": "fetch_concurrency"
+    },
+    {
+      "component": "RuntimeGovernor_MAX_BUDGET_EVENTS",
+      "file": "runtime/resource_governor.py",
+      "constant": "MAX_BUDGET_EVENTS",
+      "value": 100,
+      "unit": "events",
+      "owner": "runtime/resource_governor",
+      "hot_path": false,
+      "conflict_group": "budget_events"
+    },
+    {
+      "component": "RuntimeGovernor_SIDECAR_ESTIMATE",
+      "file": "runtime/resource_governor.py",
+      "constant": "SIDECAR_DEFAULT_ESTIMATE_MB",
+      "value": 128,
+      "unit": "MB_per_sidecar",
+      "owner": "runtime/resource_governor",
+      "hot_path": false,
+      "conflict_group": "sidecar_budget"
+    },
+    {
+      "component": "RuntimeGovernor_MISSION_PEAK_RSS",
+      "file": "runtime/resource_governor.py",
+      "constant": "MISSION_PEAK_RSS_GIB",
+      "value": 5.5,
+      "unit": "GiB",
+      "owner": "runtime/resource_governor",
+      "hot_path": true,
+      "conflict_group": "mission_budget"
+    },
+    {
+      "component": "ResourceAllocator_MAX_RAM_GB",
+      "file": "resource_allocator.py",
+      "constant": "MAX_RAM_GB",
+      "value": 5.5,
+      "unit": "GB",
+      "owner": "resource_allocator",
+      "hot_path": true,
+      "conflict_group": "ram_budget"
+    },
+    {
+      "component": "ResourceAllocator_EMERGENCY_RAM_GB",
+      "file": "resource_allocator.py",
+      "constant": "EMERGENCY_RAM_GB",
+      "value": 6.2,
+      "unit": "GB",
+      "owner": "resource_allocator",
+      "hot_path": true,
+      "conflict_group": "ram_budget"
+    },
+    {
+      "component": "ResourceAllocator_CONCURRENCY_FLOOR",
+      "file": "resource_allocator.py",
+      "constant": "_CONCURRENCY_FLOOR",
+      "value": 1,
+      "unit": "workers",
+      "owner": "resource_allocator",
+      "hot_path": true,
+      "conflict_group": "worker_concurrency"
+    },
+    {
+      "component": "Embedding_batch_size",
+      "file": "embedding_pipeline.py",
+      "constant": "_BATCH_SIZE",
+      "value": 16,
+      "unit": "texts_per_batch",
+      "owner": "embedding_pipeline",
+      "hot_path": true,
+      "conflict_group": "embedding_batch"
+    },
+    {
+      "component": "Streaming_embedder_MAX_EMBEDDING_BATCH",
+      "file": "intelligence/streaming_embedder.py",
+      "constant": "MAX_EMBEDDING_BATCH",
+      "value": 16,
+      "unit": "texts_per_batch",
+      "owner": "intelligence/streaming_embedder",
+      "hot_path": true,
+      "conflict_group": "embedding_batch"
+    },
+    {
+      "component": "Semantic_dedup_BATCH_SIZE",
+      "file": "semantic_deduplicator.py",
+      "constant": "_BATCH_SIZE",
+      "value": 16,
+      "unit": "texts_per_batch",
+      "owner": "semantic_deduplicator",
+      "hot_path": true,
+      "conflict_group": "embedding_batch"
+    },
+    {
+      "component": "Semantic_dedup_MAX_CACHE_ITEMS",
+      "file": "semantic_deduplicator.py",
+      "constant": "MAX_CACHE_ITEMS",
+      "value": 512,
+      "unit": "items",
+      "owner": "semantic_deduplicator",
+      "hot_path": false,
+      "conflict_group": "embedding_cache"
+    },
+    {
+      "component": "Semantic_dedup_MAX_CACHE_MEMORY_MB",
+      "file": "semantic_deduplicator.py",
+      "constant": "MAX_CACHE_MEMORY_MB",
+      "value": 256,
+      "unit": "MB",
+      "owner": "semantic_deduplicator",
+      "hot_path": false,
+      "conflict_group": "embedding_cache"
+    },
+    {
+      "component": "Semantic_dedup_EMBEDDING_DIM",
+      "file": "semantic_deduplicator.py",
+      "constant": "_EMBEDDING_DIM",
+      "value": 256,
+      "unit": "dimensions",
+      "owner": "semantic_deduplicator",
+      "hot_path": false,
+      "conflict_group": "embedding_dim"
+    },
+    {
+      "component": "Fetch_FETCH_SEMAPHORE_default",
+      "file": "utils/concurrency.py",
+      "constant": "get_fetch_semaphore(initial_limit=25)",
+      "value": 25,
+      "unit": "concurrent_fetches",
+      "owner": "utils/concurrency",
+      "hot_path": true,
+      "conflict_group": "fetch_concurrency"
+    },
+    {
+      "component": "Concurrency_default_concurrent_agents",
+      "file": "config.py",
+      "constant": "MAX_CONCURRENT_AGENTS",
+      "value": 6,
+      "unit": "agents",
+      "owner": "config",
+      "hot_path": false,
+      "conflict_group": "agent_concurrency"
+    },
+    {
+      "component": "M1LayerManager_memory_limit",
+      "file": "layers/layer_manager.py",
+      "constant": "M1MemoryOptimizer(memory_limit_mb=5500)",
+      "value": 5500,
+      "unit": "MB",
+      "owner": "layers/layer_manager",
+      "hot_path": true,
+      "conflict_group": "m1_memory_ceiling"
+    },
+    {
+      "component": "VLMAnalyzer_skip_threshold",
+      "file": "tools/vlm_analyzer.py",
+      "constant": "rss > 5.0 * 1024**3",
+      "value": 5120,
+      "unit": "MB",
+      "owner": "tools/vlm_analyzer",
+      "hot_path": true,
+      "conflict_group": "vlm_ram_guard"
+    },
+    {
+      "component": "Benchmark_M1_8GB_CEILING",
+      "file": "benchmarks/m1_sustained_sprint.py",
+      "constant": "M1_8GB_CEILING_MB",
+      "value": 6656,
+      "unit": "MB",
+      "owner": "benchmarks",
+      "hot_path": false,
+      "conflict_group": "benchmark_threshold"
+    },
+    {
+      "component": "MLX_memory_WARNING",
+      "file": "utils/mlx_memory.py",
+      "constant": "WARNING >= 80%",
+      "value": 80,
+      "unit": "pct",
+      "owner": "utils/mlx_memory",
+      "hot_path": false,
+      "conflict_group": "mlx_pressure"
+    },
+    {
+      "component": "MLX_memory_CRITICAL",
+      "file": "utils/mlx_memory.py",
+      "constant": "CRITICAL >= 90%",
+      "value": 90,
+      "unit": "pct",
+      "owner": "utils/mlx_memory",
+      "hot_path": false,
+      "conflict_group": "mlx_pressure"
+    },
+    {
+      "component": "Config_MEMORY_LIMIT_MB",
+      "file": "config.py",
+      "constant": "MEMORY_LIMIT_MB",
+      "value": 5500.0,
+      "unit": "MB",
+      "owner": "config",
+      "hot_path": false,
+      "conflict_group": "config_memory"
+    },
+    {
+      "component": "Config_THERMAL_THRESHOLD_C",
+      "file": "config.py",
+      "constant": "THERMAL_THRESHOLD_C",
+      "value": 85.0,
+      "unit": "celsius",
+      "owner": "config",
+      "hot_path": false,
+      "conflict_group": "thermal"
+    },
+    {
+      "component": "PublicFetcher_RSS_skip_GB",
+      "file": "fetching/public_fetcher.py",
+      "constant": "rss_gb > 5.5",
+      "value": 5632,
+      "unit": "MB",
+      "owner": "fetching/public_fetcher",
+      "hot_path": false,
+      "conflict_group": "fetcher_ram_guard"
+    },
+    {
+      "component": "SocialIdentityMiner_semaphore",
+      "file": "intelligence/social_identity_miner.py",
+      "constant": "asyncio.Semaphore(4)",
+      "value": 4,
+      "unit": "concurrent",
+      "owner": "intelligence/social_identity_miner",
+      "hot_path": true,
+      "conflict_group": "social_miner_concurrency"
+    },
+    {
+      "component": "RIR_correlator_CONCURRENCY",
+      "file": "intelligence/rir_correlator.py",
+      "constant": "asyncio.Semaphore(RIR_CONCURRENCY)",
+      "value": 4,
+      "unit": "concurrent",
+      "owner": "intelligence/rir_correlator",
+      "hot_path": true,
+      "conflict_group": "rir_concurrency"
+    },
+    {
+      "component": "High_water_guard_pct",
+      "file": "multiple",
+      "constant": "high_water > 0.85",
+      "value": 0.85,
+      "unit": "ratio",
+      "owner": "multiple",
+      "hot_path": true,
+      "conflict_group": "ram_guard_threshold"
+    }
+  ],
+
+  "conflicts": [
+    {
+      "id": "C1",
+      "severity": "HIGH",
+      "title": "MLX wired limit inconsistency",
+      "description": "core/__main__.py sets mx.metal.set_wired_limit(2_500_000_000) = 2.326 GiB. But utils/mlx_cache.py defines _METAL_WIRED_LIMIT_BYTES = 2_684_354_560 = 2.5 GiB. Two different values. The mlx_cache value is what gets used by _ensure_metal_memory_limits() which is called from resource_allocator.py cleanup path. The __main__.py value is set at boot before mlx_cache is configured.",
+      "files": ["core/__main__.py:234", "utils/mlx_cache.py:171"],
+      "values": [2500000000, 2684354560],
+      "units": ["bytes", "bytes"],
+      "conflict_group": "mlx_wired_limit"
+    },
+    {
+      "id": "C2",
+      "severity": "MEDIUM",
+      "title": "RAM ceiling inconsistency — three different 5.5GB values",
+      "description": "Three different components each define 5.5GB ceiling: (1) resource_allocator.py MAX_RAM_GB=5.5, (2) layers/layer_manager.py M1MemoryOptimizer(memory_limit_mb=5500), (3) fetching/public_fetcher.py rss_gb > 5.5 check. All 5.5GB but different types (GB vs MB, GiB implicit). No single canonical source.",
+      "files": ["resource_allocator.py:75", "layers/layer_manager.py", "fetching/public_fetcher.py:1224"],
+      "values": [5.5, 5500, 5.5],
+      "units": ["GB", "MB", "GB"],
+      "conflict_group": "ram_ceiling_fragmented"
+    },
+    {
+      "id": "C3",
+      "severity": "MEDIUM",
+      "title": "UMA CRITICAL threshold vs M1 benchmark ceiling — same value",
+      "description": "utils/uma_budget.py CRITICAL_THRESHOLD_MB=6656 and benchmarks/m1_sustained_sprint.py M1_8GB_CEILING_MB=6656 are identical but owned by different sprint eras. No guarantees they stay in sync. No canonical constant shared between them.",
+      "files": ["utils/uma_budget.py", "benchmarks/m1_sustained_sprint.py:49"],
+      "values": [6656, 6656],
+      "units": ["MB", "MB"],
+      "conflict_group": "uma_threshold_duplication"
+    },
+    {
+      "id": "C4",
+      "severity": "MEDIUM",
+      "title": "ResourceAllocator.EMERGENCY_RAM_GB=6.2 vs uma_budget CRITICAL=6.5",
+      "description": "resource_allocator.py defines EMERGENCY_RAM_GB=6.2 (triggers emergency brake/cancellation). But uma_budget.py CRITICAL=6.5. The emergency threshold (6.2) is BELOW the critical threshold (6.5). This inversion means the resource_allocator emergency brake fires before the UmaState critical state is reached. Possible race condition or intentional gradation — unclear from code.",
+      "files": ["resource_allocator.py:76", "utils/uma_budget.py"],
+      "values": [6.2, 6.5],
+      "units": ["GB", "GB"],
+      "conflict_group": "emergency_threshold_inversion"
+    },
+    {
+      "id": "C5",
+      "severity": "LOW",
+      "title": "high_water guard is 0.85 everywhere but computed differently",
+      "description": "All 6+ RAM guard sites check high_water > 0.85, but some compute the actual RSS comparison differently: streaming_embedder compares rss_mb > high_water * 0.85; social_identity_miner compares rss_mb > high_water * 0.85; multimodal/analyzer.py uses governor.high_water * 0.85 on usage['ram_mb'] dict; runtime/resource_governor.py blocks if high_water > 0.85. The base high_water value (from uma_budget) is in MB; RSS can be in MB or GiB depending on source.",
+      "files": ["intelligence/streaming_embedder.py:140", "intelligence/social_identity_miner.py:211", "multimodal/analyzer.py:434", "runtime/resource_governor.py:262", "layers/layer_manager.py"],
+      "values": [0.85, 0.85, 0.85, 0.85, 0.85],
+      "units": ["ratio", "ratio", "ratio", "ratio", "ratio"],
+      "conflict_group": "ram_guard_threshold"
+    },
+    {
+      "id": "C6",
+      "severity": "LOW",
+      "title": "configure_mlx_limits cache_limit default (1536) vs mlx_cache _METAL_CACHE_LIMIT (2684)",
+      "description": "hermes3_engine.py calls configure_mlx_limits(cache_limit_mb=1536) for MLX model loading. But _ensure_metal_memory_limits() in mlx_cache.py sets _METAL_CACHE_LIMIT_BYTES=2684354560 (2.5GiB). These are the same logical parameter but with different values: 1536MB vs 2560MB.",
+      "files": ["brain/hermes3_engine.py:1997", "utils/mlx_cache.py:171"],
+      "values": [1536, 2560],
+      "units": ["MB", "MB"],
+      "conflict_group": "mlx_cache_limit"
+    },
+    {
+      "id": "C7",
+      "severity": "INFO",
+      "title": "VLMAnalyzer 5.0GB threshold stands alone",
+      "description": "tools/vlm_analyzer.py uses rss > 5.0 * 1024**3 for its skip check. This is different from the 5.5GB ceiling used everywhere else. It's an independent determination, not derived from any shared constant.",
+      "files": ["tools/vlm_analyzer.py:112"],
+      "values": [5120],
+      "units": ["MB"],
+      "conflict_group": "vlm_ram_guard"
+    }
+  ],
+
+  "conflict_matrix": {
+    "uma_threshold": {
+      "description": "UMA state machine thresholds",
+      "count": 3,
+      "constants": ["_WARN_THRESHOLD_MB", "_CRITICAL_THRESHOLD_MB", "_EMERGENCY_THRESHOLD_MB"],
+      "status": "consistent_within_group"
+    },
+    "mlx_wired_limit": {
+      "description": "MLX Metal wired limit — how much UMA MLX can wire",
+      "count": 2,
+      "constants": ["mx.metal.set_wired_limit(2_500_000_000)", "_METAL_WIRED_LIMIT_BYTES"],
+      "status": "CONFLICT_C1",
+      "delta_bytes": 184355560,
+      "delta_MB": 175.8
+    },
+    "mlx_cache_limit": {
+      "description": "MLX Metal cache limit",
+      "count": 2,
+      "constants": ["_METAL_CACHE_LIMIT_BYTES", "configure_mlx_limits(cache_limit_mb=1536)"],
+      "status": "CONFLICT_C6",
+      "delta_MB": 1024
+    },
+    "fetch_concurrency": {
+      "description": "HTTP fetch concurrency under various memory states",
+      "count": 3,
+      "constants": ["DEFAULT_FETCH_LIMIT=25", "MODEL_LOADED_FETCH_LIMIT=3", "WARN_fetch=12"],
+      "status": "consistent_within_group"
+    },
+    "ram_budget": {
+      "description": "Request-level RAM budget",
+      "count": 2,
+      "constants": ["MAX_RAM_GB=5.5", "EMERGENCY_RAM_GB=6.2"],
+      "status": "CONFLICT_C4",
+      "note": "EMERGENCY fires BELOW CRITICAL — threshold inversion"
+    },
+    "embedding_batch": {
+      "description": "Text embedding batch size",
+      "count": 3,
+      "constants": ["embedding_pipeline._BATCH_SIZE=16", "streaming_embedder.MAX_EMBEDDING_BATCH=16", "semantic_dedup._BATCH_SIZE=16"],
+      "status": "consistent_across_all"
+    },
+    "ram_guard_threshold": {
+      "description": "high_water percentage for RAM guard skip decision",
+      "count": 6,
+      "constants": ["high_water > 0.85 at 6 locations"],
+      "status": "consistent_value_but_different_RSS_comparison"
+    },
+    "ram_ceiling_fragmented": {
+      "description": "5.5GB ceiling used in three different files",
+      "count": 3,
+      "constants": ["MAX_RAM_GB=5.5", "memory_limit_mb=5500", "rss_gb > 5.5"],
+      "status": "CONFLICT_C2",
+      "note": "same value, different types, no canonical source"
+    }
+  }
+}

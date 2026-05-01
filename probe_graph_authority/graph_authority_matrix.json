@@ -1,0 +1,157 @@
+{
+  "sprint": "F206AI",
+  "timestamp": "2026-05-01T12:54:00Z",
+  "scope": "graph_ecosystem_authority_and_write_path_seal",
+  "authority_matrix": {
+    "truth_writer": {
+      "module": "knowledge/ioc_graph.py",
+      "class": "IOCGraph",
+      "backend": "Kuzu",
+      "write_methods": ["upsert_ioc", "buffer_ioc", "upsert_ioc_batch", "add_relation", "export_stix_bundle"],
+      "canonical": true,
+      "deprecation_risk": "NONE — active truth store",
+      "callers": [
+        "runtime/sprint_scheduler.py::_accumulate_findings_to_graph (line ~1844)",
+        "runtime/sprint_scheduler.py::_buffer_ioc_pivot (line ~4674)",
+        "runtime/sprint_scheduler.py::buffer_ioc (line ~4862)",
+        "coordinators/graph_coordinator.py (reasoning overlay, read path only)"
+      ]
+    },
+    "analytics_writer": {
+      "module": "graph/quantum_pathfinder.py",
+      "class": "DuckPGQGraph",
+      "backend": "DuckDB",
+      "write_methods": ["add_ioc", "add_relation"],
+      "canonical": false,
+      "deprecation_risk": "LOW — analytics store, not canonical truth",
+      "notes": "Read-only overlay for reasoning. add_ioc/add_relation are donor methods."
+    },
+    "facade": {
+      "module": "knowledge/graph_service.py",
+      "class": "module-level functions",
+      "write_methods": ["upsert_ioc", "upsert_relation", "upsert_identity_edge"],
+      "canonical": false,
+      "deprecation_risk": "NONE — facade delegates to IOCGraph",
+      "notes": "reset_session() exists at line 152 — called at sprint_scheduler.py:5832"
+    },
+    "sprint_facts_store": {
+      "module": "knowledge/duckdb_store.py",
+      "class": "DuckDBShadowStore",
+      "write_methods": ["inject_graph (CAPABILITY-GATED)"],
+      "canonical": false,
+      "deprecation_risk": "NONE — explicitly labeled NOT graph authority",
+      "notes": "inject_graph() requires buffer_ioc/buffer_observation/flush_buffers capability. Explicit VERDICT comments throughout."
+    },
+    "reasoning_overlay_read_only": {
+      "module": "coordinators/graph_coordinator.py",
+      "class": "GraphCoordinator",
+      "write_methods": [],
+      "canonical": false,
+      "deprecation_risk": "NONE — read-only overlay",
+      "notes": "No direct writes. Delegates to graph_service facade."
+    },
+    "reasoning_overlay_analytics": {
+      "module": "graph/quantum_pathfinder.py",
+      "class": "QuantumInspiredPathFinder",
+      "write_methods": [],
+      "canonical": false,
+      "deprecation_risk": "NONE — read-only analytics path",
+      "notes": "Uses DuckPGQGraph for RAG-style queries. Not a truth writer."
+    },
+    "deprecated_donor_modules": {
+      "knowledge/graph_layer.py": {
+        "class": "KnowledgeGraphLayer",
+        "write_methods": ["add_entry"],
+        "status": "DEPRECATED — 130 lines, no active call sites found",
+        "deprecation_risk": "LOW — add_entry not called in production",
+        "evidence": "No imports in sprint_scheduler, graph_service, or production paths"
+      },
+      "knowledge/context_graph.py": {
+        "class": "ContextGraph",
+        "write_methods": ["add_node", "add_edge"],
+        "status": "DEPRECATED — 54 lines, only imported by legacy/autonomous_orchestrator.py",
+        "deprecation_risk": "LOW — legacy import only",
+        "evidence": "Imported only in legacy/ directory (pre-F195 refactor)"
+      },
+      "knowledge/graph_rag.py": {
+        "class": "GraphRAG",
+        "write_methods": [],
+        "status": "ACTIVE-READ — 2590 lines, RAG/similarity search only",
+        "deprecation_risk": "NONE — read-only, no upsert/add methods",
+        "evidence": "Zero write methods found. Pure read RAG pipeline."
+      },
+      "knowledge/persistent_layer.py": {
+        "class": "N/A (stub)",
+        "write_methods": [],
+        "status": "DEPRECATED STUB — 25 lines, generated from bytecode",
+        "deprecation_risk": "NONE — stub only, no real code",
+        "evidence": "Stub file forwarding to legacy.persistent_layer"
+      },
+      "legacy/persistent_layer.py": {
+        "status": "OUT OF SCOPE — outside universal/ boundary",
+        "deprecation_risk": "UNKNOWN — not scanned per scope rule"
+      }
+    }
+  },
+  "write_path_call_sites": {
+    "canonical_upsert_ioc": [
+      {
+        "caller": "runtime/sprint_scheduler.py",
+        "line": 1844,
+        "method": "_accumulate_findings_to_graph",
+        "target": "graph_service.upsert_ioc",
+        "authority": "IOCGraph (Kuzu) — TRUTH"
+      }
+    ],
+    "buffer_ioc_pivot": [
+      {
+        "caller": "runtime/sprint_scheduler.py",
+        "line": 4674,
+        "method": "_buffer_ioc_pivot",
+        "target": "_pivot_ioc_graph.buffer_ioc",
+        "authority": "IOCGraph — TRUTH"
+      }
+    ],
+    "add_relation_ioc_graph": [
+      {
+        "caller": "runtime/sprint_scheduler.py",
+        "line": 4625,
+        "method": "async def _buffer_ioc_pivot",
+        "target": "self._ioc_graph.add_relation",
+        "authority": "IOCGraph — TRUTH"
+      },
+      {
+        "caller": "runtime/sprint_scheduler.py",
+        "line": 4666,
+        "method": "async def _buffer_ioc_pivot",
+        "target": "self._ioc_graph.add_relation",
+        "authority": "IOCGraph — TRUTH"
+      }
+    ]
+  },
+  "reset_session_verification": {
+    "exists": true,
+    "location": "knowledge/graph_service.py:152",
+    "call_site": "runtime/sprint_scheduler.py:5832",
+    "status": "VERIFIED — reset_session called at sprint teardown"
+  },
+  "duckdb_shadow_store_gate": {
+    "inject_graph_capability_required": true,
+    "required_methods": ["buffer_ioc", "buffer_observation", "flush_buffers"],
+    "verdict_comment_present": true,
+    "lines": "692-710 approx",
+    "status": "VERIFIED"
+  },
+  "deprecated_modules_verdict": {
+    "graph_layer": "CANNOT SILENTLY BECOME ACTIVE — add_entry() has zero production call sites",
+    "context_graph": "CANNOT SILENTLY BECOME ACTIVE — only referenced in legacy/ directory",
+    "graph_rag": "SAFE — read-only RAG, zero write methods",
+    "persistent_layer": "STUB — no real code, forwarding to legacy/"
+  },
+  "aborted_conditions": {
+    "live_graph_db_mutation": "PREVENTED — tests use MagicMock/AsyncMock only",
+    "network": "NOT USED",
+    "model_load": "NOT USED",
+    "broad_rewrite": "NOT DONE — only VERDICT comments added to source files"
+  }
+}

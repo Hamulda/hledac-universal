@@ -48,10 +48,17 @@ class ExportPolicy(Enum):
     UNENCRYPTED_ONLY = "unencrypted_only"  # Never encrypt (legacy bundles)
 
 
+class Decryptability(Enum):
+    """Truthful decryptability states for production envelopes."""
+    PERSISTENT_KEYCHAIN = "persistent_keychain"  # Key available in persistent keychain
+    EPHEMERAL_TEST_ONLY = "ephemeral_test_only"  # Only for explicit test roundtrips
+    UNSUPPORTED = "unsupported"  # PQ not available or key lifecycle unavailable
+
+
 @dataclass
 class ExportEncryptionEnvelope:
     """
-    Encrypted export bundle envelope.
+    Encrypted export bundle envelope — PRODUCTION safe, no private key material.
 
     Fields:
     - mode: HPKE mode identifier (X-Wing ML-KEM-768 X25519 SHA256 AES GCM 256)
@@ -60,9 +67,14 @@ class ExportEncryptionEnvelope:
     - aad_b64: Original AAD bytes (base64) — needed for HPKE decrypt
     - ciphertext_b64: AES-256-GCM ciphertext (base64)
     - recipient_public_key_b64: recipient identity public key (base64) — for verification
-    - recipient_private_key_b64: recipient private key (base64) — for HPKE decrypt only, not exported
+    - recipient_key_id: key identifier for persistent keychain lookup
+    - recipient_public_key_fingerprint: SHA-256 fingerprint of recipient public key (hex)
+    - decryptability: truthy decryptability state (persistent_keychain | ephemeral_test_only | unsupported)
+    - pq: whether post-quantum encryption was applied
     - created_at: ISO-8601 timestamp
     - backend: backend name that produced this envelope
+
+    NEVER: recipient_private_key_b64, private key in to_dict(), private key in repr/logging
     """
     mode: str = "PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256"
     encapsulated_key_b64: str = ""
@@ -70,11 +82,15 @@ class ExportEncryptionEnvelope:
     aad_b64: str = ""
     ciphertext_b64: str = ""
     recipient_public_key_b64: str = ""
-    recipient_private_key_b64: str = ""
+    recipient_key_id: str = ""
+    recipient_public_key_fingerprint: str = ""
+    decryptability: Decryptability = Decryptability.UNSUPPORTED
+    pq: bool = False
     created_at: str = ""
     backend: str = "null"
 
     def to_dict(self) -> dict:
+        """Serialize envelope — NEVER includes private key material."""
         return {
             "mode": self.mode,
             "encapsulated_key_b64": self.encapsulated_key_b64,
@@ -82,13 +98,23 @@ class ExportEncryptionEnvelope:
             "aad_b64": self.aad_b64,
             "ciphertext_b64": self.ciphertext_b64,
             "recipient_public_key_b64": self.recipient_public_key_b64,
-            "recipient_private_key_b64": self.recipient_private_key_b64,
+            "recipient_key_id": self.recipient_key_id,
+            "recipient_public_key_fingerprint": self.recipient_public_key_fingerprint,
+            "decryptability": self.decryptability.value,
+            "pq": self.pq,
             "created_at": self.created_at,
             "backend": self.backend,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> ExportEncryptionEnvelope:
+        """Deserialize envelope — restores from production-safe dict."""
+        decrypt_str = d.get("decryptability", "unsupported")
+        try:
+            decryptability = Decryptability(decrypt_str)
+        except ValueError:
+            decryptability = Decryptability.UNSUPPORTED
+
         return cls(
             mode=d.get("mode", "PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256"),
             encapsulated_key_b64=d.get("encapsulated_key_b64", ""),
@@ -96,7 +122,10 @@ class ExportEncryptionEnvelope:
             aad_b64=d.get("aad_b64", ""),
             ciphertext_b64=d.get("ciphertext_b64", ""),
             recipient_public_key_b64=d.get("recipient_public_key_b64", ""),
-            recipient_private_key_b64=d.get("recipient_private_key_b64", ""),
+            recipient_key_id=d.get("recipient_key_id", ""),
+            recipient_public_key_fingerprint=d.get("recipient_public_key_fingerprint", ""),
+            decryptability=decryptability,
+            pq=d.get("pq", False),
             created_at=d.get("created_at", ""),
             backend=d.get("backend", "null"),
         )
@@ -104,6 +133,30 @@ class ExportEncryptionEnvelope:
     def is_encrypted(self) -> bool:
         """True if this envelope contains encrypted data."""
         return bool(self.ciphertext_b64 and self.encapsulated_key_b64)
+
+    def __repr__(self) -> str:
+        """Safe repr — no private key material."""
+        return (
+            f"ExportEncryptionEnvelope(mode={self.mode!r}, "
+            f"pq={self.pq}, decryptability={self.decryptability.value}, "
+            f"recipient_key_id={self.recipient_key_id!r}, "
+            f"backend={self.backend!r})"
+        )
+
+
+@dataclass
+class TestOnlyHPKERoundtripMaterial:
+    """
+    Test-only HPKE roundtrip material — NEVER used in production.
+
+    This dataclass exists solely for local test roundtrips where the Swift helper
+    generates a self-contained keypair. The private key is used only within the
+    test process and is NEVER placed into a production ExportEncryptionEnvelope.
+
+    Usage: explicit test helper path only.
+    """
+    public_key_b64: str
+    private_key_b64: str  # test-only, ephemeral
 
 
 @dataclass
@@ -134,15 +187,16 @@ class PostQuantumExportBackend(Protocol):
         """Return current HPKE status snapshot."""
         ...
 
-    def generate_recipient_key(self, key_id: str) -> tuple[str, str] | None:
+    def generate_recipient_key(self, key_id: str) -> tuple[str, str, str] | None:
         """
-        Generate a recipient keypair.
+        Generate a recipient keypair and store in keychain.
 
         Args:
             key_id: Key identifier for the recipient key
 
         Returns:
-            Tuple of (public_key_b64, private_key_ref) or None on failure
+            Tuple of (public_key_b64, key_id, fingerprint) or None on failure.
+            Private key is stored in persistent keychain, never in envelope.
         """
         ...
 
@@ -151,6 +205,7 @@ class PostQuantumExportBackend(Protocol):
         plaintext: bytes,
         aad: bytes,
         recipient_public_key_b64: str,
+        recipient_key_id: str = "",
     ) -> ExportEncryptionEnvelope | None:
         """
         Encrypt plaintext using HPKE X-Wing.
@@ -159,6 +214,7 @@ class PostQuantumExportBackend(Protocol):
             plaintext: Raw bytes to encrypt
             aad: Additional authenticated data for integrity binding
             recipient_public_key_b64: Recipient's public key
+            recipient_key_id: Optional key identifier for persistent keychain key
 
         Returns:
             ExportEncryptionEnvelope or None on failure
@@ -169,13 +225,17 @@ class PostQuantumExportBackend(Protocol):
         self,
         envelope: ExportEncryptionEnvelope,
         plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
     ) -> bytes | None:
         """
         Decrypt HPKE-encrypted envelope.
 
         Args:
-            envelope: Encrypted export envelope
+            envelope: Encrypted export envelope (production-safe, no private key)
             plaintext_placeholder: Expected plaintext size hint (for validation)
+            test_material: Test-only roundtrip material. If provided, uses ephemeral
+                          private key for local test decryption. Production path
+                          requires persistent keychain (envelope.recipient_key_id).
 
         Returns:
             Decrypted bytes or None on failure
@@ -215,7 +275,7 @@ class NullPostQuantumExportBackend:
     def hpke_status(self) -> HPKEStatus:
         return self._status
 
-    def generate_recipient_key(self, key_id: str) -> tuple[str, str] | None:
+    def generate_recipient_key(self, key_id: str) -> tuple[str, str, str] | None:
         return None
 
     def encrypt_hpke(
@@ -223,6 +283,7 @@ class NullPostQuantumExportBackend:
         plaintext: bytes,
         aad: bytes,
         recipient_public_key_b64: str,
+        recipient_key_id: str = "",
     ) -> ExportEncryptionEnvelope | None:
         return None
 
@@ -230,6 +291,7 @@ class NullPostQuantumExportBackend:
         self,
         envelope: ExportEncryptionEnvelope,
         plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
     ) -> bytes | None:
         return None
 
@@ -306,6 +368,7 @@ async def encrypt_export_bundle(
     aad: bytes,
     recipient_public_key_b64: str,
     policy: ExportPolicy = ExportPolicy.PQ_REQUIRED,
+    recipient_key_id: str = "",
 ) -> tuple[ExportEncryptionEnvelope | None, bool, str]:
     """
     Encrypt an export bundle using HPKE X-Wing.
@@ -315,6 +378,7 @@ async def encrypt_export_bundle(
         aad: Additional authenticated data for integrity binding
         recipient_public_key_b64: Base64-encoded recipient public key
         policy: Export policy controlling encryption behavior
+        recipient_key_id: Optional key identifier for persistent keychain key
 
     Returns:
         Tuple of (envelope, was_encrypted, error_code_or_empty)
@@ -345,6 +409,7 @@ async def encrypt_export_bundle(
         plaintext=plaintext,
         aad=aad,
         recipient_public_key_b64=recipient_public_key_b64,
+        recipient_key_id=recipient_key_id,
     )
 
     if envelope is None:
@@ -359,19 +424,26 @@ async def encrypt_export_bundle(
 async def decrypt_export_bundle(
     envelope: ExportEncryptionEnvelope,
     expected_size: int = 0,
+    test_material: TestOnlyHPKERoundtripMaterial | None = None,
 ) -> tuple[bytes | None, str]:
     """
     Decrypt an HPKE-encrypted export bundle.
 
+    Production path: requires envelope.recipient_key_id with persistent keychain.
+    Test path: requires explicit test_material with ephemeral private key.
+
     Args:
-        envelope: Encrypted export envelope
+        envelope: Encrypted export envelope (production-safe, no private key)
         expected_size: Expected plaintext size for validation (0 = no check)
+        test_material: Test-only roundtrip material for ephemeral decryption.
+                     Production envelopes must NOT carry private key material.
 
     Returns:
         Tuple of (plaintext, error_code_or_empty)
         - If decryption succeeded: (plaintext_bytes, "")
-        - If decryption failed: (None, "DECRYPTION_FAILED")
         - If envelope not encrypted: (None, "NOT_ENCRYPTED")
+        - If persistence unavailable with no test material: (None, "PQ_HPKE_DECRYPT_PERSISTENCE_UNSUPPORTED")
+        - If decryption failed: (None, "DECRYPTION_FAILED")
     """
     global _export_backend, _export_status
 
@@ -383,11 +455,17 @@ async def decrypt_export_bundle(
     if not envelope.is_encrypted():
         return None, "NOT_ENCRYPTED"
 
+    # Production path: require persistent keychain
+    if test_material is None:
+        if envelope.decryptability != Decryptability.PERSISTENT_KEYCHAIN:
+            return None, "PQ_HPKE_DECRYPT_PERSISTENCE_UNSUPPORTED"
+
     # Attempt decryption
     placeholder = b"\x00" * expected_size if expected_size > 0 else b""
     plaintext = _export_backend.decrypt_hpke(
         envelope=envelope,
         plaintext_placeholder=placeholder,
+        test_material=test_material,
     )
 
     if plaintext is None:
