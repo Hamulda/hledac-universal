@@ -4,22 +4,24 @@ Swift-backed Post-Quantum backend — calls the helper tool for ML-DSA-65.
 This module provides the actual ML-DSA signing via the secure-enclave-helper
 tool's PQ commands when running on macOS 26+.
 
-Architecture:
-- SwiftPostQuantumBackend: calls helper tool for PQ operations
-- pq-status → availability check
-- ensure-mldsa-key → key creation
-- mldsa-sign-digest → signing
-- mldsa-verify → verification
+Helper path discovery (priority order):
+  a) HLEDAC_SECURE_ENCLAVE_HELPER env var
+  b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
+  c) None (fail-soft, truthful HELPER_MISSING)
 
 Fail-soft throughout: any helper failure returns safe defaults.
+Never spawns subprocess at import time.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import shutil
+import os
 import subprocess
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .pq_crypto import (
@@ -33,19 +35,107 @@ from .pq_crypto import (
 
 logger = logging.getLogger(__name__)
 
-# Path to the compiled Swift helper
-HELPER_PATH = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/release/secure-enclave-helper"
+# ---------------------------------------------------------------------------
+# Typed helper errors
+# ---------------------------------------------------------------------------
+
+HELPER_MISSING = "HELPER_MISSING"
+HELPER_NOT_EXECUTABLE = "HELPER_NOT_EXECUTABLE"
+HELPER_TIMEOUT = "HELPER_TIMEOUT"
+HELPER_BAD_JSON = "HELPER_BAD_JSON"
+HELPER_NONZERO_EXIT = "HELPER_NONZERO_EXIT"
+
+# ---------------------------------------------------------------------------
+# Repo root detection via __file__
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT: Path | None = None
+
+_STATUS_CACHE_TTL_SECONDS = 30.0  # short TTL for hpke-status / pq-status
 
 
-def _run_helper(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
+def _detect_repo_root() -> Path | None:
+    """Detect repo root from this file's location.
+
+    This module lives at: .../security/pq_crypto_swift.py
+    Repo root is three levels up from this file's parent directory.
     """
-    Run the secure-enclave-helper and return parsed JSON.
+    global _REPO_ROOT
+    if _REPO_ROOT is not None:
+        return _REPO_ROOT
 
+    try:
+        self_path = Path(__file__).resolve()
+        # security/ → universal/ (repo-root); helper lives at universal/tools/secure_enclave_helper/
+        repo_root = self_path.parent.parent
+        if (repo_root / "tools" / "secure_enclave_helper").exists():
+            _REPO_ROOT = repo_root
+            return _REPO_ROOT
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Helper path resolver
+# ---------------------------------------------------------------------------
+
+
+def get_secure_enclave_helper_path() -> Path | None:
+    """
+    Resolve secure-enclave-helper path with priority:
+      a) HLEDAC_SECURE_ENCLAVE_HELPER env var
+      b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
+      c) None (fail-soft)
+    """
+    # (a) env override
+    env_path = os.environ.get("HLEDAC_SECURE_ENCLAVE_HELPER")
+    if env_path:
+        p = Path(env_path)
+        if p.exists() and p.is_file():
+            return p
+        return None
+
+    # (b) repo-relative fallback
+    repo_root = _detect_repo_root()
+    if repo_root is not None:
+        repo_helper = (
+            repo_root
+            / "tools"
+            / "secure_enclave_helper"
+            / ".build"
+            / "release"
+            / "secure-enclave-helper"
+        )
+        if repo_helper.exists() and repo_helper.is_file():
+            return repo_helper
+
+    # (c) None — fail-soft, truthful HELPER_MISSING
+    return None
+
+
+def _get_helper_path() -> Path | None:
+    """Internal alias for get_secure_enclave_helper_path()."""
+    return get_secure_enclave_helper_path()
+
+
+# ---------------------------------------------------------------------------
+# Sync helper runner (blocking, for use in asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+
+def _run_helper_sync(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
+    """
+    Run the secure-enclave-helper synchronously and return parsed JSON.
     Returns None on any failure (timeout, non-zero exit, bad JSON).
     """
+    helper_path = _get_helper_path()
+    if helper_path is None:
+        return None
+
     try:
         result = subprocess.run(
-            [HELPER_PATH] + command,
+            [str(helper_path)] + command,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -59,6 +149,31 @@ def _run_helper(command: list[str], timeout: float = 10.0) -> dict[str, Any] | N
         return None
 
 
+# ---------------------------------------------------------------------------
+# Async helper runner (uses asyncio.to_thread to avoid blocking event loop)
+# ---------------------------------------------------------------------------
+
+
+async def _run_helper_async(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
+    """
+    Run the secure-enclave-helper asynchronously via asyncio.to_thread.
+    Returns None on any failure.
+    """
+    return await asyncio.to_thread(_run_helper_sync, command, timeout)
+
+
+# ---------------------------------------------------------------------------
+# Status cache (short TTL)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CachedStatus:
+    """Bounded status cache entry with short TTL."""
+    status: PQStatus
+    until: float  # monotonic time when this cache entry expires
+
+
 @dataclass
 class SwiftPostQuantumBackend:
     """
@@ -67,21 +182,33 @@ class SwiftPostQuantumBackend:
     Only active on macOS 26+ where ML-DSA-65 is available.
     Falls back gracefully when helper is unavailable or fails.
     """
-
     key_id: str = "com.hledac.pq.signing.v1"
     _status: PQStatus = field(default_factory=lambda: PQStatus(
         availability=PQAvailability.UNAVAILABLE
     ))
+    _cache: _CachedStatus | None = None
 
-    def is_available(self) -> bool:
-        """Check if the Swift helper is available and ML-DSA is supported."""
-        result = _run_helper(["pq-status"])
+    def is_available(self, force_refresh: bool = False) -> bool:
+        """
+        Check if the Swift helper is available and ML-DSA is supported.
+
+        Args:
+            force_refresh: If True, bypass status cache and re-query helper.
+        """
+        # Check cache
+        if not force_refresh and self._cache is not None:
+            if time.monotonic() < self._cache.until:
+                self._status = self._cache.status
+                return self._status.availability == PQAvailability.AVAILABLE
+
+        result = _run_helper_sync(["pq-status"])
         if result is None:
             self._status = PQStatus(
                 availability=PQAvailability.UNAVAILABLE,
                 backend_name="swift-helper",
                 error_message="Helper unavailable or ML-DSA not supported",
             )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
 
         if not result.get("ok", False):
@@ -90,6 +217,7 @@ class SwiftPostQuantumBackend:
                 backend_name="swift-helper",
                 error_message=result.get("message", "PQ status check failed"),
             )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
 
         mldsa_available = result.get("data", {}).get("mldsa_available", "false") == "true"
@@ -99,6 +227,7 @@ class SwiftPostQuantumBackend:
                 backend_name="swift-helper",
                 error_message="ML-DSA not available on this macOS version",
             )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
 
         self._status = PQStatus(
@@ -107,6 +236,7 @@ class SwiftPostQuantumBackend:
             mldsa_key_id=self.key_id,
             mldsa_level=65,
         )
+        self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
         return True
 
     def pq_status(self) -> PQStatus:
@@ -119,7 +249,7 @@ class SwiftPostQuantumBackend:
 
         Returns True if key is ready or already exists.
         """
-        result = _run_helper(["ensure-mldsa-key", "--key-id", key_id])
+        result = _run_helper_sync(["ensure-mldsa-key", "--key-id", key_id])
         if result is None:
             return False
         return result.get("ok", False)
@@ -139,7 +269,7 @@ class SwiftPostQuantumBackend:
         Raises:
             PostQuantumError: If signing fails
         """
-        result = _run_helper([
+        result = _run_helper_sync([
             "mldsa-sign-digest",
             "--key-id", key_id,
             "--digest-hex", digest,
@@ -178,7 +308,7 @@ class SwiftPostQuantumBackend:
         Returns:
             True if valid, False otherwise
         """
-        result = _run_helper([
+        result = _run_helper_sync([
             "mldsa-verify",
             "--digest-hex", digest,
             "--signature-hex", signature.hex(),

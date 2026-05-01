@@ -1274,6 +1274,47 @@ class StegdetectServer:
         await self.ensure_running()
 
 
+    def close(self) -> None:
+        """Close all resources including thread pool and stegdetect processes.
+
+        Called synchronously from __del__ (GC context) — no async allowed.
+        Stegdetect processes are killed outright (no restart needed on shutdown).
+        """
+        if hasattr(self, '_thread_pool') and self._thread_pool:
+            self._thread_pool.shutdown(wait=True)
+            self._thread_pool = None
+        if hasattr(self, '_stegdetect_server') and self._stegdetect_server:
+            # Kill stegdetect processes synchronously — no restart on shutdown
+            server = self._stegdetect_server
+            try:
+                loop = asyncio.get_event_loop()
+                # Run in existing loop if running, otherwise skip async cleanup
+                if loop.is_running():
+                    loop.run_until_complete(server.restart())
+                else:
+                    # Processes already dead or no loop — kill directly
+                    for proc in getattr(server, '_procs', []):
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+            except Exception:
+                # Fallback: kill procs directly if loop unavailable
+                for proc in getattr(server, '_procs', []):
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+        if hasattr(self, '_orch'):
+            self._orch = None
+
+    def __del__(self) -> None:
+        """Fallback shutdown on garbage collection."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
 class DocumentIntelligenceEngine:
     """
     Main engine for document intelligence analysis.

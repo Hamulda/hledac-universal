@@ -1,0 +1,337 @@
+{
+  "triage_version": "F206AM",
+  "matrix_source": "probe_qoder_reality/qoder_reality_matrix.json",
+  "total_overclaims": 122,
+  "high": 4,
+  "medium": 17,
+  "low": 101,
+  "groups": {
+    "canonical_overclaim": {
+      "count": 84,
+      "docs_affected": 45,
+      "claim_pattern": "Uses 'canonical' language but module is <VERDICT>",
+      "verdicts": {
+        "TEST_ONLY": 31,
+        "DONOR_OR_OPTIONAL": 16,
+        "DEPRECATED": 22,
+        "LEGACY": 7,
+        "DONOR": 8
+      }
+    },
+    "production_overclaim": {
+      "count": 36,
+      "docs_affected": 22,
+      "claim_pattern": "Uses 'production' language but module is <VERDICT>",
+      "verdicts": {
+        "TEST_ONLY": 21,
+        "DEPRECATED": 9,
+        "DONOR_OR_OPTIONAL": 4,
+        "LEGACY": 2
+      }
+    },
+    "wired_overclaim": {
+      "count": 8,
+      "docs_affected": 5,
+      "claim_pattern": "Uses 'wired' language but module is <VERDICT>",
+      "verdicts": {
+        "TEST_ONLY": 4,
+        "DEPRECATED": 2,
+        "DONOR_OR_OPTIONAL": 1,
+        "DONOR": 1
+      }
+    },
+    "active_runtime_overclaim": {
+      "count": 4,
+      "docs_affected": 2,
+      "claim_pattern": "Uses 'active runtime' language but module is <VERDICT>",
+      "verdicts": {
+        "LEGACY": 2,
+        "DONOR": 2
+      }
+    },
+    "security_overclaim": {
+      "count": 0,
+      "note": "All 30 SECURITY_CRITICAL verdicts are correctly documented; no HIGH/MEDIUM security overclaims"
+    },
+    "storage_write_path_overclaim": {
+      "count": 0,
+      "note": "All STORAGE_AUTHORITY verdicts are correctly scoped; no HIGH/MEDIUM storage overclaims"
+    }
+  },
+  "top_patches": [
+    {
+      "patch_id": 1,
+      "severity": "HIGH",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md",
+      "claim_type": "canonical",
+      "actual_verdict": "DONOR_OR_OPTIONAL",
+      "modules": ["layers/stealth_layer.py", "layers/temporal_signal_layer.py", "layers/temporal_signal_store.py", "layers/temporal_signal_runtime.py"],
+      "affected_modules_count": 15,
+      "current_example": "Describes stealth_layer and temporal_signal_* as canonical probe infrastructure",
+      "suggested_wording": "Stealth and temporal-signal layers are optional donor components — not wired into the production pipeline.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 2,
+      "severity": "HIGH",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md",
+      "claim_type": "production",
+      "actual_verdict": "DONOR_OR_OPTIONAL",
+      "modules": ["layers/stealth_layer.py", "layers/temporal_signal_layer.py"],
+      "affected_modules_count": 15,
+      "current_example": "Describes stealth/temporal-signal as production probe surfaces",
+      "suggested_wording": "Stealth/temporal-signal are optional donor probe surfaces — not production-critical.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 3,
+      "severity": "HIGH",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Benchmark and Performance Probes.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["benchmarks/benchmark_pipeline.py", "benchmarks/benchmark_sprint_probe.py", "benchmarks/e2e_canonical_benchmark.py", "benchmarks/e2e_compare.py", "benchmarks/research_effectiveness.py"],
+      "affected_modules_count": 12,
+      "current_example": "Describes benchmarks as canonical performance measurement",
+      "suggested_wording": "Benchmark suite is a test-only harness — not part of production measurement.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 4,
+      "severity": "HIGH",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Benchmark and Performance Probes.md",
+      "claim_type": "wired",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["benchmarks/benchmark_pipeline.py"],
+      "affected_modules_count": 12,
+      "current_example": "Describes benchmark probes as wired into live pipelines",
+      "suggested_wording": "Benchmark probes are driven by the benchmark harness — not wired into live pipelines.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 5,
+      "severity": "MEDIUM",
+      "doc": "Brain Engines/Hermes3 Engine.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/test_sprint75/test_speculative_decoding.py"],
+      "affected_modules_count": 4,
+      "current_example": "Mentions speculative decoding as canonical Hermes3 capability",
+      "suggested_wording": "Speculative decoding is validated by the test harness (tests/test_sprint75/) — not a production feature.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 6,
+      "severity": "MEDIUM",
+      "doc": "Brain Engines/Hermes3 Engine.md",
+      "claim_type": "production",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/test_sprint75/test_speculative_decoding.py"],
+      "affected_modules_count": 4,
+      "current_example": "Mentions speculative decoding as production Hermes3 capability",
+      "suggested_wording": "Speculative decoding is validated by the test harness — not a production feature.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 7,
+      "severity": "MEDIUM",
+      "doc": "Core Architecture/Design Patterns and Architectural Principles.md",
+      "claim_type": "canonical",
+      "actual_verdict": "DONOR_OR_OPTIONAL",
+      "modules": ["infrastructure/plugin_manager.py"],
+      "affected_modules_count": 4,
+      "current_example": "Plugin manager listed as canonical architectural pattern",
+      "suggested_wording": "Plugin manager is an optional donor extension point — not canonical architecture.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 8,
+      "severity": "MEDIUM",
+      "doc": "Project Overview/Introduction.md",
+      "claim_type": "canonical",
+      "actual_verdict": "DEPRECATED",
+      "modules": ["REAL_ARCHITECTURE.md"],
+      "affected_modules_count": 4,
+      "current_example": "References REAL_ARCHITECTURE.md as canonical architecture doc",
+      "suggested_wording": "REAL_ARCHITECTURE.md is deprecated — see active architecture docs under Core Architecture/.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 9,
+      "severity": "MEDIUM",
+      "doc": "Project Overview/Introduction.md",
+      "claim_type": "production",
+      "actual_verdict": "DEPRECATED",
+      "modules": ["REAL_ARCHITECTURE.md"],
+      "affected_modules_count": 4,
+      "current_example": "References REAL_ARCHITECTURE.md as production architecture doc",
+      "suggested_wording": "REAL_ARCHITECTURE.md is deprecated — do not reference for production architecture.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 10,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Integration and End-to-End Testing.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/conftest.py"],
+      "affected_modules_count": 9,
+      "current_example": "conftest.py referenced as canonical test infrastructure",
+      "suggested_wording": "conftest.py is a test-only pytest harness — not part of production code.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 11,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Test Execution and Orchestration.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/conftest.py"],
+      "affected_modules_count": 6,
+      "current_example": "conftest.py described as canonical test execution infrastructure",
+      "suggested_wording": "conftest.py is a test-only pytest harness — not canonical production infrastructure.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 12,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Testing and Quality Assurance.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/conftest.py"],
+      "affected_modules_count": 9,
+      "current_example": "conftest.py described as canonical QA infrastructure",
+      "suggested_wording": "conftest.py is a test-only pytest harness.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 13,
+      "severity": "MEDIUM",
+      "doc": "Knowledge Layer/DuckDB Shadow Store.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/test_sprint8ao_duckdb_sidecar.py"],
+      "affected_modules_count": 4,
+      "current_example": "DuckDB sidecar test described as canonical storage",
+      "suggested_wording": "DuckDB sidecar is validated by the test harness — production write path is duckdb_store.py.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 14,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Production Readiness Probes (8a-8z).md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/probe_8b/test_sprint_8b.py"],
+      "affected_modules_count": 5,
+      "current_example": "Describes 8a-8z probes as production readiness gates",
+      "suggested_wording": "8a-8z probes validate sprint readiness in the test harness — not production gates.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 15,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Production Readiness Probes (8a-8z).md",
+      "claim_type": "production",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/probe_8b/test_sprint_8b.py"],
+      "affected_modules_count": 5,
+      "current_example": "Describes 8a-8z probes as production readiness",
+      "suggested_wording": "8a-8z probes are test-only readiness validation.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 16,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Capability Probes (6b-7i).md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/probe_6b/test_apple_fm_probe.py"],
+      "affected_modules_count": 10,
+      "current_example": "Describes 6b-7i probes as canonical capability coverage",
+      "suggested_wording": "6b-7i probes are test-only capability validation — M1-specific probes not wired in standard runs.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 17,
+      "severity": "MEDIUM",
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Capability Probes (6b-7i).md",
+      "claim_type": "wired",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/probe_6b/test_apple_fm_probe.py"],
+      "affected_modules_count": 10,
+      "current_example": "Describes 6b-7i probes as wired capability probes",
+      "suggested_wording": "6b-7i probes are driven by the test harness — not wired in standard runs.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 18,
+      "severity": "MEDIUM",
+      "doc": "Core Architecture/Authority Model and Entry Points/Boot Hygiene and Teardown Management.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["tests/test_sprint8an_hygiene.py"],
+      "affected_modules_count": 5,
+      "current_example": "Describes hygiene tests as canonical boot hygiene",
+      "suggested_wording": "Boot hygiene is validated by the test harness (tests/test_sprint8an_hygiene.py, tests/probe_8ai/).",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 19,
+      "severity": "MEDIUM",
+      "doc": "Utilities and Helpers/MLX Integration.md",
+      "claim_type": "canonical",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["benchmarks/m1_embedding_streaming.py"],
+      "affected_modules_count": 6,
+      "current_example": "Describes m1_embedding_streaming as canonical MLX streaming",
+      "suggested_wording": "MLX embedding streaming is benchmarked in benchmarks/m1_embedding_streaming.py — not a production streaming path.",
+      "should_patch_now": true
+    },
+    {
+      "patch_id": 20,
+      "severity": "MEDIUM",
+      "doc": "Utilities and Helpers/MLX Integration.md",
+      "claim_type": "wired",
+      "actual_verdict": "TEST_ONLY",
+      "modules": ["benchmarks/m1_embedding_streaming.py"],
+      "affected_modules_count": 6,
+      "current_example": "Describes m1_embedding_streaming as wired MLX integration",
+      "suggested_wording": "MLX streaming benchmarks are test-only — not wired into the production MLX path.",
+      "should_patch_now": true
+    }
+  ],
+  "wording_reference": {
+    "canonical→DEPRECATED": "deprecated (superseded by <SUCCESSOR_MODULE>)",
+    "canonical→TEST_ONLY": "test/benchmark harness",
+    "canonical→LEGACY": "legacy",
+    "canonical→DONOR": "optional donor",
+    "canonical→DONOR_OR_OPTIONAL": "optional donor",
+    "production→DEPRECATED": "deprecated (superseded)",
+    "production→TEST_ONLY": "test harness",
+    "production→LEGACY": "legacy advisory",
+    "production→DONOR_OR_OPTIONAL": "optional donor",
+    "wired→TEST_ONLY": "benchmarked by",
+    "wired→DEPRECATED": "was wired (deprecated)",
+    "wired→DONOR_OR_OPTIONAL": "available via optional donor",
+    "active_runtime→LEGACY": "legacy (superseded by SprintScheduler)",
+    "active_runtime→DONOR": "optional donor advisory"
+  },
+  "low_priority_batch": {
+    "total": 101,
+    "top_modules_by_doc_count": [
+      {"module": "autonomous_orchestrator.py", "verdict": "DEPRECATED", "docs_affected": 9},
+      {"module": "REAL_ARCHITECTURE.md", "verdict": "DEPRECATED", "docs_affected": 4},
+      {"module": "orchestrator/global_scheduler.py", "verdict": "LEGACY", "docs_affected": 3},
+      {"module": "layers/layer_manager.py", "verdict": "DONOR", "docs_affected": 3},
+      {"module": "orchestrator_integration.py", "verdict": "DONOR", "docs_affected": 3},
+      {"module": "smoke_runner.py", "verdict": "DEPRECATED", "docs_affected": 3}
+    ],
+    "top_docs_by_overclaim_count": [
+      {"doc": "Deployment and Operations.md", "count": 12},
+      {"doc": "API Reference/Core APIs.md", "count": 6},
+      {"doc": "Project Overview/Architecture Overview.md", "count": 6},
+      {"doc": "Project Overview/Project Overview.md", "count": 6},
+      {"doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md", "count": 6}
+    ]
+  }
+}

@@ -6,19 +6,24 @@
 
 ## Executive Summary
 
-- **CANONICAL_OWNER**: 3 modules
-- **ACTIVE_RUNTIME**: 157 modules
-- **ACTIVE_PIPELINE**: 3 modules
-- **ACTIVE_SIDECAR**: 21 modules
+- **CANONICAL_OWNER**: 1 modules
+- **ACTIVE_RUNTIME**: 11 modules
+- **ACTIVE_PIPELINE**: 2 modules
+- **ACTIVE_SIDECAR**: 30 modules
 - **ACTIVE_DIAGNOSTIC**: 3 modules
+- **ACTIVE_SUPPORT**: 4 modules
+- **ACTIVE_CAPABILITY**: 139 modules
+- **ACTIVE_ENTRYPOINT**: 1 modules
+- **PATH_AUTHORITY**: 1 modules
+- **DONOR_OR_OPTIONAL**: 28 modules
 - **SECURITY_CRITICAL**: 30 modules
 - **STORAGE_AUTHORITY**: 38 modules
 - **TRANSPORT_AUTHORITY**: 20 modules
-- **DONOR**: 32 modules
+- **DONOR**: 0 modules
 - **LEGACY**: 6 modules
-- **DEPRECATED**: 21 modules
+- **DEPRECATED**: 17 modules
 - **TEST_ONLY**: 184 modules
-- **DEAD_OR_UNWIRED**: 0 modules
+- **DEAD_OR_UNWIRED**: 3 modules
 - **MISSING_DOC_TARGET**: 0 modules
 - **UNKNOWN_NEEDS_REVIEW**: 0 modules
 
@@ -47,167 +52,20 @@ core/__main__.py (CANONICAL_OWNER)
 
 ## Active Runtime Modules
 
-- `brain/__init__.py` — Project Overview/Architecture Overview.md
-- `brain/ane_embedder.py` — Brain Engines/Distillation Engine.md
-- `brain/apple_fm_probe.py` — Testing and Quality Assurance/Probe Testing System/Probe Testing System.md
-- `brain/decision_engine.py` — API Reference/Brain APIs.md
-- `brain/distillation_engine.py` — Brain Engines/Distillation Engine.md
-- `brain/dynamic_model_manager.py` — Brain Engines/Brain Engines.md
-- `brain/fetch/coordinators` — Testing and Quality Assurance/Integration and End-to-End Testing.md
-- `brain/hermes3_engine.py` — API Reference/Brain APIs.md
-- `brain/inference_engine.py` — API Reference/Brain APIs.md
-- `brain/model_lifecycle.py` — Brain Engines/Brain Engines.md
-- `brain/model_manager.py` — API Reference/Brain APIs.md
-- `brain/model_swap_manager.py` — Brain Engines/Brain Engines.md
-- `brain/prompt_cache.py` — Utilities and Helpers/MLX Integration.md
-- `brain/research_flow_decider.py` — API Reference/Brain APIs.md
 - `cache/budget_manager.py` — Runtime Management/Resource Governance.md
 - `deep_research/probe_runner.py` — Testing and Quality Assurance/Probe Testing System/Probe Testing System.md
-- `discovery/circuits.` — Testing and Quality Assurance/Probe Testing System/Specialized Domain Probes.md
-- `discovery/duckduckgo_adapter.py` — Pipeline System/Live Public Pipeline.md
-- `discovery/fetch/quality` — Project Overview/Project Overview.md
-- `discovery/rss_atom_adapter.py` — Pipeline System/Live Feed Pipeline.md
-- `fetching/public_fetcher.py` — Pipeline System/Live Feed Pipeline.md
-- `forensics/digital_ghost_detector.py` — Security and Privacy/Stealth Operations.md
-- `forensics/steganography_detector.py` — Security and Privacy/Stealth Operations.md
-- `intelligence/__init__.py` — Intelligence Modules/Document Intelligence.md
-- `intelligence/__init__.py#L1-686` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/__init__.py#L25-422` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_discovery.py` — Intelligence Modules/Academic Intelligence.md
-- `intelligence/academic_discovery.py#L1-301` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_discovery.py#L77-122` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py` — Intelligence Modules/Academic Intelligence.md
-- `intelligence/academic_search.py#L1-1369` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py#L133-159` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py#L231-273` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py#L35-48` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py#L787-1369` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py#L79-94` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/academic_search.py#L795-800` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/attribution_scorer.py` — Intelligence Modules/Social Identity Mining.md
-- `intelligence/blockchain_analyzer.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/cryptographic_intelligence.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/dark_web_intelligence.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/data_leak_hunter.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/decision_engine.py` — Brain Engines/Decision Engine.md
-- `intelligence/decision_engine.py#L1-4` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/document_intelligence.py` — Intelligence Modules/Document Intelligence.md
-- `intelligence/document_intelligence.py#L1-2125` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/document_intelligence.py#L259-599` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/document_intelligence.py#L278-351` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/document_intelligence.py#L45-113` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/document_intelligence.py#L45-94` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/entity_signal_extractor.py` — Intelligence Modules/Social Identity Mining.md
-- `intelligence/exposed_service_hunter.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/github_secret_scanner.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/identity_stitching.py` — Intelligence Modules/Social Identity Mining.md
-- `intelligence/identity_stitching_canonical.py` — Intelligence Modules/Social Identity Mining.md
-- `intelligence/input_detector.py` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/input_detector.py#L1-954` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/input_detector.py#L162-183` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/input_detector.py#L190-954` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/input_detector.py#L23-31` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/input_detector.py#L241-272` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/input_detector.py#L429-544` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_intelligence.py` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_intelligence.py#L1-365` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_intelligence.py#L22-27` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_intelligence.py#L29-151` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_intelligence.py#L29-247` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_intelligence.py#L55-179` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/network_reconnaissance.py` — Intelligence Modules/Network Intelligence.md
-- `intelligence/onion_seed_manager.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/passive_fingerprint.py` — Intelligence Modules/Network Intelligence.md
-- `intelligence/pastebin_monitor.py` — Intelligence Modules/Specialized Intelligence Modules.md
-- `intelligence/rir_correlator.py` — Intelligence Modules/Network Intelligence.md
-- `intelligence/shodan_wrapper.py` — Intelligence Modules/Network Intelligence.md
-- `intelligence/social_identity_miner.py` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/social_identity_miner.py#L1-577` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/social_identity_miner.py#L187-299` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/social_identity_miner.py#L187-577` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/social_identity_miner.py#L23-33` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/social_identity_miner.py#L36-40` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/stealth_crawler.py` — Security and Privacy/Stealth Operations.md
-- `intelligence/streaming_embedder.py` — Intelligence Modules/Document Intelligence.md
-- `intelligence/temporal_analysis.py` — Intelligence Modules/Intelligence Workflow Orchestration.md
-- `intelligence/temporal_archaeologist.py` — Intelligence Modules/Intelligence Workflow Orchestration.md
-- `intelligence/temporal_archaeologist_adapter.py` — Intelligence Modules/Intelligence Workflow Orchestration.md
-- `intelligence/ti_feed_adapter.py` — Intelligence Modules/Intelligence Workflow Orchestration.md
-- `intelligence/timeline_synthesizer.py` — Intelligence Modules/Intelligence Workflow Orchestration.md
-- `intelligence/web_intelligence.py` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/web_intelligence.py#L1-1075` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/web_intelligence.py#L115-800` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/web_intelligence.py#L131-199` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/web_intelligence.py#L344-427` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/web_intelligence.py#L35-47` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/workflow_orchestrator.py` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/workflow_orchestrator.py#L1-1849` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/workflow_orchestrator.py#L315-333` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/workflow_orchestrator.py#L335-800` — Intelligence Modules/Intelligence Modules.md
-- `intelligence/workflow_orchestrator.py#L385-466` — Intelligence Modules/Intelligence Modules.md
 - `memory/memory_manager.py` — Pipeline System/Live Public Pipeline.md
 - `memory/performance.` — Testing and Quality Assurance/Probe Testing System/Test Execution and Orchestration.md
 - `memory/swap` — Getting Started.md
 - `memory/temp` — Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Basic Functionality Probes (0a-1b).md
 - `memory/thermal` — Testing and Quality Assurance/Testing and Quality Assurance.md
-- `multimodal/analyzer.py` — Intelligence Modules/Document Intelligence.md
-- `network/TOR` — API Reference/Core APIs.md
-- `network/TOR/proxy` — Deployment and Operations.md
-- `network/ct_log_scanner.py` — Pipeline System/Live Public Pipeline.md
-- `network/disk` — Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Basic Functionality Probes (0a-1b).md
-- `network/model` — Export and Reporting/STIX Export.md
-- `network/session_runtime.py` — API Reference/Transport APIs.md
-- `network/tor_manager.py` — API Reference/Transport APIs.md
-- `patterns/pattern_matcher.py` — Core Architecture/Component Relationships and Data Flow.md
 - `research/task_prioritizer.py` — Utilities and Helpers/Execution Optimization.md
-- `runtime/hypothesis_feedback.py` — Runtime Management/Advisory Functions.md
-- `runtime/memory_authority.py` — Core Architecture/Authority Model and Entry Points/Authority Model and Entry Points.md
-- `runtime/opsec_policy.py` — Runtime Management/Runtime Management.md
-- `runtime/pivot_executor.py` — Runtime Management/Advisory Functions.md
-- `runtime/pivot_planner.py` — Runtime Management/Advisory Functions.md
-- `runtime/resource_governor.py` — Runtime Management/Advisory Functions.md
 - `runtime/sprint_lifecycle.py` — API Reference/Core APIs.md
 - `runtime/sprint_lifecycle_runner.py` — Pipeline System/Pipeline Orchestration.md
-- `runtime/sprint_scheduler` — Project Overview/Project Overview.md
 - `runtime/sprint_scheduler.py` — API Reference/Core APIs.md
-- `runtime/telemetry.py` — Deployment and Operations.md
-- `runtime/utils` — Runtime Management/Runtime Management.md
-- `utils/__init__.py` — Utilities and Helpers/Async Utilities.md
-- `utils/async_helpers.py` — Utilities and Helpers/Async Utilities.md
-- `utils/async_utils.py` — Utilities and Helpers/Async Utilities.md
-- `utils/capability_prober.py` — Core Architecture/Boot Sequence and Initialization.md
-- `utils/concurrency.py` — Runtime Management/Resource Governance.md
-- `utils/config.py` — Utilities and Helpers/System Helpers.md
-- `utils/deduplication.py` — Intelligence Modules/Academic Intelligence.md
-- `utils/encryption.py` — Security and Privacy/Encryption Framework.md
-- `utils/exceptions.py` — Utilities and Helpers/Async Utilities.md
-- `utils/execution_optimizer.py` — Utilities and Helpers/Execution Optimization.md
-- `utils/flow_trace.py` — Utilities and Helpers/Performance Monitoring.md
-- `utils/intelligent_cache.py` — Utilities and Helpers/Utilities and Helpers.md
-- `utils/lazy_imports.py` — Utilities and Helpers/Execution Optimization.md
-- `utils/memory_dashboard.py` — Runtime Management/Resource Governance.md
-- `utils/mlx_cache` — Brain Engines/Hermes3 Engine.md
-- `utils/mlx_cache.py` — Brain Engines/Hermes3 Engine.md
-- `utils/mlx_memory` — Brain Engines/Hermes3 Engine.md
-- `utils/mlx_memory.py` — Brain Engines/Hermes3 Engine.md
-- `utils/mlx_prompt_cache.py` — Utilities and Helpers/MLX Integration.md
-- `utils/mlx_utils.py` — Utilities and Helpers/MLX Integration.md
-- `utils/optimize_imports.py` — Utilities and Helpers/Execution Optimization.md
-- `utils/performance_monitor.py` — Deployment and Operations.md
-- `utils/predictive_planner.py` — Utilities and Helpers/Utilities and Helpers.md
-- `utils/query_expansion.py` — Intelligence Modules/Academic Intelligence.md
-- `utils/signpost_profiler.py` — Runtime Management/Resource Governance.md
-- `utils/sprint_lifecycle.py` — Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Advanced Functionality Probes (4a-5b).md
-- `utils/thermal.py` — Runtime Management/Resource Governance.md
-- `utils/thread_pools.py` — Utilities and Helpers/System Helpers.md
-- `utils/uma_budget.py` — Runtime Management/Resource Governance.md
-- `utils/validation.py` — Testing and Quality Assurance/Quality Gates and Validation.md
-- `utils/worker_pool.py` — Utilities and Helpers/System Helpers.md
-- `utils/workflow_engine.py` — Core Architecture/Design Patterns and Architectural Principles.md
 
 ## Active Pipeline Modules
 
-- `pipeline/__init__.py` — 1 doc(s)
 - `pipeline/live_feed_pipeline.py` — 7 doc(s)
 - `pipeline/live_public_pipeline.py` — 8 doc(s)
 
@@ -227,9 +85,18 @@ core/__main__.py (CANONICAL_OWNER)
 - `coordinators/security_coordinator.py`
 - `coordinators/validation_coordinator.py`
 - `monitoring/sprint_dashboard.py`
+- `runtime/hypothesis_feedback.py`
+- `runtime/memory_authority.py`
+- `runtime/opsec_policy.py`
+- `runtime/pivot_executor.py`
+- `runtime/pivot_planner.py`
+- `runtime/resource_governor.py`
 - `runtime/sidecar_bus.py`
 - `runtime/sidecar_dispatcher.py`
 - `runtime/sprint_advisory_runner.py`
+- `runtime/sprint_scheduler`
+- `runtime/telemetry.py`
+- `runtime/utils`
 - `tools/commoncrawl_adapter.py`
 - `tools/darknet.py`
 - `tools/lmdb_kv.py`
@@ -341,29 +208,6 @@ core/__main__.py (CANONICAL_OWNER)
 ## Donor / Legacy / Deprecated Modules
 
 
-### DONOR (32)
-- `graph/quantum_pathfinder.py` — 1 doc(s)
-- `infrastructure/plugin_manager.py` — 3 doc(s)
-- `infrastructure/system_monitor.py` — 2 doc(s)
-- `layers/__init__.py` — 2 doc(s)
-- `layers/communication_layer.py` — 1 doc(s)
-- `layers/content_layer.py` — 1 doc(s)
-- `layers/layer_manager` — 1 doc(s)
-- `layers/layer_manager.py` — 2 doc(s)
-- `layers/memory_layer.py` — 1 doc(s)
-- `layers/privacy_layer.py` — 2 doc(s)
-- `layers/research_layer.py` — 1 doc(s)
-- `layers/security_layer.py` — 2 doc(s)
-- `layers/stealth_layer.py` — 2 doc(s)
-- `layers/temporal_signal_layer.py` — 3 doc(s)
-- `layers/temporal_signal_layer.py#L137-167` — 1 doc(s)
-- `layers/temporal_signal_layer.py#L137-691` — 1 doc(s)
-- `layers/temporal_signal_layer.py#L170-378` — 1 doc(s)
-- `layers/temporal_signal_layer.py#L336-354` — 1 doc(s)
-- `layers/temporal_signal_runtime.py` — 1 doc(s)
-- `layers/temporal_signal_runtime.py#L134-289` — 1 doc(s)
-  ... and 12 more
-
 ### LEGACY (6)
 - `execution/ghost_executor.py` — 1 doc(s)
 - `legacy/persistent_layer.py` — 1 doc(s)
@@ -372,20 +216,16 @@ core/__main__.py (CANONICAL_OWNER)
 - `orchestrator/phase_controller.py` — 3 doc(s)
 - `orchestrator/security_manager.py` — 1 doc(s)
 
-### DEPRECATED (21)
+### DEPRECATED (17)
 - `GHOST_INVARIANTS.md` — 1 doc(s)
 - `LONGTERM_PLAN.md` — 1 doc(s)
 - `REAL_ARCHITECTURE.md` — 3 doc(s)
-- `__main__.py` — 7 doc(s)
 - `autonomous_orchestrator.py` — 2 doc(s)
 - `capabilities.py` — 2 doc(s)
-- `config.py` — 2 doc(s)
 - `deep_probe.py` — 3 doc(s)
 - `embedding_pipeline.py` — 3 doc(s)
 - `enhanced_research.py` — 2 doc(s)
 - `metrics_registry.py` — 1 doc(s)
-- `paths.py` — 16 doc(s)
-- `project_types.py` — 7 doc(s)
 - `pytest.ini` — 4 doc(s)
 - `requirements-optional.txt` — 3 doc(s)
 - `requirements.txt` — 6 doc(s)
@@ -393,7 +233,7 @@ core/__main__.py (CANONICAL_OWNER)
 - `semantic_deduplicator.py` — 1 doc(s)
 - `smoke_runner.py` — 3 doc(s)
 - `tool_registry.py` — 2 doc(s)
-  ... and 1 more
+- `tot_integration.py` — 1 doc(s)
 
 ## Missing Documentation Targets
 
@@ -431,48 +271,70 @@ core/__main__.py (CANONICAL_OWNER)
 ## Unknown / Needs Review
 
 
-## Overclaims
+## Overclaims (Grouped)
 
-- **[MEDIUM]** `API Reference/API Reference.md`: Uses 'canonical' language but module is DEPRECATED
-  → Referenced path: `__main__.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/API Reference.md`: Uses 'production' language but module is DEPRECATED
-  → Referenced path: `__main__.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/API Reference.md`: Uses 'wired' language but module is DEPRECATED
-  → Referenced path: `__main__.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/Brain APIs.md`: Uses 'canonical' language but module is TEST_ONLY
-  → Referenced path: `brain/.` (verdict: TEST_ONLY)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'canonical' language but module is DEPRECATED
-  → Referenced path: `__main__.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'canonical' language but module is DONOR
-  → Referenced path: `orchestrator_integration.py` (verdict: DONOR)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'canonical' language but module is DEPRECATED
-  → Referenced path: `autonomous_orchestrator.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'production' language but module is DEPRECATED
-  → Referenced path: `__main__.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'production' language but module is DONOR
-  → Referenced path: `orchestrator_integration.py` (verdict: DONOR)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'production' language but module is DEPRECATED
-  → Referenced path: `autonomous_orchestrator.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'wired' language but module is DEPRECATED
-  → Referenced path: `__main__.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'wired' language but module is DONOR
-  → Referenced path: `orchestrator_integration.py` (verdict: DONOR)
-- **[MEDIUM]** `API Reference/Core APIs.md`: Uses 'wired' language but module is DEPRECATED
-  → Referenced path: `autonomous_orchestrator.py` (verdict: DEPRECATED)
-- **[MEDIUM]** `Brain Engines/Decision Engine.md`: Uses 'canonical' language but module is DONOR
-  → Referenced path: `loops/research_loop.py` (verdict: DONOR)
-- **[MEDIUM]** `Brain Engines/Distillation Engine.md`: Uses 'production' language but module is DEPRECATED
-  → Referenced path: `paths.py` (verdict: DEPRECATED)
+**Total overclaims**: 122 groups affecting ~337 module references
+
+- **[HIGH]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md`: Uses 'canonical' language but module is DONOR_OR_OPTIONAL
+  → `15` affected modules, examples: `layers/stealth_layer.py`, `layers/temporal_signal_layer.py`, `layers/temporal_signal_store.py`
+- **[HIGH]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md`: Uses 'production' language but module is DONOR_OR_OPTIONAL
+  → `15` affected modules, examples: `layers/stealth_layer.py`, `layers/temporal_signal_layer.py`, `layers/temporal_signal_store.py`
+- **[HIGH]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Benchmark and Performance Probes.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `12` affected modules, examples: `benchmarks/benchmark_pipeline.py`, `benchmarks/benchmark_sprint_probe.py`, `benchmarks/e2e_canonical_benchmark.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Capability Probes (6b-7i).md`: Uses 'canonical' language but module is TEST_ONLY
+  → `10` affected modules, examples: `tests/probe_6b/test_apple_fm_probe.py`, `tests/probe_6b/test_mlx_cache_limits.py`, `tests/probe_6b/test_qos_constants.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Capability Probes (6b-7i).md`: Uses 'wired' language but module is TEST_ONLY
+  → `10` affected modules, examples: `tests/probe_6b/test_apple_fm_probe.py`, `tests/probe_6b/test_mlx_cache_limits.py`, `tests/probe_6b/test_qos_constants.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Integration and End-to-End Testing.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `9` affected modules, examples: `tests/conftest.py`, `tests/test_e2e_pipeline.py`, `tests/test_e2e_first_finding.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Testing System.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `9` affected modules, examples: `tests/probe_0a/test_sprint_0a.py`, `tests/probe_1a/test_sprint_1a.py`, `tests/probe_8a/test_sprint_8a.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Testing and Quality Assurance.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `9` affected modules, examples: `tests/conftest.py`, `tests/PHASE_GATES.py`, `tests/probe_8ab/conftest.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Basic Functionality Probes (0a-1b).md`: Uses 'canonical' language but module is TEST_ONLY
+  → `8` affected modules, examples: `tests/probe_0a/test_sprint_0a.py`, `tests/probe_0a/REPORT_0A.md`, `tests/probe_1a/test_sprint_1a.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `8` affected modules, examples: `tests/probe_temporal_signal_layer/test_temporal_signal_layer.py`, `probe_e2e_readiness/`, `probe_transport_cap_2026/`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md`: Uses 'production' language but module is TEST_ONLY
+  → `8` affected modules, examples: `tests/probe_temporal_signal_layer/test_temporal_signal_layer.py`, `probe_e2e_readiness/`, `probe_transport_cap_2026/`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Performance and Benchmark Probes.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `7` affected modules, examples: `benchmarks/benchmark_pipeline.py`, `benchmarks/research_effectiveness.py`, `benchmarks/bench_8c0/common_stats.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Benchmark and Performance Testing.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `6` affected modules, examples: `benchmarks/benchmark_pipeline.py`, `benchmarks/benchmark_sprint_probe.py`, `benchmarks/e2e_canonical_benchmark.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Test Execution and Orchestration.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `6` affected modules, examples: `tests/conftest.py`, `tests/PHASE_GATES.py`, `run_baseline.py`
+- **[MEDIUM]** `Transport and Networking/Circuit Breaker.md`: Uses 'production' language but module is TEST_ONLY
+  → `6` affected modules, examples: `tests/probe_8vb/test_cb_opens_after_threshold.py`, `tests/probe_8vb/test_cb_half_open_after_recovery.py`, `tests/probe_8vb/test_cb_timeout_doubles_recovery.py`
+- **[MEDIUM]** `Utilities and Helpers/MLX Integration.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `6` affected modules, examples: `benchmarks/m1_embedding_streaming.py`, `benchmarks/m1_phase4_budget.py`, `tests/probe_1b/test_mlx_memory.py`
+- **[MEDIUM]** `Utilities and Helpers/MLX Integration.md`: Uses 'wired' language but module is TEST_ONLY
+  → `6` affected modules, examples: `benchmarks/m1_embedding_streaming.py`, `benchmarks/m1_phase4_budget.py`, `tests/probe_1b/test_mlx_memory.py`
+- **[MEDIUM]** `Core Architecture/Authority Model and Entry Points/Boot Hygiene and Teardown Management.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `5` affected modules, examples: `tests/test_sprint8an_hygiene.py`, `tests/probe_6a/test_async_hygiene.py`, `tests/probe_8vd/test_preflight_returns_dict.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Integration and End-to-End Probes.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `5` affected modules, examples: `tests/live_8be/test_live_searxng_8be.py`, `tests/live_8be/FINAL_REPORT_8BE.md`, `probe_e2e_readiness/e2e_signal_fixture_baseline.json`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Integration and End-to-End Probes.md`: Uses 'production' language but module is TEST_ONLY
+  → `5` affected modules, examples: `tests/live_8be/test_live_searxng_8be.py`, `tests/live_8be/FINAL_REPORT_8BE.md`, `probe_e2e_readiness/e2e_signal_fixture_baseline.json`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Integration and Validation Probes (2a-3d).md`: Uses 'canonical' language but module is TEST_ONLY
+  → `5` affected modules, examples: `tests/probe_2a/test_sprint_2a.py`, `tests/probe_2b/test_sprint_2b.py`, `tests/probe_3b/probe_3b.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Production Readiness Probes (8a-8z).md`: Uses 'canonical' language but module is TEST_ONLY
+  → `5` affected modules, examples: `tests/probe_8b/test_sprint_8b.py`, `tests/probe_8az/test_sprint_8az.py`, `tests/probe_8aa/test_sprint_8aa.py`
+- **[MEDIUM]** `Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Production Readiness Probes (8a-8z).md`: Uses 'production' language but module is TEST_ONLY
+  → `5` affected modules, examples: `tests/probe_8b/test_sprint_8b.py`, `tests/probe_8az/test_sprint_8az.py`, `tests/probe_8aa/test_sprint_8aa.py`
 - **[MEDIUM]** `Brain Engines/Hermes3 Engine.md`: Uses 'canonical' language but module is TEST_ONLY
-  → Referenced path: `tests/test_sprint75/test_speculative_decoding.py` (verdict: TEST_ONLY)
-- **[MEDIUM]** `Brain Engines/Hermes3 Engine.md`: Uses 'canonical' language but module is TEST_ONLY
-  → Referenced path: `tests/test_8c/test_lifecycle_convergence.py` (verdict: TEST_ONLY)
-- **[MEDIUM]** `Brain Engines/Hermes3 Engine.md`: Uses 'canonical' language but module is TEST_ONLY
-  → Referenced path: `tests/probe_7i/test_sprint_7i.py` (verdict: TEST_ONLY)
-- **[MEDIUM]** `Brain Engines/Hermes3 Engine.md`: Uses 'canonical' language but module is TEST_ONLY
-  → Referenced path: `tests/probe_7e/test_batch_batcher_7e.py` (verdict: TEST_ONLY)
+  → `4` affected modules, examples: `tests/test_sprint75/test_speculative_decoding.py`, `tests/test_8c/test_lifecycle_convergence.py`, `tests/probe_7i/test_sprint_7i.py`
 - **[MEDIUM]** `Brain Engines/Hermes3 Engine.md`: Uses 'production' language but module is TEST_ONLY
-  → Referenced path: `tests/test_sprint75/test_speculative_decoding.py` (verdict: TEST_ONLY)
+  → `4` affected modules, examples: `tests/test_sprint75/test_speculative_decoding.py`, `tests/test_8c/test_lifecycle_convergence.py`, `tests/probe_7i/test_sprint_7i.py`
+- **[MEDIUM]** `Core Architecture/Design Patterns and Architectural Principles.md`: Uses 'canonical' language but module is DONOR_OR_OPTIONAL
+  → `4` affected modules, examples: `infrastructure/plugin_manager.py`, `layers/temporal_signal_layer.py`, `infrastructure/system_monitor.py`
+- **[MEDIUM]** `Knowledge Layer/DuckDB Shadow Store.md`: Uses 'canonical' language but module is TEST_ONLY
+  → `4` affected modules, examples: `tests/test_sprint8ao_duckdb_sidecar.py`, `tests/test_sprint8as_duckdb_async/test_duckdb_async_safety.py`, `tests/probe_7f/test_lmdb_duckdb_dryrun.py`
+- **[MEDIUM]** `Project Overview/Introduction.md`: Uses 'canonical' language but module is DEPRECATED
+  → `4` affected modules, examples: `REAL_ARCHITECTURE.md`, `LONGTERM_PLAN.md`, `requirements.txt`
+- **[MEDIUM]** `Project Overview/Introduction.md`: Uses 'production' language but module is DEPRECATED
+  → `4` affected modules, examples: `REAL_ARCHITECTURE.md`, `LONGTERM_PLAN.md`, `requirements.txt`
+- **[MEDIUM]** `Testing and Quality Assurance/Quality Gates and Validation.md`: Uses 'production' language but module is TEST_ONLY
+  → `4` affected modules, examples: `tests/test_sprint_dashboard.py`, `tests/test_sprint8ap_bounded_live_gate.py`, `tests/probe_8vl/test_lifecycle_gate_truth.py`
 
 ## High-Risk Gaps
 
@@ -494,26 +356,31 @@ core/__main__.py (CANONICAL_OWNER)
 ### [MEDIUM] UNDOCUMENTED_WRITE_PATH
 **Recommended Sprint**: F206AI
 **Affected paths**:
-  - `graph/quantum_pathfinder.py`
   - `layers/__init__.py`
-  - `layers/layer_manager.py`
   - `infrastructure/plugin_manager.py`
   - `infrastructure/system_monitor.py`
+  - `layers/communication_layer.py`
+  - `layers/content_layer.py`
 
 ## Verdict Breakdown
 
 - **TEST_ONLY**: 184
-- **ACTIVE_RUNTIME**: 157
+- **ACTIVE_CAPABILITY**: 139
 - **STORAGE_AUTHORITY**: 38
-- **DONOR**: 32
+- **ACTIVE_SIDECAR**: 30
 - **SECURITY_CRITICAL**: 30
-- **DEPRECATED**: 21
-- **ACTIVE_SIDECAR**: 21
+- **DONOR_OR_OPTIONAL**: 28
 - **TRANSPORT_AUTHORITY**: 20
+- **DEPRECATED**: 17
+- **ACTIVE_RUNTIME**: 11
 - **LEGACY**: 6
-- **CANONICAL_OWNER**: 3
-- **ACTIVE_PIPELINE**: 3
+- **ACTIVE_SUPPORT**: 4
+- **DEAD_OR_UNWIRED**: 3
 - **ACTIVE_DIAGNOSTIC**: 3
+- **ACTIVE_PIPELINE**: 2
+- **ACTIVE_ENTRYPOINT**: 1
+- **CANONICAL_OWNER**: 1
+- **PATH_AUTHORITY**: 1
 
 ---
 

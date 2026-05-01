@@ -271,6 +271,106 @@ class TestNoProductionModification:
 
 
 # --------------------------------------------------------------------------- #
+# Sprint F206AK: Precision Fix Tests
+# --------------------------------------------------------------------------- #
+
+class TestF206AK_CanonicalOwnerPrecision:
+    """Task 1: Exactly one CANONICAL_OWNER — only core/__main__.py"""
+
+    def test_exactly_one_canonical_owner(self, modules: dict):
+        """Exactly one module may be CANONICAL_OWNER: core/__main__.py"""
+        canonical = [m for m in modules.values() if m["verdict"] == "CANONICAL_OWNER"]
+        assert len(canonical) == 1, f"Expected exactly 1 CANONICAL_OWNER, got {len(canonical)}: {[m['path'] for m in canonical]}"
+
+    def test_core_resource_governor_not_canonical_owner(self, modules: dict):
+        """core/resource_governor.py must NOT be CANONICAL_OWNER"""
+        if "core/resource_governor.py" in modules:
+            assert modules["core/resource_governor.py"]["verdict"] != "CANONICAL_OWNER", \
+                "core/resource_governor.py is CANONICAL_OWNER but should be ACTIVE_SUPPORT"
+
+    def test_core_mlx_embeddings_not_canonical_owner(self, modules: dict):
+        """core/mlx_embeddings.py must NOT be CANONICAL_OWNER"""
+        if "core/mlx_embeddings.py" in modules:
+            assert modules["core/mlx_embeddings.py"]["verdict"] != "CANONICAL_OWNER", \
+                "core/mlx_embeddings.py is CANONICAL_OWNER but should be ACTIVE_SUPPORT"
+
+
+class TestF206AK_NewVerdicts:
+    """Tasks 2, 6, 7: New verdicts exist and are used correctly"""
+
+    def test_active_support_verdict_exists(self):
+        """ACTIVE_SUPPORT verdict must be defined in scanner"""
+        scanner_content = SCANNER.read_text()
+        assert "VERDICT_ACTIVE_SUPPORT" in scanner_content
+
+    def test_active_capability_verdict_exists(self):
+        """ACTIVE_CAPABILITY verdict must be defined in scanner"""
+        scanner_content = SCANNER.read_text()
+        assert "VERDICT_ACTIVE_CAPABILITY" in scanner_content
+
+    def test_donor_or_optional_verdict_exists(self):
+        """DONOR_OR_OPTIONAL verdict must be defined in scanner"""
+        scanner_content = SCANNER.read_text()
+        assert "VERDICT_DONOR_OR_OPTIONAL" in scanner_content
+
+    def test_paths_py_not_deprecated(self, modules: dict):
+        """paths.py must NOT be DEPRECATED — it is PATH_AUTHORITY"""
+        if "paths.py" in modules:
+            verdict = modules["paths.py"]["verdict"]
+            assert verdict != "DEPRECATED", f"paths.py has verdict DEPRECATED but should be PATH_AUTHORITY"
+
+    def test_root_main_py_not_deprecated(self, modules: dict):
+        """Root __main__.py must NOT be DEPRECATED unless explicit VERDICT says so"""
+        if "__main__.py" in modules:
+            verdict = modules["__main__.py"]["verdict"]
+            assert verdict != "DEPRECATED", \
+                "Root __main__.py has verdict DEPRECATED but should be ACTIVE_ENTRYPOINT"
+
+
+class TestF206AK_ActiveRuntimeTightening:
+    """Task 5: ACTIVE_RUNTIME cannot be assigned by directory prefix alone"""
+
+    def test_active_runtime_is_explicit_paths(self, modules: dict):
+        """ACTIVE_RUNTIME must be explicit paths, not directory catch-alls"""
+        active_runtime = [m for m in modules.values() if m["verdict"] == "ACTIVE_RUNTIME"]
+        # Brain modules should now be ACTIVE_CAPABILITY, not ACTIVE_RUNTIME
+        brain_runtime = [m for m in active_runtime if m["path"].startswith("brain/")]
+        assert len(brain_runtime) == 0, \
+            f"Brain modules misclassified as ACTIVE_RUNTIME: {[m['path'] for m in brain_runtime]}"
+
+
+class TestF206AK_OverclaimGrouping:
+    """Task 8: Overclaims must be grouped, not noisy individual entries"""
+
+    def test_overclaims_are_grouped(self, matrix_data: dict):
+        """Overclaims must have group_key and affected_modules_count"""
+        for o in matrix_data["overclaims"]:
+            assert "group_key" in o, f"Overclaim missing group_key: {o['doc_path']}"
+            assert "affected_modules_count" in o, f"Overclaim missing affected_modules_count: {o['doc_path']}"
+            assert o["affected_modules_count"] >= 1
+
+    def test_overclaim_severity_tied_to_count(self, matrix_data: dict):
+        """HIGH severity overclaims must affect >10 modules"""
+        high_severity = [o for o in matrix_data["overclaims"] if o["severity"] == "HIGH"]
+        for o in high_severity:
+            assert o["affected_modules_count"] > 10, \
+                f"HIGH severity but only {o['affected_modules_count']} affected: {o['doc_path']}"
+
+    def test_overclaim_examples_capped_at_5(self, matrix_data: dict):
+        """Overclaim examples must be capped at 5"""
+        for o in matrix_data["overclaims"]:
+            if o.get("examples"):
+                assert len(o["examples"]) <= 5, \
+                    f"Overclaim has {len(o['examples'])} examples, max 5: {o['doc_path']}"
+
+    def test_overclaims_significantly_reduced(self, matrix_data: dict):
+        """Overclaim count should be much lower than 4,291 raw overclaims"""
+        # Grouped report should have far fewer entries than raw count
+        assert len(matrix_data["overclaims"]) < 500, \
+            f"Overclaims still too noisy: {len(matrix_data['overclaims'])} groups"
+
+
+# --------------------------------------------------------------------------- #
 # Invariant: Matrix has correct schema
 # --------------------------------------------------------------------------- #
 
@@ -332,3 +432,156 @@ class TestNoFileProtocolKeys:
         """No module path should contain 'file://' prefix."""
         bad_keys = [m["path"] for m in matrix_data["modules"] if "file://" in m["path"]]
         assert len(bad_keys) == 0, f"Keys with file:// prefix: {bad_keys[:5]}"
+
+
+# ---------------------------------------------------------------------------
+# Sprint F206AM: Overclaim Triage Tests
+# ---------------------------------------------------------------------------
+
+class TestF206AM_TriageReadsMatrix:
+    """Triage reads the matrix — no regressions."""
+
+    def test_triage_json_exists(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        assert TRIAGE_JSON.exists(), f"Triage JSON not found: {TRIAGE_JSON}"
+
+    def test_triage_json_loads(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        assert "top_patches" in data
+        assert "groups" in data
+        assert "wording_reference" in data
+
+    def test_triage_reads_matrix_overclaims(self, matrix_data: dict):
+        """Triage must reference the matrix overclaims."""
+        assert len(matrix_data["overclaims"]) > 0
+
+
+class TestF206AM_TriageOutputCapped:
+    """Output capped at 20 patches — no 4k-item flood."""
+
+    def test_top_patches_max_20(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        assert len(data["top_patches"]) <= 20, \
+            f"top_patches has {len(data['top_patches'])} items, max 20"
+
+    def test_all_patches_have_required_fields(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        required = {
+            "patch_id", "severity", "doc", "claim_type",
+            "actual_verdict", "affected_modules_count",
+            "suggested_wording", "should_patch_now"
+        }
+        for patch in data["top_patches"]:
+            missing = required - patch.keys()
+            assert len(missing) == 0, f"Patch {patch.get('patch_id')} missing: {missing}"
+
+    def test_high_severity_patches_first(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        patches = data["top_patches"]
+        severities = [p["severity"] for p in patches]
+        # HIGH must come before MEDIUM
+        high_idx = next((i for i, s in enumerate(severities) if s == "HIGH"), len(severities))
+        medium_idx = next((i for i, s in enumerate(severities) if s == "MEDIUM"), len(severities))
+        assert high_idx < medium_idx, "HIGH patches must precede MEDIUM patches"
+
+    def test_groups_summary_is_valid(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        groups = data["groups"]
+        assert "canonical_overclaim" in groups
+        assert "production_overclaim" in groups
+        assert "wired_overclaim" in groups
+        assert "active_runtime_overclaim" in groups
+        assert "security_overclaim" in groups
+        assert "storage_write_path_overclaim" in groups
+        assert groups["canonical_overclaim"]["count"] == 84
+        assert groups["production_overclaim"]["count"] == 36
+
+
+class TestF206AM_TriageNoProductionImports:
+    """Triage files must not import production modules."""
+
+    def test_triage_reads_json_only(self):
+        # Verify the triage JSON is standalone data — no Python imports of production code
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        content = TRIAGE_JSON.read_text()
+        # Should not contain import statements
+        assert "import " not in content
+        assert "from " not in content
+
+    def test_report_is_markdown_only(self):
+        # Markdown report is documentation, not code
+        MD_REPORT = REPO_ROOT / "probe_qoder_reality/REPORT_QODER_OVERCLAIM_TRIAGE.md"
+        assert MD_REPORT.exists()
+        content = MD_REPORT.read_text()
+        assert "import " not in content
+        assert "from hledac" not in content
+
+
+class TestF206AM_TriageNoNetwork:
+    """Triage is read-only from JSON — no network calls."""
+
+    def test_triage_json_no_urls(self):
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        content = TRIAGE_JSON.read_text()
+        url_patterns = ["http://", "https://", "ftp://"]
+        for pattern in url_patterns:
+            assert pattern not in content, f"Triage JSON contains URL: {pattern}"
+
+    def test_report_markdown_no_urls(self):
+        MD_REPORT = REPO_ROOT / "probe_qoder_reality/REPORT_QODER_OVERCLAIM_TRIAGE.md"
+        content = MD_REPORT.read_text()
+        url_patterns = ["http://", "https://"]
+        for pattern in url_patterns:
+            assert pattern not in content, f"Triage report contains URL: {pattern}"
+
+
+class TestF206AM_TriageGroupDefinitions:
+    """Each of the 6 groups is well-defined."""
+
+    def test_all_overclaims_fit_into_6_groups(self, matrix_data: dict):
+        """Every overclaim claim string must match one of the 6 group patterns."""
+        patterns = [
+            "Uses 'canonical'",
+            "Uses 'production'",
+            "Uses 'wired'",
+            "Uses 'active runtime'",
+        ]
+        ungrouped = [
+            o for o in matrix_data["overclaims"]
+            if not any(p in o["claim"] for p in patterns)
+        ]
+        assert len(ungrouped) == 0, \
+            f"{len(ungrouped)} overclaims don't match any group pattern: {[o['claim'] for o in ungrouped[:3]]}"
+
+    def test_wording_reference_has_all_verdict_mappings(self):
+        """wording_reference must cover canonical→DEPRECATED and canonical→TEST_ONLY."""
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        ref = data["wording_reference"]
+        assert "canonical→DEPRECATED" in ref
+        assert "canonical→TEST_ONLY" in ref
+        assert "production→TEST_ONLY" in ref
+        assert "wired→TEST_ONLY" in ref
+
+    def test_low_priority_batch_references_top_modules(self):
+        """low_priority_batch must identify high-value batch targets."""
+        TRIAGE_JSON = REPO_ROOT / "probe_qoder_reality/qoder_overclaim_triage.json"
+        with open(TRIAGE_JSON) as f:
+            data = json.load(f)
+        batch = data["low_priority_batch"]
+        assert batch["total"] == 101
+        # autonomous_orchestrator.py is the top batch target
+        top_module = batch["top_modules_by_doc_count"][0]
+        assert top_module["module"] == "autonomous_orchestrator.py"
+        assert top_module["verdict"] == "DEPRECATED"

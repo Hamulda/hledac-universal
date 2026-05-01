@@ -48,6 +48,7 @@ import aiohttp
 import orjson
 
 from hledac.universal.core.resource_governor import sample_uma_status
+from hledac.universal.utils import mlx_cache
 from hledac.universal.intelligence.ct_log_client import CTLogClient
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.knowledge.semantic_store import SemanticStore
@@ -229,10 +230,11 @@ def run_pre_sprint_checks() -> bool:
     checks_passed = True
 
     # MX wired limit — BOOT invariant (set even before model load)
+    # Sprint F206AL: wired limit now unified via mlx_cache._MLX_WIRED_LIMIT
     if mx.metal.is_available():
         try:
-            mx.metal.set_wired_limit(2_500_000_000)  # 2.5GB
-            logger.info("[BOOT] MLX wired limit: 2.5GB")
+            mx.metal.set_wired_limit(mlx_cache._MLX_WIRED_LIMIT)
+            logger.info(f"[BOOT] MLX wired limit: {mlx_cache._MLX_WIRED_LIMIT / 1e9:.1f}GB")
         except Exception as exc:
             logger.warning(f"[BOOT] mx.metal.set_wired_limit failed: {exc}")
 

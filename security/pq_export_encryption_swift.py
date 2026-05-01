@@ -4,21 +4,25 @@ Swift-backed HPKE Export backend — calls the helper tool for HPKE X-Wing.
 This module provides the actual HPKE encryption via the secure-enclave-helper
 tool's HPKE commands when running on macOS 26+.
 
-Architecture:
-- HPKEExportBackend: calls helper tool for HPKE operations
-- hpke-generate-recipient-key → key creation
-- hpke-encrypt → HPKE X-Wing encryption
-- hpke-decrypt → HPKE X-Wing decryption
+Helper path discovery (priority order):
+  a) HLEDAC_SECURE_ENCLAVE_HELPER env var
+  b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
+  c) None (fail-soft, truthful HELPER_MISSING)
 
 Fail-soft throughout: any helper failure returns safe defaults.
+Never spawns subprocess at import time.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import subprocess
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .pq_export_encryption import (
@@ -33,19 +37,103 @@ from .pq_export_encryption import (
 
 logger = logging.getLogger(__name__)
 
-# Path to the compiled Swift helper
-HELPER_PATH = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/secure_enclave_helper/.build/release/secure-enclave-helper"
+# ---------------------------------------------------------------------------
+# Typed helper errors
+# ---------------------------------------------------------------------------
+
+HELPER_MISSING = "HELPER_MISSING"
+HELPER_NOT_EXECUTABLE = "HELPER_NOT_EXECUTABLE"
+HELPER_TIMEOUT = "HELPER_TIMEOUT"
+HELPER_BAD_JSON = "HELPER_BAD_JSON"
+HELPER_NONZERO_EXIT = "HELPER_NONZERO_EXIT"
+
+# ---------------------------------------------------------------------------
+# Repo root detection via __file__
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT: Path | None = None
+
+_STATUS_CACHE_TTL_SECONDS = 30.0  # short TTL for hpke-status / pq-status
 
 
-def _run_helper(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
+def _detect_repo_root() -> Path | None:
+    """Detect repo root from this file's location."""
+    global _REPO_ROOT
+    if _REPO_ROOT is not None:
+        return _REPO_ROOT
+
+    try:
+        self_path = Path(__file__).resolve()
+        # security/ → universal/ (repo-root); helper lives at universal/tools/secure_enclave_helper/
+        repo_root = self_path.parent.parent
+        if (repo_root / "tools" / "secure_enclave_helper").exists():
+            _REPO_ROOT = repo_root
+            return _REPO_ROOT
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Helper path resolver
+# ---------------------------------------------------------------------------
+
+
+def get_secure_enclave_helper_path() -> Path | None:
     """
-    Run the secure-enclave-helper and return parsed JSON.
+    Resolve secure-enclave-helper path with priority:
+      a) HLEDAC_SECURE_ENCLAVE_HELPER env var
+      b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
+      c) None (fail-soft)
+    """
+    # (a) env override
+    env_path = os.environ.get("HLEDAC_SECURE_ENCLAVE_HELPER")
+    if env_path:
+        p = Path(env_path)
+        if p.exists() and p.is_file():
+            return p
+        return None
 
+    # (b) repo-relative fallback
+    repo_root = _detect_repo_root()
+    if repo_root is not None:
+        repo_helper = (
+            repo_root
+            / "tools"
+            / "secure_enclave_helper"
+            / ".build"
+            / "release"
+            / "secure-enclave-helper"
+        )
+        if repo_helper.exists() and repo_helper.is_file():
+            return repo_helper
+
+    # (c) None — fail-soft, truthful HELPER_MISSING
+    return None
+
+
+def _get_helper_path() -> Path | None:
+    """Internal alias for get_secure_enclave_helper_path()."""
+    return get_secure_enclave_helper_path()
+
+
+# ---------------------------------------------------------------------------
+# Sync helper runner (blocking, for use in asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+
+def _run_helper_sync(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
+    """
+    Run the secure-enclave-helper synchronously and return parsed JSON.
     Returns None on any failure (timeout, non-zero exit, bad JSON).
     """
+    helper_path = _get_helper_path()
+    if helper_path is None:
+        return None
+
     try:
         result = subprocess.run(
-            [HELPER_PATH] + command,
+            [str(helper_path)] + command,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -59,6 +147,31 @@ def _run_helper(command: list[str], timeout: float = 10.0) -> dict[str, Any] | N
         return None
 
 
+# ---------------------------------------------------------------------------
+# Async helper runner (uses asyncio.to_thread to avoid blocking event loop)
+# ---------------------------------------------------------------------------
+
+
+async def _run_helper_async(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
+    """
+    Run the secure-enclave-helper asynchronously via asyncio.to_thread.
+    Returns None on any failure.
+    """
+    return await asyncio.to_thread(_run_helper_sync, command, timeout)
+
+
+# ---------------------------------------------------------------------------
+# Status cache (short TTL)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CachedStatus:
+    """Bounded status cache entry with short TTL."""
+    status: HPKEStatus
+    until: float  # monotonic time when this cache entry expires
+
+
 @dataclass
 class HPKEExportBackend:
     """
@@ -67,21 +180,35 @@ class HPKEExportBackend:
     Only active on macOS 26+ where HPKE X-Wing is available.
     Falls back gracefully when helper is unavailable or fails.
     """
-
     key_id: str = "com.hledac.pq.export.v1"
-    _status: HPKEStatus = HPKEStatus(availability=HPKEAvailability.UNAVAILABLE)
+    _status: HPKEStatus = field(default_factory=lambda: HPKEStatus(
+        availability=HPKEAvailability.UNAVAILABLE
+    ))
     _encrypted_count: int = 0
     _decrypted_count: int = 0
+    _cache: _CachedStatus | None = None
 
-    def is_available(self) -> bool:
-        """Check if the Swift helper is available and HPKE X-Wing is supported."""
-        result = _run_helper(["hpke-status"])
+    def is_available(self, force_refresh: bool = False) -> bool:
+        """
+        Check if the Swift helper is available and HPKE X-Wing is supported.
+
+        Args:
+            force_refresh: If True, bypass status cache and re-query helper.
+        """
+        # Check cache
+        if not force_refresh and self._cache is not None:
+            if time.monotonic() < self._cache.until:
+                self._status = self._cache.status
+                return self._status.availability == HPKEAvailability.AVAILABLE
+
+        result = _run_helper_sync(["hpke-status"])
         if result is None:
             self._status = HPKEStatus(
                 availability=HPKEAvailability.UNAVAILABLE,
                 backend_name="swift-helper",
                 error_message="Helper unavailable or HPKE X-Wing not supported",
             )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
 
         if not result.get("ok", False):
@@ -90,6 +217,7 @@ class HPKEExportBackend:
                 backend_name="swift-helper",
                 error_message=result.get("message", "HPKE status check failed"),
             )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
 
         hpke_available = result.get("data", {}).get("available", "false") == "true"
@@ -100,6 +228,7 @@ class HPKEExportBackend:
                 backend_name="swift-helper",
                 error_message="HPKE X-Wing not available on this macOS version",
             )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
 
         self._status = HPKEStatus(
@@ -107,6 +236,7 @@ class HPKEExportBackend:
             backend_name="swift-helper",
             recipient_key_id=self.key_id,
         )
+        self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
         return True
 
     def hpke_status(self) -> HPKEStatus:
@@ -131,7 +261,7 @@ class HPKEExportBackend:
             Tuple of (public_key_b64, key_id, fingerprint) or None on failure.
             The private key is stored in the keychain and referenced by key_id.
         """
-        result = _run_helper(["hpke-generate-recipient-key", "--key-id", key_id])
+        result = _run_helper_sync(["hpke-generate-recipient-key", "--key-id", key_id])
         if result is None or not result.get("ok", False):
             return None
 
@@ -166,7 +296,7 @@ class HPKEExportBackend:
         import base64
         import hashlib
 
-        result = _run_helper([
+        result = _run_helper_sync([
             "hpke-encrypt",
             "--plaintext-b64", base64.b64encode(plaintext).decode("ascii"),
             "--aad-b64", base64.b64encode(aad).decode("ascii"),
@@ -253,7 +383,7 @@ class HPKEExportBackend:
             # No key source available — cannot decrypt
             return None
 
-        result = _run_helper(cmd)
+        result = _run_helper_sync(cmd)
         if result is None or not result.get("ok", False):
             return None
 

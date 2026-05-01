@@ -22,6 +22,7 @@ Mixed model NENÍ design flaw — je to správné rozdělení:
 
 from __future__ import annotations
 
+import atexit
 import asyncio
 import json
 import logging
@@ -47,6 +48,14 @@ _EXPOSURE_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days in seconds
 
 # DB executor pro LMDB write (single-writer, B.3 invariant)
 _DB_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+
+
+def _shutdown_db_executor() -> None:
+    """Shutdown the module-level DB executor at process exit."""
+    _DB_EXECUTOR.shutdown(wait=True)
+
+
+atexit.register(_shutdown_db_executor)
 
 # =============================================================================
 # LMDB Cache Helpers

@@ -1532,6 +1532,9 @@ class PersistentKnowledgeLayer:
 
     def cleanup(self):
         """Cleanup resources."""
+        if hasattr(self, '_thread_pool') and self._thread_pool:
+            self._thread_pool.shutdown(wait=True)
+            self._thread_pool = None
         self._backend.close()
         if self._semantic_filter:
             self._semantic_filter = None

@@ -48,6 +48,12 @@ __all__ = [
     # Sprint 7F: UMA Watchdog
     "UmaWatchdog",
     "UmaWatchdogCallbacks",
+    # Sprint F206AL: Canonical M1 8GB UMA thresholds (GB aliases)
+    "UMA_WARN_GIB",
+    "UMA_CRITICAL_GIB",
+    "UMA_EMERGENCY_GIB",
+    "M1_FETCH_SOFT_CEILING_GB",
+    "GENERAL_HIGH_WATER_RATIO",
 ]
 
 if TYPE_CHECKING:
@@ -60,6 +66,18 @@ _UMA_TOTAL_MB: int = 8_192  # 8 GB total
 _WARN_THRESHOLD_MB: int = 6_144  # 6.0 GB - Sprint 6B
 _CRITICAL_THRESHOLD_MB: int = 6_656  # 6.5 GB - Sprint 6B
 _EMERGENCY_THRESHOLD_MB: int = 7_168  # 7.0 GB - Sprint 6B
+
+# Sprint F206AL: Canonical GB aliases — single source of truth for all M1 8GB UMA thresholds.
+# These are mirrors of the MB constants above; do not change independently.
+# Components that need these values should import from utils.uma_budget, not hardcode.
+UMA_WARN_GIB: float = 6.0
+UMA_CRITICAL_GIB: float = 6.5
+UMA_EMERGENCY_GIB: float = 7.0
+# Fetch/concurrency soft ceiling — independent of UMA sampler thresholds.
+# Named _GB suffix to distinguish from concurrent semaphore limits (which use percent).
+M1_FETCH_SOFT_CEILING_GB: float = 5.5
+# High-water ratio for general RAM pressure (used by resource_governor etc.).
+GENERAL_HIGH_WATER_RATIO: float = 0.85
 
 # psutil lazy import
 _psutil: Optional["ModuleType"] = None

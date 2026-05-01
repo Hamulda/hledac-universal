@@ -33,10 +33,15 @@ VERDICT_ACTIVE_RUNTIME = "ACTIVE_RUNTIME"
 VERDICT_ACTIVE_PIPELINE = "ACTIVE_PIPELINE"
 VERDICT_ACTIVE_SIDECAR = "ACTIVE_SIDECAR"
 VERDICT_ACTIVE_DIAGNOSTIC = "ACTIVE_DIAGNOSTIC"
+VERDICT_ACTIVE_SUPPORT = "ACTIVE_SUPPORT"      # used by canonical runtime, not owning it
+VERDICT_ACTIVE_CAPABILITY = "ACTIVE_CAPABILITY"  # implemented/importable but only used by sidecars/optional flags
+VERDICT_ACTIVE_ENTRYPOINT = "ACTIVE_ENTRYPOINT"  # shell entry point, part of run chain
+VERDICT_PATH_AUTHORITY = "PATH_AUTHORITY"       # path resolution infrastructure
 VERDICT_SECURITY_CRITICAL = "SECURITY_CRITICAL"
 VERDICT_STORAGE_AUTHORITY = "STORAGE_AUTHORITY"
 VERDICT_TRANSPORT_AUTHORITY = "TRANSPORT_AUTHORITY"
 VERDICT_DONOR = "DONOR"
+VERDICT_DONOR_OR_OPTIONAL = "DONOR_OR_OPTIONAL"  # documented by Qoder but not reachable from canonical sprint
 VERDICT_LEGACY = "LEGACY"
 VERDICT_DEPRECATED = "DEPRECATED"
 VERDICT_TEST_ONLY = "TEST_ONLY"
@@ -48,8 +53,35 @@ VERDICT_UNKNOWN_NEEDS_REVIEW = "UNKNOWN_NEEDS_REVIEW"
 # Known canonical hot-path classifications (hardcoded for hermetic operation)
 # These are verified by the test suite invariants
 # --------------------------------------------------------------------------- #
+# ONLY core/__main__.py::run_sprint is the canonical owner
 CANONICAL_OWNER_PATHS = {"core/__main__.py"}
 
+# ACTIVE_SUPPORT: used by canonical runtime but does not own runtime
+ACTIVE_SUPPORT_PATHS = {
+    "core/resource_governor.py",
+    "core/mlx_embeddings.py",
+    "project_types.py",
+    "config.py",
+}
+
+# ACTIVE_ENTRYPOINT: shell entry point in run chain
+ACTIVE_ENTRYPOINT_PATHS = {
+    "__main__.py",
+}
+
+# PATH_AUTHORITY: path resolution infrastructure
+PATH_AUTHORITY_PATHS = {
+    "paths.py",
+}
+
+# ACTIVE_CAPABILITY: implemented/importable but only used by sidecars or optional flags
+ACTIVE_CAPABILITY_PATHS = {
+    "tools/qoder_reality_check.py",
+    "graph/quantum_pathfinder.py",
+}
+
+# ACTIVE_RUNTIME: only files directly in canonical call chain
+# NOT assigned by directory prefix alone
 ACTIVE_RUNTIME_PATHS = {
     "runtime/sprint_scheduler.py",
     "runtime/sprint_lifecycle.py",
@@ -109,8 +141,18 @@ TEST_ONLY_PATHS = {
 DEAD_OR_UNWIRED_PATHS = {
     "layers/layer_manager.py",          # donor only
     "orchestrator_integration.py",        # donor only
-    "graph/quantum_pathfinder.py",         # read-side overlay
     "runtime/windup_engine.py",             # donor - not in production call chain
+}
+
+# DONOR_OR_OPTIONAL: advanced modules documented by Qoder but not reachable from canonical sprint
+DONOR_OR_OPTIONAL_PATHS = {
+    "graph/quantum_pathfinder.py",         # read-side overlay, not in canonical path
+    "layers/",
+    "planning/",
+    "policy/",
+    "loops/",
+    "infrastructure/",
+    "orchestrator_integration.py",
 }
 
 # Paths that have canonical write path
@@ -192,6 +234,9 @@ class Overclaim:
     referenced_path: str
     actual_verdict: str
     severity: str  # HIGH, MEDIUM, LOW
+    affected_modules_count: int = 1
+    examples: list[str] = field(default_factory=list)
+    group_key: str = ""  # for grouping: "doc_path|claim_type"
 
 
 @dataclass
@@ -319,11 +364,28 @@ def classify_path(path: str) -> str:
         if path.startswith(prefix):
             return VERDICT_TEST_ONLY
 
-    # Canonical owner
+    # Canonical owner — ONLY core/__main__.py is canonical owner
+    # Files under core/ are NOT automatically canonical owners
     if path in CANONICAL_OWNER_PATHS:
         return VERDICT_CANONICAL_OWNER
 
-    # Active runtime
+    # Active support: used by canonical runtime but not owning it
+    if path in ACTIVE_SUPPORT_PATHS:
+        return VERDICT_ACTIVE_SUPPORT
+
+    # Active capability: implemented but only used by sidecars/optional flags
+    if path in ACTIVE_CAPABILITY_PATHS:
+        return VERDICT_ACTIVE_CAPABILITY
+
+    # Active entrypoint: shell entry point in run chain
+    if path in ACTIVE_ENTRYPOINT_PATHS:
+        return VERDICT_ACTIVE_ENTRYPOINT
+
+    # Path authority
+    if path in PATH_AUTHORITY_PATHS:
+        return VERDICT_PATH_AUTHORITY
+
+    # Active runtime — explicit paths only, NOT directory prefix
     if path in ACTIVE_RUNTIME_PATHS:
         return VERDICT_ACTIVE_RUNTIME
 
@@ -365,31 +427,31 @@ def classify_path(path: str) -> str:
 
     # Donor (referenced but not in canonical call chain)
     if path in DEAD_OR_UNWIRED_PATHS:
-        return VERDICT_DONOR
+        return VERDICT_DEAD_OR_UNWIRED
+
+    # Donor or optional: documented by Qoder but not reachable from canonical sprint
+    for prefix in DONOR_OR_OPTIONAL_PATHS:
+        if path.startswith(prefix):
+            return VERDICT_DONOR_OR_OPTIONAL
 
     # Malformed refs FIRST (before any directory catchers)
     if path in ("brain/.",) or path.endswith("/."):
         return VERDICT_TEST_ONLY
 
     # Donor: modules referenced in docs but not in production call chain
-    if path.startswith("layers/"):
-        return VERDICT_DONOR
-    if path.startswith("orchestrator_integration"):
-        return VERDICT_DONOR
-    if path.startswith("graph/quantum_pathfinder"):
-        return VERDICT_DONOR
 
-    # Active Brain engines
+    # Brain engines — explicit paths only, not directory prefix
+    # brain/hermes3_engine.py etc. are ACTIVE_CAPABILITY if used by sidecars
     if path.startswith("brain/"):
-        return VERDICT_ACTIVE_RUNTIME  # brain modules are part of active runtime
+        return VERDICT_ACTIVE_CAPABILITY
 
     # Coordinators - active sidecar/coordination layer
     if path.startswith("coordinators/"):
         return VERDICT_ACTIVE_SIDECAR
 
-    # Intelligence modules - active intelligence gathering
+    # Intelligence modules - ACTIVE_CAPABILITY (gathering, not always in canonical path)
     if path.startswith("intelligence/"):
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_CAPABILITY
 
     # Knowledge layer - storage authority
     if path.startswith("knowledge/"):
@@ -413,49 +475,53 @@ def classify_path(path: str) -> str:
     if path.startswith("export/"):
         return VERDICT_STORAGE_AUTHORITY
 
-    # Runtime - active runtime
+    # Runtime - EXPLICIT paths only, not directory prefix
+    # runtime/shadow_* files are ACTIVE_DIAGNOSTIC
     if path.startswith("runtime/"):
         if path.startswith("runtime/shadow_"):
             return VERDICT_ACTIVE_DIAGNOSTIC
-        return VERDICT_ACTIVE_RUNTIME
-
-    # Utils - helper utilities, generally safe
-    if path.startswith("utils/"):
-        if "mlx" in path or "cache" in path:
+        # runtime/ files not in ACTIVE_RUNTIME_PATHS are ACTIVE_SIDECAR or UNKNOWN
+        if path in ACTIVE_RUNTIME_PATHS:
             return VERDICT_ACTIVE_RUNTIME
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_SIDECAR
 
-    # Discovery - active discovery adapters
+    # Utils - ACTIVE_CAPABILITY (helpers used by sidecars/optional features)
+    if path.startswith("utils/"):
+        return VERDICT_ACTIVE_CAPABILITY
+
+    # Discovery - ACTIVE_CAPABILITY
     if path.startswith("discovery/") or path.startswith("network/"):
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_CAPABILITY
 
-    # Fetching - active fetch
+    # Fetching - ACTIVE_CAPABILITY
     if path.startswith("fetching/"):
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_CAPABILITY
 
-    # Multimodal - active analysis
+    # Multimodal - ACTIVE_CAPABILITY
     if path.startswith("multimodal/"):
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_CAPABILITY
 
     # Stealth - security critical
     if path.startswith("stealth/"):
         return VERDICT_SECURITY_CRITICAL
 
-    # Forensics - active forensics
+    # Forensics - ACTIVE_CAPABILITY
     if path.startswith("forensics/"):
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_CAPABILITY
 
-    # Monitoring - active monitoring
+    # Monitoring - ACTIVE_SIDECAR
     if path.startswith("monitoring/"):
         return VERDICT_ACTIVE_SIDECAR
 
-    # Patterns - pattern matching
+    # Patterns - ACTIVE_CAPABILITY
     if path.startswith("patterns/"):
-        return VERDICT_ACTIVE_RUNTIME
+        return VERDICT_ACTIVE_CAPABILITY
 
-    # Pipeline - active pipeline
+    # Pipeline - ACTIVE_PIPELINE (explicit paths only)
     if path.startswith("pipeline/"):
-        return VERDICT_ACTIVE_PIPELINE
+        if path in ACTIVE_PIPELINE_PATHS:
+            return VERDICT_ACTIVE_PIPELINE
+        return VERDICT_ACTIVE_CAPABILITY
 
     # Tools - helpers (not security critical unless secure_enclave)
     if path.startswith("tools/"):
@@ -463,9 +529,11 @@ def classify_path(path: str) -> str:
             return VERDICT_SECURITY_CRITICAL
         return VERDICT_ACTIVE_SIDECAR
 
-    # Core - canonical owner
-    if path.startswith("core/"):
-        return VERDICT_CANONICAL_OWNER
+    # Core - NOT canonical owner by default; only core/__main__.py is canonical
+    # core/ files that exist but are not in CANONICAL_OWNER_PATHS get default verdict
+    if path.startswith("core/") and path != "core/__main__.py":
+        # core/resource_governor.py etc are ACTIVE_SUPPORT
+        return VERDICT_UNKNOWN_NEEDS_REVIEW
 
     # Graph - knowledge layer
     if path.startswith("graph/"):
@@ -483,9 +551,9 @@ def classify_path(path: str) -> str:
     if path.startswith("orchestrator/") or path.startswith("execution/"):
         return VERDICT_LEGACY
 
-    # Loops - research loops
+    # Loops - research loops — DONOR_OR_OPTIONAL
     if path.startswith("loops/"):
-        return VERDICT_DONOR
+        return VERDICT_DONOR_OR_OPTIONAL
 
     # Memory - memory management
     if path.startswith("memory/"):
@@ -507,12 +575,13 @@ def classify_path(path: str) -> str:
     if path.startswith("legacy/"):
         return VERDICT_LEGACY
 
-    # Infrastructure - infrastructure
+    # Infrastructure - infrastructure — DONOR_OR_OPTIONAL
     if path.startswith("infrastructure/"):
-        return VERDICT_DONOR
+        return VERDICT_DONOR_OR_OPTIONAL
 
     # Config, paths, requirements - configuration
-    if path in ("config.py", "paths.py", "requirements.txt",
+    # Note: paths.py is PATH_AUTHORITY, __main__.py (root) is ACTIVE_ENTRYPOINT
+    if path in ("config.py", "requirements.txt",
                 "requirements-optional.txt", "pytest.ini",
                 "project_types.py", "capabilities.py",
                 "smoke_runner.py", "tool_registry.py",
@@ -523,9 +592,9 @@ def classify_path(path: str) -> str:
                 "LONGTERM_PLAN.md", "REAL_ARCHITECTURE.md"):
         return VERDICT_DEPRECATED
 
-    # Root __main__.py
+    # Root __main__.py — shell entry point, not deprecated unless explicit VERDICT says so
     if path == "__main__.py":
-        return VERDICT_DEPRECATED
+        return VERDICT_ACTIVE_ENTRYPOINT
 
     # Benchmark results
     if "benchmark_results" in path or "benchmark_results/" in path:
@@ -539,15 +608,19 @@ def classify_path(path: str) -> str:
     if path.endswith(".stix.json"):
         return VERDICT_TEST_ONLY
 
-    # __init__.py in known dirs
+    # __init__.py in known dirs — these are infrastructure, not runtime
+    # Only mark __init__.py as ACTIVE_SUPPORT if explicitly needed
+    # Most __init__.py files are organizational and get ACTIVE_CAPABILITY or UNKNOWN
     if path.endswith("/__init__.py"):
         dir_name = path.split("/")[0]
-        if dir_name in ("brain", "knowledge", "security", "transport",
-                       "coordinators", "export", "runtime", "utils",
-                       "discovery", "fetching", "multimodal", "monitoring",
-                       "patterns", "pipeline", "core", "graph", "stealth",
-                       "forensics", "intelligence"):
-            return VERDICT_ACTIVE_RUNTIME
+        if dir_name in ("knowledge", "storage"):
+            return VERDICT_STORAGE_AUTHORITY
+        if dir_name in ("security", "stealth"):
+            return VERDICT_SECURITY_CRITICAL
+        if dir_name in ("transport",):
+            return VERDICT_TRANSPORT_AUTHORITY
+        # Most __init__.py are organizational infrastructure, not hot path
+        return VERDICT_ACTIVE_CAPABILITY
 
     # Unknown - needs review
     return VERDICT_UNKNOWN_NEEDS_REVIEW
@@ -585,6 +658,12 @@ def build_risks(path: str, verdict: str, exists: bool) -> list[str]:
 
     if verdict == VERDICT_DONOR:
         risks.append("DONOR: referenced by docs but not in canonical runtime call chain")
+
+    if verdict == VERDICT_DONOR_OR_OPTIONAL:
+        risks.append("DONOR_OR_OPTIONAL: documented by Qoder but not reachable from canonical sprint")
+
+    if verdict == VERDICT_DEAD_OR_UNWIRED:
+        risks.append("DEAD_OR_UNWIRED: confirmed dead or unwired from production call chain")
 
     if path in HAS_SECRET_EXPORT_RISK:
         risks.append("PRIVATE_KEY_OR_SECRET_EXPORT_RISK: handles sensitive material in export envelopes")
@@ -702,7 +781,7 @@ def detect_high_risk_gaps(all_modules: dict[str, ModuleReality]) -> list[HighRis
 
     # 5. Missing canonical write path documentation
     missing_write = [m for m in all_modules.values()
-                     if m.verdict in (VERDICT_UNKNOWN_NEEDS_REVIEW, VERDICT_DONOR)
+                     if m.verdict in (VERDICT_UNKNOWN_NEEDS_REVIEW, VERDICT_DONOR, VERDICT_DONOR_OR_OPTIONAL)
                      and m.evidence.get("has_canonical_write", False) is False
                      and m.path not in HAS_CANONICAL_WRITE]
     if missing_write:
@@ -805,10 +884,9 @@ def scan_qoder_wiki(qoder_root: Path) -> tuple[dict[str, ModuleReality], list[Ov
         "verdict_breakdown": dict(verdict_counts),
     }
 
-    # Overclaims
-    overclaims: list[Overclaim] = []
-    # Deduplicated by (doc, keyword, verdict) to avoid explosion
-    seen_overclaims: set[tuple] = set()
+    # Overclaims — grouped by (doc_path, claim_type) to reduce noise
+    # Collect all individual overclaim entries first
+    raw_overclaims: list[tuple] = []  # (doc_path, keyword, referenced_path, actual_verdict)
     for md_path in sorted(qoder_root.rglob("*.md")):
         rel_doc = str(md_path.relative_to(qoder_root))
         try:
@@ -816,28 +894,45 @@ def scan_qoder_wiki(qoder_root: Path) -> tuple[dict[str, ModuleReality], list[Ov
         except Exception:
             continue
 
-        # Simple keyword-based overclaim detection
         for keyword in ["canonical", "production", "wired", "active runtime"]:
             if keyword.lower() in content.lower():
-                # Find paths referenced in this doc
                 refs = extract_file_refs(md_path)
                 for ref_list in [refs["file_links"], refs["md_links"], refs["code_paths"]]:
                     for ref in ref_list:
                         normalized = normalize_path(ref)
                         if normalized in modules:
                             m = modules[normalized]
-                            if m.verdict in (VERDICT_DONOR, VERDICT_LEGACY, VERDICT_DEPRECATED,
-                                            VERDICT_DEAD_OR_UNWIRED, VERDICT_TEST_ONLY):
-                                key = (rel_doc, keyword, normalized, m.verdict)
-                                if key not in seen_overclaims:
-                                    seen_overclaims.add(key)
-                                    overclaims.append(Overclaim(
-                                        doc_path=rel_doc,
-                                        claim=f"Uses '{keyword}' language but module is {m.verdict}",
-                                        referenced_path=normalized,
-                                        actual_verdict=m.verdict,
-                                        severity="MEDIUM",
-                                    ))
+                            if m.verdict in (VERDICT_DONOR, VERDICT_DONOR_OR_OPTIONAL,
+                                           VERDICT_LEGACY, VERDICT_DEPRECATED,
+                                           VERDICT_DEAD_OR_UNWIRED, VERDICT_TEST_ONLY):
+                                raw_overclaims.append((rel_doc, keyword, normalized, m.verdict))
+
+    # Group by (doc_path, keyword, actual_verdict)
+    grouped: dict[tuple, dict] = defaultdict(lambda: {
+        "affected_modules": set(),
+        "examples": [],
+    })
+    for doc_path, keyword, ref_path, verdict in raw_overclaims:
+        key = (doc_path, keyword, verdict)
+        grouped[key]["affected_modules"].add(ref_path)
+        if len(grouped[key]["examples"]) < 5:
+            grouped[key]["examples"].append(ref_path)
+
+    # Convert to grouped Overclaim entries
+    overclaims: list[Overclaim] = []
+    for (doc_path, keyword, verdict), data in grouped.items():
+        affected_count = len(data["affected_modules"])
+        severity = "HIGH" if affected_count > 10 else "MEDIUM" if affected_count > 3 else "LOW"
+        overclaims.append(Overclaim(
+            doc_path=doc_path,
+            claim=f"Uses '{keyword}' language but module is {verdict}",
+            referenced_path=data["examples"][0] if data["examples"] else "",
+            actual_verdict=verdict,
+            severity=severity,
+            affected_modules_count=affected_count,
+            examples=data["examples"],
+            group_key=f"{doc_path}|{keyword}|{verdict}",
+        ))
 
     # High-risk gaps
     gaps = detect_high_risk_gaps(modules)
@@ -898,6 +993,11 @@ def write_markdown(modules: dict[str, ModuleReality], overclaims: list[Overclaim
         f"- **ACTIVE_PIPELINE**: {len(by_verdict.get(VERDICT_ACTIVE_PIPELINE, []))} modules",
         f"- **ACTIVE_SIDECAR**: {len(by_verdict.get(VERDICT_ACTIVE_SIDECAR, []))} modules",
         f"- **ACTIVE_DIAGNOSTIC**: {len(by_verdict.get(VERDICT_ACTIVE_DIAGNOSTIC, []))} modules",
+        f"- **ACTIVE_SUPPORT**: {len(by_verdict.get(VERDICT_ACTIVE_SUPPORT, []))} modules",
+        f"- **ACTIVE_CAPABILITY**: {len(by_verdict.get(VERDICT_ACTIVE_CAPABILITY, []))} modules",
+        f"- **ACTIVE_ENTRYPOINT**: {len(by_verdict.get(VERDICT_ACTIVE_ENTRYPOINT, []))} modules",
+        f"- **PATH_AUTHORITY**: {len(by_verdict.get(VERDICT_PATH_AUTHORITY, []))} modules",
+        f"- **DONOR_OR_OPTIONAL**: {len(by_verdict.get(VERDICT_DONOR_OR_OPTIONAL, []))} modules",
         f"- **SECURITY_CRITICAL**: {len(by_verdict.get(VERDICT_SECURITY_CRITICAL, []))} modules",
         f"- **STORAGE_AUTHORITY**: {len(by_verdict.get(VERDICT_STORAGE_AUTHORITY, []))} modules",
         f"- **TRANSPORT_AUTHORITY**: {len(by_verdict.get(VERDICT_TRANSPORT_AUTHORITY, []))} modules",
@@ -985,11 +1085,14 @@ def write_markdown(modules: dict[str, ModuleReality], overclaims: list[Overclaim
     for m in sorted(unknown, key=lambda x: x.path)[:20]:
         lines.append(f"- `{m.path}` — {m.recommended_action}")
 
-    lines.extend(["", "## Overclaims", ""])
+    lines.extend(["", "## Overclaims (Grouped)", ""])
     if overclaims:
-        for o in overclaims[:20]:
+        total_affected = sum(o.affected_modules_count for o in overclaims)
+        lines.append(f"**Total overclaims**: {len(overclaims)} groups affecting ~{total_affected} module references")
+        lines.append("")
+        for o in sorted(overclaims, key=lambda x: -x.affected_modules_count)[:30]:
             lines.append(f"- **[{o.severity}]** `{o.doc_path}`: {o.claim}")
-            lines.append(f"  → Referenced path: `{o.referenced_path}` (verdict: {o.actual_verdict})")
+            lines.append(f"  → `{o.affected_modules_count}` affected modules, examples: {', '.join(f'`{e}`' for e in o.examples[:3])}")
     else:
         lines.append("No significant overclaims detected.")
 

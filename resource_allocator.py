@@ -28,6 +28,12 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 
+# Sprint F206AL: Import canonical M1 8GB thresholds from uma_budget.
+# MAX_RAM_GB mirrors M1_FETCH_SOFT_CEILING_GB — do not change independently.
+# SOFT_PREEMPT_RAM_GIB is intentionally SEPARATE from uma_budget.UMA_EMERGENCY_GIB
+# because it governs request-level preemption (not system-level emergency).
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+
 logger = logging.getLogger(__name__)
 
 # MLX is imported lazily inside helpers to avoid paying import tax
@@ -65,15 +71,20 @@ class ResourceAllocator:
     """
     Predictive resource allocator with:
     - MAX_CONCURRENT: Maximum concurrent requests (default 3)
-    - MAX_RAM_GB: Maximum RAM usage before rejecting new requests (default 5.5 GB)
-    - EMERGENCY_RAM_GB: Threshold for emergency brake (default 6.2 GB)
+    - MAX_RAM_GB: Maximum RAM usage (mirrors uma_budget.M1_FETCH_SOFT_CEILING_GB)
+    - SOFT_PREEMPT_RAM_GIB: Request-level soft-preemption threshold (default 6.5 GB)
     - Warm-up: First 5 queries use fixed allocation
     - MLX-based linear regression for prediction after warm-up
     """
 
     MAX_CONCURRENT: int = 3
-    MAX_RAM_GB: float = 5.5
-    EMERGENCY_RAM_GB: float = 6.2
+    # Sprint F206AL: MAX_RAM_GB mirrors M1_FETCH_SOFT_CEILING_GB (uma_budget.M1_FETCH_SOFT_CEILING_GB).
+    MAX_RAM_GB: float = M1_FETCH_SOFT_CEILING_GB
+    # Sprint F206AL: SOFT_PREEMPT_RAM_GIB — request-level soft preemption, NOT system emergency.
+    # Value 6.5 equals uma_budget.UMA_CRITICAL_GIB (6.5). The old EMERGENCY_RAM_GB=6.2
+    # was incorrectly BELOW uma_budget.UMA_CRITICAL_GIB=6.5, creating a threshold inversion.
+    # Correct ordering: WARN(6.0) < SOFT_PREEMPT(6.5) = CRITICAL(6.5) < EMERGENCY(7.0).
+    SOFT_PREEMPT_RAM_GIB: float = 6.5
     WARMUP_QUERIES: int = 5
 
     def __init__(self):
@@ -189,12 +200,12 @@ class ResourceAllocator:
 
     def emergency_brake(self) -> Optional[str]:
         """
-        Emergency brake: cancel lowest priority task if RSS > EMERGENCY_RAM_GB.
+        Emergency brake: cancel lowest priority task if RSS > SOFT_PREEMPT_RAM_GIB.
         Returns cancelled request_id or None.
         """
         try:
             mem = psutil.virtual_memory()
-            if mem.used < self.EMERGENCY_RAM_GB * (1024 ** 3):
+            if mem.used < self.SOFT_PREEMPT_RAM_GIB * (1024 ** 3):
                 return None
 
             if not self.active_requests:

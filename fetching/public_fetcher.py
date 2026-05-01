@@ -24,6 +24,9 @@ from typing import Final, Optional
 
 import psutil
 
+# Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+
 import aiohttp
 
 import msgspec
@@ -1217,11 +1220,12 @@ async def async_fetch_public_text(
         #   3. fetch_coordinator._validate_fetch_target() validating initial URL
         request_kwargs: dict = {"headers": headers, "allow_redirects": True}
 
-        # F191B: Lightweight backpressure when RAM > 5.5 GB — don't resize semaphore, just slow down
+        # F191B: Lightweight backpressure when RAM > M1_FETCH_SOFT_CEILING_GB — don't resize semaphore, just slow down
+        # Sprint F206AL: 5.5GB ceiling now unified via uma_budget.M1_FETCH_SOFT_CEILING_GB
         if not use_tor and not use_i2p and not use_stealth:
             try:
                 rss_gb = psutil.Process().memory_info().rss / 1e9
-                if rss_gb > 5.5:
+                if rss_gb > M1_FETCH_SOFT_CEILING_GB:
                     await asyncio.sleep(0.05)
             except Exception as e:
                 logger.debug(f"Memory check failed (non-fatal): {e}")
