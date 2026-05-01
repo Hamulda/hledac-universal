@@ -71,6 +71,9 @@ except ImportError:
 # Hard limit for LLM prompt (no user toggles)
 MAX_LLM_PROMPT_CHARS = 8192
 
+# Sprint F206X: Bounded pending futures to prevent memory exhaustion
+MAX_PENDING_FUTURES = 256
+
 
 @dataclass
 class HermesConfig:
@@ -197,7 +200,8 @@ class Hermes3Engine:
             'adaptive_flush_fast_entries': 0,
         }
         # Sprint 7I: Pending batch futures registry (for emergency failure)
-        self._pending_futures: set = set()
+        # Sprint F206X: Fixed bug - type annotation without assignment created local var
+        self._pending_futures = set()
         self._ema_alpha = 0.3
 
         # Sprint 7E: Age bump for anti-starvation
@@ -218,7 +222,7 @@ class Hermes3Engine:
             self._batch_queue = asyncio.PriorityQueue(maxsize=256)
             import itertools
             self._batch_tie_breaker = itertools.count()
-            self._pending_futures: set = set()
+            self._pending_futures = set()  # Sprint F206X: fixed bug - remove type annotation that shadowed class attr
             self._batch_worker_shutting_down = False  # Sprint 7K: reset poison pill
             self._batch_worker_task = asyncio.create_task(self._batch_worker())
             logger.debug("Batch worker started")
@@ -302,8 +306,23 @@ class Hermes3Engine:
         future = asyncio.Future()
         payload['future'] = future
         # Sprint 7I: Track pending future for emergency failure
+        # Sprint F206X: Bounded set prevents memory exhaustion; try/except ensures discard always runs
+        if len(self._pending_futures) >= MAX_PENDING_FUTURES:
+            # Evict oldest done future first
+            done_futures = [f for f in self._pending_futures if f.done()]
+            if done_futures:
+                self._pending_futures.discard(done_futures[0])
+            else:
+                raise RuntimeError("pending_futures overflow")
         self._pending_futures.add(future)
-        future.add_done_callback(lambda f: self._pending_futures.discard(f) if f in self._pending_futures else None)
+
+        def _safe_discard(f: asyncio.Future) -> None:
+            try:
+                self._pending_futures.discard(f)
+            except Exception:
+                pass  # Sprint F206X: ensure discard never raises
+
+        future.add_done_callback(_safe_discard)
 
         # Tie-breaker counter — module-level to avoid per-call overhead
         if not hasattr(self.__class__, '_batch_tie_breaker'):

@@ -1328,8 +1328,8 @@ class DocumentIntelligenceEngine:
                         forensics = future.result()
                     if forensics:
                         analysis.metadata.raw_metadata['forensics'] = forensics
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[F206AC] forensics analyze failed: {e}")
             return analysis
         else:
             # Try to detect type

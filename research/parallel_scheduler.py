@@ -47,6 +47,10 @@ class ParallelResearchScheduler:
         self.running_cpu: Dict[str, concurrent.futures.Future] = {}
         self.completed: Dict[str, Any] = {}
         self._lock = asyncio.Lock()
+        # Event-based wait — no busy-polling in wait_all()
+        # Initially set (no work yet)
+        self._work_done = asyncio.Event()
+        self._work_done.set()
 
         # ThreadPoolExecutor pro CPU úlohy
         self._cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent_cpu)
@@ -70,6 +74,8 @@ class ParallelResearchScheduler:
                      *args, **kwargs):
         """Přidá úlohu do příslušné fronty."""
         async with self._lock:
+            # New work arriving — clear the all-done event
+            self._work_done.clear()
             current_max_io = await self.get_recommended_concurrency('io')
             current_max_cpu = await self.get_recommended_concurrency('cpu')
 
@@ -110,7 +116,7 @@ class ParallelResearchScheduler:
             loop = asyncio.get_running_loop()
             future.add_done_callback(
                 lambda f: loop.call_soon_threadsafe(
-                    asyncio.create_task, self._on_cpu_done(task.task_id, f)
+                    lambda: asyncio.create_task(self._on_cpu_done(task.task_id, f))
                 )
             )
         except RuntimeError:
@@ -165,6 +171,10 @@ class ParallelResearchScheduler:
                     next_task = heappop(self.cpu_queue)
                     self._start_cpu_task(next_task)
 
+            # Signal wait_all when all work is done
+            if not self.running_io and not self.running_cpu:
+                self._work_done.set()
+
     async def steal_work(self, worker_type: str):
         """
         Work stealing – experimentální.
@@ -187,18 +197,25 @@ class ParallelResearchScheduler:
         """Ukončí plánovač a uvolní zdroje."""
         self._cpu_executor.shutdown(wait=wait)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.shutdown()
+        return False
+
     async def wait_all(self, timeout: Optional[float] = None):
-        """Počká na dokončení všech úloh."""
-        start_time = time.time()
+        """
+        Počká na dokončení všech úloh — event-based, no polling.
 
-        while True:
-            async with self._lock:
-                if not self.running_io and not self.running_cpu:
-                    break
-                if timeout and (time.time() - start_time) > timeout:
-                    break
+        Uses asyncio.Event for efficient wait instead of busy-sleep polling.
+        """
+        try:
+            await asyncio.wait_for(self._work_done.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass  # timeout exceeded, return anyway
 
-            await asyncio.sleep(0.1)
+    # Priority constants
 
     # Priority constants
     PRIORITY_RESEARCH = 5

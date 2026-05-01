@@ -175,18 +175,29 @@ async def _run_ct_pivots(
     max_results: int,
     timeout_s: float,
 ) -> DiscoveryBatchResult:
-    # CT pivots require ct_log_client wiring in the sprint scheduler.
-    # Stub: return empty — the planner selects it opportunistically.
-    del query, max_results, timeout_s
-    return DiscoveryBatchResult(
-        hits=(),
-        error="ct_pivots_no_pipeline_context",
-        error_type="not_wired",
-        provider_name="ct_pivots",
-        provider_chain=("ct_pivots",),
-        source_family=None,
-        elapsed_s=0.0,
-    )
+    # Sprint F206AU: real crtsh adapter — passive CT subdomain discovery.
+    # No pipeline context needed — crt.sh JSON endpoint is self-contained.
+    from .crtsh_adapter import async_search_crtsh
+
+    try:
+        return await async_search_crtsh(
+            query=query,
+            max_results=max_results,
+            timeout_s=timeout_s,
+        )
+    except asyncio.CancelledError:
+        raise  # always re-raise — do not swallow
+    except Exception as e:
+        # Fail-soft: return empty with error tag
+        return DiscoveryBatchResult(
+            hits=(),
+            error=str(e),
+            error_type="provider_exception",
+            provider_name="ct_pivots",
+            provider_chain=("ct_pivots",),
+            source_family="ct",
+            elapsed_s=0.0,
+        )
 
 
 # ---------------------------------------------------------------------------

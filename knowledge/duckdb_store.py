@@ -1343,8 +1343,8 @@ class DuckDBShadowStore:
                             await self._truth_write_graph.buffer_observation(
                                 id_a, id_b, fid, ts, src
                             )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[F206AC] truth_write_graph buffer failed: {e}")
 
         t = asyncio.create_task(_run())
         self._bg_tasks.add(t)
@@ -1698,8 +1698,8 @@ class DuckDBShadowStore:
                     profile.entity_summary_json,
                 ],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[F206L] _sync_upsert_target_profile failed for {profile.target_id}: {e}")
 
     def _sync_get_target_profile(self, target_id: str) -> TargetProfileSummary | None:
         """Sync get — MUST be called on the worker thread. Returns None if not found."""
@@ -1760,7 +1760,8 @@ class DuckDBShadowStore:
                 ],
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[F206L] _sync_record_hypothesis_feedback failed for {record.id}: {e}")
             return False
 
     def _sync_get_hypothesis_feedback(
@@ -2369,6 +2370,29 @@ class DuckDBShadowStore:
             return True
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Async Context Manager
+    # ------------------------------------------------------------------
+
+    async def __aenter__(self) -> "DuckDBShadowStore":
+        """
+        Async context manager entry — initializes the store.
+
+        Usage:
+            async with DuckDBShadowStore() as store:
+                await store.async_insert_finding(...)
+            # aclose() called automatically on exit
+        """
+        await self.async_initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Async context manager exit — cleans up the store.
+        Idempotent: safe to call even if already closed.
+        """
+        await self.aclose()
 
     async def async_record_shadow_finding(
         self,

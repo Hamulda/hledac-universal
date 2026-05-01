@@ -1,0 +1,53 @@
+{
+  "adapter": "crtsh",
+  "production_enabled": true,
+  "source_family": "ct",
+  "uses_shared_session": true,
+  "uses_circuit_breaker": true,
+  "planner_selectable": true,
+  "canonical_cascade_wired": false,
+  "commoncrawl_still_stub": true,
+  "feed_pivots_still_stub": true,
+  "sprint": "F206AU",
+  "replaces_stub": "ct_pivots",
+  "endpoint": "https://crt.sh/?q=<domain>&output=json",
+  "no_api_key_required": true,
+  "passive_only": true,
+  "hard_cap_results": 20,
+  "hard_cap_certs": 50,
+  "error_taxonomy": [
+    "none",
+    "invalid_query",
+    "timeout",
+    "http_429",
+    "http_403",
+    "http_5xx",
+    "http_4xx",
+    "network_error",
+    "parse_error",
+    "provider_empty",
+    "provider_exception"
+  ],
+  "planner_wired": true,
+  "planner_provider_name": "ct_pivots",
+  "tests": {
+    "probe_providerless_discovery/test_crtsh_adapter.py": "27 passed",
+    "probe_f206aq_discovery_planner/test_planner_stub_quarantine.py": "18 passed"
+  },
+  "regression_suite": "265 passed across 6 test suites",
+  "changed_files": [
+    "discovery/crtsh_adapter.py (new)",
+    "discovery/provider_stats.py (ct_pivots capability flip)",
+    "discovery/discovery_planner.py (_run_ct_pivots replacement)",
+    "tests/probe_providerless_discovery/test_crtsh_adapter.py (new)",
+    "tests/probe_f206aq_discovery_planner/test_planner_stub_quarantine.py (updated)"
+  ],
+  "NOT_modified": [
+    "runtime/sprint_scheduler.py",
+    "core/__main__.py",
+    "pipeline/live_public_pipeline.py",
+    "transport/httpx_*",
+    "transport/curl_cffi_*"
+  ],
+  "sealed": true
+}

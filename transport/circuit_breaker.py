@@ -191,7 +191,8 @@ _BREAKERS: OrderedDict[str, CircuitBreaker] = OrderedDict()
 
 def _evict_if_needed() -> None:
     """Evict oldest entry when at or exceeding MAX_TRACKED_DOMAINS."""
-    while len(_BREAKERS) >= MAX_TRACKED_DOMAINS - 1:
+    # Sprint F206X: Fixed off-by-one - evict when FULL (>= MAX) not when about to be full
+    while len(_BREAKERS) >= MAX_TRACKED_DOMAINS:
         _BREAKERS.popitem(last=False)  # pop oldest (FIFO)
 
 

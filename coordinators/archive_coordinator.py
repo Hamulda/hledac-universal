@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .base import UniversalCoordinator
 
@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 # Maximum results per step (bounded output)
 MAX_ARCHIVE_RESULTS = 20
+
+# Sprint F206X: Bounded pending URLs to prevent memory exhaustion
+MAX_PENDING_URLS = 2000
 
 
 @dataclass
@@ -57,7 +60,9 @@ class ArchiveCoordinator(UniversalCoordinator):
         self._config = config or ArchiveCoordinatorConfig()
 
         # State
-        self._pending_urls: deque = deque()
+        # Sprint F206X: deque with maxlen prevents unbounded growth
+        self._pending_urls: deque = deque(maxlen=MAX_PENDING_URLS)
+        self._seen_urls: Set[str] = set()  # O(1) membership test
         self._escalations_executed: int = 0
         self._urls_emitted: int = 0
         self._stop_reason: Optional[str] = None
@@ -102,7 +107,10 @@ class ArchiveCoordinator(UniversalCoordinator):
 
         # Load pending URLs if provided
         if 'pending_urls' in ctx:
-            self._pending_urls = list(ctx['pending_urls'])
+            # Sprint F206X: Convert to bounded deque, populate seen set for O(1) dedup
+            incoming = ctx['pending_urls']
+            self._pending_urls = deque(incoming, maxlen=MAX_PENDING_URLS)
+            self._seen_urls = set(incoming)
 
         logger.info(f"ArchiveCoordinator started with {len(self._pending_urls)} pending URLs")
 
@@ -117,9 +125,11 @@ class ArchiveCoordinator(UniversalCoordinator):
         self._ctx.update(ctx)
 
         # Add new URLs from ctx
+        # Sprint F206X: Use set for O(1) membership, bounded deque auto-evicts
         new_urls = ctx.get('new_urls', [])
         for url in new_urls:
-            if url not in self._pending_urls:
+            if url not in self._seen_urls:
+                self._seen_urls.add(url)
                 self._pending_urls.append(url)
 
         if not self._pending_urls:
@@ -128,6 +138,7 @@ class ArchiveCoordinator(UniversalCoordinator):
 
         # Process URLs
         url = self._pending_urls.popleft()
+        self._seen_urls.discard(url)  # Sprint F206X: remove from seen when processed
 
         # Execute archive escalation
         result = await self._execute_archive_escalation(url)
@@ -219,3 +230,4 @@ class ArchiveCoordinator(UniversalCoordinator):
         """Cleanup on shutdown."""
         logger.info(f"ArchiveCoordinator shutting down: {self._escalations_executed} escalations, {self._urls_emitted} URLs")
         self._pending_urls.clear()
+        self._seen_urls.clear()  # Sprint F206X: clear seen set too

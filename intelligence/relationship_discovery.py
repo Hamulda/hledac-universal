@@ -99,6 +99,18 @@ def _get_csr_matrix():
     return None
 
 
+# Sprint F206X: Helper for deterministic entity pair keys
+def _make_pair(entity_a: str, entity_b: str) -> tuple[str, str]:
+    """
+    Create a deterministic (sorted) pair tuple.
+
+    Replaces tuple(sorted([a, b])) which allocates a temporary list.
+    O(1) comparison vs O(n log n) sort, but for n=2 the main benefit
+    is avoiding allocation overhead in tight loops.
+    """
+    return (entity_a, entity_b) if entity_a < entity_b else (entity_b, entity_a)
+
+
 def _get_lil_matrix():
     """Lazy lil_matrix loader."""
     sp = _get_sparse()
@@ -946,7 +958,7 @@ class RelationshipDiscoveryEngine:
 
             # Count communications between pairs
             for recipient in comm.recipients:
-                pair = tuple(sorted([comm.sender, recipient]))
+                pair = _make_pair(comm.sender, recipient)
                 communication_counts[pair] += 1
                 evidence = f"{comm.communication_type}:{comm.timestamp.isoformat() if comm.timestamp else 'unknown'}"
                 communication_evidence[pair].append(evidence)
@@ -1008,14 +1020,14 @@ class RelationshipDiscoveryEngine:
                     window = entities[i:i + window_size]
                     for j, entity_a in enumerate(window):
                         for entity_b in window[j + 1:]:
-                            pair = tuple(sorted([entity_a, entity_b]))
+                            pair = _make_pair(entity_a, entity_b)
                             cooccurrence_counts[pair] += 1
                             cooccurrence_docs[pair].add(doc.id)
             else:
                 # Use all pairs in document
                 for i, entity_a in enumerate(entities):
                     for entity_b in entities[i + 1:]:
-                        pair = tuple(sorted([entity_a, entity_b]))
+                        pair = _make_pair(entity_a, entity_b)
                         cooccurrence_counts[pair] += 1
                         cooccurrence_docs[pair].add(doc.id)
 
@@ -2189,7 +2201,7 @@ class RelationshipDiscoveryEngine:
         seen = set()
         for source_id, rels in self._relationships.items():
             for rel in rels:
-                link_key = tuple(sorted([rel.source, rel.target]))
+                link_key = _make_pair(rel.source, rel.target)
                 if link_key not in seen:
                     links.append({
                         "source": rel.source,

@@ -149,8 +149,8 @@ class AutonomousPivotExecutor:
                 ):
                     logger.debug("[F204C] Skipping pivot executor — RAM critical/emergency")
                     return []
-            except Exception:
-                pass  # Fail-safe: governor check is best-effort
+            except Exception as e:
+                logger.debug(f"[F206AC] governor check failed: {e}")
 
         # Select top N by priority (lowest priority value = highest priority)
         sorted_pivots = sorted(pivots, key=lambda p: getattr(p, "priority", 0))
@@ -191,8 +191,8 @@ class AutonomousPivotExecutor:
                     )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            pass  # Fail-safe: executor must never crash sprint
+        except Exception as e:
+            logger.warning(f"[F206AC] execute_top failed: {e}")
 
         return results
 
@@ -223,8 +223,8 @@ class AutonomousPivotExecutor:
                 if findings_out and self._store is not None:
                     try:
                         await self._store.async_ingest_findings_batch(findings_out)
-                    except Exception:
-                        pass  # Fail-soft: ingest failure does not block feedback
+                    except Exception as e:
+                        logger.debug(f"[F206AC] feedback ingest failed: {e}")
 
                 # Record feedback
                 if self._feedback is not None and self._executed_count < self._max_per_sprint:
@@ -237,8 +237,8 @@ class AutonomousPivotExecutor:
                             accepted_count=accepted,
                             signal_value=signal,
                         )
-                    except Exception:
-                        pass  # Fail-safe: feedback must never crash pivot
+                    except Exception as e:
+                        logger.debug(f"[F206AC] feedback record failed: {e}")
 
                 self._executed_count += 1
 

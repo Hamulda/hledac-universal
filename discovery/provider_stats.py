@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,7 +67,8 @@ class ProviderStats:
     call_count: int = 0
     last_call_time: float | None = None
 
-    recent_errors: list[str] = field(default_factory=list)
+    # Sprint F206X: deque with maxlen for O(1) eviction instead of list.pop(0) O(n)
+    recent_errors: deque = field(default_factory=lambda: deque(maxlen=_MAX_ERRORS_STORED))
 
     # Snapshot version for migration safety
     _version: int = 1
@@ -111,8 +113,7 @@ class ProviderStats:
         self._update_reliability(success=False)
         self.last_error_type = error_type
         self.last_error_time = time.monotonic()
-        if len(self.recent_errors) >= _MAX_ERRORS_STORED:
-            self.recent_errors.pop(0)
+        # Sprint F206X: deque(maxlen=N) auto-evicts oldest on append - O(1)
         self.recent_errors.append(error_type)
 
     def record_timeout(self) -> None:
@@ -122,8 +123,7 @@ class ProviderStats:
         self._update_reliability(success=False)
         self.last_error_type = "timeout"
         self.last_error_time = time.monotonic()
-        if len(self.recent_errors) >= _MAX_ERRORS_STORED:
-            self.recent_errors.pop(0)
+        # Sprint F206X: deque(maxlen=N) auto-evicts oldest on append - O(1)
         self.recent_errors.append("timeout")
 
     # -------------------------------------------------------------------------
@@ -269,10 +269,10 @@ PROVIDER_CAPABILITIES: dict[str, dict[str, object]] = {
         "disabled_reason": "pipeline_context_not_wired",
     },
     "ct_pivots": {
-        "production_enabled": False,
-        "is_stub": True,
-        "requires_context": True,
-        "disabled_reason": "ct_context_not_wired",
+        "production_enabled": True,
+        "is_stub": False,
+        "requires_context": False,
+        "enabled_reason": "F206AU_crtsh_adapter",
     },
 }
 

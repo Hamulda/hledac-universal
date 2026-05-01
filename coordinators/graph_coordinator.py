@@ -15,6 +15,7 @@ graph reasoning to this coordinator.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Maximum paths to return per step (bounded output)
 MAX_RETURNED_PATHS = 20
+
+# Sprint F206X: Bounded pending queries to prevent memory exhaustion
+MAX_PENDING_QUERIES = 1000
 
 # Sprint 50: Fingerprint edge types (string constants, not enum)
 FINGERPRINT_EDGE_TYPES = {
@@ -68,7 +72,9 @@ class GraphCoordinator(UniversalCoordinator):
         self._config = config or GraphCoordinatorConfig()
 
         # State
-        self._pending_queries: deque = deque()
+        # Sprint F206X: deque with maxlen prevents unbounded growth
+        self._pending_queries: deque = deque(maxlen=MAX_PENDING_QUERIES)
+        self._seen_queries: Set[str] = set()  # O(1) membership test
         self._walks_executed: int = 0
         self._paths_returned: int = 0
         self._stop_reason: Optional[str] = None
@@ -118,7 +124,10 @@ class GraphCoordinator(UniversalCoordinator):
 
         # Load pending queries if provided
         if 'pending_queries' in ctx:
-            self._pending_queries = list(ctx['pending_queries'])
+            # Sprint F206X: Convert to bounded deque, populate seen set for O(1) dedup
+            incoming = ctx['pending_queries']
+            self._pending_queries = deque(incoming, maxlen=MAX_PENDING_QUERIES)
+            self._seen_queries = set(incoming)
 
         logger.info(f"GraphCoordinator started with {len(self._pending_queries)} pending queries")
 
@@ -133,9 +142,11 @@ class GraphCoordinator(UniversalCoordinator):
         self._ctx.update(ctx)
 
         # Add new queries from ctx
+        # Sprint F206X: Use set for O(1) membership, bounded deque auto-evicts
         new_queries = ctx.get('new_queries', [])
         for query in new_queries:
-            if query not in self._pending_queries:
+            if query not in self._seen_queries:
+                self._seen_queries.add(query)
                 self._pending_queries.append(query)
 
         if not self._pending_queries:
@@ -144,6 +155,7 @@ class GraphCoordinator(UniversalCoordinator):
 
         # Process queries
         query = self._pending_queries.popleft()
+        self._seen_queries.discard(query)  # Sprint F206X: remove from seen when processed
 
         # Execute graph reasoning
         result = await self._execute_graph_reasoning(query)
@@ -232,6 +244,7 @@ class GraphCoordinator(UniversalCoordinator):
         """Cleanup on shutdown."""
         logger.info(f"GraphCoordinator shutting down: {self._walks_executed} walks, {self._paths_returned} paths")
         self._pending_queries.clear()
+        self._seen_queries.clear()  # Sprint F206X: clear seen set too
 
     # Sprint 50: Fingerprint metadata consumption
     async def consume_fingerprint_metadata(self, url: str, metadata: dict) -> None:

@@ -715,8 +715,8 @@ class UnicodeAttackAnalyzer:
                 # a nested event loop which crashes Metal on Apple Silicon M1.
                 try:
                     asyncio.run(self.cleanup())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[F206AC] unicode_analyzer cleanup failed: {e}")
 
 
 def create_unicode_analyzer(config: Optional[UnicodeConfig] = None) -> Optional[UnicodeAttackAnalyzer]:

@@ -23,6 +23,9 @@ SKLEARN_AVAILABLE = True  # Will be verified on actual use
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Sprint F206X: Bounded pending requests to prevent memory exhaustion
+MAX_PENDING_RESOURCE_REQUESTS = 1000
+
 class ResourceType(Enum):
     """Resource types for allocation"""
     CPU = "cpu"
@@ -83,7 +86,8 @@ class IntelligentResourceAllocator:
 
     def __init__(self, config_path: str = None):
         self.config = self._load_config(config_path)
-        self.pending_requests = []
+        # Sprint F206X: dict keyed by task_id for O(1) removal after allocation, bounded size
+        self._pending_requests_dict: Dict[str, ResourceRequest] = {}
         self.active_allocations = {}
         self.completed_allocations = []
         self.resource_history = []
@@ -292,14 +296,21 @@ class IntelligentResourceAllocator:
         """Request resource allocation for a task"""
         logger.info(f"Resource request received: {request.task_name} (Priority: {request.priority.name})")
 
-        # Add to pending queue
-        self.pending_requests.append(request)
+        # Sprint F206X: Bounded pending queue - evict oldest if full
+        if len(self._pending_requests_dict) >= MAX_PENDING_RESOURCE_REQUESTS:
+            oldest_key = next(iter(self._pending_requests_dict))
+            del self._pending_requests_dict[oldest_key]
+            logger.warning(f"Pending requests queue full, evicted oldest: {oldest_key}")
 
-        # Sort by priority
-        self.pending_requests.sort(key=lambda x: x.priority.value, reverse=True)
+        # Add to pending queue
+        self._pending_requests_dict[request.task_id] = request
 
         # Attempt allocation
-        return await self._allocate_resources(request)
+        success = await self._allocate_resources(request)
+        if success:
+            # Bugfix: remove from pending after successful allocation
+            self._pending_requests_dict.pop(request.task_id, None)
+        return success
 
     async def _allocate_resources(self, request: ResourceRequest) -> bool:
         """Attempt to allocate resources for a request"""
@@ -547,8 +558,8 @@ class IntelligentResourceAllocator:
     def get_allocation_statistics(self) -> Dict[str, Any]:
         """Get resource allocation statistics"""
         stats = {
-            'total_requests': len(self.pending_requests) + len(self.active_allocations) + len(self.completed_allocations),
-            'pending_requests': len(self.pending_requests),
+            'total_requests': len(self._pending_requests_dict) + len(self.active_allocations) + len(self.completed_allocations),
+            'pending_requests': len(self._pending_requests_dict),
             'active_allocations': len(self.active_allocations),
             'completed_allocations': len(self.completed_allocations),
             'average_efficiency': 0.0,
