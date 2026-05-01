@@ -1,0 +1,51 @@
+{
+  "sprint": "F206AP",
+  "triage_version": "F206AM",
+  "patched_files": [
+    {
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md",
+      "severity_patches": ["HIGH-1", "HIGH-2"],
+      "verdict": "DONOR_OR_OPTIONAL",
+      "modules": [
+        "layers/stealth_layer.py",
+        "layers/temporal_signal_layer.py",
+        "layers/temporal_signal_store.py",
+        "layers/temporal_signal_runtime.py"
+      ],
+      "reality_status_blocks_added": 4,
+      "changes": [
+        "Removed 'canonical probe infrastructure' language",
+        "Removed 'production probe surfaces' language",
+        "Added Reality status blocks to Introduction, Project Structure, Core Components, Architecture Overview"
+      ]
+    },
+    {
+      "doc": "Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Benchmark and Performance Probes.md",
+      "severity_patches": ["HIGH-3", "HIGH-4"],
+      "verdict": "TEST_ONLY",
+      "modules": [
+        "benchmarks/benchmark_pipeline.py",
+        "benchmarks/benchmark_sprint_probe.py",
+        "benchmarks/e2e_canonical_benchmark.py",
+        "benchmarks/e2e_compare.py",
+        "benchmarks/research_effectiveness.py"
+      ],
+      "reality_status_blocks_added": 2,
+      "changes": [
+        "Removed 'canonical performance measurement' language",
+        "Removed 'wired into live pipelines' language",
+        "Added Reality status blocks to Introduction and Architecture Overview"
+      ]
+    }
+  ],
+  "total_high_patches": 4,
+  "total_high_patched": 4,
+  "total_medium_remaining": 17,
+  "total_low_remaining": 101,
+  "backups_created": [
+    ".qoder/repowiki/en/content/Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Specialized Domain Probes.md.bak_F206AP_QODER_DOC_PATCH",
+    ".qoder/repowiki/en/content/Testing and Quality Assurance/Probe Testing System/Probe Categories and Classification/Benchmark and Performance Probes.md.bak_F206AP_QODER_DOC_PATCH"
+  ],
+  "production_files_touched": 0,
+  "scope_note": "Only top 4 HIGH severity patches applied. Scope limited to two doc files."
+}

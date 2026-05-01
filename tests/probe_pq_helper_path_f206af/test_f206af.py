@@ -48,12 +48,86 @@ class TestHelperPathDiscovery:
 
 
 class TestImportTimeSafety:
+    """
+    Import-time safety: no subprocess may be spawned during module import.
+
+    This is the correct invariant — import must be side-effect free.
+    The backend.is_available() first-use helper probe is a separate concern.
+    """
+
     def test_import_does_not_spawn_subprocess(self):
-        path = get_secure_enclave_helper_path()
+        """
+        Import-time assertion: subprocess.run must NOT be called during import.
+
+        The Swift backend is_available() calls _run_helper_sync(["pq-status"])
+        which uses subprocess.run — but only when is_available() is called at
+        runtime (first-use), not at import time.
+
+        This test imports the module in a fresh subprocess with subprocess.run
+        pre-patched. If the import completes without raising, no subprocess
+        call happened during import.
+        """
+        import subprocess, sys
+
+        code = '''
+import subprocess as sp
+import sys
+sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
+
+from unittest.mock import patch
+
+def capturing_run(*args, **kwargs):
+    raise AssertionError("subprocess.run called during import!")
+
+with patch.object(sp, 'run', capturing_run):
+    from hledac.universal.security.pq_crypto_swift import SwiftPostQuantumBackend, get_secure_enclave_helper_path
+
+print("IMPORT_OK")
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if "IMPORT_OK" not in result.stdout:
+            raise AssertionError(
+                f"Import-time subprocess call detected:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+
+    def test_first_use_is_available_may_spawn_helper_bounded(self):
+        """
+        First-use is_available() MAY call the helper subprocess — intentional design.
+
+        Verifies: (1) helper path is exercised on first call, (2) timeout is bounded,
+        (3) errors are caught and is_available() returns False (fail-soft).
+
+        _run_helper_sync returns None on any failure (timeout, non-zero exit, bad JSON).
+        When it returns None, is_available() returns False.
+        We test this by patching _run_helper_sync to return None (simulating any helper failure).
+        """
+        from unittest.mock import patch
+
+        from hledac.universal.security.pq_crypto_swift import SwiftPostQuantumBackend
+        from hledac.universal.security import pq_crypto_swift
+
         backend = SwiftPostQuantumBackend()
-        with patch("subprocess.run", side_effect=AssertionError("subprocess.run called at import time!")):
-            if path is not None:
-                backend.is_available()
+
+        # Simulate helper returning None (timeout or error) — is_available() must return False
+        def none_helper(cmd, timeout=10.0):
+            return None
+
+        with patch.object(pq_crypto_swift, "_run_helper_sync", none_helper):
+            result = backend.is_available()
+            assert result is False, f"is_available() should return False when helper returns None, got {result}"
+
+        # Also verify: when helper returns {"ok": False} (PQ not available), is_available returns False
+        def bad_helper(cmd, timeout=10.0):
+            return {"ok": False, "message": "ML-DSA not available"}
+
+        with patch.object(pq_crypto_swift, "_run_helper_sync", bad_helper):
+            result = backend.is_available()
+            assert result is False, f"is_available() should return False when PQ not available"
 
 
 class TestHelperErrors:

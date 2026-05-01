@@ -35,18 +35,24 @@
 ## Introduction
 This document presents specialized domain probe categories that validate advanced OSINT research domains: stealth operations, end-to-end readiness, transport capabilities, temporal signal processing, and advanced system integration. Each category targets distinct validation needs:
 - Stealth operations: HTTP header spoofing, fingerprint randomization, rate limiting, and human-like behavior simulation under memory constraints.
-- End-to-end readiness: Cross-stack transport validation across HTTP/1.1, HTTP/2, and curl_cffi transports with canonical baselines.
+- End-to-end readiness: Cross-stack transport validation across HTTP/1.1, HTTP/2, and curl_cffi transports.
 - Transport capabilities: Autonomous transport selection among Tor, I2P, and direct connectivity with mandatory routing for .onion domains.
 - Temporal signal processing: Burst detection, periodicity scoring, change-point detection, and source synchrony with bounded memory and deterministic behavior.
 - Advanced system integration: Persistent temporal state, cross-run snapshotting, and advisory priority hints for orchestration.
 
-These probes collectively ensure robustness across network security, temporal analysis, stealth operations, and system-wide integration scenarios.
+**Reality status:**
+- Runtime verdict: DONOR_OR_OPTIONAL for stealth_layer, temporal_signal_layer, temporal_signal_store, temporal_signal_runtime
+- Canonical hot path: no
+- Production write path: no
+- Test/benchmark role: yes (probe-driven validation only)
+
+Stealth and temporal-signal layers are optional donor components — not wired into the production pipeline.
 
 ## Project Structure
 The specialized probes are organized around focused modules and test suites:
-- Stealth: Unified stealth manager, session, crawler, and layer integrations.
+- Stealth: Unified stealth manager, session, crawler, and layer integrations (optional donor — not production-critical).
 - Transport: Transport resolver and classification for .onion, .i2p, and .freenet domains.
-- Temporal: Event-driven layer with bounded state, persistence, and runtime helpers.
+- Temporal: Event-driven layer with bounded state, persistence, and runtime helpers (optional donor — not production-wired).
 - E2E readiness: Comparative datasets and reports validating transport stacks.
 - Integration probes: Dedicated test suites for temporal layer, store, and wiring.
 
@@ -98,11 +104,11 @@ E2E --> TR
 - [temporal_signal_layer.py:137-691](file://layers/temporal_signal_layer.py#L137-691)
 
 ## Core Components
-- StealthManager: Integrates rate limiting, header spoofing, and fingerprint randomization with session lifecycle and retry/backoff policies.
-- StealthSession: HTTP/3 autodetection, streaming reads with bounded memory, and Tor identity rotation.
+- StealthManager: Integrates rate limiting, header spoofing, and fingerprint randomization with session lifecycle and retry/backoff policies (optional donor).
+- StealthSession: HTTP/3 autodetection, streaming reads with bounded memory, and Tor identity rotation (optional donor).
 - TransportResolver: Autonomous selection among Nym, Tor, Direct, and InMemory transports with mandatory routing for .onion.
-- TemporalSignalLayer: Burst, periodicity, change-point, and source synchrony scoring with bounded memory and deterministic behavior.
-- TemporalSignalStore/Runtime: SQLite WAL persistence for snapshots, cross-run continuity, and advisory priority hints.
+- TemporalSignalLayer: Burst, periodicity, change-point, and source synchrony scoring with bounded memory and deterministic behavior (optional donor — not production-wired).
+- TemporalSignalStore/Runtime: SQLite WAL persistence for snapshots, cross-run continuity, and advisory priority hints (optional donor — not production-wired).
 
 **Section sources**
 - [stealth_manager.py:85-337](file://stealth/stealth_manager.py#L85-337)
@@ -113,7 +119,15 @@ E2E --> TR
 - [temporal_signal_runtime.py:134-289](file://layers/temporal_signal_runtime.py#L134-289)
 
 ## Architecture Overview
-The specialized probes integrate stealth, transport, and temporal domains into a cohesive validation pipeline. Transport classification drives routing decisions, stealth ensures operational security, and temporal scoring enables anomaly detection and prioritization.
+The specialized probes integrate stealth, transport, and temporal domains into a validation pipeline. Transport classification drives routing decisions, stealth supports operational security, and temporal scoring enables anomaly detection and prioritization.
+
+**Reality status:**
+- Runtime verdict: DONOR_OR_OPTIONAL
+- Canonical hot path: no
+- Production write path: no
+- Test/benchmark role: yes (probe-driven validation only)
+
+Stealth and temporal-signal layers are optional donor probe surfaces — not production-critical.
 
 ```mermaid
 sequenceDiagram

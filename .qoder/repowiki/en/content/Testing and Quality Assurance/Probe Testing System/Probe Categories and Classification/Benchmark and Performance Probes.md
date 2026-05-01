@@ -31,6 +31,14 @@
 ## Introduction
 This document describes the benchmark and performance probe categories used to validate system performance, computational efficiency, memory usage, throughput, and scaling characteristics. It documents the systematic approach to measuring performance, validating results, and detecting regressions across specialized probe suites. The probes cover end-to-end pipeline performance, agent performance benchmarking, research effectiveness scoring, transport lane validation, and M1 memory-constrained budgets.
 
+**Reality status:**
+- Runtime verdict: TEST_ONLY
+- Canonical hot path: no
+- Production write path: no
+- Test/benchmark role: yes (test-only harness — not part of production measurement)
+
+The benchmark suite is a test-only harness — not part of production measurement.
+
 ## Project Structure
 The benchmark suite is organized around focused probe categories:
 - Pipeline and end-to-end benchmarks: measure timing, memory, and throughput across integrated stages.
@@ -122,20 +130,13 @@ T82J --> S82J
 ## Architecture Overview
 The benchmark ecosystem integrates measurement, artifact generation, comparison, and scoring:
 
-```mermaid
-sequenceDiagram
-participant Runner as "Benchmark Runner"
-participant Probe as "Probe Module"
-participant Store as "Mock/Store Layer"
-participant Metrics as "Metrics Registry"
-participant Analyzer as "Comparison/Scoring"
-Runner->>Probe : Invoke benchmark with config
-Probe->>Store : Execute canonical path (hermetic/live)
-Probe->>Metrics : Record counters and timestamps
-Probe-->>Runner : Emit JSON artifact
-Runner->>Analyzer : Feed artifact(s)
-Analyzer-->>Runner : Verdict + report
-```
+**Reality status:**
+- Runtime verdict: TEST_ONLY
+- Canonical hot path: no
+- Production write path: no
+- Test/benchmark role: yes (driven by benchmark harness — not wired into live pipelines)
+
+Benchmark probes are driven by the benchmark harness — not wired into live pipelines.
 
 **Diagram sources**
 - [benchmark_pipeline.py:213-342](file://benchmarks/benchmark_pipeline.py#L213-L342)

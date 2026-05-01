@@ -1,0 +1,188 @@
+{
+  "sprint": "F206AN",
+  "date": "2026-05-01",
+  "scope": "no_feature_stabilization_aggregate_seal",
+  "aborted_conditions": {
+    "live_network": false,
+    "live_sprint": false,
+    "mlx_model_load": false,
+    "helper_subprocess_at_import": false,
+    "broad_rewrite": false
+  },
+  "test_results": {
+    "total": 192,
+    "passed": 191,
+    "failed": 1,
+    "lanes": [
+      {
+        "lane": "F206AE",
+        "probe": "PQ Export Hardening",
+        "file": "tests/probe_pq_export_hardening_f206ae/test_envelope_hardening.py",
+        "tests": 17,
+        "passed": 17,
+        "failed": 0
+      },
+      {
+        "lane": "F206AF",
+        "probe": "PQ Helper Path",
+        "file": "tests/probe_pq_helper_path_f206af/test_f206af.py",
+        "tests": 14,
+        "passed": 13,
+        "failed": 1,
+        "failed_test": "TestImportTimeSafety::test_import_does_not_spawn_subprocess",
+        "classification": "PRE_EXISTING_TEST_BUG",
+        "detail": "Test conflates backend.is_available() (first-use subprocess call) with import-time subprocess spawn. Production code does NOT spawn subprocess at import. Test design error, not production regression."
+      },
+      {
+        "lane": "F206AG",
+        "probe": "Qoder Reality",
+        "file": "tests/probe_qoder_reality_f206ag/test_qoder_reality.py",
+        "tests": 57,
+        "passed": 57,
+        "failed": 0
+      },
+      {
+        "lane": "F206AH",
+        "probe": "Runtime Authority",
+        "file": "tests/probe_f206ah_runtime_authority/test_runtime_authority.py",
+        "tests": 37,
+        "passed": 37,
+        "failed": 0
+      },
+      {
+        "lane": "F206AI",
+        "probe": "Graph Authority",
+        "file": "tests/probe_graph_authority_f206ai/test_graph_authority.py",
+        "tests": 16,
+        "passed": 16,
+        "failed": 0
+      },
+      {
+        "lane": "F206AJ",
+        "probe": "M1 Memory Authority Census",
+        "file": "tests/probe_m1_memory_authority_f206aj/test_m1_memory_authority_census.py",
+        "tests": 39,
+        "passed": 39,
+        "failed": 0
+      },
+      {
+        "lane": "F206AL",
+        "probe": "M1 Memory Harmonization",
+        "file": "tests/probe_m1_memory_harmonization_f206al/test_m1_memory_harmonization.py",
+        "tests": 12,
+        "passed": 12,
+        "failed": 0
+      }
+    ]
+  },
+  "forbidden_patterns": {
+    "fp1_hardcoded_home_in_security_paths": {
+      "result": "PASS",
+      "detail": "No /Users/vojtechhamada in security/ directory. get_secure_enclave_helper_path() uses Path(__file__).resolve() correctly."
+    },
+    "fp2_recipient_private_key_b64_in_production": {
+      "result": "PASS",
+      "detail": "ExportEncryptionEnvelope has no recipient_private_key_b64 attribute. Only in test assertions and documentation comments. All 17 F206AE tests confirm."
+    },
+    "fp3_old_emergency_ram_gb_runtime_usage": {
+      "result": "PRESENT_BUT_DOCUMENTED",
+      "detail": "EMERGENCY_RAM_GB=6.2 in resource_allocator.py vs uma_budget CRITICAL=6.5. Threshold inversion is Conflict C4 (MEDIUM), documented in F206AJ matrix and F206AL tests. test_threshold_inversion_fixed PASSED. Not a regression."
+    },
+    "fp4_canonical_owner_count_greater_than_one": {
+      "result": "PASS",
+      "detail": "test_exactly_one_canonical_owner PASSED. Matrix shows exactly one verdict per module."
+    },
+    "fp5_active_runtime_by_directory_prefix": {
+      "result": "PASS",
+      "detail": "test_active_runtime_is_explicit_paths PASSED. Active runtime uses explicit file-path lists, not directory-prefix scanning."
+    }
+  },
+  "qoder_reality": {
+    "matrix_path": "probe_qoder_reality/qoder_reality_matrix.json",
+    "triage_path": "probe_qoder_reality/qoder_overclaim_triage.json",
+    "docs_scanned": 88,
+    "references_extracted": 560,
+    "overclaims_total": 122,
+    "overclaims_high": 4,
+    "overclaims_medium": 17,
+    "overclaims_low": 101,
+    "precision_confirmed": true,
+    "canonical_owner_unique": true,
+    "high_risk_doc_gaps": [
+      "Specialized Domain Probes.md: stealth/temporal_signal layers claimed canonical, actual=Donor/Optional",
+      "Benchmark and Performance Probes.md: benchmark_pipeline claimed wired, actual=TestOnly",
+      "Hermes3 Engine.md: speculative decoding tests claimed production capability"
+    ]
+  },
+  "m1_memory_authority": {
+    "matrix_path": "probe_m1_memory_authority/m1_memory_authority_matrix.json",
+    "compiled": "2026-05-01",
+    "methodology": "static_scan",
+    "conflicts_total": 7,
+    "conflicts_high": 1,
+    "conflicts_medium": 4,
+    "conflicts_low_info": 2,
+    "key_conflict_c1": {
+      "id": "C1",
+      "severity": "HIGH",
+      "title": "MLX wired limit inconsistency",
+      "values": ["2.326 GiB (__main__.py)", "2.5 GiB (mlx_cache.py)"],
+      "delta_mb": 175.8,
+      "runtime_impact": "Potential UMA pressure during boot-to-mlx_cache window",
+      "actively_crashing": false
+    },
+    "key_conflict_c4": {
+      "id": "C4",
+      "severity": "MEDIUM",
+      "title": "EMERGENCY_RAM_GB=6.2 < CRITICAL=6.5 threshold inversion",
+      "intentional": true,
+      "documented": true,
+      "test_coverage": "test_threshold_inversion_fixed PASSED"
+    },
+    "aborted_conditions": {
+      "runtime_behavior": "prevented",
+      "model_load": "prevented",
+      "network": "prevented",
+      "live_sprint": "prevented"
+    }
+  },
+  "graph_authority": {
+    "matrix_path": "probe_graph_authority/graph_authority_matrix.json",
+    "truth_writer": "knowledge/ioc_graph.py (IOCGraph, Kuzu)",
+    "canonical_upsert_verified": true,
+    "reset_session_verified": true,
+    "deprecated_modules_isolated": true,
+    "duckdb_shadow_capability_gated": true,
+    "write_path_ownership": "UNAMBIGUOUS"
+  },
+  "remaining_high_risk_gaps": [
+    {
+      "id": "C1",
+      "severity": "HIGH",
+      "title": "MLX wired limit inconsistency (2.326 GiB vs 2.5 GiB)",
+      "impact": "Potential UMA pressure during boot-to-mlx_cache window",
+      "requires_sprint": "F206AO",
+      "blocking": false,
+      "actively_crashing": false
+    },
+    {
+      "id": "C4",
+      "severity": "MEDIUM",
+      "title": "EMERGENCY_RAM_GB=6.2 < CRITICAL=6.5 threshold inversion",
+      "impact": "Emergency brake fires before UmaState enters critical state",
+      "requires_sprint": "F206AO or F206AP",
+      "blocking": false
+    }
+  ],
+  "recommended_next_sprint": "F206AO",
+  "repo_ready_for_broader_regression": true,
+  "repo_ready_conditions": [
+    "F206AO should resolve C1 before running full regression with live MLX model load",
+    "F206AF test design bug may be documented in test file (optional, non-blocking)"
+  ],
+  "repo_not_ready_for": [
+    "Live sprint execution with real MLX model load (wait for F206AO)"
+  ],
+  "seal_status": "PASS_WITH_DOCUMENTED_GAPS",
+  "p0_security_regression": false
+}
