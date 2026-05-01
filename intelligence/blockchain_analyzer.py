@@ -51,6 +51,7 @@ import hashlib
 import logging
 import re
 import time
+from urllib.parse import urlparse
 from collections import defaultdict, deque, OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -73,6 +74,43 @@ try:
 except ImportError:
     HTTP_UTILS_AVAILABLE = False
     logger.debug("hledac.core.http not available, using direct httpx")
+
+# F206AW: Canonical transport seam helpers
+# Lazily imported to avoid import-time session creation
+_circuit_breaker_module = None
+
+
+def _get_circuit_breaker_module():
+    """Lazily import circuit_breaker to avoid import-time session creation."""
+    global _circuit_breaker_module
+    if _circuit_breaker_module is None:
+        try:
+            from transport.circuit_breaker import domain_breaker_check
+            _circuit_breaker_module = domain_breaker_check
+        except ImportError:
+            _circuit_breaker_module = None
+    return _circuit_breaker_module
+
+
+def _extract_domain(url: str) -> str:
+    """Extract domain from URL for circuit breaker check."""
+    try:
+        return urlparse(url).netloc
+    except Exception:
+        return ""
+
+
+def _try_domain_breaker_check(domain: str) -> Any:
+    """Fail-soft circuit breaker check. Returns None if breaker unavailable."""
+    if not domain:
+        return None
+    try:
+        cb_check = _get_circuit_breaker_module()
+        if cb_check is not None:
+            return cb_check(domain)
+        return None
+    except Exception:
+        return None
 
 
 # =============================================================================
@@ -280,6 +318,7 @@ class BlockchainForensics:
         blockchair_api_key: Optional[str] = None,
         cache_ttl_seconds: int = 300,
         max_concurrent_requests: int = 5,
+        fetch_func: Optional[Any] = None,
     ):
         """
         Initialize BlockchainForensics.
@@ -289,19 +328,29 @@ class BlockchainForensics:
             blockchair_api_key: API key for Blockchair (Bitcoin, others)
             cache_ttl_seconds: Cache time-to-live in seconds (default: 300)
             max_concurrent_requests: Max concurrent API requests (default: 5)
+            fetch_func: Optional async fetch function(url: str) -> dict.
+                When provided, takes precedence over internal httpx client.
+                Enables canonical transport seam (circuit breaker, shared session).
         """
         self.etherscan_api_key = etherscan_api_key
         self.blockchair_api_key = blockchair_api_key
         self.cache_ttl = cache_ttl_seconds
         self.max_concurrent = max_concurrent_requests
+        self._fetch_func = fetch_func
+        # transport_policy: "injected" = uses caller-provided fetch_func
+        #                   "bypass_legacy" = uses internal httpx (no circuit breaker)
+        self.transport_policy = "injected" if fetch_func else "bypass_legacy"
 
         # In-memory cache — F184F: OrderedDict pro LRU eviction, MAX_CACHE_SIZE bounded
         self._cache: OrderedDict[str, APIResponse] = OrderedDict()
         self._cache_lock = asyncio.Lock()
 
-        # HTTP client (initialized lazily)
+        # HTTP client (initialized lazily — only used when _fetch_func is None)
         self._client: Optional[httpx.AsyncClient] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
+
+        # Circuit breaker check result for telemetry
+        self._last_circuit_decision: Optional[Any] = None
 
         # Rate limiting
         self._last_etherscan_call = 0.0
@@ -372,13 +421,29 @@ class BlockchainForensics:
             await asyncio.sleep(self._etherscan_delay - elapsed)
 
         self._last_etherscan_call = time.time()
-        client = await self._get_client()
 
+        # F206AW: Canonical circuit breaker preflight (fail-soft)
+        domain = _extract_domain(url)
+        circuit_decision = _try_domain_breaker_check(domain)
+        if circuit_decision is not None:
+            self._last_circuit_decision = circuit_decision
+            if not circuit_decision.allowed:
+                logger.debug(
+                    f"Etherscan circuit breaker blocked {domain}: "
+                    f"{circuit_decision.reason} (retry in {circuit_decision.retry_after_s:.1f}s)"
+                )
+                return {"status": "0", "message": f"circuit_breaker_blocked:{domain}"}
+
+        # Ensure semaphore is initialized (get_client creates it)
+        await self._get_client()
         async with self._semaphore:
             try:
-                if HTTP_UTILS_AVAILABLE:
+                if self._fetch_func is not None:
+                    return await self._fetch_func(url) or {}
+                elif HTTP_UTILS_AVAILABLE:
                     return await fetch_json(url) or {}
                 else:
+                    client = await self._get_client()
                     response = await client.get(url)
                     response.raise_for_status()
                     return response.json()
@@ -394,13 +459,29 @@ class BlockchainForensics:
             await asyncio.sleep(self._blockchair_delay - elapsed)
 
         self._last_blockchair_call = time.time()
-        client = await self._get_client()
 
+        # F206AW: Canonical circuit breaker preflight (fail-soft)
+        domain = _extract_domain(url)
+        circuit_decision = _try_domain_breaker_check(domain)
+        if circuit_decision is not None:
+            self._last_circuit_decision = circuit_decision
+            if not circuit_decision.allowed:
+                logger.debug(
+                    f"Blockchair circuit breaker blocked {domain}: "
+                    f"{circuit_decision.reason} (retry in {circuit_decision.retry_after_s:.1f}s)"
+                )
+                return {"status": "0", "message": f"circuit_breaker_blocked:{domain}"}
+
+        # Ensure semaphore is initialized (get_client creates it)
+        await self._get_client()
         async with self._semaphore:
             try:
-                if HTTP_UTILS_AVAILABLE:
+                if self._fetch_func is not None:
+                    return await self._fetch_func(url) or {}
+                elif HTTP_UTILS_AVAILABLE:
                     return await fetch_json(url) or {}
                 else:
+                    client = await self._get_client()
                     response = await client.get(url)
                     response.raise_for_status()
                     return response.json()

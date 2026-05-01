@@ -1,9 +1,9 @@
 """
-WaybackDiffMiner — Sprint F203F
-==============================
+WaybackDiffMiner — Sprint F206AX
+================================
 
-Systematically mines historical changes from Wayback Machine CDX API
-and produces temporal OSINT diff signals for timeline/diff pipeline.
+Transport seam: injected fetch provider + canonical circuit breaker preflight.
+No network at import time. Fail-soft when breaker unavailable.
 
 Bounds:
     MAX_CDX_SNAPSHOTS_PER_DOMAIN = 50   — max CDX snapshots per domain/URL
@@ -18,6 +18,7 @@ Guardrails:
     asyncio.gather return_exceptions=True + _check_gathered()
     Circuit opens after 3 consecutive 429/503 from Wayback CDX
     Fail-soft: errors never crash mining
+    Optional injected fetch provider for test seam
 
 Definition:
     change_type enum: "added" | "changed" | "disappeared" | "unchanged"
@@ -32,7 +33,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 import aiohttp
 
@@ -87,6 +88,12 @@ class WaybackDiffResult:
     input_count: int
     change_events: List[CDXDiffEvent] = field(default_factory=list)
     stats: dict[str, int] = field(default_factory=dict)
+    # F206AX telemetry
+    transport_policy: str = "native_aiohttp"
+    circuit_breaker_used: bool = False
+    injected_fetch_used: bool = False
+    fallback_reason: Optional[str] = None
+    archive_domain: Optional[str] = None
 
     def to_findings(
         self, query: str, sprint_id: str
@@ -137,6 +144,15 @@ def _build_payload(event: CDXDiffEvent) -> str:
         f"Digest: {event.digest}\n"
         f"Replay: {event.evidence_url}"
     )
+
+
+def _extract_archive_domain(url: str = WAYBACK_CDX_API) -> str:
+    """Extract netloc from a URL for circuit breaker lookup."""
+    try:
+        from urllib.parse import urlparse
+        return urlparse(url).netloc
+    except Exception:
+        return "archive.org"
 
 
 # ── Circuit Breaker ────────────────────────────────────────────────────────────
@@ -195,13 +211,34 @@ class WaybackDiffMiner:
       - Circuit breaker after 3 consecutive 429/503
       - HTTP only, no JS renderer
       - Bounded semaphore for rate limiting (2 req/s)
+      - Optional injected fetch provider for test seam (F206AX)
+      - Canonical transport circuit breaker preflight (F206AX)
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        fetch_provider: Optional[Callable[..., Awaitable[Any]]] = None,
+        session_provider: Optional[Callable[[], Awaitable[aiohttp.ClientSession]]] = None,
+    ) -> None:
+        """
+        Initialize WaybackDiffMiner.
+
+        Args:
+            fetch_provider: Optional async callable(url, params, timeout) -> response.
+                          If provided, used instead of native aiohttp session.get.
+                          Enables test seam injection without changing OSINT logic.
+            session_provider: Optional async callable() -> aiohttp.ClientSession.
+                             If provided with fetch_provider, used for session.
+                             If only session_provider provided, native fetch with that session.
+        """
         self._breaker = _WaybackCircuitBreaker()
         self._semaphore: Optional[Any] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_request_at = 0.0
+        # F206AX: injected providers — fail-soft if unavailable
+        self._fetch_provider = fetch_provider
+        self._session_provider = session_provider
         self._stats: dict[str, int] = {
             "domains_processed": 0,
             "cdx_snapshots_collected": 0,
@@ -209,7 +246,30 @@ class WaybackDiffMiner:
             "circuit_open": 0,
             "rate_limited": 0,
             "errors": 0,
+            "cb_preflight_skipped": 0,
+            "cb_preflight_blocked": 0,
         }
+
+    def _check_circuit_breaker(self, domain: str) -> bool:
+        """
+        F206AX: Canonical transport circuit breaker preflight.
+
+        Returns True if request is allowed (breaker closed or not available).
+        Returns False if circuit is open (skip request).
+        Fail-soft: returns True if circuit_breaker module unavailable.
+        """
+        try:
+            from hledac.universal.transport.circuit_breaker import domain_breaker_check
+            decision = domain_breaker_check(domain)
+            if not decision.allowed:
+                self._stats["cb_preflight_blocked"] += 1
+                logger.debug(f"Circuit breaker blocked {domain}: {decision.reason}")
+                return False
+            return True
+        except Exception:
+            # Fail-soft: if breaker unavailable, allow request
+            self._stats["cb_preflight_skipped"] += 1
+            return True
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -224,14 +284,19 @@ class WaybackDiffMiner:
             WaybackDiffResult with change_events list
         """
         if not domains_or_urls:
-            return WaybackDiffResult(input_count=0, change_events=[], stats=self._stats.copy())
+            return WaybackDiffResult(
+                input_count=0, change_events=[], stats=self._stats.copy(),
+                transport_policy=self._transport_policy_label(),
+                circuit_breaker_used=self._breaker is not None,
+                injected_fetch_used=self._fetch_provider is not None,
+                archive_domain=_extract_archive_domain(),
+            )
 
         # Bound input
         targets = domains_or_urls[:MAX_DOMAINS_PER_SPRINT]
 
         # Lazy-init session and semaphore
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+        await self._ensure_session()
         if self._semaphore is None:
             import asyncio
             self._semaphore = asyncio.Semaphore(2)  # 2 concurrent CDX requests
@@ -242,6 +307,11 @@ class WaybackDiffMiner:
         async def _fetch_one(target: str) -> List[CDXDiffEvent]:
             if self._breaker.is_open():
                 self._stats["circuit_open"] += 1
+                return []
+
+            # F206AX: canonical circuit breaker preflight
+            archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
+            if not self._check_circuit_breaker(archive_domain):
                 return []
 
             # Rate limiting
@@ -290,15 +360,42 @@ class WaybackDiffMiner:
             input_count=len(targets),
             change_events=all_events,
             stats=self._stats.copy(),
+            transport_policy=self._transport_policy_label(),
+            circuit_breaker_used=True,
+            injected_fetch_used=self._fetch_provider is not None,
+            fallback_reason=self._fallback_reason(),
+            archive_domain=_extract_archive_domain(WAYBACK_CDX_API),
         )
 
     async def close(self) -> None:
         """Close the aiohttp session."""
-        if self._session and not self._session.closed:
+        if self._session is not None and not self._session.closed:
             await self._session.close()
             self._session = None
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    async def _ensure_session(self) -> None:
+        """Lazily initialize session from provider or native."""
+        if self._session_provider is not None and (
+            self._session is None or self._session.closed
+        ):
+            self._session = await self._session_provider()
+        elif self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+
+    def _transport_policy_label(self) -> str:
+        """F206AX telemetry: describe active transport policy."""
+        if self._fetch_provider is not None:
+            return "injected_fetch"
+        if self._session_provider is not None:
+            return "injected_session"
+        return "native_aiohttp"
+
+    def _fallback_reason(self) -> Optional[str]:
+        """F206AX telemetry: reason for fallback path if any."""
+        # No fallback needed — fetch_provider/session_provider are opt-in seam, not fallback
+        return None
 
     async def _fetch_and_diff(self, target: str) -> List[CDXDiffEvent]:
         """Fetch CDX for target and diff consecutive snapshots."""
@@ -373,6 +470,43 @@ class WaybackDiffMiner:
             if session is None:
                 return []
 
+            # F206AX: use injected fetch provider if available
+            if self._fetch_provider is not None:
+                return await self._fetch_via_injected(params)
+            return await self._fetch_via_native(params)
+
+        except Exception as e:
+            logger.debug(f"CDX query error for {url}: {e}")
+            self._stats["errors"] += 1
+            return []
+
+    async def _fetch_via_injected(
+        self, params: dict[str, Any]
+    ) -> List[dict[str, str]]:
+        """F206AX: Use injected fetch provider for testing seam."""
+        try:
+            # Injected fetch_provider(url, params, timeout) -> response
+            assert self._fetch_provider is not None, "fetch_provider must be set for injected path"
+            resp = await self._fetch_provider(
+                WAYBACK_CDX_API,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=TIMEOUT_PER_REQUEST),
+            )
+            self._breaker.record_success()
+            return await self._parse_cdx_response(resp)
+        except Exception as e:
+            logger.debug(f"Injected fetch error: {e}")
+            self._stats["errors"] += 1
+            return []
+
+    async def _fetch_via_native(
+        self, params: dict[str, Any]
+    ) -> List[dict[str, str]]:
+        """Native aiohttp fetch — original behavior."""
+        session = self._session
+        if session is None:
+            return []
+        try:
             async with session.get(
                 WAYBACK_CDX_API,
                 params=params,
@@ -382,28 +516,43 @@ class WaybackDiffMiner:
 
                 if resp.status in (429, 503):
                     self._breaker.record_failure(resp.status)
-                    logger.warning(f"Wayback CDX 429/503 for {url}")
+                    logger.warning(f"Wayback CDX 429/503 for {params.get('url', '?')}")
                     return []
 
                 if resp.status != 200:
                     return []
 
-                data = await resp.json()
-                # CDX returns [header_row, ...data_rows] — skip header
-                rows = data[1:] if data and isinstance(data, list) else []
-                snapshots = []
-                for row in rows:
-                    if len(row) >= 4:
-                        snapshots.append({
-                            "timestamp": row[0],
-                            "original": row[1],
-                            "status_code": row[2] if len(row) > 2 else "",
-                            "digest": row[3] if len(row) > 3 else "",
-                            "length": row[4] if len(row) > 4 else "0",
-                        })
-                return snapshots
+                return await self._parse_cdx_response(resp)
 
         except Exception as e:
-            logger.debug(f"CDX query error for {url}: {e}")
+            logger.debug(f"CDX query error: {e}")
             self._stats["errors"] += 1
+            return []
+
+    async def _parse_cdx_response(
+        self, resp: aiohttp.ClientResponse
+    ) -> List[dict[str, str]]:
+        """Parse CDX JSON response into snapshot dicts."""
+        if resp.status in (429, 503):
+            self._breaker.record_failure(resp.status)
+            return []
+        if resp.status != 200:
+            return []
+
+        try:
+            data = await resp.json()
+            # CDX returns [header_row, ...data_rows] — skip header
+            rows = data[1:] if data and isinstance(data, list) else []
+            snapshots = []
+            for row in rows:
+                if len(row) >= 4:
+                    snapshots.append({
+                        "timestamp": row[0],
+                        "original": row[1],
+                        "status_code": row[2] if len(row) > 2 else "",
+                        "digest": row[3] if len(row) > 3 else "",
+                        "length": row[4] if len(row) > 4 else "0",
+                    })
+            return snapshots
+        except Exception:
             return []
