@@ -1,8 +1,12 @@
 """
-Sprint F206AU — CT/crt.sh Providerless Pivot Adapter
+Sprint F206AV — CT/crt.sh Providerless Pivot Adapter
 Probe tests for discovery/crtsh_adapter.py
 
-Tests F206AU invariants:
+Transport alignment: crtsh_adapter now uses canonical:
+- async_get_aiohttp_session() from network.session_runtime
+- checked_aiohttp_get() from transport.circuit_breaker
+
+Tests F206AU invariants (AU-1 to AU-16 retained):
 AU-1  domain extraction from query
 AU-2  invalid_query without network call
 AU-3  crt.sh JSON parsed to DiscoveryHit
@@ -17,8 +21,13 @@ AU-11 HTTP 5xx → error_type=http_5xx
 AU-12 parse error → error_type=parse_error
 AU-13 CancelledError re-raised
 AU-14 provider metadata preserved
-AU-15 no Brave/SearXNG imports
+AU-15 no Brave/SearXNG imports (only canonical transport imports)
 AU-16 no raw aiohttp.ClientSession() constructor
+
+Tests F206AV invariants (AV-1 to AV-3):
+AV-1  uses async_get_aiohttp_session (not raw ClientSession)
+AV-2  uses canonical checked_aiohttp_get from circuit_breaker
+AV-3  circuit_breaker_open error_type mapped
 """
 from __future__ import annotations
 
@@ -50,9 +59,7 @@ class TestDomainExtraction:
         assert _extract_domain_from_query("deep.sub.example.com") == "deep.sub.example.com"
 
     def test_au1_free_text_extracts_domain_token(self):
-        # "example" has no dot → not domain-like
         assert _extract_domain_from_query("example target company") is None
-        # "example.com" with dot → extracted
         res = _extract_domain_from_query("lookup example.com for research")
         assert res == "example.com"
 
@@ -98,31 +105,8 @@ class TestInvalidQueryNoNetwork:
 
 
 # ---------------------------------------------------------------------------
-# AU-4 & AU-5 & AU-6 & AU-7: JSON parsing, dedup, bounds, filtering
+# AU-3 to AU-7: JSON parsing, dedup, bounds, filtering
 # ---------------------------------------------------------------------------
-
-def _make_mock_json_response(json_data):
-    """Build a mock aiohttp response with json()."""
-    mock_resp = mock.AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = mock.AsyncMock(return_value=json_data)
-    return mock_resp
-
-
-def _make_mock_checked_aiohttp_get(response, err="", status=200):
-    """Patch checked_aiohttp_get to return mock response."""
-    def check(session, url, *, params, headers, timeout, failure_kind):
-        if err:
-            return (None, err)
-        mock_resp = mock.AsyncMock()
-        mock_resp.status = status
-        if response is not None:
-            mock_resp.json = mock.AsyncMock(return_value=response)
-        else:
-            mock_resp.json = mock.AsyncMock(side_effect=ValueError("malformed json"))
-        return (mock_resp, "")
-    return mock.Mock(side_effect=check)
-
 
 class TestHitsFromJson:
     def _make_checked_get_mock(self, response_data, err=""):
@@ -190,9 +174,7 @@ class TestHitsFromJson:
         assert any("www.example.com" in u for u in urls)
 
     def test_au7_public_tlds_allowed(self):
-        # "test" IS in _PRIVATE_HOSTNAMES (RFC 6761) — correct behavior
         assert _is_private_domain("test") is True
-        # public domains should not be filtered
         assert _is_private_domain("example.com") is False
 
 
@@ -205,7 +187,7 @@ class TestTimeout:
     async def test_au8_timeout_error_type(self):
         async def mock_timeout(*args, **kwargs):
             return (None, "timeout")
-        mock_checked = mock.AsyncMock(side_effect=mock_timeout)
+        mock_checked = mock.Mock(side_effect=mock_timeout)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com", timeout_s=1.0)
         assert result.error_type == "timeout"
@@ -219,8 +201,10 @@ class TestHttp429:
     @pytest.mark.asyncio
     async def test_au9_http_429_error_type(self):
         async def mock_rate_limited(*args, **kwargs):
-            return (None, "rate_limited")
-        mock_checked = mock.AsyncMock(side_effect=mock_rate_limited)
+            mock_resp = mock.AsyncMock()
+            mock_resp.status = 429
+            return (mock_resp, None)
+        mock_checked = mock.Mock(side_effect=mock_rate_limited)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.error_type == "http_429"
@@ -234,8 +218,10 @@ class TestHttp403:
     @pytest.mark.asyncio
     async def test_au10_http_403_error_type(self):
         async def mock_403(*args, **kwargs):
-            return (None, "captcha_or_blocked")
-        mock_checked = mock.AsyncMock(side_effect=mock_403)
+            mock_resp = mock.AsyncMock()
+            mock_resp.status = 403
+            return (mock_resp, None)
+        mock_checked = mock.Mock(side_effect=mock_403)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.error_type == "http_403"
@@ -249,8 +235,10 @@ class TestHttp5xx:
     @pytest.mark.asyncio
     async def test_au11_http_5xx_error_type(self):
         async def mock_5xx(*args, **kwargs):
-            return (None, "server_error")
-        mock_checked = mock.AsyncMock(side_effect=mock_5xx)
+            mock_resp = mock.AsyncMock()
+            mock_resp.status = 500
+            return (mock_resp, None)
+        mock_checked = mock.Mock(side_effect=mock_5xx)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.error_type == "http_5xx"
@@ -268,7 +256,7 @@ class TestParseError:
             mock_resp.status = 200
             mock_resp.json = mock.AsyncMock(side_effect=ValueError("malformed json"))
             return (mock_resp, "")
-        mock_checked = mock.AsyncMock(side_effect=mock_parse_err)
+        mock_checked = mock.Mock(side_effect=mock_parse_err)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.error_type == "parse_error"
@@ -283,7 +271,7 @@ class TestCancelledError:
     async def test_au13_cancelled_error_re_raised(self):
         async def mock_cancelled(*args, **kwargs):
             raise asyncio.CancelledError("test cancelled")
-        mock_checked = mock.AsyncMock(side_effect=mock_cancelled)
+        mock_checked = mock.Mock(side_effect=mock_cancelled)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             with pytest.raises(asyncio.CancelledError):
                 await async_search_crtsh("example.com")
@@ -301,7 +289,7 @@ class TestProviderMetadata:
             mock_resp.status = 200
             mock_resp.json = mock.AsyncMock(return_value=[])
             return (mock_resp, "")
-        mock_checked = mock.AsyncMock(side_effect=make_ok)
+        mock_checked = mock.Mock(side_effect=make_ok)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.provider_name == "crtsh"
@@ -315,7 +303,7 @@ class TestProviderMetadata:
             mock_resp.status = 200
             mock_resp.json = mock.AsyncMock(return_value=[])
             return (mock_resp, "")
-        mock_checked = mock.AsyncMock(side_effect=make_ok)
+        mock_checked = mock.Mock(side_effect=make_ok)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.elapsed_s is not None
@@ -328,7 +316,7 @@ class TestProviderMetadata:
             mock_resp.status = 200
             mock_resp.json = mock.AsyncMock(return_value=[])
             return (mock_resp, "")
-        mock_checked = mock.AsyncMock(side_effect=make_empty)
+        mock_checked = mock.Mock(side_effect=make_empty)
         with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
             result = await async_search_crtsh("example.com")
         assert result.error_type == "provider_empty"
@@ -336,7 +324,8 @@ class TestProviderMetadata:
 
 
 # ---------------------------------------------------------------------------
-# AU-15 & AU-16: no external imports, no raw ClientSession()
+# AU-15 & AU-16: no external/unwanted imports, no raw ClientSession()
+# AV-1 & AV-2: uses canonical transport imports
 # ---------------------------------------------------------------------------
 
 class TestNoExternalImports:
@@ -361,3 +350,45 @@ class TestNoExternalImports:
         assert "aiohttp.ClientSession()" not in src, (
             "crtsh_adapter must not use raw aiohttp.ClientSession() constructor"
         )
+
+    def test_av1_uses_canonical_async_get_aiohttp_session(self):
+        from hledac.universal.discovery import crtsh_adapter as m
+        import inspect
+        src = inspect.getsource(m)
+        assert "async_get_aiohttp_session" in src
+        assert "from hledac.universal.network.session_runtime import" in src
+
+    def test_av2_uses_canonical_checked_aiohttp_get(self):
+        from hledac.universal.discovery import crtsh_adapter as m
+        import inspect
+        src = inspect.getsource(m)
+        assert "checked_aiohttp_get" in src
+        assert "from hledac.universal.transport.circuit_breaker import" in src
+
+
+# ---------------------------------------------------------------------------
+# AV-3: circuit_breaker_open taxonomy
+# ---------------------------------------------------------------------------
+
+class TestCircuitBreakerOpen:
+    @pytest.mark.asyncio
+    async def test_av3_circuit_breaker_open_error_type(self):
+        async def mock_breaker_open(*args, **kwargs):
+            return (None, "circuit_breaker_open:crtsh")
+        mock_checked = mock.Mock(side_effect=mock_breaker_open)
+        with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
+            result = await async_search_crtsh("example.com")
+        assert result.error_type == "circuit_breaker_open"
+        assert result.provider_name == "crtsh"
+        assert result.provider_chain == ("crtsh",)
+
+    @pytest.mark.asyncio
+    async def test_av3_circuit_breaker_open_preserves_metadata(self):
+        async def mock_breaker_open(*args, **kwargs):
+            return (None, "circuit_breaker_open:crtsh:example.com")
+        mock_checked = mock.Mock(side_effect=mock_breaker_open)
+        with mock.patch("hledac.universal.discovery.crtsh_adapter.checked_aiohttp_get", mock_checked):
+            result = await async_search_crtsh("example.com")
+        assert result.error_type == "circuit_breaker_open"
+        assert result.source_family == "ct"
+        assert result.elapsed_s >= 0.0

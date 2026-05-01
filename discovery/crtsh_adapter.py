@@ -1,8 +1,11 @@
 """
 discovery/crtsh_adapter.py — CT/crt.sh Providerless Pivot Adapter
 
-Sprint F206AU: replaces the ct_pivots stub in discovery_planner with a real
-passive Certificate Transparency adapter backed by crt.sh JSON endpoint.
+Sprint F206AV: transport alignment with canonical session_runtime + circuit_breaker.
+
+Replaces local aiohttp.ClientSession + local checked_aiohttp_get with:
+- async_get_aiohttp_session() from network.session_runtime
+- checked_aiohttp_get() from transport.circuit_breaker
 
 Passive only — no auth/API key, no body fetch beyond crt.sh JSON endpoint.
 Fail-soft throughout.
@@ -15,6 +18,9 @@ import re
 import time
 
 import aiohttp
+
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
 
@@ -33,11 +39,7 @@ _CRTSH_URL = "https://crt.sh/"
 _HTTP_TIMEOUT_S = 8.0
 
 # Reserved/special names that are never valid public hosts.
-# Does NOT include public TLDs like "example.com" (those are valid CT targets).
 _PRIVATE_HOSTNAMES = {
-    "localhost",
-    "invalid",
-    # RFC 6761 special-use names (must not be looked up in DNS)
     "localhost",
     "invalid",
     "test",
@@ -50,10 +52,8 @@ _WILDCARD_ONLY_RE = re.compile(r"^\*\.")
 def _is_private_domain(domain: str) -> bool:
     """Return True if domain is private, internal, or reserved."""
     domain_lower = domain.lower()
-    # Check reserved hostnames (localhost, invalid, test, etc.)
     if domain_lower in _PRIVATE_HOSTNAMES:
         return True
-    # IP address check
     if _is_ip_like(domain_lower):
         return True
     return False
@@ -63,7 +63,7 @@ def _is_ip_like(value: str) -> bool:
     """Return True if value looks like an IP address (v4 or v6)."""
     if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", value):
         return True
-    if ":" in value:  # likely IPv6
+    if ":" in value:
         return True
     return False
 
@@ -81,15 +81,12 @@ def _extract_domain_from_query(query: str) -> str | None:
     if not query:
         return None
 
-    # If the whole query looks like a domain, use it directly
     if _looks_like_domain(query):
         return query
 
-    # Scan tokens for domain-like
     for token in query.split():
         token = token.strip().lower()
         if "." in token and _looks_like_domain(token):
-            # Skip single-label with a dot (like "foo.bar" where "bar" is TLD)
             parts = token.split(".")
             if len(parts) >= 2 and len(parts[0]) <= 63:
                 return token
@@ -103,17 +100,14 @@ def _looks_like_domain(value: str) -> bool:
         return False
     if not value or len(value) > 253:
         return False
-    # Must contain at least one dot
     if "." not in value:
         return False
     parts = value.split(".")
     if len(parts) < 2:
         return False
-    # TLD-like last component
     tld = parts[-1]
     if len(tld) < 1 or len(tld) > 63:
         return False
-    # No spaces or special chars
     if not re.match(r"^[a-z0-9.\-_]+$", tld):
         return False
     return True
@@ -122,48 +116,6 @@ def _looks_like_domain(value: str) -> bool:
 def _is_wildcard_only(domain: str) -> bool:
     """Return True if domain is a wildcard cert (e.g. '*.example.com')."""
     return bool(_WILDCARD_ONLY_RE.match(domain))
-
-
-async def checked_aiohttp_get(
-    session: aiohttp.ClientSession,
-    url: str,
-    *,
-    params: dict[str, str] | None = None,
-    headers: dict[str, str] | None = None,
-    timeout: aiohttp.ClientTimeout,
-) -> tuple[aiohttp.ClientResponse | None, str]:
-    """
-    Perform GET and return (response, error_string).
-
-    error_string is "" on success.
-    On failure, returns (None, err_string).
-
-    Maps aiohttp errors to taxonomy:
-      - asyncio.TimeoutError → "timeout"
-      - aiohttp.ClientError → "network_error"
-      - HTTP status 429 → "rate_limited"
-      - HTTP status 403 → "captcha_or_blocked"
-      - HTTP status 5xx → "server_error"
-      - HTTP status 4xx → "client_error"
-    """
-    try:
-        async with session.get(url, params=params, headers=headers, timeout=timeout) as resp:
-            if resp.status == 429:
-                return (None, "rate_limited")
-            if resp.status == 403:
-                return (None, "captcha_or_blocked")
-            if resp.status >= 500:
-                return (None, "server_error")
-            if resp.status >= 400:
-                # 4xx — return response so caller can attempt parse
-                return (resp, "")
-            return (resp, "")  # success
-    except asyncio.TimeoutError:
-        return (None, "timeout")
-    except aiohttp.ClientError as e:
-        return (None, f"network_error:{e}")
-    except Exception as e:
-        return (None, f"unknown_error:{e}")
 
 
 async def async_search_crtsh(
@@ -193,6 +145,7 @@ async def async_search_crtsh(
         - parse_error: crt.sh JSON unparseable
         - provider_empty: no subdomains found
         - provider_exception: unexpected exception
+        - circuit_breaker_open: domain temporarily blocked
     """
     start = time.monotonic()
 
@@ -229,31 +182,11 @@ async def async_search_crtsh(
             elapsed_s=elapsed,
         )
 
-    # Session setup
+    # Session via canonical shared session_runtime
+    session: aiohttp.ClientSession | None = None
     try:
-        import aiohttp as _aiohttp
-    except ImportError:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error="aiohttp_not_available",
-            error_type="import_error",
-            provider_name="crtsh",
-            provider_chain=("crtsh",),
-            source_family="ct",
-            elapsed_s=elapsed,
-        )
-
-    connector = _aiohttp.TCPConnector(
-        limit=10,
-        limit_per_host=3,
-        ttl_dns_cache=300,
-    )
-    session: _aiohttp.ClientSession | None = None
-
-    try:
-        session = _aiohttp.ClientSession(connector=connector)
-        timeout = _aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
+        session = await async_get_aiohttp_session()
+        timeout = aiohttp.ClientTimeout(total=min(timeout_s, _HTTP_TIMEOUT_S))
 
         params = {
             "q": domain_candidate,
@@ -268,6 +201,7 @@ async def async_search_crtsh(
                     params=params,
                     headers={"User-Agent": "Hledac/1.0 (research bot)"},
                     timeout=timeout,
+                    failure_kind="crtsh",
                 )
         except asyncio.CancelledError:
             raise  # always re-raise
@@ -275,22 +209,15 @@ async def async_search_crtsh(
         elapsed = time.monotonic() - start
 
         if err:
-            # Map error string to taxonomy
             err_tag: str
-            if err == "rate_limited":
-                err_tag = "http_429"
-            elif err == "captcha_or_blocked":
-                err_tag = "http_403"
-            elif err.startswith("server_error"):
-                err_tag = "http_5xx"
-            elif err == "client_error":
-                err_tag = "http_4xx"
+            if err.startswith("circuit_breaker_open:"):
+                err_tag = "circuit_breaker_open"
             elif err == "timeout":
                 err_tag = "timeout"
-            elif err.startswith("network_error"):
+            elif err == "client_error":
                 err_tag = "network_error"
             else:
-                err_tag = "provider_exception"
+                err_tag = "network_error"
 
             return DiscoveryBatchResult(
                 hits=(),
@@ -302,8 +229,50 @@ async def async_search_crtsh(
                 elapsed_s=elapsed,
             )
 
-        # resp is guaranteed non-None here because err == "" means success
+        # resp is non-None when err is None (canonical checked_aiohttp_get returns
+        # (resp, None) for HTTP 4xx/5xx — caller checks resp.status)
         assert resp is not None
+        if resp.status == 429:
+            return DiscoveryBatchResult(
+                hits=(),
+                error="rate_limited",
+                error_type="http_429",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=time.monotonic() - start,
+            )
+        if resp.status == 403:
+            return DiscoveryBatchResult(
+                hits=(),
+                error="captcha_or_blocked",
+                error_type="http_403",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=time.monotonic() - start,
+            )
+        if resp.status >= 500:
+            return DiscoveryBatchResult(
+                hits=(),
+                error=f"http_{resp.status}",
+                error_type="http_5xx",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=time.monotonic() - start,
+            )
+        if resp.status >= 400:
+            return DiscoveryBatchResult(
+                hits=(),
+                error=f"http_{resp.status}",
+                error_type="http_4xx",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=time.monotonic() - start,
+            )
+
         try:
             data = await resp.json(content_type=None)
         except Exception as e:
@@ -340,26 +309,21 @@ async def async_search_crtsh(
             if not name_value:
                 continue
 
-            # crt.sh can return multiple names per cert (separated by newlines)
             for subdomain in name_value.split("\n"):
                 subdomain = subdomain.strip()
                 if not subdomain:
                     continue
 
-                # Skip wildcard-only certs (often noise)
                 if _is_wildcard_only(subdomain):
                     continue
 
-                # Skip private/internal domains
                 if _is_private_domain(subdomain):
                     continue
 
-                # Skip duplicates
                 subdomain_lower = subdomain.lower()
                 if subdomain_lower in seen_domains:
                     continue
 
-                # Stop at max_results
                 if len(hits) >= max_results:
                     break
 
@@ -373,7 +337,7 @@ async def async_search_crtsh(
                         source="crtsh",
                         rank=len(hits),
                         retrieved_ts=now,
-                        score=1.0 - (len(hits) / max_results),  # rank-based score
+                        score=1.0 - (len(hits) / max_results),
                         reason="ct_subdomain",
                     )
                 )
@@ -405,10 +369,7 @@ async def async_search_crtsh(
         )
 
     except asyncio.CancelledError:
-        # Re-raise — do not swallow
-        if session:
-            await session.close()
-        raise
+        raise  # re-raised — no session.close() needed with shared session
 
     except Exception as e:
         elapsed = time.monotonic() - start
@@ -422,7 +383,3 @@ async def async_search_crtsh(
             source_family="ct",
             elapsed_s=elapsed,
         )
-
-    finally:
-        if session:
-            await session.close()
