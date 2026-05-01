@@ -319,3 +319,42 @@ def get_transport_hint_string(url: str) -> str:
 
 # Backwards compatibility alias
 Transport = Transport  # re-export via module-level alias
+
+
+# =============================================================================
+# F206AV VERDICT — TRANSPORT RESOLVER DORMANT PATH DECISION
+# =============================================================================
+#
+# ACTIVE API (sealed, Sprint 4A canonical production path):
+#   get_transport_for_url(url: str) -> Transport
+#     Fast sync suffix classifier — no lifecycle, no network, thread-safe
+#     Production call site: FetchCoordinator._fetch_url() via SourceTransportMap.get()
+#     Supports: .onion, .i2p, .b32.i2p, .freenet, clearnet
+#
+#   get_transport_hint_string(url: str) -> str
+#     Maps Transport -> opsec_policy string ("tor", "i2p", "clearnet")
+#
+# INSTANCE METHODS on TransportResolver (active but NOT the canonical path):
+#   resolver.resolve_url(url: str) -> Transport
+#     Fast sync helper — SUBSET of get_transport_for_url()
+#     Supports: .onion, .i2p (including .b32.i2p via .i2p suffix), clearnet
+#     KNOWN GAP: .freenet falls through to DIRECT (not classified)
+#     Not used by FetchCoordinator — get_transport_for_url() is used instead
+#
+#   resolver.is_tor_mandatory(url: str) -> bool
+#     True for .onion only — SourceTransportMap.is_mandatory_tor() facade
+#
+# DORMANT API (NOT recommended, not wired):
+#   TransportResolver.resolve(context: TransportContext) -> Optional[Transport]
+#     WHY DORMANT: attempts per-request transport.start() lifecycle
+#     which is incompatible with FetchCoordinator's pooled session model.
+#     NOT called from any production path.
+#
+# MIGRATION RECOMMENDATION (future only, requires lifecycle preconditions):
+#   1. TorTransport session pool must be managed by resolver
+#   2. FetchCoordinator._get_tor_session() pool replaced by resolver-backed session
+#   3. NymTransport persistent session established
+#
+# F206AR FINDING: CLOSED — resolve() explicitly documented as DORMANT since Sprint 8VX
+# =============================================================================
+

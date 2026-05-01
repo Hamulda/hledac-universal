@@ -500,6 +500,107 @@ class FetchCoordinator(UniversalCoordinator):
             'circuit_breaker_active': 0,
         }
 
+        # F206AS: Canonical circuit breaker adapter (lazy, fail-soft)
+        # References canonical transport/circuit_breaker.py domain_breaker_check / record functions
+        self._canonical_breaker: Any = None
+        self._canonical_breaker_available: bool = False
+        self._canonical_breaker_checked: int = 0
+        self._canonical_breaker_blocks: int = 0
+        self._canonical_breaker_fallback_used: int = 0
+        self._canonical_breaker_lock = __import__('threading').Lock()
+
+    def _ensure_canonical_breaker(self) -> Tuple[bool, Any, str]:
+        """
+        Lazily import canonical circuit breaker from transport/circuit_breaker.py.
+
+        Returns:
+            (available, breaker_module, fallback_reason)
+            - available: True if canonical breaker is importable and loaded
+            - breaker_module: the imported module (or None)
+            - fallback_reason: why canonical was not used (empty if available)
+        """
+        if self._canonical_breaker_checked:
+            return (
+                self._canonical_breaker_available,
+                self._canonical_breaker,
+                getattr(self, '_canonical_breaker_fallback_reason', 'already_checked'),
+            )
+
+        with self._canonical_breaker_lock:
+            # Double-check after acquiring lock (another thread may have initialized)
+            if self._canonical_breaker_checked:
+                return (
+                    self._canonical_breaker_available,
+                    self._canonical_breaker,
+                    getattr(self, '_canonical_breaker_fallback_reason', 'already_checked'),
+                )
+
+            self._canonical_breaker_checked = True
+
+            try:
+                from transport import circuit_breaker
+                # Verify it has the canonical API we need
+                if hasattr(circuit_breaker, 'domain_breaker_check') and hasattr(circuit_breaker, 'get_breaker'):
+                    self._canonical_breaker = circuit_breaker
+                    self._canonical_breaker_available = True
+                    return (True, circuit_breaker, '')
+                else:
+                    self._canonical_breaker_fallback_reason = 'missing_canonical_api'
+                    return (False, None, 'missing_canonical_api')
+            except ImportError:
+                self._canonical_breaker_fallback_reason = 'import_failed'
+                return (False, None, 'import_failed')
+            except Exception as e:
+                self._canonical_breaker_fallback_reason = f'unexpected_error:{e}'
+                return (False, None, f'unexpected_error:{e}')
+
+    def _check_canonical_breaker(self, domain: str) -> Tuple[bool, str, float]:
+        """
+        Check canonical circuit breaker for a domain.
+
+        Returns:
+            (allowed, reason, retry_after_s)
+            - allowed: True if fetch is allowed (circuit closed or half-open)
+            - reason: human-readable reason for the decision
+            - retry_after_s: seconds to wait if circuit is open
+        """
+        available, cb_module, fallback_reason = self._ensure_canonical_breaker()
+
+        if not available:
+            return (True, f'canonical_unavailable:{fallback_reason}', 0.0)
+
+        try:
+            decision = cb_module.domain_breaker_check(domain)
+            if not decision.allowed:
+                self._canonical_breaker_blocks += 1
+            return (decision.allowed, decision.reason, decision.retry_after_s)
+        except Exception as e:
+            self._canonical_breaker_fallback_used += 1
+            return (True, f'canonical_check_error:{e}', 0.0)
+
+    def _record_canonical_success(self, domain: str) -> None:
+        """Record fetch success to canonical circuit breaker if available."""
+        available, cb_module, _ = self._ensure_canonical_breaker()
+        if not available:
+            return
+        try:
+            cb_module.get_breaker(domain).record_success()
+        except Exception:
+            self._canonical_breaker_fallback_used += 1
+
+    def _record_canonical_failure(self, domain: str, is_timeout: bool = False, failure_kind: str = '') -> None:
+        """Record fetch failure to canonical circuit breaker if available."""
+        available, cb_module, _ = self._ensure_canonical_breaker()
+        if not available:
+            return
+        try:
+            cb_module.get_breaker(domain).record_failure(
+                is_timeout=is_timeout,
+                failure_kind=failure_kind or 'fetch_error',
+            )
+        except Exception:
+            self._canonical_breaker_fallback_used += 1
+
     async def _record_domain_failure(self, domain: str) -> None:
         """Record a failure for a domain; block it after _failure_threshold failures."""
         # P2-1: Evict stale entries if dict grows too large
@@ -532,6 +633,29 @@ class FetchCoordinator(UniversalCoordinator):
         """Returns {domain: unblock_timestamp} for currently blocked domains."""
         now = time.time()
         return {d: t for d, t in self._domain_blocked_until.items() if t > now}
+
+    def get_canonical_breaker_stats(self) -> Dict[str, Any]:
+        """
+        F206AS: Return canonical circuit breaker integration stats.
+
+        Returns telemetry about whether canonical breaker was consulted,
+        whether it blocked requests, and fallback usage.
+        """
+        available, _, fallback_reason = self._ensure_canonical_breaker()
+        result = {
+            'canonical_available': available,
+            'canonical_checked_count': self._canonical_breaker_checked,
+            'canonical_blocks': self._canonical_breaker_blocks,
+            'fallback_used_count': getattr(self, '_canonical_breaker_fallback_used', 0),
+            'fallback_reason': fallback_reason if not available else '',
+            'canonical_breaker_states': {},
+        }
+        if available and self._canonical_breaker:
+            try:
+                result['canonical_breaker_states'] = self._canonical_breaker.get_all_breaker_states()
+            except Exception:
+                pass  # fail-soft: return empty states on error
+        return result
 
     def init_session_manager(self, lmdb_path: Optional[str] = None):
         """Initialize session manager with LMDB persistence (idempotent)."""
@@ -1121,8 +1245,19 @@ class FetchCoordinator(UniversalCoordinator):
         result = None
         try:
             while attempt <= max_retries:
-                # Circuit breaker check
+                # F206AS: Canonical circuit breaker check (before local breaker)
+                # Consult canonical transport/circuit_breaker.py domain_breaker_check if available
                 domain = urlparse(url).netloc
+                canonical_allowed, canonical_reason, canonical_retry_after = self._check_canonical_breaker(domain)
+                if not canonical_allowed:
+                    # F206AS: Update active count on each canonical circuit breaker hit
+                    self._telemetry['circuit_breaker_active'] = len(self.get_blocked_domains())
+                    logger.debug(f"[F206AS] Canonical circuit breaker open for {domain}: {canonical_reason} (retry in {canonical_retry_after:.1f}s)")
+                    trace_fetch_end(url, "circuit_breaker", "circuit_open", 0.0)
+                    result = None
+                    break
+
+                # Local circuit breaker check (fallback if canonical unavailable or not blocking)
                 now = time.time()
                 if domain in self._domain_blocked_until and now < self._domain_blocked_until[domain]:
                     # P1-13: Update active count on each circuit breaker hit
@@ -1260,9 +1395,13 @@ class FetchCoordinator(UniversalCoordinator):
                 # Sprint F3/F8/F9: ensure success flag is set for corpus ingest
                 result.setdefault('success', True)
                 self._aimd_release_success()
+                # F206AS: Record success to canonical circuit breaker if available
+                self._record_canonical_success(domain)
             elif result is None or result.get('error'):
                 # Failure path already handled by _aimd_release_failure in fetch methods
-                pass
+                # F206AS: Record failure to canonical circuit breaker if available
+                is_timeout = result.get('error') == 'timeout' if result else True
+                self._record_canonical_failure(domain, is_timeout=is_timeout, failure_kind='fetch_error')
 
         except Exception as e:
             logger.warning(f"[_fetch_url] Unexpected error for {url}: {e}")

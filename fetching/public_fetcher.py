@@ -70,6 +70,73 @@ _tor_session_lock: "asyncio.Lock" = asyncio.Lock()
 # P10: Module-level state for I2P session management
 _i2p_session: Optional["aiohttp.ClientSession"] = None
 
+# F206AT: Public fetcher pool authority verdict.
+# Tor and I2P sessions are LOCAL FALLBACK pools managed directly by public_fetcher.
+# They are NOT coordinated through FetchCoordinator transport policy.
+# When a canonical transport provider is injected, it supersedes these local pools.
+PUBLIC_FETCHER_POOL_AUTHORITY: Final[str] = "local_fallback_until_transport_unified"
+
+# F206AT: Optional injected session provider seam.
+# When set (via constructor or param), used instead of local _tor_session/_i2p_session.
+# Format: tuple of (tor_session, i2p_session) or None
+_injected_session_provider: Optional[
+    tuple["aiohttp.ClientSession | None", "aiohttp.ClientSession | None"]
+] = None
+
+# F206AT: Session source telemetry — truth about where sessions come from.
+# Updated on each _get_tor_session / _get_i2p_session call.
+_session_source_telemetry: dict[str, str] = {
+    "tor": "unavailable",
+    "i2p": "unavailable",
+}
+
+
+def inject_session_provider(
+    tor_session: "aiohttp.ClientSession | None",
+    i2p_session: "aiohttp.ClientSession | None",
+) -> None:
+    """F206AT: Inject canonical session provider for Tor/I2P pools.
+
+    When injected with non-None sessions, the provided sessions are used instead of
+    local _tor_session/_i2p_session. This allows FetchCoordinator or transport layer
+    to own the canonical session lifecycle.
+
+    Calling with (None, None) resets to local-only mode — the seam is deactivated.
+
+    Args:
+        tor_session: Canonical Tor aiohttp session, or None to use local fallback.
+        i2p_session: Canonical I2P aiohttp session, or None to use local fallback.
+    """
+    global _injected_session_provider
+    # Deactivate seam if both are None — reset to local pools
+    if tor_session is None and i2p_session is None:
+        _injected_session_provider = None
+    else:
+        _injected_session_provider = (tor_session, i2p_session)
+
+
+def get_session_source_telemetry() -> dict[str, str]:
+    """F206AT: Return snapshot of session source telemetry.
+
+    Returns:
+        dict with keys:
+        - tor: "injected" | "local_tor" | "unavailable"
+        - i2p: "injected" | "local_i2p" | "unavailable"
+        - transport_policy_bypassed: "true" | "false"
+        - fallback_reason: str | None
+    """
+    global _session_source_telemetry
+    result = dict(_session_source_telemetry)
+    result["transport_policy_bypassed"] = (
+        "true" if _injected_session_provider is None else "false"
+    )
+    result["fallback_reason"] = (
+        "injected_provider_available"
+        if _injected_session_provider is not None
+        else "local_pool_until_transport_unified"
+    )
+    return result
+
 # P7: Camoufox singleton lock — max 1 instance across entire fetcher
 _CAMOUFOX_LOCK: "asyncio.Lock" = asyncio.Lock()
 
@@ -573,8 +640,19 @@ def _is_freenet_url(url: str) -> bool:
 
 
 async def _get_tor_session() -> "aiohttp.ClientSession":
-    """Get or create aiohttp session via Tor SOCKS5 proxy (lazy, singleton)."""
-    global _tor_session
+    """Get or create aiohttp session via Tor SOCKS5 proxy (lazy, singleton).
+
+    F206AT: If _injected_session_provider is set, uses the injected Tor session
+    and records source as 'injected'. Otherwise uses local _tor_session and
+    records source as 'local_tor'.
+    """
+    global _tor_session, _session_source_telemetry
+    # F206AT: Check for injected provider first
+    if _injected_session_provider is not None:
+        injected_tor, _ = _injected_session_provider
+        if injected_tor is not None and not injected_tor.closed:
+            _session_source_telemetry["tor"] = "injected"
+            return injected_tor
     if _tor_session is None or _tor_session.closed:
         try:
             from aiohttp_socks import ProxyConnector
@@ -582,6 +660,7 @@ async def _get_tor_session() -> "aiohttp.ClientSession":
             raise RuntimeError("aiohttp_socks required for Tor: pip install aiohttp_socks")
         connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
         _tor_session = aiohttp.ClientSession(connector=connector)
+    _session_source_telemetry["tor"] = "local_tor"
     return _tor_session
 
 
@@ -589,8 +668,18 @@ async def _get_i2p_session() -> "aiohttp.ClientSession":
     """
     P10: Get or create aiohttp session via I2P SOCKS5 proxy (lazy, singleton).
     Uses aiohttp_socks.ProxyConnector for .i2p/.b32.i2p URLs.
+
+    F206AT: If _injected_session_provider is set, uses the injected I2P session
+    and records source as 'injected'. Otherwise uses local _i2p_session and
+    records source as 'local_i2p'.
     """
-    global _i2p_session
+    global _i2p_session, _session_source_telemetry
+    # F206AT: Check for injected provider first
+    if _injected_session_provider is not None:
+        _, injected_i2p = _injected_session_provider
+        if injected_i2p is not None and not injected_i2p.closed:
+            _session_source_telemetry["i2p"] = "injected"
+            return injected_i2p
     if _i2p_session is None or _i2p_session.closed:
         try:
             from aiohttp_socks import ProxyConnector
@@ -599,6 +688,7 @@ async def _get_i2p_session() -> "aiohttp.ClientSession":
         # I2P default SOCKS port is 7654
         connector = ProxyConnector.from_url("socks5://127.0.0.1:7654", rdns=True)
         _i2p_session = aiohttp.ClientSession(connector=connector)
+    _session_source_telemetry["i2p"] = "local_i2p"
     return _i2p_session
 
 
@@ -1670,6 +1760,10 @@ __all__ = [
     "_needs_js_fetch",
     "_fetch_with_camoufox",
     "_fetch_with_nodriver",
+    # F206AT: Pool authority seam
+    "PUBLIC_FETCHER_POOL_AUTHORITY",
+    "inject_session_provider",
+    "get_session_source_telemetry",
 ]
 
 # ---------------------------------------------------------------------------
