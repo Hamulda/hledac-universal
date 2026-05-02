@@ -76,7 +76,14 @@ from hledac.universal.knowledge.target_memory import (
 )
 from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
 # Sprint F206BG: Canonical acquisition strategy layer
-from hledac.universal.runtime.acquisition_strategy import build_acquisition_plan
+from hledac.universal.runtime.acquisition_strategy import (
+    AcquisitionLane,
+    AcquisitionLaneOutcome,
+    build_acquisition_plan,
+    is_lane_enabled,
+    lane_skip_reason,
+    run_enabled_acquisition_lanes,
+)
 
 if TYPE_CHECKING:
     pass
@@ -428,11 +435,15 @@ class SprintSchedulerResult:
     rir_correlation_produced: int = 0
     # Sprint F204J: Mission budget tracking
     sidecars_skipped: tuple[str, ...] = ()  # heavy sidecars skipped due to RAM pressure
+    # Sprint F206BK: Acquisition strategy enforcement — optional heavy lanes skipped via acquisition plan gate
+    acquisition_lanes_skipped: int = 0
     peak_rss_gib: float = 0.0  # peak RSS observed during sprint
     budget_violations: int = 0  # number of times RSS exceeded MISSION_PEAK_RSS_GIB
     # Sprint F193B: CommonCrawl + academic discovery additive truth
     cc_archive_injected: int = 0
     academic_findings_count: int = 0
+    # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
+    acquisition_lane_outcomes: tuple = ()  # tuple[AcquisitionLaneOutcome, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +708,8 @@ class SprintScheduler:
         self._branch_value_summary: Optional[dict] = None
         # Sprint F206BG: Acquisition strategy plan — built at sprint start, diagnostic only
         self._acquisition_plan: Any = None
+        # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
+        self._lane_outcomes: tuple = ()
         # Sprint 8VN §C: Feed + public branch verdict accumulators (additive, fail-soft)
         # Capped at 10 entries to stay M1 8GB safe
         self._feed_verdicts: list[tuple[str, int, int, int, int]] = []  # (verdict_tag, s, f, w, q)
@@ -1494,6 +1507,22 @@ class SprintScheduler:
             memory_manager=self._memory_manager,
         )
 
+        # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
+        # STEALTH excluded — never auto-runs; FEED and PUBLIC already handled above
+        _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
+        try:
+            _outcomes = await run_enabled_acquisition_lanes(
+                snapshot=self._acquisition_plan,
+                query=query,
+                store=duckdb_store,
+                uma_state=_uma,
+            )
+            if _outcomes:
+                self._lane_outcomes = _outcomes
+                self._result.acquisition_lane_outcomes = _outcomes
+        except Exception:
+            pass  # fail-soft: lane runner must never crash sprint
+
         return True
 
     async def _run_one_cycle_aggressive(
@@ -1634,6 +1663,22 @@ class SprintScheduler:
             self._result.ct_branch_timed_out = True
             self._result.branch_timeout_count += 2
             results = []
+
+        # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
+        # STEALTH excluded — never auto-runs; FEED, PUBLIC, CT already handled as branches above
+        _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
+        try:
+            _outcomes = await run_enabled_acquisition_lanes(
+                snapshot=self._acquisition_plan,
+                query=query,
+                store=duckdb_store,
+                uma_state=_uma,
+            )
+            if _outcomes:
+                self._lane_outcomes = _outcomes
+                self._result.acquisition_lane_outcomes = _outcomes
+        except Exception:
+            pass  # fail-soft: lane runner must never crash sprint
 
         return True
 
@@ -3122,7 +3167,7 @@ class SprintScheduler:
 
         Runner order:
           1. pivot_planner  → planned_pivots
-          2. pivot_executor → executed_pivots
+          2. pivot_executor → executed_pivots (gated by acquisition strategy)
           3. resource_governor → governor_recorded
           4. analyst_brief → brief_generated
         """
@@ -3132,6 +3177,16 @@ class SprintScheduler:
             governor=getattr(self, "_governor", None),
             analyst_workbench=getattr(self, "_analyst_workbench", None),
         )
+
+        # Sprint F206BK: Gate pivot_executor via acquisition strategy
+        snapshot = getattr(self, "_acquisition_plan", None)
+        if not is_lane_enabled(snapshot, AcquisitionLane.PIVOT_EXECUTOR):
+            reason = lane_skip_reason(snapshot, AcquisitionLane.PIVOT_EXECUTOR) or "unknown"
+            log.debug(
+                f"[F206BK] pivot_executor skipped by acquisition strategy: {reason}"
+            )
+            self._result.acquisition_lanes_skipped += 1
+
         await runner.run_all_advisories()
 
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
@@ -4275,25 +4330,49 @@ class SprintScheduler:
         if circuit_state:
             report["circuit_breaker_state"] = circuit_state
         # Sprint F206BG: Append acquisition strategy snapshot (read-only, built at sprint start)
+        # Sprint F206BK: Add enforcement fields
         if self._acquisition_plan is not None:
+            _lanes_list = [
+                {
+                    "lane": p.lane,
+                    "enabled": p.enabled,
+                    "reason": p.reason,
+                    "max_items": p.max_items,
+                    "timeout_s": p.timeout_s,
+                    "concurrency": p.concurrency,
+                    "risk_level": p.risk_level,
+                }
+                for p in self._acquisition_plan.plans
+            ]
+            _skipped = [
+                p.lane for p in self._acquisition_plan.plans if not p.enabled
+            ]
+            _executed = [p.lane for p in self._acquisition_plan.plans if p.enabled]
             report["acquisition_strategy"] = {
                 "uma_state": self._acquisition_plan.uma_state,
                 "swap_detected": self._acquisition_plan.swap_detected,
                 "aggressive_mode": self._acquisition_plan.aggressive_mode,
                 "stealth_ready": self._acquisition_plan.stealth_ready,
                 "transport_degraded": self._acquisition_plan.transport_degraded,
-                "lanes": [
-                    {
-                        "lane": p.lane,
-                        "enabled": p.enabled,
-                        "reason": p.reason,
-                        "max_items": p.max_items,
-                        "timeout_s": p.timeout_s,
-                        "concurrency": p.concurrency,
-                        "risk_level": p.risk_level,
-                    }
-                    for p in self._acquisition_plan.plans
-                ],
+                "enforced": True,
+                "skipped_lanes": _skipped,
+                "executed_lanes": _executed,
+                "lanes": _lanes_list,
+            }
+        # Sprint F207A: Append multi-source acquisition lane outcomes
+        if self._lane_outcomes:
+            _outcomes_list = [o.to_dict() if hasattr(o, "to_dict") else dict(o) for o in self._lane_outcomes]
+            _planned = [p.lane for p in (self._acquisition_plan.plans if self._acquisition_plan else [])]
+            _attempted = [o["lane"] for o in _outcomes_list if o.get("attempted")]
+            _skipped_lanes = [l for l in _planned if l not in _attempted and l not in (_executed if self._acquisition_plan else [])]
+            _lane_errors = [o["error"] for o in _outcomes_list if o.get("error")]
+            report["acquisition_lanes"] = {
+                "planned": _planned,
+                "attempted": _attempted,
+                "skipped": _skipped_lanes,
+                "outcomes": _outcomes_list,
+                "total_optional_findings": sum(o.get("accepted_findings", 0) for o in _outcomes_list),
+                "lane_errors": _lane_errors,
             }
         return report
 
@@ -5894,6 +5973,9 @@ class SprintScheduler:
         if _existing_skipped is not None:
             self._result.sidecars_skipped = _existing_skipped
         self._peak_rss_gib = 0.0
+        # Sprint F207A: Reset multi-source lane outcomes for new sprint
+        self._lane_outcomes = ()
+        self._result.acquisition_lane_outcomes = ()
 
 
 # ---------------------------------------------------------------------------

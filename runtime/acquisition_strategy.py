@@ -52,7 +52,11 @@ __all__ = [
     "AcquisitionLane",
     "AcquisitionLanePlan",
     "AcquisitionStrategySnapshot",
+    "AcquisitionLaneOutcome",
     "build_acquisition_plan",
+    "is_lane_enabled",
+    "get_lane_plan",
+    "lane_skip_reason",
 ]
 
 # ── Lane constants ────────────────────────────────────────────────────────────
@@ -111,6 +115,84 @@ class AcquisitionStrategySnapshot:
     plans: tuple[AcquisitionLanePlan, ...] = ()
 
 
+# ── Helper APIs for lane admission gating ──────────────────────────────────
+
+
+def is_lane_enabled(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> bool:
+    """
+    Return True if the given lane is enabled in the acquisition plan.
+
+    Fail-soft: returns False if snapshot is None or lane is not found.
+    """
+    if snapshot is None:
+        return False
+    for plan in snapshot.plans:
+        if plan.lane == lane_name:
+            return plan.enabled
+    return False
+
+
+def get_lane_plan(
+    snapshot: AcquisitionStrategySnapshot, lane_name: str
+) -> AcquisitionLanePlan | None:
+    """
+    Return the AcquisitionLanePlan for the given lane, or None if not found.
+
+    Fail-soft: returns None if snapshot is None or lane is not found.
+    """
+    if snapshot is None:
+        return None
+    for plan in snapshot.plans:
+        if plan.lane == lane_name:
+            return plan
+    return None
+
+
+def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> str | None:
+    """
+    Return the skip reason for the given lane, or None if lane is enabled or not found.
+
+    Fail-soft: returns None if snapshot is None or lane is not found.
+    """
+    if snapshot is None:
+        return None
+    for plan in snapshot.plans:
+        if plan.lane == lane_name:
+            return None if plan.enabled else plan.reason
+    return None
+
+
+# ── Lane outcome ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class AcquisitionLaneOutcome:
+    """Normalized outcome for one acquisition lane run."""
+
+    lane: str
+    enabled: bool
+    attempted: bool
+    accepted_findings: int = 0
+    produced_items: int = 0
+    timeout: bool = False
+    error: Optional[str] = None
+    duration_s: float = 0.0
+    source_family: str = "unknown"
+
+    def to_dict(self) -> dict:
+        return {
+            "lane": self.lane,
+            "enabled": self.enabled,
+            "attempted": self.attempted,
+            "accepted_findings": self.accepted_findings,
+            "produced_items": self.produced_items,
+            "timeout": self.timeout,
+            "error": self.error,
+            "duration_s": round(self.duration_s, 3),
+            "source_family": self.source_family,
+        }
+
+
 # ── Indicator patterns ──────────────────────────────────────────────────────
 
 
@@ -154,7 +236,8 @@ def _has_url(query: str) -> bool:
 
 
 def _has_crypto_wallet(query: str) -> bool:
-    return bool(_WALLET_RE.search(query))
+    m = _WALLET_RE.search(query)
+    return bool(m) and len(m.group()) > 0
 
 
 def _has_crypto_hash(query: str) -> bool:
@@ -435,3 +518,460 @@ def _build_plan_impl(
         transport_degraded=transport_degraded,
         plans=tuple(plans),
     )
+
+
+# ── Multi-source lane runner ─────────────────────────────────────────────────
+
+
+async def run_enabled_acquisition_lanes(
+    snapshot,  # AcquisitionStrategySnapshot — type hint deferred to avoid circular
+    query: str,
+    store,  # DuckDBShadowStore | None
+    uma_state: str = "ok",
+) -> tuple:
+    """
+    Run all enabled optional acquisition lanes (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN)
+    bounded by their per-lane plans from the acquisition strategy snapshot.
+
+    FEED and PUBLIC lanes are NOT run here — they are run by SprintScheduler
+    via its own pipeline calls.
+
+    STEALTH lane is NOT run here — caller must explicitly enable it.
+
+    Args:
+        snapshot:   AcquisitionStrategySnapshot from build_acquisition_plan().
+        query:      Sprint query string.
+        store:      DuckDBShadowStore for canonical storage (async_ingest_findings_batch).
+        uma_state:  Current UMA state ("ok" | "warn" | "critical" | "emergency").
+
+    Returns:
+        Tuple of AcquisitionLaneOutcome, one per optional lane.
+
+    GHOST_INVARIANTS:
+      - gather(return_exceptions=True) so one lane crash never fails others
+      - per-lane timeout enforced via asyncio.timeout
+      - per-lane max_items enforced by each lane adapter
+      - STEALTH never auto-enabled
+      - No MLX/model load
+    """
+    import asyncio
+    import time
+
+    outcomes: list = []
+    tasks: list[asyncio.Task] = []
+
+    # Heavy optional lanes skipped under hardware critical
+    hardware_critical = uma_state in ("critical", "emergency")
+
+    async def _run_ct_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run CT/crt.sh lane."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                # Local import to avoid cold-import cost
+                from hledac.universal.discovery.crtsh_adapter import (
+                    async_search_crtsh as _crtsh_search,
+                )
+
+                result = await _crtsh_search(
+                    query=query,
+                    max_results=plan.max_items,
+                    timeout_s=plan.timeout_s,
+                )
+
+                accepted = 0
+                if result.hits and store is not None:
+                    findings = _hits_to_ct_findings(result.hits, query)
+                    if findings and hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            accepted = sum(
+                                1 for r in ingest_results
+                                if isinstance(r, dict) and r.get("accepted")
+                            )
+                        except Exception:
+                            pass  # fail-soft
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CT,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(result.hits),
+                    duration_s=time.monotonic() - start,
+                    source_family="ct",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CT,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="ct",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CT,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="ct",
+            )
+
+    async def _run_wayback_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run Wayback diff mining lane."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.wayback_diff_miner import (
+                    WaybackDiffMiner,
+                )
+
+                miner = WaybackDiffMiner()
+                try:
+                    result = await miner.mine([query])
+                finally:
+                    await miner.close()
+
+                accepted = 0
+                if result.change_events and store is not None:
+                    findings = result.to_findings(query=query, sprint_id="")
+                    if findings and hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            accepted = sum(
+                                1 for r in ingest_results
+                                if isinstance(r, dict) and r.get("accepted")
+                            )
+                        except Exception:
+                            pass  # fail-soft
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.WAYBACK,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(result.change_events),
+                    duration_s=time.monotonic() - start,
+                    source_family="archive",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.WAYBACK,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="archive",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.WAYBACK,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="archive",
+            )
+
+    async def _run_pdns_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run passive DNS lookup lane."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.security.passive_dns import (
+                    lookup_passive_dns,
+                )
+
+                ips = await lookup_passive_dns(query)
+                accepted = 0
+                produced = len(ips)
+
+                if ips and store is not None:
+                    findings = _ips_to_pdns_findings(ips, query)
+                    if findings and hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            accepted = sum(
+                                1 for r in ingest_results
+                                if isinstance(r, dict) and r.get("accepted")
+                            )
+                        except Exception:
+                            pass  # fail-soft
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.PASSIVE_DNS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=produced,
+                    duration_s=time.monotonic() - start,
+                    source_family="passive_dns",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.PASSIVE_DNS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="passive_dns",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.PASSIVE_DNS,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="passive_dns",
+            )
+
+    async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run blockchain forensics lane."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.blockchain_analyzer import (
+                    BlockchainForensics,
+                )
+
+                wallets = _extract_crypto_from_query(query)
+                accepted = 0
+                total_tx = 0
+
+                for address in wallets[: plan.max_items]:
+                    try:
+                        bf = BlockchainForensics()
+                        result = await bf.analyze_wallet(address)
+                        await bf.close()
+                        if result and hasattr(store, "async_ingest_findings_batch"):
+                            findings = _wallet_to_findings(result, query)
+                            if findings:
+                                try:
+                                    ingest_results = await store.async_ingest_findings_batch(findings)
+                                    accepted += sum(
+                                        1 for r in ingest_results
+                                        if isinstance(r, dict) and r.get("accepted")
+                                    )
+                                    total_tx += getattr(result, "transaction_count", 0) or 0
+                                except Exception:
+                                    pass  # fail-soft
+                    except Exception:
+                        continue  # fail-soft per address
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.BLOCKCHAIN,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=total_tx,
+                    duration_s=time.monotonic() - start,
+                    source_family="blockchain",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.BLOCKCHAIN,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="blockchain",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.BLOCKCHAIN,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="blockchain",
+            )
+
+    if snapshot is None:
+        return ()
+
+    async def _stealth_never_run(plan) -> "AcquisitionLaneOutcome":
+        """STEALTH is never auto-run — always record the skip."""
+        return AcquisitionLaneOutcome(
+            lane=AcquisitionLane.STEALTH,
+            enabled=False,
+            attempted=False,
+            error="stealth_not_auto_run",
+            source_family="stealth",
+        )
+
+    lane_runners = {
+        AcquisitionLane.CT: _run_ct_lane,
+        AcquisitionLane.WAYBACK: _run_wayback_lane,
+        AcquisitionLane.PASSIVE_DNS: _run_pdns_lane,
+        AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane,
+        AcquisitionLane.STEALTH: _stealth_never_run,
+    }
+
+    for plan in snapshot.plans:
+        lane = plan.lane
+        if lane not in lane_runners:
+            continue
+        if not plan.enabled:
+            outcomes.append(
+                AcquisitionLaneOutcome(
+                    lane=lane,
+                    enabled=False,
+                    attempted=False,
+                    source_family=_LANE_TO_FAMILY.get(lane, "unknown"),
+                )
+            )
+            continue
+        if hardware_critical and lane in (
+            AcquisitionLane.WAYBACK,
+            AcquisitionLane.BLOCKCHAIN,
+        ):
+            outcomes.append(
+                AcquisitionLaneOutcome(
+                    lane=lane,
+                    enabled=False,
+                    attempted=False,
+                    error="hardware_critical",
+                    source_family=_LANE_TO_FAMILY.get(lane, "unknown"),
+                )
+            )
+            continue
+
+        tasks.append(asyncio.create_task(lane_runners[lane](plan)))
+
+    if not tasks:
+        return tuple(outcomes)
+
+    # Run all lanes concurrently; return_exceptions=True means one lane
+    # crash cannot fail others
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for result in results:
+        if isinstance(result, AcquisitionLaneOutcome):
+            outcomes.append(result)
+        elif isinstance(result, Exception):
+            # Defensive: should not happen since each runner catches internally
+            outcomes.append(
+                AcquisitionLaneOutcome(
+                    lane="UNKNOWN",
+                    enabled=True,
+                    attempted=True,
+                    error=f"gather_error:{result}",
+                    source_family="unknown",
+                )
+            )
+
+    return tuple(outcomes)
+
+
+# ── Conversion helpers ─────────────────────────────────────────────────────────
+
+
+_LANE_TO_FAMILY: dict[str, str] = {
+    AcquisitionLane.FEED: "feed",
+    AcquisitionLane.PUBLIC: "public",
+    AcquisitionLane.CT: "ct",
+    AcquisitionLane.WAYBACK: "archive",
+    AcquisitionLane.PASSIVE_DNS: "passive_dns",
+    AcquisitionLane.BLOCKCHAIN: "blockchain",
+    AcquisitionLane.STEALTH: "stealth",
+    AcquisitionLane.PIVOT_EXECUTOR: "pivot",
+}
+
+
+def _hits_to_ct_findings(hits: tuple, query: str) -> list:
+    """Convert crt.sh DiscoveryHit tuple to CanonicalFinding list."""
+    try:
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    except ImportError:
+        return []
+
+    findings = []
+    for hit in hits:
+        try:
+            finding = CanonicalFinding(
+                finding_id=f"ct-{hit.url[:32]}-{hash(str(hit.rank)) % 10000:04d}",
+                source_type="ct_log",
+                confidence=0.8,
+                query=query[:128],
+                ts=getattr(hit, "retrieved_ts", 0.0) or 0.0,
+                payload_text=f"{hit.title}\n{hit.url}\n{hit.snippet}",
+                provenance=(f"source:crtsh", f"url:{hit.url}"),
+            )
+            findings.append(finding)
+        except Exception:
+            continue
+    return findings
+
+
+def _ips_to_pdns_findings(ips: list[str], query: str) -> list:
+    """Convert passive DNS IP list to CanonicalFinding list."""
+    try:
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    except ImportError:
+        return []
+
+    findings = []
+    for ip in ips[:100]:
+        try:
+            finding = CanonicalFinding(
+                finding_id=f"pdns-{ip}",
+                source_type="passive_dns",
+                confidence=0.7,
+                query=query[:128],
+                ts=0.0,
+                payload_text=f"ip:{ip}",
+                provenance=("source:circl_pdns", f"resolved_ip:{ip}"),
+            )
+            findings.append(finding)
+        except Exception:
+            continue
+    return findings
+
+
+def _wallet_to_findings(wallet_analysis, query: str) -> list:
+    """Convert blockchain WalletAnalysis to CanonicalFinding list."""
+    try:
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    except ImportError:
+        return []
+
+    findings = []
+    try:
+        address = getattr(wallet_analysis, "address", "") or ""
+        chain = getattr(wallet_analysis, "chain", "") or "unknown"
+        balance = getattr(wallet_analysis, "balance", None)
+        risk = getattr(wallet_analysis, "risk_score", None)
+
+        finding = CanonicalFinding(
+            finding_id=f"bc-{address[:16]}",
+            source_type="blockchain_forensics",
+            confidence=0.75,
+            query=query[:128],
+            ts=0.0,
+            payload_text=(
+                f"address:{address} chain:{chain} "
+                f"balance:{balance} risk_score:{risk}"
+            ),
+            provenance=(f"source:blockchain", f"address:{address}"),
+        )
+        findings.append(finding)
+    except Exception:
+        pass
+    return findings
+
+
+def _extract_crypto_from_query(query: str) -> list[str]:
+    """Extract crypto wallet addresses and hashes from query string."""
+    wallets: list[str] = []
+    for pattern in (_WALLET_RE, _CRYPTO_HASH_RE):
+        for match in pattern.finditer(query):
+            wallets.append(match.group())
+    return wallets[:20]
