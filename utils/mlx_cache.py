@@ -8,12 +8,31 @@ Provides:
 """
 
 import asyncio
+import importlib.util
 import logging
 import threading
 from collections import OrderedDict
 from typing import Optional, Tuple, Any
 
 logger = logging.getLogger(__name__)
+
+# ── MLX Availability Detection ──────────────────────────────────────────────
+# Safe runtime detection: does NOT import mlx.core, only checks spec existence.
+# This ensures importing mlx_cache never crashes when mlx is absent.
+
+
+def _detect_mlx_available() -> bool:
+    """Return True only if mlx.core is importable (spec found, not None)."""
+    try:
+        spec = importlib.util.find_spec("mlx.core")
+        return spec is not None
+    except (ValueError, ModuleNotFoundError, ImportError):
+        # ModuleNotFoundError: parent 'mlx' package doesn't exist
+        # ImportError: mlx exists but mlx.core submodule not found
+        return False
+
+
+MLX_AVAILABLE: bool = _detect_mlx_available()
 
 # LRU cache for MLX models (max 2 models)
 _MLX_CACHE: OrderedDict[str, Tuple[Any, Any]] = OrderedDict()
@@ -186,6 +205,13 @@ _cache_limit_actual: Optional[int] = None
 _wired_limit_actual: Optional[int] = None
 
 
+def _format_limit_mib(value: Optional[int]) -> str:
+    """Format a memory limit in MiB for safe logging."""
+    if value is None:
+        return "unavailable"
+    return f"{value // 1024 ** 2} MiB"
+
+
 def _ensure_metal_memory_limits() -> bool:
     """
     Ensure Metal memory limits are set exactly once per process (thread-safe).
@@ -278,12 +304,14 @@ def get_metal_limits_status() -> dict:
 
     Returns:
         dict with keys:
-          - configured: bool
+          - mlx_available: bool — whether mlx.core spec was found at import time
+          - configured: bool — whether limits have been initialized
           - cache_limit_bytes: int or None
           - wired_limit_bytes: int or None
           - last_error: str or None
     """
     return {
+        "mlx_available": MLX_AVAILABLE,
         "configured": _MLX_METAL_LIMITS_CONFIGURED,
         "cache_limit_bytes": _cache_limit_actual,
         "wired_limit_bytes": _wired_limit_actual,
@@ -302,10 +330,13 @@ def init_mlx_buffers() -> bool:
 
     Returns:
         True if initialization successful, False otherwise.
+        Returns False (no crash) when MLX is unavailable.
     """
     global _MLX_INITIALIZED
-    if not MLX_AVAILABLE or _MLX_INITIALIZED:
-        return MLX_AVAILABLE
+    if not MLX_AVAILABLE:
+        return False
+    if _MLX_INITIALIZED:
+        return True
 
     # Sprint 8T: Metal limit init FIRST, before any buffer/array allocation
     _ensure_metal_memory_limits()
@@ -313,19 +344,16 @@ def init_mlx_buffers() -> bool:
     _MLX_INITIALIZED = True
     status = get_metal_limits_status()
     logger.info(
-        f"MLX buffers initialized: cache={status['cache_limit_bytes']//1024**2} MiB, "
-        f"wired={status['wired_limit_bytes']//1024**2} MiB, "
+        f"MLX buffers initialized: cache={_format_limit_mib(status['cache_limit_bytes'])}, "
+        f"wired={_format_limit_mib(status['wired_limit_bytes'])}, "
         f"configured={status['configured']}, error={status['last_error']}"
     )
     return True
 
 
-# Initialize MLX buffers lazily on first use, not at module import time.
+# DO NOT call init_mlx_buffers() at module import time.
+# Importing utils.mlx_cache must not import mlx.core or configure Metal limits.
 # Call init_mlx_buffers() explicitly when MLX is about to be used.
-# This avoids pulling in mlx.core on every cold import of the planning stack.
-
-# Sprint 6B probe: call init at module level so tests can verify wiring
-init_mlx_buffers()
 
 
 def mlx_cleanup_sync() -> None:
