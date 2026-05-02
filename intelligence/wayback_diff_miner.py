@@ -29,6 +29,7 @@ Definition:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -94,6 +95,15 @@ class WaybackDiffResult:
     injected_fetch_used: bool = False
     fallback_reason: Optional[str] = None
     archive_domain: Optional[str] = None
+    # F207F: normalized outcome fields
+    attempted: bool = False
+    raw_count: int = 0  # total CDX snapshot rows received before diff
+    built_count: int = 0  # CDXDiffEvent records after diff
+    accepted_count: None = None  # Wayback lane owns acceptance
+    error: Optional[str] = None
+    timeout: bool = False
+    duration_s: float = 0.0
+    skip_reason: Optional[str] = None
 
     def to_findings(
         self, query: str, sprint_id: str
@@ -281,15 +291,25 @@ class WaybackDiffMiner:
             domains_or_urls: List of domains or full URLs to query (max 100)
 
         Returns:
-            WaybackDiffResult with change_events list
+            WaybackDiffResult with change_events list and F207F outcome fields.
         """
+        start = time.monotonic()
+
         if not domains_or_urls:
+            elapsed = time.monotonic() - start
             return WaybackDiffResult(
                 input_count=0, change_events=[], stats=self._stats.copy(),
                 transport_policy=self._transport_policy_label(),
                 circuit_breaker_used=self._breaker is not None,
                 injected_fetch_used=self._fetch_provider is not None,
                 archive_domain=_extract_archive_domain(),
+                attempted=True,
+                raw_count=0,
+                built_count=0,
+                error=None,
+                timeout=False,
+                duration_s=elapsed,
+                skip_reason="empty_input",
             )
 
         # Bound input
@@ -355,6 +375,19 @@ class WaybackDiffMiner:
         all_events = all_events[:MAX_CHANGE_EVENTS]
         self._stats["domains_processed"] = len(targets)
         self._stats["changes_detected"] = len(all_events)
+        elapsed = time.monotonic() - start
+
+        # Determine error from gathered_errors
+        error: Optional[str] = None
+        timeout = False
+        if gathered_errors:
+            # surface first error type
+            first = gathered_errors[0]
+            if isinstance(first, (asyncio.TimeoutError, asyncio.CancelledError, TimeoutError)):
+                error = "timeout"
+                timeout = True
+            else:
+                error = f"gather_error:{type(first).__name__}"
 
         return WaybackDiffResult(
             input_count=len(targets),
@@ -365,6 +398,13 @@ class WaybackDiffMiner:
             injected_fetch_used=self._fetch_provider is not None,
             fallback_reason=self._fallback_reason(),
             archive_domain=_extract_archive_domain(WAYBACK_CDX_API),
+            attempted=True,
+            raw_count=self._stats.get("cdx_snapshots_collected", 0),
+            built_count=len(all_events),
+            accepted_count=None,
+            error=error,
+            timeout=timeout,
+            duration_s=elapsed,
         )
 
     async def close(self) -> None:
@@ -407,6 +447,10 @@ class WaybackDiffMiner:
 
         try:
             snapshots = await self._query_cdx(query_url)
+        except asyncio.TimeoutError:
+            raise  # propagate to gather for timeout detection
+        except asyncio.CancelledError:
+            raise  # propagate to gather
         except Exception as e:
             logger.debug(f"CDX query failed for {target}: {e}")
             self._stats["errors"] += 1
@@ -475,6 +519,10 @@ class WaybackDiffMiner:
                 return await self._fetch_via_injected(params)
             return await self._fetch_via_native(params)
 
+        except asyncio.TimeoutError:
+            raise  # propagate to gather for timeout detection
+        except asyncio.CancelledError:
+            raise  # propagate to gather
         except Exception as e:
             logger.debug(f"CDX query error for {url}: {e}")
             self._stats["errors"] += 1
@@ -494,6 +542,10 @@ class WaybackDiffMiner:
             )
             self._breaker.record_success()
             return await self._parse_cdx_response(resp)
+        except asyncio.TimeoutError:
+            raise  # propagate to gather for timeout detection
+        except asyncio.CancelledError:
+            raise  # propagate to gather
         except Exception as e:
             logger.debug(f"Injected fetch error: {e}")
             self._stats["errors"] += 1

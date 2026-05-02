@@ -240,6 +240,8 @@ class FetchResult(msgspec.Struct, frozen=True, gc=False):
     transport_fallback_reason: str | None = None  # set when fallback occurred (curl_cffi_failed:..., httpx_h2_fallback)
     # Added in F206N — Transport Telemetry Counters
     transport_counters: "TransportCounters | None" = None
+    # Added in F207F — PUBLIC Yield: why JS renderer was skipped
+    js_renderer_skipped_reason: str | None = None  # xml_or_feed_url | xml_recovered | browser_unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -774,6 +776,23 @@ atexit.register(_close_i2p_session_sync)
 # JS detection patterns — trigger Camoufox retry
 _NOSCRIPT_RE = re.compile(r"<noscript[^>]*>|enable javascript", re.IGNORECASE)
 
+# F207F: Feed/RSS URL detection — skip JS renderer for XML-ish feeds
+_FEED_URL_RE = re.compile(
+    r"/?(?:rss|feed|atom|xml|sitemap|opensearch)",
+    re.IGNORECASE,
+)
+
+# F207F: Browser unavailable cache — process-level, set once after first failure
+_browser_unavailable: bool = False
+"""True when both Camoufox and nodriver fail due to missing browser binary."""
+
+
+def _looks_like_feed_url(url: str) -> bool:
+    """Return True if URL path strongly suggests an RSS/XML/Atom/Sitemap feed."""
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.rstrip("/")
+    return bool(_FEED_URL_RE.search(path))
+
 
 def _needs_js_fetch(text: str) -> bool:
     """Detect if response suggests JS-rendered content is needed."""
@@ -810,6 +829,8 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
         from camoufox.async_api import AsyncCamoufox
     except ImportError:
         logger.debug("camoufox not installed, JS fetch unavailable")
+        global _browser_unavailable
+        _browser_unavailable = True
         return ""
 
     async with _CAMOUFOX_LOCK:
@@ -841,6 +862,8 @@ async def _fetch_with_nodriver(url: str) -> str:
         import nodriver as uc
     except ImportError:
         logger.debug("nodriver not installed, CDP fetch unavailable")
+        global _browser_unavailable
+        _browser_unavailable = True
         return ""
 
     browser = None
@@ -1523,51 +1546,67 @@ async def async_fetch_public_text(
                             decode_replacement_count = 0
 
                         # P7: Auto-detect JS need and retry via Camoufox → nodriver
+                        # F207F: Skip JS retry for feed URLs, XML content-types, or when browser is unavailable
+                        skip_js_reason: str | None = None
                         if text and not use_js and _needs_js_fetch(text):
-                            logger.info(f"JS need detected, retrying with Camoufox: {url}")
-                            js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-                            if js_html:
-                                # Process JS-rendered HTML
-                                js_text, js_matches = await process_html_payload(js_html, url)
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                _tc.js_renderer_count += 1
-                                return FetchResult(
-                                    url=url,
-                                    final_url=url,
-                                    status_code=200,
-                                    content_type="text/html",
-                                    text=js_text,
-                                    fetched_bytes=len(js_html),
-                                    declared_length=-1,
-                                    elapsed_ms=elapsed_ms,
-                                    error=None,
-                                    selected_transport="js",
-                                    transport_policy_reason="js_required",
-                                    transport_counters=_tc,
+                            if _browser_unavailable:
+                                skip_js_reason = "browser_unavailable"
+                            elif _looks_like_feed_url(url):
+                                skip_js_reason = "xml_or_feed_url"
+                            elif xml_recovered:
+                                skip_js_reason = "xml_recovered"
+
+                            if skip_js_reason:
+                                logger.debug(
+                                    f"JS renderer skipped for {url}: reason={skip_js_reason}"
                                 )
-                            # Camoufox failed → try nodriver fallback
-                            logger.warning(f"Camoufox failed, trying nodriver: {url}")
-                            js_html = await _fetch_with_nodriver(url)
-                            if js_html:
-                                js_text, js_matches = await process_html_payload(js_html, url)
-                                elapsed_ms = (time.monotonic() - t0) * 1000
-                                _tc.js_renderer_count += 1
-                                return FetchResult(
-                                    url=url,
-                                    final_url=url,
-                                    status_code=200,
-                                    content_type="text/html",
-                                    text=js_text,
-                                    fetched_bytes=len(js_html),
-                                    declared_length=-1,
-                                    elapsed_ms=elapsed_ms,
-                                    error=None,
-                                    selected_transport="js",
-                                    transport_policy_reason="js_required",
-                                    transport_counters=_tc,
-                                )
-                            # Both JS renders failed → warn and return original
-                            logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
+                            else:
+                                logger.info(f"JS need detected, retrying with Camoufox: {url}")
+                                js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+                                if js_html:
+                                    # Process JS-rendered HTML
+                                    js_text, js_matches = await process_html_payload(js_html, url)
+                                    elapsed_ms = (time.monotonic() - t0) * 1000
+                                    _tc.js_renderer_count += 1
+                                    return FetchResult(
+                                        url=url,
+                                        final_url=url,
+                                        status_code=200,
+                                        content_type="text/html",
+                                        text=js_text,
+                                        fetched_bytes=len(js_html),
+                                        declared_length=-1,
+                                        elapsed_ms=elapsed_ms,
+                                        error=None,
+                                        selected_transport="js",
+                                        transport_policy_reason="js_required",
+                                        transport_counters=_tc,
+                                    )
+                                # Camoufox failed → try nodriver fallback
+                                logger.warning(f"Camoufox failed, trying nodriver: {url}")
+                                js_html = await _fetch_with_nodriver(url)
+                                if js_html:
+                                    js_text, js_matches = await process_html_payload(js_html, url)
+                                    elapsed_ms = (time.monotonic() - t0) * 1000
+                                    _tc.js_renderer_count += 1
+                                    return FetchResult(
+                                        url=url,
+                                        final_url=url,
+                                        status_code=200,
+                                        content_type="text/html",
+                                        text=js_text,
+                                        fetched_bytes=len(js_html),
+                                        declared_length=-1,
+                                        elapsed_ms=elapsed_ms,
+                                        error=None,
+                                        selected_transport="js",
+                                        transport_policy_reason="js_required",
+                                        transport_counters=_tc,
+                                    )
+                                # F207F: Both JS renders failed — mark browser unavailable if binary missing
+                                if not js_html:
+                                    _browser_unavailable = True
+                                    logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
 
                         elapsed_ms = (time.monotonic() - t0) * 1000
                         if _circuit_breaker and last_status_code >= 200 and last_status_code < 300:
@@ -1615,6 +1654,7 @@ async def async_fetch_public_text(
                             transport_policy_reason=_httpx_reason if _use_httpx_h2 else "clearnet_default",
                             transport_fallback_reason=_fallback_info,
                             transport_counters=_tc,
+                            js_renderer_skipped_reason=skip_js_reason,  # F207F
                         )
 
         except asyncio.TimeoutError:

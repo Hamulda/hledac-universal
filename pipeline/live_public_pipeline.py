@@ -203,6 +203,9 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     # Sprint F171A: redirect truth surfaces — redirect-induced non-content vs weak conversion
     redirected: bool = False  # True when page was redirected (final_url != original_url)
     redirect_target: str | None = None  # redirect destination URL when redirected=True
+    # F207F: PUBLIC Yield — per-page JS/feed skip telemetry
+    js_renderer_skipped_reason: str | None = None  # xml_or_feed_url | xml_recovered | browser_unavailable
+    fetch_blocked_reason: str | None = None  # uma_memory | quality_skip (page not fetched due to gate)
 
 
 class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
@@ -278,6 +281,15 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     zero_hit_title_samples: tuple = ()
     # public_zero_hit_summary: run-level structured summary for gate review
     public_zero_hit_summary: dict = {}
+    # F207F: PUBLIC Yield — discovered→fetched gap telemetry
+    public_discovered: int = 0  # URLs discovered in public lane
+    public_fetch_attempted: int = 0  # fetch() called for public URLs
+    public_fetch_skipped: int = 0  # fetch skipped (UMA, quality gate, etc.)
+    public_fetch_skip_reason: str | None = None  # uma_memory | quality_skip | error
+    public_js_renderer_unavailable: int = 0  # JS renderer skipped due to browser unavailable
+    public_xml_or_rss_detected: int = 0  # JS renderer skipped due to XML/feed URL
+    public_fetch_timeout_count: int = 0  # fetch timeouts in public lane
+    public_fetch_blocked_by_memory: int = 0  # skipped due to UMA critical
 
 
 # -----------------------------------------------------------------------------
@@ -814,8 +826,8 @@ async def _fetch_and_process_page(
                 failure_stage=None,
                 redirected=False,
                 redirect_target=None,
+                fetch_blocked_reason="quality_skip",  # F207F
             )
-            ppr._fetch_result = None  # type: ignore[attr-defined]
             return ppr
 
         # Sprint F193B: Policy-driven fetch — JS/DoH/stealth driven by signal, not dormant defaults
@@ -855,8 +867,10 @@ async def _fetch_and_process_page(
                 failure_stage="connection",
                 redirected=False,
                 redirect_target=None,
+                fetch_blocked_reason="timeout",  # F207F
             )
-            ppr._fetch_result = None  # type: ignore[attr-defined]  # no FetchResult on timeout
+            # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
+            # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
             return ppr
         except asyncio.CancelledError:
             raise  # [I6] propagate, never swallow
@@ -884,22 +898,27 @@ async def _fetch_and_process_page(
                 failure_stage="connection",
                 redirected=False,
                 redirect_target=None,
+                fetch_blocked_reason="exception",  # F207F
             )
-            ppr._fetch_result = None  # type: ignore[attr-defined]  # no FetchResult on exception path
+            # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
+            # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
             return ppr
 
         # Unpack fetch result (FetchResult frozen struct)
         # Sprint F170D: also read failure_stage for accessibility truth
         # Sprint F171A: also read redirected + redirect_target for redirect-induced non-content detection
+        # F207F: also read js_renderer_skipped_reason for PUBLIC yield telemetry
         fetched_text: str | None
         fetched_failure_stage: str | None = None
         fetched_redirected: bool = False
         fetched_redirect_target: str | None = None
+        fetched_js_skip_reason: str | None = None
         if hasattr(result, "text"):
             fetched_text = result.text
             fetched_failure_stage = getattr(result, "failure_stage", None)
             fetched_redirected = getattr(result, "redirected", False)
             fetched_redirect_target = getattr(result, "redirect_target", None)
+            fetched_js_skip_reason = getattr(result, "js_renderer_skipped_reason", None)
         else:
             fetched_text = None
 
@@ -927,9 +946,8 @@ async def _fetch_and_process_page(
                 failure_stage=None,
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
+                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
             )
-            # Sprint F206AC: attach raw FetchResult for verdict telemetry
-            ppr._fetch_result = result  # type: ignore[attr-defined]
             return ppr
 
         # ---- Extract ---------------------------------------------------------
@@ -962,8 +980,8 @@ async def _fetch_and_process_page(
                 failure_stage=fetched_failure_stage,
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
+                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
             )
-            ppr._fetch_result = result  # type: ignore[attr-defined]
             return ppr
 
         # Hard cap
@@ -1008,8 +1026,8 @@ async def _fetch_and_process_page(
                 failure_stage=fetched_failure_stage,
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
+                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
             )
-            ppr._fetch_result = result  # type: ignore[attr-defined]
             return ppr
 
         # Sprint F150I: enrich extracted text with discovery metadata
@@ -1062,8 +1080,8 @@ async def _fetch_and_process_page(
                 failure_stage=fetched_failure_stage,
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
+                js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
             )
-            ppr._fetch_result = result  # type: ignore[attr-defined]
             return ppr
 
         # ---- Per-page dedup: (label, pattern, value) exact dedup -----------
@@ -1276,8 +1294,8 @@ async def _fetch_and_process_page(
             failure_stage=fetched_failure_stage,
             redirected=fetched_redirected,
             redirect_target=fetched_redirect_target,
+            js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
         )
-        ppr._fetch_result = result  # type: ignore[attr-defined]
         return ppr
 
 
@@ -2316,6 +2334,33 @@ async def async_run_live_public_pipeline(
     total_stored = sum(p.stored_findings for p in all_page_results)
     patterns_cfg = _get_patterns_configured_count()
 
+    # F207F: PUBLIC Yield telemetry — aggregate from per-page telemetry
+    public_discovered = total_discovered
+    public_fetch_attempted = sum(1 for p in all_page_results if p.fetched)
+    public_fetch_skipped = sum(1 for p in all_page_results if not p.fetched)
+    public_fetch_skip_reason = None
+    public_js_renderer_unavailable = sum(
+        1 for p in all_page_results
+        if p.fetched and p.js_renderer_skipped_reason == "browser_unavailable"
+    )
+    public_xml_or_rss_detected = sum(
+        1 for p in all_page_results
+        if p.fetched and p.js_renderer_skipped_reason in ("xml_or_feed_url", "xml_recovered")
+    )
+    public_fetch_timeout_count = sum(
+        1 for p in all_page_results
+        if not p.fetched and p.fetch_blocked_reason == "timeout"
+    )
+    public_fetch_blocked_by_memory = sum(
+        1 for p in all_page_results
+        if not p.fetched and p.fetch_blocked_reason == "uma_memory"
+    )
+    # Dominant skip reason for reporting
+    skip_reasons = [p.fetch_blocked_reason for p in all_page_results if not p.fetched and p.fetch_blocked_reason]
+    if skip_reasons:
+        from collections import Counter
+        public_fetch_skip_reason = Counter(skip_reasons).most_common(1)[0][0]
+
     # Sprint F150J Fix B: branch economics counters
     # Fix weak_pages_skipped: SKIP_WEAK post-fetch pages have error=None (not error!=None)
     strong_pages = sum(
@@ -3070,6 +3115,15 @@ async def async_run_live_public_pipeline(
         # P20: PastebinMonitor + GitHubSecretScanner telemetry
         pastebin_findings_count=pastebin_findings_count,
         github_secrets_count=github_secrets_count,
+        # F207F: PUBLIC Yield telemetry
+        public_discovered=public_discovered,
+        public_fetch_attempted=public_fetch_attempted,
+        public_fetch_skipped=public_fetch_skipped,
+        public_fetch_skip_reason=public_fetch_skip_reason,
+        public_js_renderer_unavailable=public_js_renderer_unavailable,
+        public_xml_or_rss_detected=public_xml_or_rss_detected,
+        public_fetch_timeout_count=public_fetch_timeout_count,
+        public_fetch_blocked_by_memory=public_fetch_blocked_by_memory,
     )
 
 

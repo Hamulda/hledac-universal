@@ -863,6 +863,12 @@ class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
     dominant_signal_stage: str = "unknown"
     # Sprint F164C: batch-level dedup loss aggregation (per-entry hits filtered by dedup)
     findings_lost_to_dedup: int = 0
+    # Sprint F207F: feed source dominance telemetry
+    feed_findings_by_source: tuple[tuple[str, str, int], ...] = ()
+    dominant_feed_source: str = ""
+    dominant_feed_share_pct: float = 0.0
+    feed_sources_successful: int = 0
+    feed_source_cap_applied: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2605,6 +2611,22 @@ async def async_run_feed_source_batch(
     # F164C: aggregate findings_lost_to_dedup from all sources
     _batch_dedup_loss = sum(r.findings_lost_to_dedup for r in results)
 
+    # Sprint F207F: feed source dominance telemetry — compute before building result
+    _feed_by_source: list[tuple[str, str, int]] = [
+        (r.feed_url, r.label, r.accepted_findings) for r in results
+    ]
+    _dominant = max(
+        results,
+        key=lambda r: r.accepted_findings,
+        default=None,
+    )
+    _dom_source: str = ""
+    _dom_share_pct: float = 0.0
+    if _dominant is not None and total_accepted > 0:
+        _dom_source = _dominant.label or _dominant.feed_url
+        _dom_share_pct = round(_dominant.accepted_findings / total_accepted * 100.0, 2)
+    _successful = sum(1 for r in results if r.error is None)
+
     return FeedSourceBatchRunResult(
         total_sources=len(normalized),
         completed_sources=completed,
@@ -2616,6 +2638,12 @@ async def async_run_feed_source_batch(
         dominant_signal_stage=dominant_stage,
         # F164C: batch-level dedup loss
         findings_lost_to_dedup=_batch_dedup_loss,
+        # Sprint F207F: feed source dominance telemetry
+        feed_findings_by_source=tuple(_feed_by_source),
+        dominant_feed_source=_dom_source,
+        dominant_feed_share_pct=_dom_share_pct,
+        feed_sources_successful=_successful,
+        feed_source_cap_applied=False,
     )
 
 

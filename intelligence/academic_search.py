@@ -250,20 +250,30 @@ class BaseSourceAdapter(ABC):
         self,
         query: str,
         max_results: int = 10,
-        analysis: Optional[QueryAnalysis] = None
+        analysis: Optional[QueryAnalysis] = None,
+        **kwargs
     ) -> Tuple[List[SearchResult], float, bool]:
         """Execute search with performance tracking."""
         start_time = time.time()
-        
+        adapter_name = getattr(self.config, 'name', self.__class__.__name__)
+        skipped_kwargs = {k: v for k, v in kwargs.items() if k != 'async_session'}
+        async_session_supported = 'async_session' in kwargs
+
         try:
-            results = await self.search(query, max_results, analysis)
+            async_session = kwargs.get('async_session')
+            results = await self.search(query, max_results, analysis, async_session=async_session)
             execution_time = (time.time() - start_time) * 1000
             self.performance.update(success=True, response_time_ms=execution_time)
             return results, execution_time, True
-            
+
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            self.logger.error(f"Search failed: {e}")
+            self.logger.warning(
+                f"[ADAPTER_COMPAT] Search failed for {adapter_name}: "
+                f"error_type={type(e).__name__}, "
+                f"async_session_supported={async_session_supported}, "
+                f"skipped_kwargs={list(skipped_kwargs.keys())}"
+            )
             self.performance.update(success=False, response_time_ms=execution_time)
             return [], execution_time, False
     

@@ -179,6 +179,9 @@ class AcquisitionLaneOutcome:
     error: Optional[str] = None
     duration_s: float = 0.0
     source_family: str = "unknown"
+    # [F207F] CT lane telemetry — shaped query and raw hit counts
+    ct_query: str = ""
+    ct_results_raw: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -191,6 +194,9 @@ class AcquisitionLaneOutcome:
             "error": self.error,
             "duration_s": round(self.duration_s, 3),
             "source_family": self.source_family,
+            # [F207F] CT telemetry
+            "ct_query": self.ct_query,
+            "ct_results_raw": self.ct_results_raw,
         }
 
 
@@ -567,6 +573,13 @@ async def run_enabled_acquisition_lanes(
     async def _run_ct_lane(plan) -> "AcquisitionLaneOutcome":
         """Run CT/crt.sh lane."""
         start = time.monotonic()
+        # [F207F] Shape domain-only query for CT lane
+        # build_lane_query returns str|dict; CT always returns str, so guard
+        _raw = build_lane_query(query, AcquisitionLane.CT)
+        shaped_query = _raw if isinstance(_raw, str) else ""
+        ct_error: str | None = None
+        ct_results_raw = 0
+        accepted = 0
         try:
             async with asyncio.timeout(plan.timeout_s):
                 # Local import to avoid cold-import cost
@@ -575,12 +588,11 @@ async def run_enabled_acquisition_lanes(
                 )
 
                 result = await _crtsh_search(
-                    query=query,
+                    query=shaped_query,
                     max_results=plan.max_items,
                     timeout_s=plan.timeout_s,
                 )
-
-                accepted = 0
+                ct_results_raw = len(result.hits)
                 if result.hits and store is not None:
                     findings = _hits_to_ct_findings(result.hits, query)
                     if findings and hasattr(store, "async_ingest_findings_batch"):
@@ -592,15 +604,20 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
+                if result.error:
+                    ct_error = result.error
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.CT,
                     enabled=plan.enabled,
                     attempted=True,
                     accepted_findings=accepted,
-                    produced_items=len(result.hits),
+                    produced_items=ct_results_raw,
                     duration_s=time.monotonic() - start,
                     source_family="ct",
+                    ct_query=shaped_query,
+                    ct_results_raw=ct_results_raw,
+                    error=ct_error,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -611,6 +628,8 @@ async def run_enabled_acquisition_lanes(
                 duration_s=time.monotonic() - start,
                 error="timeout",
                 source_family="ct",
+                ct_query=shaped_query,
+                ct_results_raw=ct_results_raw,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -620,6 +639,8 @@ async def run_enabled_acquisition_lanes(
                 error=f"{type(exc).__name__}:{exc}",
                 duration_s=time.monotonic() - start,
                 source_family="ct",
+                ct_query=shaped_query,
+                ct_results_raw=ct_results_raw,
             )
 
     async def _run_wayback_lane(plan) -> "AcquisitionLaneOutcome":

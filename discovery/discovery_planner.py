@@ -23,9 +23,12 @@ Pure Python. No ML hot path. M1-safe.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from hledac.universal.discovery.duckduckgo_adapter import (
     DiscoveryBatchResult,
@@ -175,16 +178,24 @@ async def _run_ct_pivots(
     max_results: int,
     timeout_s: float,
 ) -> DiscoveryBatchResult:
-    # Sprint F206AU: real crtsh adapter — passive CT subdomain discovery.
-    # No pipeline context needed — crt.sh JSON endpoint is self-contained.
-    from .crtsh_adapter import async_search_crtsh
+    # Sprint F207F: call_crtsh returns (DiscoveryBatchResult, CTOutcome).
+    # F207F: CTOutcome available via call_crtsh for lane-level measurement.
+    from .crtsh_adapter import call_crtsh
 
     try:
-        return await async_search_crtsh(
+        result, outcome = await call_crtsh(
             query=query,
             max_results=max_results,
             timeout_s=timeout_s,
         )
+        # Log outcome for lane observability (json structured, human-readable)
+        logger.debug(
+            f"[ct_pivots] outcome: attempted={outcome.attempted} "
+            f"raw={outcome.raw_count} built={outcome.built_count} "
+            f"error={outcome.error} timeout={outcome.timeout} "
+            f"duration_s={outcome.duration_s:.3f}"
+        )
+        return result
     except asyncio.CancelledError:
         raise  # always re-raise — do not swallow
     except Exception as e:
