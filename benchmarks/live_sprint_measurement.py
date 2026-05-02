@@ -52,6 +52,32 @@ PROFILE_DURATION: dict[str, int] = {
     "active600": 600,
 }
 
+# Profile metadata — makes profiles truthful and self-documenting
+# - planned_duration_s: total wall-clock duration
+# - expected_windup_lead_s: how long lead/windup occupies before active runtime
+# - expected_active_window_s: meaningful active runtime window (>0 = active profile)
+# - active_runtime_expected: whether profile produces active runtime cycles
+PROFILE_META: dict[str, dict] = {
+    "smoke180": {
+        "planned_duration_s": 180,
+        "expected_windup_lead_s": 180,   # full duration is lead/windup — no active window
+        "expected_active_window_s": 0,   # zero → smoke180 is ENTRY_SMOKE_ONLY
+        "active_runtime_expected": False,
+    },
+    "active300": {
+        "planned_duration_s": 300,
+        "expected_windup_lead_s": 180,   # windup consumes ~180s
+        "expected_active_window_s": 120, # ~120s of active runtime remains
+        "active_runtime_expected": True,
+    },
+    "active600": {
+        "planned_duration_s": 600,
+        "expected_windup_lead_s": 180,   # windup consumes ~180s
+        "expected_active_window_s": 420, # ~420s of active runtime remains
+        "active_runtime_expected": True,
+    },
+}
+
 MIN_DURATION_S = 180
 
 # ---------------------------------------------------------------------------
@@ -105,8 +131,8 @@ class LiveMeasurementResult:
     cycles_completed: int | None = None
     cycles_started: int | None = None
     accepted_findings: int | None = None
-    runtime_truth: str | None = None
-    timing_truth: str | None = None
+    runtime_truth: dict | None = None
+    timing_truth: dict | None = None
     checkpoint_zero_category: str | None = None
 
     # Signal
@@ -124,6 +150,12 @@ class LiveMeasurementResult:
     hermetic_regression_manifest_present: bool = False
     transport_authority_status_present: bool = False
     mlx_wired_limit_seal_present: bool = False
+
+    # Profile truthfulness metadata
+    active_runtime_expected: bool = False
+    expected_windup_lead_s: int | None = None
+    expected_active_window_s: int | None = None
+    profile_verdict: str | None = None   # "ENTRY_SMOKE_ONLY" or "ACTIVE_SPRINT"
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -184,26 +216,80 @@ async def _capture_uma() -> dict:
 
 
 def _parse_sprint_report(report_path: str | None) -> dict | None:
-    """Parse sprint JSON report for findings count. Fail-soft."""
+    """
+    Parse sprint JSON report for measurement metrics.
+
+    Robust extraction strategy — tries multiple schema locations:
+    1. runtime_truth (top-level dict) for cycles, accepted_findings, primary_signal_source
+    2. timing_truth (top-level dict) for timing data
+    3. canonical_run_summary for checkpoint_zero_category and any missing fields
+
+    Fail-soft: returns partial dict if some fields are missing.
+    """
     if not report_path:
         return None
     try:
         with open(report_path) as f:
             data = json.load(f)
-        # Navigate to canonical_run_summary
-        summary = data.get("canonical_run_summary", {})
-        return {
-            "findings_count": summary.get("findings_count"),
-            "cycles_completed": summary.get("cycles_completed"),
-            "cycles_started": summary.get("cycles_started"),
-            "accepted_findings": summary.get("accepted_findings"),
-            "runtime_truth": summary.get("runtime_truth"),
-            "timing_truth": summary.get("timing_truth"),
-            "checkpoint_zero_category": summary.get("checkpoint_zero_category"),
-            "primary_signal_source": summary.get("primary_signal_source"),
-        }
+
+        # Primary source: runtime_truth (top-level dict) — authoritative for sprint metrics
+        rt = data.get("runtime_truth") or {}
+        tt = data.get("timing_truth") or {}
+        summary = data.get("canonical_run_summary") or {}
+
+        result: dict = {}
+
+        # findings_count: try canonical_run_summary, then top-level, then derive from branch_mix
+        branch_mix = rt.get("branch_mix", {})
+        result["findings_count"] = (
+            summary.get("findings_count")
+            or data.get("findings_count")
+            or branch_mix.get("feed_findings", 0)
+            + branch_mix.get("public_findings", 0)
+            + branch_mix.get("ct_findings", 0)
+        )
+
+        # cycles_completed / cycles_started: runtime_truth is authoritative
+        result["cycles_completed"] = rt.get("cycles_completed")
+        result["cycles_started"] = rt.get("cycles_started")
+
+        # accepted_findings: runtime_truth is authoritative
+        result["accepted_findings"] = rt.get("accepted_findings")
+
+        # runtime_truth: return the dict directly (LiveMeasurementResult now holds dict | None)
+        result["runtime_truth"] = rt if isinstance(rt, dict) else None
+
+        # timing_truth: return the dict directly
+        result["timing_truth"] = tt if isinstance(tt, dict) else None
+
+        # checkpoint_zero_category: canonical_run_summary
+        result["checkpoint_zero_category"] = summary.get("checkpoint_zero_category")
+
+        # primary_signal_source: runtime_truth is authoritative
+        result["primary_signal_source"] = rt.get("primary_signal_source") or summary.get("primary_signal_source")
+
+        return result
     except Exception:
         return None
+
+
+def _get_profile_verdict(profile: str) -> tuple[bool, int | None, int | None, str]:
+    """Derive profile truthfulness tuple from PROFILE_META. Returns (active_expected, windup, window, verdict)."""
+    meta = PROFILE_META.get(profile, {})
+    active_expected = meta.get("active_runtime_expected", False)
+    windup_lead_s = meta.get("expected_windup_lead_s")
+    active_window_s = meta.get("expected_active_window_s")
+    verdict = "ENTRY_SMOKE_ONLY" if not active_expected else "ACTIVE_SPRINT"
+    return active_expected, windup_lead_s, active_window_s, verdict
+
+
+def _stamp_profile_meta(result: LiveMeasurementResult, profile: str) -> None:
+    """Stamp profile truthfulness metadata onto result."""
+    active_expected, windup_lead_s, active_window_s, verdict = _get_profile_verdict(profile)
+    result.active_runtime_expected = active_expected
+    result.expected_windup_lead_s = windup_lead_s
+    result.expected_active_window_s = active_window_s
+    result.profile_verdict = verdict
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +364,23 @@ async def _run_dry_run(
         status_str = "PRESENT" if present else "MISSING"
         logging.info("[DRY-RUN] Readiness artifact [%s]: %s", name, status_str)
 
+    # Inject profile truthfulness metadata
+    active_expected, windup_lead_s, active_window_s, verdict = _get_profile_verdict(profile)
+
+    # Warn in dry-run log if profile has no active window
+    if not active_expected:
+        logging.warning(
+            "[DRY-RUN] Profile %s is ENTRY_SMOKE_ONLY — no active runtime window. "
+            "Use active300 (or active600) for meaningful active sprint measurement.",
+            profile
+        )
+    else:
+        logging.info(
+            "[DRY-RUN] Profile %s verdict=%s windup_lead=%ds active_window=%ds "
+            "(active_runtime_expected=True)",
+            profile, verdict, windup_lead_s, active_window_s
+        )
+
     # Simulate validation
     errors: list[str] = []
     if duration_s < MIN_DURATION_S:
@@ -291,6 +394,9 @@ async def _run_dry_run(
         logging.info(
             "[DRY-RUN] Validation PASSED — ready for live execution with --live flag"
         )
+
+    # Always stamp profile truthfulness — verdict needed even on ABORTED
+    _stamp_profile_meta(result, profile)
 
     return result
 
@@ -417,6 +523,9 @@ async def _run_live_sprint(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
             measurement_id, result.findings_count, result.cycles_completed, actual_duration_s
         )
+
+        # Stamp profile truthfulness
+        _stamp_profile_meta(result, profile)
 
     except Exception as exc:
         result.status = MeasurementStatus.FAILED
@@ -559,8 +668,8 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"- Cycles completed: {result.cycles_completed}",
             f"- Cycles started: {result.cycles_started}",
             f"- Accepted findings: {result.accepted_findings}",
-            f"- Runtime truth: {result.runtime_truth}",
-            f"- Timing truth: {result.timing_truth}",
+            f"- Runtime truth: {json.dumps(result.runtime_truth, default=str) if isinstance(result.runtime_truth, dict) else result.runtime_truth}",
+            f"- Timing truth: {json.dumps(result.timing_truth, default=str) if isinstance(result.timing_truth, dict) else result.timing_truth}",
             f"- Checkpoint zero: {result.checkpoint_zero_category}",
             f"- Primary signal source: {result.primary_signal_source}",
             f"- Report: {result.report_json_path}",
@@ -576,6 +685,13 @@ def _render_md(result: LiveMeasurementResult) -> str:
         f"- hermetic_regression_manifest.json: {'PRESENT' if result.hermetic_regression_manifest_present else 'MISSING'}",
         f"- transport_authority_status_refreshed.json: {'PRESENT' if result.transport_authority_status_present else 'MISSING'}",
         f"- mlx_wired_limit_seal.json: {'PRESENT' if result.mlx_wired_limit_seal_present else 'MISSING'}",
+        "",
+        "## Profile Truthfulness",
+        "",
+        f"- Verdict: **{result.profile_verdict or 'UNKNOWN'}**",
+        f"- active_runtime_expected: {result.active_runtime_expected}",
+        f"- expected_windup_lead_s: {result.expected_windup_lead_s}s",
+        f"- expected_active_window_s: {result.expected_active_window_s}s",
     ])
 
     if result.error:

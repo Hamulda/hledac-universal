@@ -43,6 +43,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 import orjson
@@ -225,18 +226,22 @@ def run_pre_sprint_checks() -> bool:
 
     Returns True if safe to proceed, False to abort.
     """
-    import mlx.core as mx
-
     checks_passed = True
 
-    # MX wired limit — BOOT invariant (set even before model load)
-    # Sprint F206AL: wired limit now unified via mlx_cache._MLX_WIRED_LIMIT
-    if mx.metal.is_available():
+    # MLX wired limit — fail-soft (Sprint F207D)
+    # MLX is optional. Skip Metal limit config when unavailable.
+    if not mlx_cache.MLX_AVAILABLE:
+        logger.info("[BOOT] MLX unavailable — skipping Metal wired limit")
+    else:
         try:
-            mx.metal.set_wired_limit(mlx_cache._MLX_WIRED_LIMIT)
-            logger.info(f"[BOOT] MLX wired limit: {mlx_cache._MLX_WIRED_LIMIT / 1e9:.1f}GB")
+            mlx_cache.init_mlx_buffers()
+            status = mlx_cache.get_metal_limits_status()
+            _fmt = lambda v: f"{v // (1024 * 1024):.0f}MiB" if v else "N/A"
+            logger.info(
+                f"[BOOT] MLX buffers: cache={_fmt(status['cache_limit_bytes'])} wired={_fmt(status['wired_limit_bytes'])} configured={status['configured']}"
+            )
         except Exception as exc:
-            logger.warning(f"[BOOT] mx.metal.set_wired_limit failed: {exc}")
+            logger.warning(f"[BOOT] MLX buffer init failed: {exc}")
 
     # Swap check — WARNING only, non-blocking
     s = sample_uma_status()

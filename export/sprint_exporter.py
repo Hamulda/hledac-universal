@@ -145,6 +145,7 @@ async def export_sprint(
     store: Any,
     handoff: "ExportHandoff",  # type: ignore[name-defined]
     sprint_id: str | None = None,
+    enable_security_enrichment: bool = False,
 ) -> dict:
     """
     EXPORT fáze — JSON report, seed tasky pro příští sprint.
@@ -157,6 +158,11 @@ async def export_sprint(
     always passes typed ExportHandoff. The dict/None compat paths in
     ensure_export_handoff() are preserved for backward compat but are NOT
     exercised by the canonical producer path.
+
+    enable_security_enrichment (default False):
+      Když False (implicitní): export_sprint nepouští SecurityCoordinator/StealthEngine.
+      Když True (explicitní stealth mód): volá sanitize_outbound pro PII audit.
+      Vždy produkuje platný JSON report.
 
     Součásti:
       1. JSON report do ~/.hledac/reports/{sprint_id}_report.json
@@ -202,40 +208,47 @@ async def export_sprint(
 
     # Pass through early privacy gate (outbound boundary)
     # Using security_coordinator sanitize_outbound seam
-    try:
-        from hledac.universal.coordinators.security_coordinator import UniversalSecurityCoordinator
-        sec_coordinator = UniversalSecurityCoordinator(max_concurrent=2)
-        await sec_coordinator.initialize()
-        gate_result = await sec_coordinator.sanitize_outbound(boundary_text, force_fallback=True)
-        # Sprint F192F §2: Check for sanitized key BEFORE using the value.
-        # If gate returned without 'sanitized' key (partial failure), do NOT fall back
-        # to boundary_text (unsanitized). Use degraded structure instead.
-        if "sanitized" in gate_result:
-            sanitized_scorecard_raw = gate_result["sanitized"]
-        else:
-            # Partial success (gate ran but produced no sanitized output) — safe degraded
-            logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key — using degraded structure")
+    # Sprint F207E: SecurityCoordinator/StealthEngine are NOT initialized by default.
+    # enable_security_enrichment=False (default) skips sanitize_outbound entirely,
+    # using boundary_text directly — appropriate for non-stealth live runs.
+    if enable_security_enrichment:
+        try:
+            from hledac.universal.coordinators.security_coordinator import UniversalSecurityCoordinator
+            sec_coordinator = UniversalSecurityCoordinator(max_concurrent=2)
+            await sec_coordinator.initialize()
+            gate_result = await sec_coordinator.sanitize_outbound(boundary_text, force_fallback=True)
+            # Sprint F192F §2: Check for sanitized key BEFORE using the value.
+            # If gate returned without 'sanitized' key (partial failure), do NOT fall back
+            # to boundary_text (unsanitized). Use degraded structure instead.
+            if "sanitized" in gate_result:
+                sanitized_scorecard_raw = gate_result["sanitized"]
+            else:
+                # Partial success (gate ran but produced no sanitized output) — safe degraded
+                logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key — using degraded structure")
+                degraded = {
+                    "_sanitize_failure": True,
+                    "sprint_id": _sprint_id,
+                    "report": "sanitization_failed_degraded_export",
+                }
+                sanitized_scorecard_raw = json.dumps(degraded, default=str)
+            # Log audit metadata (non-blocking)
+            if gate_result.get("pii_count"):
+                logger.info("[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
+                            gate_result.get("pii_count"), gate_result.get("risk_level", "unknown"))
+        except Exception as e:
+            # Fail-soft: fall back to DEGRADED SANITIZED-SAFE structure, NOT unsanitized original.
+            # Sprint F500M §1 CRITICAL: boundary_text is UNSANITIZED — never return it.
+            # Produces a bounded degraded report structure that is safe for export.
+            logger.warning("[EXPORT] sanitize_outbound failed (non-fatal): %s", e)
             degraded = {
                 "_sanitize_failure": True,
                 "sprint_id": _sprint_id,
                 "report": "sanitization_failed_degraded_export",
             }
             sanitized_scorecard_raw = json.dumps(degraded, default=str)
-        # Log audit metadata (non-blocking)
-        if gate_result.get("pii_count"):
-            logger.info("[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
-                        gate_result.get("pii_count"), gate_result.get("risk_level", "unknown"))
-    except Exception as e:
-        # Fail-soft: fall back to DEGRADED SANITIZED-SAFE structure, NOT unsanitized original.
-        # Sprint F500M §1 CRITICAL: boundary_text is UNSANITIZED — never return it.
-        # Produces a bounded degraded report structure that is safe for export.
-        logger.warning("[EXPORT] sanitize_outbound failed (non-fatal): %s", e)
-        degraded = {
-            "_sanitize_failure": True,
-            "sprint_id": _sprint_id,
-            "report": "sanitization_failed_degraded_export",
-        }
-        sanitized_scorecard_raw = json.dumps(degraded, default=str)
+    else:
+        # Non-stealth path: skip SecurityCoordinator init entirely, use boundary_text directly
+        sanitized_scorecard_raw = boundary_text
 
     # Sprint F150I §2: Build product_value_summary from all existing surfaces
     pvs = _build_product_value_summary(store, eh, _sprint_id)

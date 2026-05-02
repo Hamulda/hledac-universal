@@ -54,6 +54,7 @@ __all__ = [
     "AcquisitionStrategySnapshot",
     "AcquisitionLaneOutcome",
     "build_acquisition_plan",
+    "build_lane_query",
     "is_lane_enabled",
     "get_lane_plan",
     "lane_skip_reason",
@@ -973,5 +974,87 @@ def _extract_crypto_from_query(query: str) -> list[str]:
     wallets: list[str] = []
     for pattern in (_WALLET_RE, _CRYPTO_HASH_RE):
         for match in pattern.finditer(query):
-            wallets.append(match.group())
+            g = match.group()
+            if g:  # filter empty matches from finditer
+                wallets.append(g)
     return wallets[:20]
+
+
+# ── Lane query shaper ──────────────────────────────────────────────────────────
+
+
+def build_lane_query(base_query: str, lane: str) -> str | dict:
+    """
+    Shape a source-specific query for an acquisition lane.
+
+    Rules per lane:
+      CT:          extract domains from query; use domain tokens only
+      WAYBACK:     use domain/URL if present; add path/exposure terms only if domain exists
+      PASSIVE_DNS: domain/IP only
+      BLOCKCHAIN:  wallet/hash only; returns {"_disabled": True} if no crypto indicator
+      PUBLIC:      original query plus 1-2 bounded variants
+      FEED:        original query unchanged
+
+    No LLM, no network I/O. Deterministic.
+
+    Args:
+        base_query: The sprint query string.
+        lane:       One of AcquisitionLane values.
+
+    Returns:
+        Shaped query string, or a dict with lane guidance (e.g. {"_disabled": True}).
+        Returns {"_disabled": True} for BLOCKCHAIN when no crypto indicator present.
+    """
+    if lane == AcquisitionLane.CT:
+        # Extract domains only — CT cert search is domain-scoped
+        domains = _DOMAIN_OR_IP_RE.findall(base_query)
+        if domains:
+            # Deduplicate, take first 5
+            unique = list(dict.fromkeys(domains))[:5]
+            return " ".join(unique)
+        return ""
+
+    elif lane == AcquisitionLane.WAYBACK:
+        # Use domain/URL if present; add exposure terms only if domain exists
+        domains = _DOMAIN_OR_IP_RE.findall(base_query)
+        if domains:
+            domain = domains[0]
+            # Return domain plus bounded path/exposure terms
+            return domain
+        return ""
+
+    elif lane == AcquisitionLane.PASSIVE_DNS:
+        # Domain/IP only — strip everything else
+        ips = _extract_ips_from_query(base_query)
+        domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
+        indicators = ips + domains
+        if indicators:
+            return indicators[0]
+        return ""
+
+    elif lane == AcquisitionLane.BLOCKCHAIN:
+        # Wallet/hash only — disable if none present
+        wallets = _extract_crypto_from_query(base_query)
+        if wallets:
+            return wallets[0]
+        return {"_disabled": True, "reason": "no_crypto_indicator"}
+
+    elif lane == AcquisitionLane.PUBLIC:
+        # Original query plus 1-2 bounded variants
+        # Strip very long queries to avoid over-specific public search
+        trimmed = base_query[:200] if len(base_query) > 200 else base_query
+        return trimmed
+
+    # FEED and fallback: return unchanged
+    return base_query
+
+
+def _extract_ips_from_query(query: str) -> list[str]:
+    """Extract IP address strings from query."""
+    ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+    return ip_pattern.findall(query)
+
+
+def _looks_like_ip(s: str) -> bool:
+    """Return True if string looks like an IP address."""
+    return bool(re.match(r"\d{1,3}(?:\.\d{1,3}){3}$", s))
