@@ -146,6 +146,7 @@ async def export_sprint(
     handoff: "ExportHandoff",  # type: ignore[name-defined]
     sprint_id: str | None = None,
     enable_security_enrichment: bool = False,
+    export_mode: str = "slim",
 ) -> dict:
     """
     EXPORT fáze — JSON report, seed tasky pro příští sprint.
@@ -158,6 +159,15 @@ async def export_sprint(
     always passes typed ExportHandoff. The dict/None compat paths in
     ensure_export_handoff() are preserved for backward compat but are NOT
     exercised by the canonical producer path.
+
+    export_mode (default "slim"):
+      slim — M1-safe minimal export. JSON report + next seeds + canonical runtime
+             truth. No security enrichment, no stealth engine, no evidence chains,
+             no hypothesis engine, no background monitoring.
+      full — Full export with all enrichment layers. Enables evidence_chain
+             (igraph) and hypothesis_engine (numpy/mlx) when explicitly requested.
+             Security enrichment (enable_security_enrichment=True) also requires
+             full mode.
 
     enable_security_enrichment (default False):
       Když False (implicitní): export_sprint nepouští SecurityCoordinator/StealthEngine.
@@ -211,7 +221,10 @@ async def export_sprint(
     # Sprint F207E: SecurityCoordinator/StealthEngine are NOT initialized by default.
     # enable_security_enrichment=False (default) skips sanitize_outbound entirely,
     # using boundary_text directly — appropriate for non-stealth live runs.
-    if enable_security_enrichment:
+    # Sprint F207H: export_mode="full" required for security enrichment.
+    sanitized_scorecard_raw = boundary_text
+    sec_coordinator = None
+    if enable_security_enrichment and export_mode == "full":
         try:
             from hledac.universal.coordinators.security_coordinator import UniversalSecurityCoordinator
             sec_coordinator = UniversalSecurityCoordinator(max_concurrent=2)
@@ -246,6 +259,13 @@ async def export_sprint(
                 "report": "sanitization_failed_degraded_export",
             }
             sanitized_scorecard_raw = json.dumps(degraded, default=str)
+        finally:
+            # Sprint F207H: defensive cleanup — shutdown sec_coordinator if initialized
+            if sec_coordinator is not None:
+                try:
+                    await sec_coordinator.shutdown({})
+                except Exception:
+                    pass
     else:
         # Non-stealth path: skip SecurityCoordinator init entirely, use boundary_text directly
         sanitized_scorecard_raw = boundary_text
@@ -323,9 +343,10 @@ async def export_sprint(
     # Primary: get_sprint_next_seeds_path() from paths.py (canonical)
     # Fallback: SPRINT_STORE_ROOT.parent/"reports" if report_path is None (write failed)
     # Sprint F150L: also pass branch_value + sprint_trend for enriched seeds
+    # Sprint F207H: pass export_mode to gate hypothesis_engine (numpy/mlx)
     branch_value = _get_branch_value(eh)
     sprint_trend = await _get_sprint_trend(store, last_n=3)
-    seeds_path = _generate_next_sprint_seeds(top_nodes, _sprint_id, report_path, pvs, branch_value, sprint_trend)
+    seeds_path = _generate_next_sprint_seeds(top_nodes, _sprint_id, report_path, pvs, branch_value, sprint_trend, export_mode=export_mode)
 
     # Sprint F150K: build sprint_summary for human use
     try:
@@ -425,31 +446,33 @@ async def export_sprint(
         pass
 
     # Sprint F203D: attach top-5 evidence chains from global builder
+    # Sprint F207H: gated behind export_mode — igraph is heavy on M1
     evidence_chains: list = []
-    try:
-        from hledac.universal.knowledge.evidence_chain import get_all_chains
-        all_chains = get_all_chains()
-        # Sort by depth, take top 5
-        all_chains.sort(key=lambda c: len(c.steps), reverse=True)
-        evidence_chains = [
-            {
-                "root_finding_id": c.root_finding_id,
-                "steps": [
-                    {
-                        "step_type": s.step_type,
-                        "input_ids": s.input_ids,
-                        "output_id": s.output_id,
-                        "confidence": s.confidence,
-                        "reason": s.reason,
-                    }
-                    for s in c.steps
-                ],
-                "conclusion": c.conclusion,
-            }
-            for c in all_chains[:5]
-        ]
-    except Exception:
-        pass
+    if export_mode == "full":
+        try:
+            from hledac.universal.knowledge.evidence_chain import get_all_chains
+            all_chains = get_all_chains()
+            # Sort by depth, take top 5
+            all_chains.sort(key=lambda c: len(c.steps), reverse=True)
+            evidence_chains = [
+                {
+                    "root_finding_id": c.root_finding_id,
+                    "steps": [
+                        {
+                            "step_type": s.step_type,
+                            "input_ids": s.input_ids,
+                            "output_id": s.output_id,
+                            "confidence": s.confidence,
+                            "reason": s.reason,
+                        }
+                        for s in c.steps
+                    ],
+                    "conclusion": c.conclusion,
+                }
+                for c in all_chains[:5]
+            ]
+        except Exception:
+            pass
 
     return {
         "report_json": str(report_path) if report_path else "",
@@ -484,6 +507,7 @@ def _generate_next_sprint_seeds(
     pvs: dict[str, Any] | None = None,
     branch_value: dict[str, Any] | None = None,
     sprint_trend: list[dict] | None = None,
+    export_mode: str = "slim",
 ) -> pathlib.Path:
     """
     Sprint F150J: Enhanced seed derivation driven by product_value_summary.
@@ -499,6 +523,10 @@ def _generate_next_sprint_seeds(
     Canonical next-seeds path (Sprint F500D):
       - Primary: get_sprint_next_seeds_path(sprint_id) z paths.py
       - Fallback: SPRINT_STORE_ROOT.parent/"reports" if report_path is None
+
+    export_mode (Sprint F207H):
+      slim (default) — skip hypothesis_engine (numpy/mlx heavy import)
+      full — enables hypothesis_engine for query suggestions
     """
     from hledac.universal.paths import get_sprint_next_seeds_path, SPRINT_STORE_ROOT
     if report_path is not None:
@@ -554,7 +582,8 @@ def _generate_next_sprint_seeds(
             seeds.extend(low_signal_seeds)
 
         # 5. Sprint F150K: hypothesis_engine.suggest_next_queries() seam
-        if pvs:
+        # Sprint F207H: gated behind export_mode — numpy/mlx is heavy on M1
+        if pvs and export_mode == "full":
             hyp_queries = _derive_hypothesis_queries(pvs, max_queries=2)
             seeds.extend(hyp_queries)
 

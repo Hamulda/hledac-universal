@@ -26,6 +26,10 @@ Usage:
   # Live execution (requires --live)
   python benchmarks/live_sprint_measurement.py --profile active300 --query "LockBit" --live
   python benchmarks/live_sprint_measurement.py --profile active600 --query "ransomware" --live --output-json /tmp/live_measure.json
+
+  # Preflight check (no sprint execution)
+  python benchmarks/live_sprint_measurement.py --print-preflight-only
+  python benchmarks/live_sprint_measurement.py --print-preflight-only --output-json /tmp/preflight.json
 """
 
 from __future__ import annotations
@@ -80,6 +84,11 @@ PROFILE_META: dict[str, dict] = {
 
 MIN_DURATION_S = 180
 
+# Memory-gate operator action text
+_MEMORY_GATE_OPERATOR_ACTION = (
+    "restart or close heavy apps; rerun active300 with --require-memory-ok"
+)
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -87,6 +96,7 @@ MIN_DURATION_S = 180
 class RunMode(Enum):
     DRY_RUN = "dry_run"
     LIVE = "live"
+    PREFLIGHT = "preflight"
 
 
 class MeasurementStatus(Enum):
@@ -102,7 +112,9 @@ class RunQualityVerdict(Enum):
     PASS_VALID_CAPABILITY_RUN = "PASS_VALID_CAPABILITY_RUN"
     PASS_HARDWARE_CONSTRAINED = "PASS_HARDWARE_CONSTRAINED"
     ENTRY_SMOKE_ONLY = "ENTRY_SMOKE_ONLY"
-    FAIL = "FAIL"
+    FAIL_RUNTIME_ERROR = "FAIL_RUNTIME_ERROR"
+    FAIL_MEASUREMENT_ERROR = "FAIL_MEASUREMENT_ERROR"
+    ABORTED_MEMORY_GATE = "ABORTED_MEMORY_GATE"
 
 
 @dataclass
@@ -165,13 +177,14 @@ class LiveMeasurementResult:
     expected_active_window_s: int | None = None
     profile_verdict: str | None = None   # "ENTRY_SMOKE_ONLY" or "ACTIVE_SPRINT"
 
-    # Run quality verdict (F207G)
+    # Run quality verdict (F207G/F207H)
     run_quality_verdict: str | None = None
     hardware_constrained: bool | None = None
     memory_state_pre: str | None = None
     memory_state_post: str | None = None
     swap_warning: bool | None = None
     recommended_next_profile: str | None = None
+    recommended_operator_action: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -244,12 +257,14 @@ def _derive_run_quality_verdict(
     uma_pre_state: str | None,
     runtime_truth: dict | None,
     swap_pre_gib: float | None,
-) -> tuple[RunQualityVerdict | None, bool, str | None, bool, str | None]:
+    is_memory_gate_abort: bool = False,
+) -> tuple[RunQualityVerdict | None, bool, str | None, bool, str | None, str | None]:
     """
     Derive run quality verdict from measurement state.
 
     Returns:
-        (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile)
+        (verdict, hardware_constrained, memory_state_pre, swap_warning,
+         recommended_next_profile, recommended_operator_action)
 
     Verdict is None when no runtime execution occurred (PLANNED/RUNNING with no runtime_truth).
     """
@@ -258,24 +273,37 @@ def _derive_run_quality_verdict(
     memory_state_pre = uma_pre_state
     swap_warning = swap_pre_gib is not None and swap_pre_gib > 0
     recommended_next_profile: str | None = None
+    recommended_operator_action: str | None = None
+
+    # Rule 0: ABORTED_MEMORY_GATE — specific memory-gate abort, not generic FAIL
+    if is_memory_gate_abort:
+        verdict = RunQualityVerdict.ABORTED_MEMORY_GATE
+        hardware_constrained = True
+        recommended_next_profile = "none_until_memory_ok"
+        recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
     # Rule 1: ENTRY_SMOKE_ONLY for smoke profiles (always determinable)
     if profile_verdict == "ENTRY_SMOKE_ONLY":
         verdict = RunQualityVerdict.ENTRY_SMOKE_ONLY
         recommended_next_profile = "active300"
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
-    # Rule 2: FAIL for explicitly failed/aborted runs
-    if status in (MeasurementStatus.FAILED, MeasurementStatus.ABORTED):
-        verdict = RunQualityVerdict.FAIL
-        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile
+    # Rule 2: FAIL_RUNTIME_ERROR / FAIL_MEASUREMENT_ERROR for failed/aborted runs
+    if status == MeasurementStatus.FAILED:
+        verdict = RunQualityVerdict.FAIL_RUNTIME_ERROR
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+
+    if status == MeasurementStatus.ABORTED:
+        verdict = RunQualityVerdict.FAIL_MEASUREMENT_ERROR
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
     # Rule 3: COMPLETED — requires runtime_truth to derive meaningful verdict
     if status == MeasurementStatus.COMPLETED:
         if runtime_truth is None:
             # Completed but no runtime data — cannot determine meaningful verdict
             verdict = None
-            return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile
+            return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
         is_critical_uma = _uma_state_is_critical_or_emergency(uma_pre_state)
         runtime_meaningful = runtime_truth.get("cycles_started", 0) > 0
@@ -285,14 +313,14 @@ def _derive_run_quality_verdict(
             hardware_constrained = True
             recommended_next_profile = None  # requires human review
         elif is_critical_uma and not runtime_meaningful:
-            verdict = RunQualityVerdict.FAIL
+            verdict = RunQualityVerdict.FAIL_MEASUREMENT_ERROR
         else:
             verdict = RunQualityVerdict.PASS_VALID_CAPABILITY_RUN
             if uma_pre_state in ("warn",):
                 recommended_next_profile = "active300"
 
     # PLANNED/RUNNING with no runtime_truth → verdict stays None (no execution occurred)
-    return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile
+    return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
 
 def _parse_sprint_report(report_path: str | None) -> dict | None:
@@ -372,14 +400,18 @@ def _stamp_profile_meta(result: LiveMeasurementResult, profile: str) -> None:
     result.profile_verdict = verdict
 
 
-def _stamp_run_quality_verdict(result: LiveMeasurementResult) -> None:
+def _stamp_run_quality_verdict(
+    result: LiveMeasurementResult,
+    is_memory_gate_abort: bool = False,
+) -> None:
     """Derive and stamp run quality verdict onto result."""
-    verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next = _derive_run_quality_verdict(
+    verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next, operator_action = _derive_run_quality_verdict(
         status=result.status,
         profile_verdict=result.profile_verdict,
         uma_pre_state=result.uma_pre_state,
         runtime_truth=result.runtime_truth,
         swap_pre_gib=result.uma_pre_swap_gib,
+        is_memory_gate_abort=is_memory_gate_abort,
     )
     result.run_quality_verdict = verdict.value if verdict is not None else None
     result.hardware_constrained = hardware_constrained
@@ -387,6 +419,64 @@ def _stamp_run_quality_verdict(result: LiveMeasurementResult) -> None:
     result.memory_state_post = result.uma_post_state
     result.swap_warning = swap_warning
     result.recommended_next_profile = recommended_next
+    result.recommended_operator_action = operator_action
+
+
+# ---------------------------------------------------------------------------
+# Preflight mode
+# ---------------------------------------------------------------------------
+
+async def _run_preflight() -> LiveMeasurementResult:
+    """
+    Sample readiness/memory/profile metadata without calling run_sprint.
+    Useful for checking whether Mac is ready after restart.
+    """
+    readiness = _check_readiness_artifacts()
+    uma_pre = await _capture_uma()
+
+    result = LiveMeasurementResult(
+        measurement_id=_make_measurement_id(),
+        sprint_id=None,
+        mode=RunMode.PREFLIGHT,
+        status=MeasurementStatus.PLANNED,
+        start_time_iso=_now_iso(),
+        end_time_iso=None,
+        planned_duration_s=None,
+        actual_duration_s=None,
+        query="(preflight-only)",
+        profile="preflight",
+        uma_pre_used_gib=uma_pre.get("used_gib"),
+        uma_pre_swap_gib=uma_pre.get("swap_gib"),
+        uma_pre_state=uma_pre.get("state"),
+        stabilization_seal_present=readiness.get("stabilization_seal", False),
+        hermetic_regression_manifest_present=readiness.get("hermetic_regression_manifest", False),
+        transport_authority_status_present=readiness.get("transport_authority_status", False),
+        mlx_wired_limit_seal_present=readiness.get("mlx_wired_limit_seal", False),
+    )
+
+    # Memory gate signal for preflight
+    is_critical = _uma_state_is_critical_or_emergency(result.uma_pre_state)
+    if is_critical:
+        result.status = MeasurementStatus.ABORTED
+        result.error = (
+            f"[MEMORY GATE] UMA pre-state is '{result.uma_pre_state}' — "
+            f"aborting live execution before sprint starts. "
+            f"Resolve memory pressure and retry."
+        )
+        result.hardware_constrained = True
+        result.memory_state_pre = result.uma_pre_state
+        result.swap_warning = result.uma_pre_swap_gib is not None and result.uma_pre_swap_gib > 0
+        result.recommended_next_profile = "none_until_memory_ok"
+        result.recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
+        result.run_quality_verdict = RunQualityVerdict.ABORTED_MEMORY_GATE.value
+        logging.warning("[PREFLIGHT] [MEMORY GATE] Memory critical: %s", result.uma_pre_state)
+    else:
+        result.hardware_constrained = False
+        result.memory_state_pre = result.uma_pre_state
+        result.swap_warning = uma_pre.get("swap_gib", 0) > 0
+        logging.info("[PREFLIGHT] Memory state=%s — preflight OK", result.uma_pre_state)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +560,8 @@ async def _run_dry_run(
                 f"requires ok/warn state for live execution. "
                 f"Use without --require-memory-ok or address memory pressure first."
             )
-            _stamp_run_quality_verdict(result)
+            # Thread is_memory_gate_abort=True so verdict = ABORTED_MEMORY_GATE
+            _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
             logging.error("[DRY-RUN] [MEMORY GATE] Aborted: %s", result.error)
             return result
         else:
@@ -518,8 +609,8 @@ async def _run_dry_run(
             "[DRY-RUN] Validation PASSED — ready for live execution with --live flag"
         )
 
-    # Stamp run quality verdict
-    _stamp_run_quality_verdict(result)
+    # Stamp run quality verdict (is_memory_gate_abort=False — already handled above if True)
+    _stamp_run_quality_verdict(result, is_memory_gate_abort=False)
 
     return result
 
@@ -591,7 +682,8 @@ async def _run_live_sprint(
                 f"Resolve memory pressure and retry."
             )
             _stamp_profile_meta(result, profile)
-            _stamp_run_quality_verdict(result)
+            # Thread is_memory_gate_abort=True so verdict = ABORTED_MEMORY_GATE
+            _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
             logging.error("[LIVE] [MEMORY GATE] Aborted: %s", result.error)
             return result
 
@@ -678,8 +770,8 @@ async def _run_live_sprint(
         # Restore original _make_sprint_id — critical for test isolation
         core_main._make_sprint_id = _original_make_sprint_id
 
-    # Always stamp run quality verdict
-    _stamp_run_quality_verdict(result)
+    # Always stamp run quality verdict (is_memory_gate_abort=False — handled above if True)
+    _stamp_run_quality_verdict(result, is_memory_gate_abort=False)
 
     return result
 
@@ -707,6 +799,7 @@ Examples:
   python benchmarks/live_sprint_measurement.py --profile smoke180 --query "LockBit ransomware"
   python benchmarks/live_sprint_measurement.py --profile active300 --query "APT29" --live
   python benchmarks/live_sprint_measurement.py --profile active600 --query "ransomware" --live --output-json /tmp/measure.json
+  python benchmarks/live_sprint_measurement.py --print-preflight-only --output-json /tmp/preflight.json
         """,
     )
 
@@ -720,7 +813,7 @@ Examples:
     parser.add_argument(
         "--query",
         type=str,
-        required=True,
+        required=False,
         help="Sprint query string",
     )
     parser.add_argument(
@@ -762,6 +855,12 @@ Examples:
              "Dry-run reports the gate; live execution aborts before sprint starts.",
     )
     parser.add_argument(
+        "--print-preflight-only",
+        action="store_true",
+        help="Sample readiness/memory/profile metadata without running sprint. "
+             "Never calls run_sprint. Useful for checking readiness after restart.",
+    )
+    parser.add_argument(
         "--output-json",
         type=str,
         default=None,
@@ -791,7 +890,6 @@ def _render_md(result: LiveMeasurementResult) -> str:
         f"**Status:** {result.status.value}",
         f"**Quality Verdict:** `{verdict_badge}`",
         f"**Profile:** {result.profile}",
-        f"**Query:** `{result.query}`",
         "",
         "## Timing",
         "",
@@ -812,18 +910,34 @@ def _render_md(result: LiveMeasurementResult) -> str:
         f"- Swap warning: {result.swap_warning}",
         f"- Hardware constrained: {result.hardware_constrained}",
         f"- Recommended next profile: {result.recommended_next_profile or 'N/A'}",
+    ]
+
+    if result.recommended_operator_action:
+        lines.extend([
+            f"- Recommended operator action: {result.recommended_operator_action}",
+        ])
+
+    if result.query and result.query != "(preflight-only)":
+        lines.extend([
+            "",
+            "## Query",
+            "",
+            f"`{result.query}`",
+        ])
+
+    lines.extend([
         "",
         "## UMA Memory",
         "",
         f"- Pre-sprint: {result.uma_pre_used_gib} GiB used, {result.uma_pre_swap_gib} GiB swap, state={result.uma_pre_state}",
         f"- Post-sprint: {result.uma_post_used_gib} GiB used, {result.uma_post_swap_gib} GiB swap, state={result.uma_post_state}",
-        "",
-        "## Sprint Results" if result.mode == RunMode.LIVE else "## Sprint Results (not executed in dry-run)",
-        "",
-    ]
+    ])
 
     if result.mode == RunMode.LIVE:
         lines.extend([
+            "",
+            "## Sprint Results",
+            "",
             f"- Findings count: {result.findings_count}",
             f"- Cycles completed: {result.cycles_completed}",
             f"- Cycles started: {result.cycles_started}",
@@ -835,7 +949,10 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"- Report: {result.report_json_path}",
         ])
     else:
-        lines.append("- *(Sprint not executed in dry-run mode)*")
+        lines.extend([
+            "",
+            "## Sprint Results (not executed in this mode)",
+        ])
 
     lines.extend([
         "",
@@ -855,7 +972,7 @@ def _render_md(result: LiveMeasurementResult) -> str:
     ])
 
     if result.error:
-        lines.extend(["", f"## Error", "", f"```\n{result.error}\n```"])
+        lines.extend(["", "## Error", "", f"```\n{result.error}\n```"])
 
     return "\n".join(lines)
 
@@ -871,6 +988,41 @@ async def main() -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # Preflight mode — no query required, never calls run_sprint
+    if args.print_preflight_only:
+        result = await _run_preflight()
+
+        if args.output_json:
+            out_path = Path(args.output_json)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w") as f:
+                f.write(result.to_json())
+            logging.info("JSON result written to %s", out_path)
+
+        if args.output_md:
+            md_path = Path(args.output_md)
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(md_path, "w") as f:
+                f.write(_render_md(result))
+            logging.info("Markdown summary written to %s", md_path)
+
+        print(f"[PREFLIGHT] measurement_id={result.measurement_id} status={result.status.value}")
+        print(f"  verdict={result.run_quality_verdict}")
+        print(f"  uma_pre_state={result.uma_pre_state} uma_pre_used={result.uma_pre_used_gib} GiB")
+        print(f"  uma_pre_swap={result.uma_pre_swap_gib} GiB")
+        if result.error:
+            print(f"  ERROR: {result.error}")
+        if result.recommended_operator_action:
+            print(f"  OPERATOR ACTION: {result.recommended_operator_action}")
+        if result.status == MeasurementStatus.ABORTED:
+            return 2
+        return 0
+
+    # Require query for non-preflight modes
+    if not args.query:
+        logging.error("--query is required (use --print-preflight-only for preflight check without query)")
+        return 1
 
     # Resolve duration
     duration_s = args.duration or PROFILE_DURATION[args.profile]

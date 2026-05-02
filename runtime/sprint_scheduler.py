@@ -715,6 +715,8 @@ class SprintScheduler:
         # Capped at 10 entries to stay M1 8GB safe
         self._feed_verdicts: list[tuple[str, int, int, int, int]] = []  # (verdict_tag, s, f, w, q)
         self._public_verdicts: list[dict] = []  # public_branch_verdict dicts
+        # Sprint F207H: Public pipeline outcome for source_family_outcomes consumption
+        self._public_outcome: dict | None = None  # normalized public outcome dict
         # Sprint F160C: Per-sprint source economics — bounded local economics layer
         # In-memory only, reset per sprint, no cross-sprint state
         self._source_economics: dict[str, SourceEconomics] = {}
@@ -1763,6 +1765,20 @@ class SprintScheduler:
         # Sprint F169E: Public branch blocker aggregation — fail-soft
         if getattr(public_result, 'backend_degraded', False):
             self._result.public_backend_degraded = True
+
+        # Sprint F207H: Populate _public_outcome for source_family_outcomes consumption
+        # Maps PipelineRunResult fields to the shape normalize_source_family_outcome expects
+        self._public_outcome = {
+            "attempted": True,
+            "skipped": False,
+            "skip_reason": None,
+            "raw_count": getattr(public_result, 'discovered', 0) or 0,
+            "built_count": getattr(public_result, 'fetched', 0) or 0,
+            "accepted_count": getattr(public_result, 'accepted_findings', 0) or 0,
+            "error": getattr(public_result, 'error', None),
+            "timeout": getattr(public_result, 'timed_out', False),
+            "duration_s": getattr(public_result, 'elapsed_s', None),
+        }
 
         log.debug(
             f"[8XE] Public discovery: discovered={public_result.discovered} "
@@ -4389,6 +4405,9 @@ class SprintScheduler:
             _raw: dict | None = None
             if _lane == "FEED":
                 _raw = getattr(self, "_feed_verdicts", []) or None
+            elif _lane == AcquisitionLane.PUBLIC:
+                # Sprint F207H: Consume public pipeline outcome directly
+                _raw = getattr(self, "_public_outcome", None)
             elif self._lane_outcomes:
                 for _o in self._lane_outcomes:
                     if hasattr(_o, "lane") and _o.lane == _lane:
@@ -5970,6 +5989,8 @@ class SprintScheduler:
         # Sprint 8VN §C: Clear branch verdict accumulators
         self._feed_verdicts.clear()
         self._public_verdicts.clear()
+        # Sprint F207H: Reset public pipeline outcome
+        self._public_outcome = None
         # Sprint F160C: Clear per-sprint source economics
         self._source_economics.clear()
         # Sprint F203D: Reset evidence chain builder for new sprint
