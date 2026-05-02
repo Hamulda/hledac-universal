@@ -53,11 +53,13 @@ __all__ = [
     "AcquisitionLanePlan",
     "AcquisitionStrategySnapshot",
     "AcquisitionLaneOutcome",
+    "SourceFamilyOutcome",
     "build_acquisition_plan",
     "build_lane_query",
     "is_lane_enabled",
     "get_lane_plan",
     "lane_skip_reason",
+    "normalize_source_family_outcome",
 ]
 
 # ── Lane constants ────────────────────────────────────────────────────────────
@@ -167,9 +169,119 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
 
 
 @dataclass(frozen=True)
-class AcquisitionLaneOutcome:
-    """Normalized outcome for one acquisition lane run."""
+class SourceFamilyOutcome:
+    """Normalized outcome for one source family (lane) in the scheduler report.
 
+    F207G: Unifies CTOutcome, PassiveDNSOutcome, WaybackDiffResult, and feed
+    balance telemetry into one canonical shape so diagnostics have a single
+    place to explain per-family zero-yield.
+    """
+
+    family: str
+    attempted: bool
+    skipped: bool
+    skip_reason: str | None
+    raw_count: int
+    built_count: int
+    accepted_count: int
+    error: str | None
+    timeout: bool
+    duration_s: float | None
+
+    def to_dict(self) -> dict:
+        return {
+            "family": self.family,
+            "attempted": self.attempted,
+            "skipped": self.skipped,
+            "skip_reason": self.skip_reason,
+            "raw_count": self.raw_count,
+            "built_count": self.built_count,
+            "accepted_count": self.accepted_count,
+            "error": self.error,
+            "timeout": self.timeout,
+            "duration_s": round(self.duration_s, 3) if self.duration_s is not None else None,
+        }
+
+
+def normalize_source_family_outcome(family: str, raw: dict) -> dict:
+    """Normalize a raw lane or adapter outcome dict into SourceFamilyOutcome fields.
+
+    Handles three F207F shapes:
+    - AcquisitionLaneOutcome  (ct, wayback, passive_dns, blockchain lanes)
+    - dict with ct_results_raw / produced_items / accepted_findings keys
+    - Feed balance tuple (verdict_tag, signal, fallback_use, fallback_waste, quality)
+      which maps to family=FEED, attempted=True, raw_count=signal
+
+    Also handles the "missing family" case where no outcome was produced at all,
+    returning a skipped/attempted=False outcome for documentation purposes.
+    """
+    if raw is None:
+        return SourceFamilyOutcome(
+            family=family,
+            attempted=False,
+            skipped=True,
+            skip_reason="no_outcome_recorded",
+            raw_count=0,
+            built_count=0,
+            accepted_count=0,
+            error=None,
+            timeout=False,
+            duration_s=None,
+        ).to_dict()
+
+    # AcquisitionLaneOutcome (or compatible object with to_dict method)
+    if hasattr(raw, "to_dict"):
+        raw = raw.to_dict()
+
+    # Feed balance: raw is self._feed_verdicts which is list[tuple[tag, signal, fb_use, fb_waste, quality]].
+    # Handle a single verdict tuple directly; handle a list of verdicts by taking first.
+    if isinstance(raw, (list, tuple)) and not isinstance(raw, dict):
+        _verdict = raw if isinstance(raw, tuple) else raw[0]
+        if len(_verdict) >= 5 and isinstance(_verdict[1], int):
+            _tag, _sig, _fb_use, _fb_waste, _qual = _verdict[:5]
+            return SourceFamilyOutcome(
+                family=family,
+                attempted=True,
+                skipped=False,
+                skip_reason=None,
+                raw_count=_sig,
+                built_count=0,
+                accepted_count=0,
+                error=None,
+                timeout=False,
+                duration_s=None,
+            ).to_dict()
+
+    # Dict form — raw must be a Mapping after tuple/list is excluded above
+    _d: Any = raw  # type: ignore[assignment]
+    attempted = _d.get("attempted", False)
+    skip_reason = _d.get("skip_reason") if not attempted else None
+    skipped = _d.get("skipped", not attempted)
+
+    # CT/Wayback/PassiveDNS: built_count from produced_items or ct_results_raw as last resort
+    built_count = _d.get("built_count", _d.get("produced_items", _d.get("ct_results_raw", 0)))
+    # raw_count is ct_results_raw specifically; do NOT fall back to built_count —
+    # a zero raw_count has semantic meaning (no raw hits before filtering)
+    raw_count = _d.get("raw_count", _d.get("ct_results_raw", 0))
+    # AcquisitionLaneOutcome uses accepted_findings; SourceFamilyOutcome uses accepted_count
+    accepted_count = _d.get("accepted_count", _d.get("accepted_findings", 0))
+
+    return SourceFamilyOutcome(
+        family=family,
+        attempted=attempted,
+        skipped=skipped,
+        skip_reason=skip_reason,
+        raw_count=raw_count,
+        built_count=built_count,
+        accepted_count=accepted_count,
+        error=_d.get("error"),
+        timeout=_d.get("timeout", False),
+        duration_s=_d.get("duration_s"),
+    ).to_dict()
+
+
+@dataclass(frozen=True)
+class AcquisitionLaneOutcome:
     lane: str
     enabled: bool
     attempted: bool

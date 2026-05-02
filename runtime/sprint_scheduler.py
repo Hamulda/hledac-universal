@@ -79,6 +79,7 @@ from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
 from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionLane,
     AcquisitionLaneOutcome,
+    normalize_source_family_outcome,
     build_acquisition_plan,
     is_lane_enabled,
     lane_skip_reason,
@@ -4374,6 +4375,29 @@ class SprintScheduler:
                 "total_optional_findings": sum(o.get("accepted_findings", 0) for o in _outcomes_list),
                 "lane_errors": _lane_errors,
             }
+        # Sprint F207G: Canonical per-source-family outcome breakdown
+        # Unifies CT, Wayback, PassiveDNS, feed balance into one explainable section
+        _sfo: dict[str, dict] = {}
+        for _fam, _lane in [
+            ("ct", AcquisitionLane.CT),
+            ("wayback", AcquisitionLane.WAYBACK),
+            ("passive_dns", AcquisitionLane.PASSIVE_DNS),
+            ("blockchain", AcquisitionLane.BLOCKCHAIN),
+            ("feed", "FEED"),
+            ("public", AcquisitionLane.PUBLIC),
+        ]:
+            _raw: dict | None = None
+            if _lane == "FEED":
+                _raw = getattr(self, "_feed_verdicts", []) or None
+            elif self._lane_outcomes:
+                for _o in self._lane_outcomes:
+                    if hasattr(_o, "lane") and _o.lane == _lane:
+                        _raw = _o
+                        break
+            _sfo[_fam] = normalize_source_family_outcome(_fam, _raw)
+        # Academic is always skipped unless explicitly enabled
+        _sfo["academic"] = normalize_source_family_outcome("academic", None)
+        report["source_family_outcomes"] = _sfo
         return report
 
     # ── Sprint 8RC: IOC-aware prioritisation ───────────────────────────────
