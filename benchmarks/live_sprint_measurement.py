@@ -638,6 +638,7 @@ def _derive_next_action(
         return ("inspect_public_reject_reasons", top_public_reject_reason)
 
     # Rule 2: feed dominance high, BOTH public AND ct were attempted, nonfeed accepted=0 → inspect
+    # NOTE: Rule 5 and Rule 4 must fire BEFORE this rule so specific CT/public actions take priority
     if feed_dominance_score is not None and feed_dominance_score >= 0.7:
         if nonfeed_accepted_findings == 0:
             # BOTH nonfeed families must have run (not just one)
@@ -646,16 +647,16 @@ def _derive_next_action(
                 return ("inspect_nonfeed_rejection_or_raw_counts", None)
             return ("improve_nonfeed_lanes", None)
 
+    # Rule 5: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
+    if ct_findings == 0 and _was_family_attempted(runtime_truth, "ct"):
+        return ("inspect_ct_query_domain", None)
+
     # Rule 4: feed-only with public findings present AND ct was attempted but zero ct findings
     # Only fires when public had findings (public_findings > 0) — distinguishes from Rule 5
     if (total_findings > 0 and feed_findings == total_findings
             and _was_family_attempted(runtime_truth, "ct")
             and public_findings > 0):
         return ("improve_nonfeed_lanes", None)
-
-    # Rule 5: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
-    if ct_findings == 0 and _was_family_attempted(runtime_truth, "ct"):
-        return ("inspect_ct_query_domain", None)
 
     # Rule 6: valid multi-source yield
     if nonfeed_accepted_findings > 0:
