@@ -441,6 +441,7 @@ def _derive_live_kpi(
     run_quality_verdict: str | None,
     hardware_constrained: bool | None,
     public_pipeline: dict | None = None,
+    timing_truth: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -470,6 +471,13 @@ def _derive_live_kpi(
       - hardware_constrained
       - next_action
       - next_action_detail                (F207K)
+      - nonfeed_starvation_suspected      (F207M)
+      - nonfeed_starvation_reason         (F207M)
+      - windup_lead_requested_s           (F207M)
+      - windup_lead_observed_s            (F207M)
+      - active_window_budget_s            (F207M)
+      - nonfeed_eligible_families         (F207M)
+      - nonfeed_skipped_reasons           (F207M)
 
     Feed telemetry preference (F207K-C):
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
@@ -551,7 +559,43 @@ def _derive_live_kpi(
             key=lambda k: public_acceptance_reject_reasons[k]
         )
 
-    # next_action + next_action_detail (F207K)
+    # F207M: Nonfeed starvation detection
+    # Extract timing fields
+    tt = timing_truth or {}
+    windup_lead_requested_s: float | None = tt.get("windup_lead_requested_s")
+    windup_lead_observed_s: float | None = tt.get("windup_lead_observed_s")
+    active_window_budget_s: int | None = tt.get("active_window_budget_s")
+    active_runtime_occurred: bool = tt.get("active_runtime_occurred", False)
+
+    # nonfeed_eligible_families: nonfeed families that exist in branch_mix
+    nonfeed_eligible_families: list[str] = []
+    nonfeed_skipped_reasons: dict[str, str] = {}
+    if "public_findings" in branch_mix or "public_branch_timed_out" in rt:
+        nonfeed_eligible_families.append("public")
+    if "ct_findings" in branch_mix or "ct_branch_timed_out" in rt:
+        nonfeed_eligible_families.append("ct")
+
+    # Detection rule (F207M):
+    # If PASS_VALID_CAPABILITY_RUN AND nonfeed_attempted_families empty AND
+    # active_runtime_occurred true AND feed_findings > 0 AND both public/ct NOT timed out
+    # THEN starvation suspected — early windup consumed the window before nonfeed dispatch
+    nonfeed_starvation_suspected: bool = False
+    nonfeed_starvation_reason: str | None = None
+    nonfeed_findings = public_findings + ct_findings
+    if (
+        run_quality_verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN.value
+        and not nonfeed_attempted_families
+        and active_runtime_occurred
+        and feed_findings > 0
+        and nonfeed_findings == 0
+    ):
+        public_not_timed = not rt.get("public_branch_timed_out", False)
+        ct_not_timed = not rt.get("ct_branch_timed_out", False)
+        if public_not_timed and ct_not_timed:
+            nonfeed_starvation_suspected = True
+            nonfeed_starvation_reason = "early_windup_or_scheduler_order"
+
+    # next_action + next_action_detail (F207K, F207M)
     next_action, next_action_detail = _derive_next_action(
         status=status,
         is_memory_gate_abort=is_memory_gate_abort,
@@ -564,6 +608,7 @@ def _derive_live_kpi(
         runtime_truth=rt,
         feed_dominance_score=feed_dominance_score,
         top_public_reject_reason=top_public_reject_reason,
+        nonfeed_starvation_suspected=nonfeed_starvation_suspected,
     )
 
     return {
@@ -591,6 +636,14 @@ def _derive_live_kpi(
         "hardware_constrained": hardware_constrained,
         "next_action": next_action,
         "next_action_detail": next_action_detail,
+        # F207M: Nonfeed starvation
+        "nonfeed_starvation_suspected": nonfeed_starvation_suspected,
+        "nonfeed_starvation_reason": nonfeed_starvation_reason,
+        "windup_lead_requested_s": windup_lead_requested_s,
+        "windup_lead_observed_s": windup_lead_observed_s,
+        "active_window_budget_s": active_window_budget_s,
+        "nonfeed_eligible_families": nonfeed_eligible_families,
+        "nonfeed_skipped_reasons": nonfeed_skipped_reasons,
     }
 
 
@@ -618,13 +671,19 @@ def _derive_next_action(
     runtime_truth: dict,
     feed_dominance_score: float | None = None,
     top_public_reject_reason: str | None = None,
+    nonfeed_starvation_suspected: bool = False,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
     Returns a (action, detail) tuple where detail may be None.
     Rule order matters — public rejection (Rule 3) checked BEFORE feed-dominance (Rule 2)
     so operators see WHY public_findings=0 before generic nonfeed recommendations.
+    F207M: starvation rule fires before most other rules to surface scheduler-order fixes.
     """
+    # Rule 0: nonfeed starvation (F207M) — must fire early so operators see it
+    if nonfeed_starvation_suspected:
+        return ("fix_nonfeed_scheduler_order", None)
+
     # Rule 1: memory gate abort
     if is_memory_gate_abort:
         return ("clean_memory", None)
@@ -683,6 +742,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         run_quality_verdict=result.run_quality_verdict,
         hardware_constrained=result.hardware_constrained,
         public_pipeline=result.public_pipeline,
+        timing_truth=result.timing_truth,
     )
     result.live_kpi = kpi
 
@@ -1269,6 +1329,26 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"| Hardware constrained | {kpi.get('hardware_constrained', 'N/A')} |",
             f"| **Next action** | **{kpi.get('next_action', 'unknown')}** |",
         ])
+
+        # Non-feed Starvation section (F207M)
+        # Renders whenever timing data or eligible families are present
+        if kpi.get('nonfeed_eligible_families') or kpi.get('windup_lead_observed_s') is not None:
+            suspected = kpi.get('nonfeed_starvation_suspected', False)
+            starvation_rows = [
+                "",
+                "## Non-feed Starvation",
+                "",
+                f"| Metric | Value |",
+                f"| --- | --- |",
+                f"| Nonfeed starvation suspected | {suspected} |",
+                f"| Windup lead requested | {kpi.get('windup_lead_requested_s', 'N/A')}s |",
+                f"| Windup lead observed | {kpi.get('windup_lead_observed_s', 'N/A')}s |",
+                f"| Active window budget | {kpi.get('active_window_budget_s', 'N/A')}s |",
+                f"| Nonfeed eligible families | {kpi.get('nonfeed_eligible_families', [])} |",
+            ]
+            if suspected:
+                starvation_rows.insert(7, f"| Starvation reason | {kpi.get('nonfeed_starvation_reason', 'N/A')} |")
+            lines.extend(starvation_rows)
 
     # PUBLIC Acceptance section (F207K) — detailed breakdown
     kpi = result.live_kpi

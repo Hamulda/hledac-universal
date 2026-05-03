@@ -645,6 +645,14 @@ async def run_sprint(
             next_hint = "current query and source mix working — continue as-is"
 
         # --- Runtime truth (smoke vs meaningful) ---------------------------------
+        # [F207L] Compute CT findings: legacy ct_log_stored + new acquisition lane CT findings
+        # The new acquisition lane (crtsh_adapter) is the canonical nonfeed CT path.
+        # lane_ct_accepted_findings tracks new-lane CT; ct_log_stored tracks legacy CT pipeline.
+        # Both paths can run in the same sprint — sum them for total CT signal.
+        _lane_ct = getattr(result, "lane_ct_accepted_findings", 0) or 0
+        _legacy_ct = getattr(result, "ct_log_stored", 0) or 0
+        _total_ct = _lane_ct + _legacy_ct
+
         runtime_truth = _runtime_truth(
             actual_duration_s=actual_duration,
             query=query,
@@ -656,7 +664,8 @@ async def run_sprint(
             public_accepted_findings=result.public_accepted_findings,
             feed_findings=feed_fnd,
             # Sprint F194A: CT findings additive to canonical truth accounting
-            ct_findings=result.ct_log_stored,
+            # [F207L] Sum legacy ct_log_stored + lane_ct_accepted_findings from new acquisition lanes
+            ct_findings=_total_ct,
             # F176A: Hardware pressure surfaces for smoke classification
             swap_detected=_swap_detected_pre,
             uma_state=_uma_state_pre,

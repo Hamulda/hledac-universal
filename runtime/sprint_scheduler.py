@@ -79,11 +79,19 @@ from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
 from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionLane,
     AcquisitionLaneOutcome,
+    NonfeedPlanDebug,
     normalize_source_family_outcome,
     build_acquisition_plan,
     is_lane_enabled,
     lane_skip_reason,
+    get_lane_plan,
+    build_lane_query,
     run_enabled_acquisition_lanes,
+    _get_ct_adapter,
+)
+from hledac.universal.runtime.source_finding_bridge import (
+    ct_results_to_findings,
+    wayback_results_to_findings,
 )
 
 if TYPE_CHECKING:
@@ -450,6 +458,14 @@ class SprintSchedulerResult:
     lane_wayback_accepted_findings: int = 0
     lane_pdns_accepted_findings: int = 0
     lane_blockchain_accepted_findings: int = 0
+    # Sprint F207M-A: Nonfeed pre-dispatch telemetry
+    nonfeed_predispatch_attempted: bool = False
+    nonfeed_predispatch_skipped: dict[str, str] = field(default_factory=dict)
+    nonfeed_predispatch_lanes: tuple[str, ...] = ()
+    nonfeed_predispatch_duration_s: float = 0.0
+    windup_blocked_until_nonfeed_attempted: bool = False
+    # Sprint F207L: Nonfeed lane planning debug snapshot for live KPI diagnosis
+    nonfeed_plan_debug: "NonfeedPlanDebug | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +665,8 @@ class SprintScheduler:
         # Sprint 8UC B.5: OODA loop
         self._ooda_interval: float = 60.0
         self._last_ooda: float = 0.0
+        # Sprint F207M-A: Nonfeed pre-dispatch guard — set True after first predispatch runs
+        self._nonfeed_predispatch_done: bool = False
         # Sprint 8VB: Adaptive timeout EMA
         # F196C: Bounded to prevent unbounded growth across sprints
         self._fetch_latency_ema: dict[str, float] = {}
@@ -1162,6 +1180,8 @@ class SprintScheduler:
                 accepted_findings_so_far=self._result.accepted_findings,
                 branch_timeout_count=self._result.branch_timeout_count,
             )
+            # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
+            self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
         except Exception:
             self._acquisition_plan = None
 
@@ -1185,9 +1205,20 @@ class SprintScheduler:
                 # Periodic tick
                 phase = self._runner.tick(now_monotonic)
 
+                # ── Sprint F207M-A: Nonfeed pre-dispatch checkpoint ───────────
+                # Run BEFORE windup guard so CT is attempted before early windup can fire.
+                # Called once per sprint; subsequent calls are no-ops.
+                await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
+
                 # ── Wind-down guard ────────────────────────────────────────
                 # Sprint F206C: Delegated to runner.windup_guard()
+                # Sprint F207M-A: Extended to also block windup until nonfeed pre-dispatch runs
                 if self._runner.windup_guard(now_monotonic):
+                    # If nonfeed pre-dispatch hasn't run yet, yield to it first
+                    if not self._nonfeed_predispatch_done:
+                        log.debug("[F207M-A] Windup signalled but pre-dispatch not done — yielding")
+                        # Give pre-dispatch a chance before entering windup
+                        await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
                     # Phase already advanced via tick(); let scheduler handle pre-windup ops
                     # Sprint 8RA: Flush dedup at WINDUP entry
                     await self._flush_dedup()
@@ -1400,6 +1431,258 @@ class SprintScheduler:
             log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
         return self._result
+
+    # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
+
+    async def _maybe_dispatch_nonfeed_probe_lanes(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> None:
+        """
+        Sprint F207M-A: Bounded nonfeed pre-dispatch checkpoint.
+
+        Fires before the first active cycle's aggressive branch fan-out can trigger
+        early windup, ensuring CT (and optionally WAYBACK/PASSIVE_DNS) are attempted
+        at least once for domain queries before the sprint winds down.
+
+        Invariants (strict):
+          - No stealth, no graph writes, no unbounded network
+          - max_items <= 5, timeout_s <= 15
+          - Fail-soft: errors/skips are telemetry only, never crash sprint
+          - CT only by default for domain queries
+          - WAYBACK/PASSIVE_DNS only when memory is ok/warn
+
+        Windup blocking:
+          If domain query + CT enabled but not yet attempted, set
+          windup_blocked_until_nonfeed_attempted = True so the windup gate
+          delays entry until pre-dispatch completes.
+        """
+        import time as _time
+
+        if self._nonfeed_predispatch_done:
+            return
+
+        if self._acquisition_plan is None:
+            return
+
+        # Check if CT is enabled in the acquisition plan
+        ct_plan = get_lane_plan(self._acquisition_plan, AcquisitionLane.CT)
+        if ct_plan is None or not ct_plan.enabled:
+            self._nonfeed_predispatch_done = True
+            return
+
+        # Check if this is a domain query (CT pre-dispatch is only meaningful for domains)
+        if not is_lane_enabled(self._acquisition_plan, AcquisitionLane.CT):
+            # CT not enabled — nothing to pre-dispatch
+            self._nonfeed_predispatch_done = True
+            return
+
+        # Sprint F207M-A: Check whether CT was already attempted via aggressive branch
+        _ct_already_run = (
+            self._result.ct_log_discovered > 0
+            or self._result.lane_ct_accepted_findings > 0
+            or getattr(self._ct_log_client, "_called", False)
+        )
+
+        # Windup blocking: if domain query + CT enabled + not yet run, block windup
+        if _ct_already_run:
+            self._nonfeed_predispatch_done = True
+            return
+
+        # Windup will be blocked until pre-dispatch runs
+        self._result.windup_blocked_until_nonfeed_attempted = True
+        log.debug("[F207M-A] Nonfeed pre-dispatch: blocking windup until CT attempted")
+
+        # Determine memory state for optional lane gating
+        _uma = "ok"
+        if self._governor is not None:
+            try:
+                _snap = self._governor.evaluate()
+                _uma = getattr(_snap, "uma_state", "ok")
+            except Exception:
+                pass
+
+        _memory_ok = _uma in ("ok", "warn")
+
+        # Build a minimal CT plan with tiny bounds
+        from hledac.universal.runtime.acquisition_strategy import (
+            AcquisitionLanePlan,
+            AcquisitionLaneOutcome,
+            RiskLevel,
+        )
+
+        _t0 = _time.monotonic()
+        _skipped: dict[str, str] = {}
+        _attempted_lanes: list[str] = []
+        _outcome: AcquisitionLaneOutcome | None = None
+
+        async def _run_ct_predispatch() -> AcquisitionLaneOutcome:
+            """CT pre-dispatch with max_items=5, timeout=15s."""
+            _start = _time.monotonic()
+            _candidate_findings: tuple = ()
+            _rejection_reasons: tuple = ()
+            _rejected_count = 0
+            _sample_rejections: tuple = ()
+            _ct_error: str | None = None
+            _ct_results_raw = 0
+            try:
+                async with asyncio.timeout(15.0):
+                    _ct_call = _get_ct_adapter()
+                    # Build lane query for CT
+                    from hledac.universal.runtime.acquisition_strategy import build_lane_query
+                    _shaped = build_lane_query(query, AcquisitionLane.CT)
+                    if isinstance(_shaped, dict) or not _shaped:
+                        raise ValueError("empty_ct_query")
+                    result, ct_outcome = await _ct_call(
+                        query=_shaped,
+                        max_results=5,
+                        timeout_s=15.0,
+                    )
+                    _ct_results_raw = ct_outcome.raw_count
+
+                    # Bridge conversion
+                    candidates, rejections = ct_results_to_findings(
+                        result, ct_outcome, query, sprint_id=f"predispatch-{int(_time.time())}"
+                    )
+                    _candidate_findings = tuple(candidates)
+                    _rejection_reasons = tuple(rejections)
+                    _rejected_count = len(rejections)
+                    _sample_rejections = tuple(rejections[:3])
+
+                    accepted = 0
+                    if _candidate_findings and duckdb_store is not None:
+                        if hasattr(duckdb_store, "async_ingest_findings_batch"):
+                            try:
+                                ingest_results = await duckdb_store.async_ingest_findings_batch(
+                                    list(_candidate_findings)
+                                )
+                                accepted = sum(
+                                    1 for r in ingest_results
+                                    if isinstance(r, dict) and r.get("accepted")
+                                )
+                            except Exception:
+                                pass
+                    if ct_outcome.error:
+                        _ct_error = ct_outcome.error
+
+                    return AcquisitionLaneOutcome(
+                        lane=AcquisitionLane.CT,
+                        enabled=True,
+                        attempted=True,
+                        accepted_findings=accepted,
+                        produced_items=_ct_results_raw,
+                        duration_s=_time.monotonic() - _start,
+                        source_family="ct",
+                        ct_query=_shaped,
+                        ct_results_raw=_ct_results_raw,
+                        error=_ct_error,
+                        candidate_findings=_candidate_findings,
+                        rejection_reasons=_rejection_reasons,
+                        rejected_count=_rejected_count,
+                        sample_rejections=_sample_rejections,
+                    )
+            except asyncio.TimeoutError:
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CT,
+                    enabled=True,
+                    attempted=True,
+                    timeout=True,
+                    duration_s=_time.monotonic() - _start,
+                    error="predispatch_timeout",
+                    source_family="ct",
+                    ct_query=str(_shaped) if '_shaped' in dir() else "",
+                    ct_results_raw=_ct_results_raw,
+                    candidate_findings=_candidate_findings,
+                    rejection_reasons=_rejection_reasons,
+                    rejected_count=_rejected_count,
+                    sample_rejections=_sample_rejections,
+                )
+            except Exception as exc:
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CT,
+                    enabled=True,
+                    attempted=True,
+                    error=f"predispatch_error:{type(exc).__name__}:{exc}",
+                    duration_s=_time.monotonic() - _start,
+                    source_family="ct",
+                    ct_query=str(_shaped) if '_shaped' in dir() else "",
+                    ct_results_raw=_ct_results_raw,
+                    candidate_findings=_candidate_findings,
+                    rejection_reasons=_rejection_reasons,
+                    rejected_count=_rejected_count,
+                    sample_rejections=_sample_rejections,
+                )
+
+        # Actually run CT predispatch
+        try:
+            _outcome = await _run_ct_predispatch()
+            _attempted_lanes.append("ct")
+        except Exception as exc:
+            log.debug("[F207M-A] CT pre-dispatch failed: %s", exc)
+            _skipped["ct"] = f"predispatch_exception:{type(exc).__name__}"
+
+        # Optional: WAYBACK only if memory ok and domain present
+        if _memory_ok and _outcome and not _outcome.timeout:
+            from hledac.universal.runtime.acquisition_strategy import build_lane_query
+            _wayback_shaped = build_lane_query(query, AcquisitionLane.WAYBACK)
+            if _wayback_shaped and not isinstance(_wayback_shaped, dict):
+                try:
+                    from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+                    miner = WaybackDiffMiner()
+                    try:
+                        result = await miner.mine([str(_wayback_shaped)])
+                    finally:
+                        await miner.close()
+                    candidates, rejections = wayback_results_to_findings(
+                        result, str(_wayback_shaped), query,
+                        sprint_id=f"predispatch-wb-{int(_time.time())}"
+                    )
+                    _attempted_lanes.append("wayback")
+                except Exception as exc:
+                    _skipped["wayback"] = f"{type(exc).__name__}:{exc}"
+            else:
+                _skipped["wayback"] = "empty_query_or_disabled"
+        else:
+            _skip_reason = "memory_critical" if not _memory_ok else ("ct_timeout" if _outcome and _outcome.timeout else "ct_failed")
+            _skipped["wayback"] = _skip_reason
+
+        # Optional: PASSIVE_DNS only if memory ok
+        if _memory_ok:
+            from hledac.universal.runtime.acquisition_strategy import build_lane_query
+            _pdns_shaped = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
+            if _pdns_shaped and not isinstance(_pdns_shaped, dict):
+                try:
+                    from hledac.universal.security.passive_dns import call_lookup_passive_dns
+                    ips, pdns_outcome = await call_lookup_passive_dns(str(_pdns_shaped))
+                    _attempted_lanes.append("passive_dns")
+                except Exception as exc:
+                    _skipped["passive_dns"] = f"{type(exc).__name__}:{exc}"
+            else:
+                _skipped["passive_dns"] = "empty_query_or_disabled"
+        else:
+            _skipped["passive_dns"] = "memory_critical"
+
+        _duration = _time.monotonic() - _t0
+
+        # Record telemetry
+        self._result.nonfeed_predispatch_attempted = True
+        self._result.nonfeed_predispatch_lanes = tuple(_attempted_lanes)
+        self._result.nonfeed_predispatch_skipped = dict(_skipped)
+        self._result.nonfeed_predispatch_duration_s = _duration
+
+        # Accumulate CT outcome into scheduler truth if we got one
+        if _outcome is not None:
+            _outcomes = (_outcome,)
+            self._lane_outcomes = _outcomes
+            self._result.acquisition_lane_outcomes = _outcomes
+            self._accumulate_lane_findings(_outcomes, query)
+
+        self._nonfeed_predispatch_done = True
+        log.debug(
+            "[F207M-A] Nonfeed pre-dispatch done: lanes=%s, skipped=%s, dur=%.2fs",
+            _attempted_lanes, _skipped, _duration,
+        )
 
     # ── Cycle logic ────────────────────────────────────────────────────────
 
@@ -4510,6 +4793,22 @@ class SprintScheduler:
                 "skipped_lanes": _skipped,
                 "executed_lanes": _executed,
                 "lanes": _lanes_list,
+                # [F207L] Nonfeed lane planning debug snapshot for KPI diagnosis
+                "nonfeed_plan_debug": (
+                    {
+                        "domain_detected": self._acquisition_plan.nonfeed_plan_debug.domain_detected,
+                        "wallet_detected": self._acquisition_plan.nonfeed_plan_debug.wallet_detected,
+                        "enabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.enabled_nonfeed_lanes),
+                        "disabled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.disabled_nonfeed_lanes),
+                        "disabled_reasons": list(self._acquisition_plan.nonfeed_plan_debug.disabled_reasons),
+                        "scheduled_nonfeed_lanes": list(self._acquisition_plan.nonfeed_plan_debug.scheduled_nonfeed_lanes),
+                        "hardware_skipped_lanes": list(self._acquisition_plan.nonfeed_plan_debug.hardware_skipped_lanes),
+                        "nonfeed_execution_scheduled": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_scheduled,
+                        "nonfeed_execution_skip_reason": self._acquisition_plan.nonfeed_plan_debug.nonfeed_execution_skip_reason,
+                    }
+                    if self._acquisition_plan.nonfeed_plan_debug is not None
+                    else None
+                ),
             }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:
@@ -6189,6 +6488,8 @@ class SprintScheduler:
         self._public_verdicts.clear()
         # Sprint F207H: Reset public pipeline outcome
         self._public_outcome = None
+        # Sprint F207M-A: Reset nonfeed pre-dispatch guard for new sprint
+        self._nonfeed_predispatch_done = False
         # Sprint F160C: Clear per-sprint source economics
         self._source_economics.clear()
         # Sprint F203D: Reset evidence chain builder for new sprint
