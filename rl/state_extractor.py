@@ -3,15 +3,25 @@ Extrakce stavu pro MARL agenty.
 Stav obsahuje globální informace (z grafu, scheduleru) a lokální informace z aktuálního vlákna.
 """
 
-import mlx.core as mx
 from typing import Dict, Optional
+
+try:
+    import mlx.core as mx
+
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None
+
+import numpy as np
+
 
 class StateExtractor:
     def __init__(self, state_dim: int = 12, gnn_predictor: Optional['GNNPredictor'] = None):
         self.state_dim = state_dim
         self.gnn_predictor = gnn_predictor
 
-    def extract(self, thread_state: Dict, global_state: Dict) -> mx.array:
+    def extract(self, thread_state: Dict, global_state: Dict):
         """
         thread_state: {
             'entity_centrality': float,
@@ -59,4 +69,6 @@ class StateExtractor:
         else:
             features = features[:self.state_dim]
 
-        return mx.array(features)
+        if MLX_AVAILABLE:
+            return mx.array(features)
+        return np.array(features, dtype=np.float32)

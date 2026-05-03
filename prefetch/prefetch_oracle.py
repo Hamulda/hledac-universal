@@ -53,7 +53,14 @@ import time
 from collections import defaultdict, OrderedDict
 from typing import Dict, List, Optional, Tuple, Any
 
-import mlx.core as mx
+try:
+    import mlx.core as mx
+
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None
+
 import numpy as np
 
 from hledac.universal.research.parallel_scheduler import ParallelResearchScheduler
@@ -127,7 +134,7 @@ class PrefetchOracle:
         self.prefetch_stats = defaultdict(lambda: {'hits': 0, 'misses': 0, 'bytes': 0})
 
         # Aktuální task embedding (bude nastaven orchestrátorem)
-        self._current_task_embedding = mx.zeros(64)
+        self._current_task_embedding = np.zeros(64, dtype=np.float32)
 
         # Mapování node_id ↔ url (pro PQIndex)
         self._id_to_url = []                              # index -> url
@@ -151,7 +158,7 @@ class PrefetchOracle:
         if self._expire_task:
             await self._expire_task
 
-    def set_task_embedding(self, emb: mx.array):
+    def set_task_embedding(self, emb):
         """Nastaví embedding aktuálního výzkumného úkolu (např. z query)."""
         self._current_task_embedding = emb
 
@@ -262,7 +269,7 @@ class PrefetchOracle:
         # 2. Entity-based (PQIndex approximate nearest neighbors)
         emb = self._get_entity_embedding(entity)
         if emb is not None and self.pq_index.centroids is not None:
-            if not isinstance(emb, mx.array):
+            if MLX_AVAILABLE and not isinstance(emb, mx.array):
                 emb = mx.array(emb)
             similar = self.pq_index.search(emb, k=self._pq_k)            # vrací [(node_id, dist)]
             for node_id, dist in similar:
@@ -293,7 +300,7 @@ class PrefetchOracle:
                 pass
         return []
 
-    def _get_entity_embedding(self, entity: str) -> Optional[mx.array]:
+    def _get_entity_embedding(self, entity: str):
         """Placeholder pro get_entity_embedding - wrapper pro relationship_discovery."""
         if hasattr(self.rel_engine, 'get_entity_embedding'):
             try:
@@ -303,9 +310,11 @@ class PrefetchOracle:
             except Exception:
                 pass
         # Fallback - return random embedding for testing
-        return mx.random.normal(64)
+        if MLX_AVAILABLE:
+            return mx.random.normal(64)
+        return np.random.normal(size=64).astype(np.float32)
 
-    def _extract_features_batch(self, candidates: List[Dict]) -> mx.array:
+    def _extract_features_batch(self, candidates: List[Dict]):
         """Extrahuje feature vektory pro reranker. Vrací (n, RERANKER_DIM)."""
         features = []
         for i, c in enumerate(candidates):
@@ -328,9 +337,14 @@ class PrefetchOracle:
                 stage_score_np,
                 bandit_context
             ]).astype(np.float32)
-            features.append(mx.array(feat_np))
+            if MLX_AVAILABLE:
+                features.append(mx.array(feat_np))
+            else:
+                features.append(feat_np)
 
-        return mx.stack(features)
+        if MLX_AVAILABLE:
+            return mx.stack(features)
+        return np.stack(features)
 
     def _get_bandit_context_vector(self, candidate: Dict) -> np.ndarray:
         """Vrací feature vector pro bandit (numpy array float32, dim BANDIT_DIM)."""
@@ -338,7 +352,7 @@ class PrefetchOracle:
         entity = candidate.get('entity', '')
         entity_emb = self._get_entity_embedding(entity)
         if entity_emb is not None:
-            if isinstance(entity_emb, mx.array):
+            if MLX_AVAILABLE and isinstance(entity_emb, mx.array):
                 entity_emb_np = entity_emb.astype(np.float32)
             else:
                 entity_emb_np = np.array(entity_emb, dtype=np.float32)

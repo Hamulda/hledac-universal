@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +82,8 @@ async def async_getaddrinfo(
     """
     loop = asyncio.get_running_loop()
     if timeout is not None and timeout > 0:
-        return await asyncio.wait_for(
-            loop.getaddrinfo(host, port, family=family, type=type_, proto=proto),
-            timeout=timeout
-        )
+        async with asyncio.timeout(timeout):
+            return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
     return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
 
 

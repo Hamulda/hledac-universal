@@ -3,9 +3,17 @@ Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatel
 """
 
 import numpy as np
-import mlx.core as mx
 from pathlib import Path
 from typing import Dict
+
+try:
+    import mlx.core as mx
+
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    mx = None
+
 
 class MARLReplayBuffer:
     def __init__(self, capacity: int = 50000, state_dim: int = 12, n_agents: int = 5):
@@ -20,8 +28,9 @@ class MARLReplayBuffer:
         self.pos = 0
         self.size = 0
 
-    def push(self, state: mx.array, actions: np.ndarray, reward: float, next_state: mx.array, done: bool):
-        mx.eval(state, next_state)
+    def push(self, state, actions: np.ndarray, reward: float, next_state, done: bool):
+        if MLX_AVAILABLE:
+            mx.eval(state, next_state)
         self.states[self.pos] = np.array(state)
         self.actions[self.pos] = actions
         self.rewards[self.pos] = reward
@@ -30,14 +39,22 @@ class MARLReplayBuffer:
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size: int) -> Dict[str, mx.array]:
+    def sample(self, batch_size: int) -> Dict:
         idx = np.random.randint(0, self.size, batch_size)
+        if MLX_AVAILABLE:
+            return {
+                'states': mx.array(self.states[idx]),
+                'actions': mx.array(self.actions[idx]),
+                'rewards': mx.array(self.rewards[idx]),
+                'next_states': mx.array(self.next_states[idx]),
+                'dones': mx.array(self.dones[idx])
+            }
         return {
-            'states': mx.array(self.states[idx]),
-            'actions': mx.array(self.actions[idx]),
-            'rewards': mx.array(self.rewards[idx]),
-            'next_states': mx.array(self.next_states[idx]),
-            'dones': mx.array(self.dones[idx])
+            'states': self.states[idx],
+            'actions': self.actions[idx],
+            'rewards': self.rewards[idx],
+            'next_states': self.next_states[idx],
+            'dones': self.dones[idx]
         }
 
     def save(self, path: Path):

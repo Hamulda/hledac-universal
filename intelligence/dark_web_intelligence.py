@@ -256,6 +256,7 @@ class DarkWebCrawler:
     MAX_CONTENT_CACHE: int = 200
     MAX_VISITED_URLS: int = 5000
     MAX_DISCOVERED_SERVICES: int = 1000
+    MAX_URL_QUEUE: int = 200  # bounded queue for discovered URLs
 
     # Regex patterns
     ONION_V2_PATTERN = re.compile(r"[a-z2-7]{16}\.onion")
@@ -289,7 +290,7 @@ class DarkWebCrawler:
         self.discovered_services: OrderedDict[str, HiddenService] = OrderedDict()
         self.visited_urls: OrderedDict[str, bool] = OrderedDict()
         self.content_cache: OrderedDict[str, DarkWebContent] = OrderedDict()
-        self.url_queue: asyncio.Queue = asyncio.Queue()
+        self.url_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_URL_QUEUE)
 
         # Statistics
         self.stats = {

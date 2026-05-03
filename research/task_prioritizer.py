@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 try:
     import mlx.core as mx
     import mlx.nn as nn
+
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
@@ -20,20 +21,32 @@ except ImportError:
     nn = None
 
 
-class TaskPrioritizer(nn.Module):
-    """
-    MLP pro predikci přínosu a doby trvání úlohy.
-    Vstup: 10-dim feature vector (task metadata)
-    Výstup: [gain, duration]
-    """
-    def __init__(self, input_dim: int = 10, hidden_dim: int = 32):
-        super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 2)  # [gain, duration]
+if MLX_AVAILABLE:
 
-    def __call__(self, x):
-        x = nn.relu(self.fc1(x))
-        return self.fc2(x)
+    class TaskPrioritizer(nn.Module):
+        """
+        MLP pro predikci přínosu a doby trvání úlohy.
+        Vstup: 10-dim feature vector (task metadata)
+        Výstup: [gain, duration]
+        """
+        def __init__(self, input_dim: int = 10, hidden_dim: int = 32):
+            super().__init__()
+            self.fc1 = nn.Linear(input_dim, hidden_dim)
+            self.fc2 = nn.Linear(hidden_dim, 2)  # [gain, duration]
+
+        def __call__(self, x):
+            x = nn.relu(self.fc1(x))
+            return self.fc2(x)
+
+else:
+    # Stub when MLX unavailable — fail-soft so callers handle unavailability
+    class TaskPrioritizer:  # type: ignore[no-redef]
+        """Stub when MLX unavailable."""
+        def __init__(self, *args, **kwargs):
+            raise ImportError("TaskPrioritizer requires MLX (not available)")
+
+        def __call__(self, *args, **kwargs):
+            raise ImportError("TaskPrioritizer requires MLX (not available)")
 
 
 class TaskPrioritizerWrapper:
@@ -83,6 +96,8 @@ class TaskPrioritizerWrapper:
 
     def _load(self):
         """Načte model ze souboru."""
+        if not MLX_AVAILABLE or self.model is None:
+            return
         if not self.model_path.exists():
             return
 
@@ -112,7 +127,7 @@ class TaskPrioritizerWrapper:
         except Exception as e:
             logger.error(f"Failed to save TaskPrioritizer: {e}")
 
-    def extract_features(self, task_metadata: Dict) -> mx.array:
+    def extract_features(self, task_metadata: Dict):
         """
         Extrahuje 10-dim feature vector z task metadata.
         TODO: implementovat podle skutečných metadat.

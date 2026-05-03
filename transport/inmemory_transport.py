@@ -1,8 +1,14 @@
+"""
+InMemory Transport — bounded queue for M1 8GB safety.
+"""
 import asyncio
-from typing import Dict, Callable, Any, Optional
+from typing import Dict, Callable, Optional
 import inspect
 
 from .base import Transport
+
+# Queue size bounds
+_MAX_QUEUE_SIZE = 128
 
 
 class InMemoryTransport(Transport):
@@ -10,7 +16,7 @@ class InMemoryTransport(Transport):
         self.node_id = node_id
         self.handlers: Dict[str, Callable] = {}
         self.peers: Dict[str, 'InMemoryTransport'] = {}
-        self._queue = asyncio.Queue()
+        self._queue = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
         self._task: Optional[asyncio.Task] = None
         self._ready = asyncio.Event()
 

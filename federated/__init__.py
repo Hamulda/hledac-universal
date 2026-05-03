@@ -19,7 +19,12 @@ except ImportError:
 
 # Sprint 58B components
 from .post_quantum import PQCProvider
-from .secure_aggregator import SecureAggregator
+
+# MLX-dependent — guarded so non-MLX environments can still import federated module
+try:
+    from .secure_aggregator import SecureAggregator
+except ImportError:
+    SecureAggregator = None  # type: ignore[misc,assignment]
 from .sketches import CountMinSketch, MinHashSketch, SimHashSketch
 from .transport_base import Transport
 from .transport_inmemory import InMemoryTransport
