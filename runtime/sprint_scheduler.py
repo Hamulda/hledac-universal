@@ -445,6 +445,11 @@ class SprintSchedulerResult:
     academic_findings_count: int = 0
     # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
     acquisition_lane_outcomes: tuple = ()  # tuple[AcquisitionLaneOutcome, ...]
+    # Sprint F207J-A: Lane verdict accumulators for signal_path and branch_mix truth
+    lane_ct_accepted_findings: int = 0
+    lane_wayback_accepted_findings: int = 0
+    lane_pdns_accepted_findings: int = 0
+    lane_blockchain_accepted_findings: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +716,9 @@ class SprintScheduler:
         self._acquisition_plan: Any = None
         # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
         self._lane_outcomes: tuple = ()
+        # Sprint F207J-A: Lane verdict accumulators for compute_sprint_intelligence
+        # (tag, signal, fallback_use, fallback_waste, quality)
+        self._lane_verdicts: list[tuple[str, int, int, int, int]] = []
         # Sprint 8VN §C: Feed + public branch verdict accumulators (additive, fail-soft)
         # Capped at 10 entries to stay M1 8GB safe
         self._feed_verdicts: list[tuple[str, int, int, int, int]] = []  # (verdict_tag, s, f, w, q)
@@ -1523,6 +1531,8 @@ class SprintScheduler:
             if _outcomes:
                 self._lane_outcomes = _outcomes
                 self._result.acquisition_lane_outcomes = _outcomes
+                # Sprint F207J-A: Accumulate lane findings into scheduler truth + _all_findings
+                self._accumulate_lane_findings(_outcomes, query)
         except Exception:
             pass  # fail-soft: lane runner must never crash sprint
 
@@ -1680,6 +1690,8 @@ class SprintScheduler:
             if _outcomes:
                 self._lane_outcomes = _outcomes
                 self._result.acquisition_lane_outcomes = _outcomes
+                # Sprint F207J-A: Accumulate lane findings into scheduler truth + _all_findings
+                self._accumulate_lane_findings(_outcomes, query)
         except Exception:
             pass  # fail-soft: lane runner must never crash sprint
 
@@ -1940,6 +1952,84 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: graph must never block sprint
         return count
+
+    # ── Sprint F207J-A: Lane findings accumulation into scheduler truth ──────────
+
+    def _accumulate_lane_findings(
+        self,
+        outcomes: tuple,
+        query: str,
+    ) -> None:
+        """
+        Sprint F207J-A: Accumulate accepted lane findings into scheduler truth.
+
+        Populates:
+          - _result.lane_*_accepted_findings counters
+          - _lane_verdicts accumulator (for feed_verdict analog per lane)
+          - _all_findings (bounded at 500, same cap as feed findings)
+
+        Also updates source_family_outcomes in the diagnostic report.
+
+        Args:
+            outcomes: Tuple of AcquisitionLaneOutcome from run_enabled_acquisition_lanes.
+            query: Sprint query string (used for _all_findings entry).
+        """
+        _LANE_SOURCE_MAP = {
+            AcquisitionLane.CT: "ct",
+            AcquisitionLane.WAYBACK: "wayback_archive",
+            AcquisitionLane.PASSIVE_DNS: "passive_dns",
+            AcquisitionLane.BLOCKCHAIN: "blockchain",
+        }
+
+        for outcome in outcomes:
+            if not getattr(outcome, "attempted", False):
+                continue
+            lane_name = getattr(outcome, "lane", None)
+            accepted = getattr(outcome, "accepted_findings", 0) or 0
+            produced = getattr(outcome, "produced_items", 0) or 0
+            error = getattr(outcome, "error", None)
+            duration = getattr(outcome, "duration_s", 0.0) or 0.0
+            source_family = getattr(outcome, "source_family", None)
+
+            # Update per-lane accepted count on SprintSchedulerResult
+            if lane_name == AcquisitionLane.CT:
+                self._result.lane_ct_accepted_findings += accepted
+            elif lane_name == AcquisitionLane.WAYBACK:
+                self._result.lane_wayback_accepted_findings += accepted
+            elif lane_name == AcquisitionLane.PASSIVE_DNS:
+                self._result.lane_pdns_accepted_findings += accepted
+            elif lane_name == AcquisitionLane.BLOCKCHAIN:
+                self._result.lane_blockchain_accepted_findings += accepted
+
+            # Accumulate into _lane_verdicts (same shape as _feed_verdicts)
+            # Shape: (verdict_tag, signal, fallback_use, fallback_waste, quality)
+            if accepted > 0:
+                verdict_tag = _LANE_SOURCE_MAP.get(lane_name, "unknown_lane")
+                # signal = accepted findings, fallback_use = 0 (lane-based, no fallback concept)
+                # quality encoded as: 1 if no error else 0 (int, matches _feed_verdicts shape)
+                quality = 1 if not error else 0
+                self._lane_verdicts.append((
+                    verdict_tag,
+                    accepted,   # signal
+                    0,          # fallback_use (not applicable for lane)
+                    0,          # fallback_waste (not applicable for lane)
+                    quality,
+                ))
+                # Bounded accumulation into _all_findings (cap is 500)
+                if len(self._all_findings) <= 499:
+                    finding_entry = {
+                        "type": f"lane_{verdict_tag}",
+                        "source": verdict_tag,
+                        "matched_patterns": produced,
+                        "accepted_findings": accepted,
+                        "severity": "medium",
+                        "confidence": quality * 0.8,
+                        "description": (
+                            f"{accepted} accepted findings from {verdict_tag} lane "
+                            f"in {duration:.1f}s"
+                        ),
+                    }
+                    self._all_findings.append(finding_entry)
 
     # ── F202B: Identity Stitching Sidecar ────────────────────────────────────
 
@@ -5607,6 +5697,35 @@ class SprintScheduler:
             "public_verdict": None,
         }
 
+        # ── Sprint F207J-A: Lane verdict (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN) ──
+        # Computed BEFORE the findings-based early return — lane_verdict does not
+        # depend on _all_findings and must appear in intelligence even for empty sprints.
+        try:
+            lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, '_lane_verdicts', []) or []
+            if lane_vlist:
+                verdict_tags: dict[str, int] = {}
+                total_signal = 0
+                total_quality = 0
+                for tag, sig, fb_use, fb_waste, qual in lane_vlist:
+                    verdict_tags[tag] = verdict_tags.get(tag, 0) + sig
+                    total_signal += sig
+                    total_quality += qual
+                dominant_tag = max(verdict_tags, key=verdict_tags.get) if verdict_tags else "none"
+                avg_quality = total_quality / len(lane_vlist) if lane_vlist else 0.0
+                result["lane_verdict"] = {
+                    "dominant_tag": dominant_tag,
+                    "cycle_count": len(lane_vlist),
+                    "total_signal_strength": total_signal,
+                    "tag_distribution": verdict_tags,
+                    "avg_quality": avg_quality,
+                    "ct_findings": self._result.lane_ct_accepted_findings,
+                    "wayback_findings": self._result.lane_wayback_accepted_findings,
+                    "pdns_findings": self._result.lane_pdns_accepted_findings,
+                    "blockchain_findings": self._result.lane_blockchain_accepted_findings,
+                }
+        except Exception:
+            result["lane_verdict"] = None
+
         if not findings:
             return result
 
@@ -5745,15 +5864,49 @@ class SprintScheduler:
         except Exception:
             result["public_verdict"] = None
 
+        # ── Sprint F207J-A: Lane verdict (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN) ──
+        try:
+            lane_vlist: list[tuple[str, int, int, int, int]] = getattr(self, '_lane_verdicts', []) or []
+            if lane_vlist:
+                verdict_tags: dict[str, int] = {}
+                total_signal = 0
+                total_quality = 0
+                for tag, sig, fb_use, fb_waste, qual in lane_vlist:
+                    verdict_tags[tag] = verdict_tags.get(tag, 0) + sig
+                    total_signal += sig
+                    total_quality += qual
+                dominant_tag = max(verdict_tags, key=verdict_tags.get) if verdict_tags else "none"
+                avg_quality = total_quality / len(lane_vlist) if lane_vlist else 0.0
+                result["lane_verdict"] = {
+                    "dominant_tag": dominant_tag,
+                    "cycle_count": len(lane_vlist),
+                    "total_signal_strength": total_signal,
+                    "tag_distribution": verdict_tags,
+                    "avg_quality": avg_quality,
+                    "ct_findings": self._result.lane_ct_accepted_findings,
+                    "wayback_findings": self._result.lane_wayback_accepted_findings,
+                    "pdns_findings": self._result.lane_pdns_accepted_findings,
+                    "blockchain_findings": self._result.lane_blockchain_accepted_findings,
+                }
+        except Exception:
+            result["lane_verdict"] = None
+
         # ── Signal path + branch mix health ────────────────────────────────
         try:
             corr = result.get("correlation") or {}
             sig_quality = corr.get("signal_quality", "weak")
             cross_conf = corr.get("cross_source_confidence", 0.0)
             camp_conf = corr.get("campaign_confidence", 0.0)
+            # Sprint F207J-A: Include lane findings in total findings count
             feed_f = self._result.accepted_findings or 0
             pub_f = self._result.public_accepted_findings or 0
-            total_findings = feed_f + pub_f
+            lane_f = (
+                self._result.lane_ct_accepted_findings
+                + self._result.lane_wayback_accepted_findings
+                + self._result.lane_pdns_accepted_findings
+                + self._result.lane_blockchain_accepted_findings
+            )
+            total_findings = feed_f + pub_f + lane_f
 
             # Dominant signal path
             if sig_quality == "strong":
@@ -6021,6 +6174,12 @@ class SprintScheduler:
         # Sprint F207A: Reset multi-source lane outcomes for new sprint
         self._lane_outcomes = ()
         self._result.acquisition_lane_outcomes = ()
+        # Sprint F207J-A: Clear lane verdict accumulators
+        self._lane_verdicts.clear()
+        self._result.lane_ct_accepted_findings = 0
+        self._result.lane_wayback_accepted_findings = 0
+        self._result.lane_pdns_accepted_findings = 0
+        self._result.lane_blockchain_accepted_findings = 0
 
 
 # ---------------------------------------------------------------------------

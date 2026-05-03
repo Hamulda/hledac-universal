@@ -186,6 +186,9 @@ class LiveMeasurementResult:
     recommended_next_profile: str | None = None
     recommended_operator_action: str | None = None
 
+    # Live KPI (F207J)
+    live_kpi: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -422,6 +425,183 @@ def _stamp_run_quality_verdict(
     result.recommended_operator_action = operator_action
 
 
+def _derive_live_kpi(
+    status: MeasurementStatus,
+    is_memory_gate_abort: bool,
+    runtime_truth: dict | None,
+    actual_duration_s: float | None,
+    primary_signal_source: str | None,
+    run_quality_verdict: str | None,
+    hardware_constrained: bool | None,
+) -> dict:
+    """
+    Compute live KPI dict from parsed sprint report.
+
+    Returns a dict with:
+      - total_findings
+      - accepted_findings
+      - cycles_completed
+      - findings_per_min
+      - primary_signal_source
+      - source_family_counts
+      - nonfeed_attempted_families
+      - nonfeed_accepted_findings
+      - public_fetch_attempted
+      - public_acceptance_rejected
+      - feed_dominance_score
+      - run_quality_verdict
+      - hardware_constrained
+      - next_action
+    """
+    rt = runtime_truth or {}
+    branch_mix = rt.get("branch_mix", {})
+
+    # Basic counts
+    feed_findings = branch_mix.get("feed_findings", 0)
+    public_findings = branch_mix.get("public_findings", 0)
+    ct_findings = branch_mix.get("ct_findings", 0)
+    total_findings = feed_findings + public_findings + ct_findings
+    accepted_findings = rt.get("accepted_findings") or 0
+    cycles_completed = rt.get("cycles_completed") or 0
+
+    # findings_per_min: compute from actual_duration_s
+    findings_per_min: float | None = None
+    if actual_duration_s and actual_duration_s > 0:
+        findings_per_min = round((total_findings / actual_duration_s) * 60, 2)
+
+    # source_family_counts
+    source_family_counts: dict[str, int] = {}
+    if feed_findings > 0:
+        source_family_counts["feed"] = feed_findings
+    if public_findings > 0:
+        source_family_counts["public"] = public_findings
+    if ct_findings > 0:
+        source_family_counts["ct"] = ct_findings
+
+    # nonfeed_attempted_families: families with 0 findings (they were attempted)
+    nonfeed_attempted_families: list[str] = []
+    if public_findings == 0 and _was_family_attempted(rt, "public"):
+        nonfeed_attempted_families.append("public")
+    if ct_findings == 0 and _was_family_attempted(rt, "ct"):
+        nonfeed_attempted_families.append("ct")
+
+    # nonfeed_accepted_findings
+    nonfeed_accepted_findings = accepted_findings - feed_findings if accepted_findings else 0
+    nonfeed_accepted_findings = max(0, nonfeed_accepted_findings)
+
+    # public_fetch_attempted / public_acceptance_rejected
+    public_fetch_attempted = _was_family_attempted(rt, "public")
+    # public_acceptance_rejected: attempted but no accepted from public
+    public_acceptance_rejected = (
+        public_fetch_attempted and public_findings == 0 and nonfeed_accepted_findings == 0
+    )
+
+    # feed_dominance_score: ratio of feed findings to total
+    feed_dominance_score: float | None = None
+    if total_findings > 0:
+        feed_dominance_score = round(feed_findings / total_findings, 4)
+
+    # next_action
+    next_action = _derive_next_action(
+        status=status,
+        is_memory_gate_abort=is_memory_gate_abort,
+        nonfeed_accepted_findings=nonfeed_accepted_findings,
+        public_fetch_attempted=public_fetch_attempted,
+        feed_findings=feed_findings,
+        total_findings=total_findings,
+        ct_findings=ct_findings,
+        runtime_truth=rt,
+    )
+
+    return {
+        "total_findings": total_findings,
+        "accepted_findings": accepted_findings,
+        "cycles_completed": cycles_completed,
+        "findings_per_min": findings_per_min,
+        "primary_signal_source": primary_signal_source,
+        "source_family_counts": source_family_counts,
+        "nonfeed_attempted_families": nonfeed_attempted_families,
+        "nonfeed_accepted_findings": nonfeed_accepted_findings,
+        "public_fetch_attempted": public_fetch_attempted,
+        "public_acceptance_rejected": public_acceptance_rejected,
+        "feed_dominance_score": feed_dominance_score,
+        "run_quality_verdict": run_quality_verdict,
+        "hardware_constrained": hardware_constrained,
+        "next_action": next_action,
+    }
+
+
+def _was_family_attempted(runtime_truth: dict, family: str) -> bool:
+    """Return True if a source family was attempted (not just present in branch_mix)."""
+    # Detection heuristic: family has >0 findings OR branch timed out (indicates it ran)
+    branch_mix = runtime_truth.get("branch_mix", {})
+    family_findings = branch_mix.get(f"{family}_findings", 0)
+    if family_findings > 0:
+        return True
+    # Also true if branch timed out for this family
+    timed_out = runtime_truth.get(f"{family}_branch_timed_out", False)
+    return timed_out
+
+
+def _derive_next_action(
+    status: MeasurementStatus,
+    is_memory_gate_abort: bool,
+    nonfeed_accepted_findings: int,
+    public_fetch_attempted: bool,
+    feed_findings: int,
+    total_findings: int,
+    ct_findings: int,
+    runtime_truth: dict,
+) -> str:
+    """Derive next_action string based on sprint outcome rules."""
+    # Rule 1: memory gate abort
+    if is_memory_gate_abort:
+        return "clean_memory"
+
+    # Rule 2: public attempted but accepted=0 (only when ct was NOT attempted)
+    if (public_fetch_attempted and nonfeed_accepted_findings == 0
+            and feed_findings == total_findings
+            and not _was_family_attempted(runtime_truth, "ct")):
+        return "inspect_public_reject_reasons"
+
+    # Rule 3: feed-only with multiple nonfeed families attempted (public AND ct both ran)
+    if (total_findings > 0 and feed_findings == total_findings
+            and _was_family_attempted(runtime_truth, "ct")
+            and public_fetch_attempted):
+        return "improve_nonfeed_lanes"
+
+    # Rule 4: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
+    if ct_findings == 0 and _was_family_attempted(runtime_truth, "ct"):
+        return "inspect_ct_query_domain"
+
+    # Rule 5: valid multi-source yield
+    if nonfeed_accepted_findings > 0:
+        return "run_active600_or_targeted_query"
+
+    # Rule 6: no findings but sprint completed — inspect
+    if total_findings == 0 and status == MeasurementStatus.COMPLETED:
+        return "inspect_empty_run"
+
+    # Default: no action determinable
+    return "unknown"
+
+
+def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
+    """Compute and stamp live_kpi onto result."""
+    kpi = _derive_live_kpi(
+        status=result.status,
+        is_memory_gate_abort=(
+            result.run_quality_verdict == RunQualityVerdict.ABORTED_MEMORY_GATE.value
+        ),
+        runtime_truth=result.runtime_truth,
+        actual_duration_s=result.actual_duration_s,
+        primary_signal_source=result.primary_signal_source,
+        run_quality_verdict=result.run_quality_verdict,
+        hardware_constrained=result.hardware_constrained,
+    )
+    result.live_kpi = kpi
+
+
 # ---------------------------------------------------------------------------
 # Preflight mode
 # ---------------------------------------------------------------------------
@@ -611,6 +791,7 @@ async def _run_dry_run(
 
     # Stamp run quality verdict (is_memory_gate_abort=False — already handled above if True)
     _stamp_run_quality_verdict(result, is_memory_gate_abort=False)
+    _stamp_live_kpi(result)
 
     return result
 
@@ -772,6 +953,7 @@ async def _run_live_sprint(
 
     # Always stamp run quality verdict (is_memory_gate_abort=False — handled above if True)
     _stamp_run_quality_verdict(result, is_memory_gate_abort=False)
+    _stamp_live_kpi(result)
 
     return result
 
@@ -973,6 +1155,31 @@ def _render_md(result: LiveMeasurementResult) -> str:
 
     if result.error:
         lines.extend(["", "## Error", "", f"```\n{result.error}\n```"])
+
+    # Live KPI section (F207J)
+    if result.live_kpi is not None:
+        kpi = result.live_kpi
+        lines.extend([
+            "",
+            "## Live KPI",
+            "",
+            f"| Metric | Value |",
+            f"| --- | --- |",
+            f"| Total findings | {kpi.get('total_findings', 'N/A')} |",
+            f"| Accepted findings | {kpi.get('accepted_findings', 'N/A')} |",
+            f"| Cycles completed | {kpi.get('cycles_completed', 'N/A')} |",
+            f"| Findings/min | {kpi.get('findings_per_min', 'N/A')} |",
+            f"| Primary signal | {kpi.get('primary_signal_source', 'N/A')} |",
+            f"| Feed dominance | {kpi.get('feed_dominance_score', 'N/A')} |",
+            f"| Source families | {json.dumps(kpi.get('source_family_counts', {}))} |",
+            f"| Nonfeed attempted | {kpi.get('nonfeed_attempted_families', [])} |",
+            f"| Nonfeed accepted | {kpi.get('nonfeed_accepted_findings', 'N/A')} |",
+            f"| Public attempted | {kpi.get('public_fetch_attempted', 'N/A')} |",
+            f"| Public rejected | {kpi.get('public_acceptance_rejected', 'N/A')} |",
+            f"| Quality verdict | {kpi.get('run_quality_verdict', 'N/A')} |",
+            f"| Hardware constrained | {kpi.get('hardware_constrained', 'N/A')} |",
+            f"| **Next action** | **{kpi.get('next_action', 'unknown')}** |",
+        ])
 
     return "\n".join(lines)
 

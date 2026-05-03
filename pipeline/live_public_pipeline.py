@@ -206,6 +206,9 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     # F207F: PUBLIC Yield — per-page JS/feed skip telemetry
     js_renderer_skipped_reason: str | None = None  # xml_or_feed_url | xml_recovered | browser_unavailable
     fetch_blocked_reason: str | None = None  # uma_memory | quality_skip (page not fetched due to gate)
+    # F207J-C: PUBLIC Acceptance — per-page acceptance rejection reason
+    # None = accepted | rejection reason string
+    rejection_reason: str | None = None
 
 
 class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
@@ -296,6 +299,15 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_fetch_candidate_count: int = 0  # URLs queued for fetch
     public_fetch_gate: str = "none"  # memory gate verdict: ok | critical_limited | emergency_blocked
     public_fetch_attempted_urls_sample: tuple[str, ...] = ()  # first 5 fetched URLs
+    # F207J-C: PUBLIC Acceptance — post-fetch acceptance/rejection telemetry
+    public_acceptance_attempted: int = 0  # pages where fetch succeeded (fetched=True)
+    public_acceptance_accepted: int = 0  # pages with accepted_findings > 0
+    public_acceptance_rejected: int = 0  # pages with accepted_findings == 0 (post-fetch rejection)
+    # rejection reason breakdown: {reason: count}
+    public_acceptance_reject_reasons: dict = {}
+    # bounded URL samples (max 5 each)
+    public_accepted_url_sample: tuple[str, ...] = ()
+    public_rejected_url_sample: tuple[str, ...] = ()
 
 
 # -----------------------------------------------------------------------------
@@ -833,6 +845,7 @@ async def _fetch_and_process_page(
                 redirected=False,
                 redirect_target=None,
                 fetch_blocked_reason="quality_skip",  # F207F
+                rejection_reason="no_fetch_result",  # F207J-C: not fetched due to quality gate
             )
             return ppr
 
@@ -874,6 +887,7 @@ async def _fetch_and_process_page(
                 redirected=False,
                 redirect_target=None,
                 fetch_blocked_reason="timeout",  # F207F
+                rejection_reason="fetch_error",  # F207J-C: fetch failed due to timeout
             )
             # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
             # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
@@ -905,6 +919,7 @@ async def _fetch_and_process_page(
                 redirected=False,
                 redirect_target=None,
                 fetch_blocked_reason="exception",  # F207F
+                rejection_reason="fetch_error",  # F207J-C: fetch failed due to exception
             )
             # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
             # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
@@ -953,6 +968,7 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+                rejection_reason="empty_text",  # F207J-C: fetched but text extraction returned nothing
             )
             return ppr
 
@@ -987,6 +1003,7 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+                rejection_reason="extraction_failed",  # F207J-C: HTML text extraction failed
             )
             return ppr
 
@@ -1033,6 +1050,7 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+                rejection_reason="low_information",  # F207J-C: page quality too low (SKIP_WEAK)
             )
             return ppr
 
@@ -1087,6 +1105,7 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+                rejection_reason="no_pattern_match",  # F207J-C: fetched text had no pattern matches
             )
             return ppr
 
@@ -1301,6 +1320,7 @@ async def _fetch_and_process_page(
             redirected=fetched_redirected,
             redirect_target=fetched_redirect_target,
             js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
+            rejection_reason=None,  # F207J-C: accepted (matched patterns + passed storage gate)
         )
         return ppr
 
@@ -2050,6 +2070,13 @@ async def async_run_live_public_pipeline(
             public_fetch_skipped=0,
             public_fetch_candidate_count=0,
             public_fetch_attempted_urls_sample=(),
+            # F207J-C: PUBLIC Acceptance — zeroed (UMA emergency abort before fetch)
+            public_acceptance_attempted=0,
+            public_acceptance_accepted=0,
+            public_acceptance_rejected=0,
+            public_acceptance_reject_reasons={},
+            public_accepted_url_sample=(),
+            public_rejected_url_sample=(),
         )
 
     effective_concurrency = fetch_concurrency
@@ -2131,6 +2158,13 @@ async def async_run_live_public_pipeline(
             public_fetch_accessibility_blocker=False,
             public_discovery_fallback_state="primary_failed_fallback_failed" if discovery_error else None,
             dominant_public_failure_mode=discovery_error if discovery_error else "no_discovery",
+            # F207J-C: PUBLIC Acceptance — zeroed (no hits means no fetch attempted)
+            public_acceptance_attempted=0,
+            public_acceptance_accepted=0,
+            public_acceptance_rejected=0,
+            public_acceptance_reject_reasons={},
+            public_accepted_url_sample=(),
+            public_rejected_url_sample=(),
         )
 
     # P16: Academic discovery integration — run after DuckDuckGo discovery
@@ -2398,6 +2432,31 @@ async def async_run_live_public_pipeline(
     public_fetch_candidate_count = len(hits)
     fetched_urls_sample_list = [p.url for p in all_page_results if p.fetched][:5]
     public_fetch_attempted_urls_sample = tuple(fetched_urls_sample_list)
+
+    # F207J-C: PUBLIC Acceptance — post-fetch acceptance/rejection aggregation
+    # Only pages where fetch was attempted (fetched=True) enter acceptance classification
+    _fetched_pages = [p for p in all_page_results if p.fetched]
+    public_acceptance_attempted = len(_fetched_pages)
+    public_acceptance_accepted: int = 0  # pages with accepted_findings > 0
+    public_acceptance_rejected: int = 0  # pages with accepted_findings == 0 (post-fetch rejection)
+    public_acceptance_reject_reasons: dict[str, int] = {}
+    accepted_urls: list[str] = []
+    rejected_urls: list[str] = []
+    for p in _fetched_pages:
+        rr = getattr(p, "rejection_reason", None)
+        if rr is None:
+            # Accepted: had pattern matches that passed storage gate
+            public_acceptance_accepted += 1
+            if len(accepted_urls) < 5:
+                accepted_urls.append(p.url)
+        else:
+            # Rejected: reasons include empty_text, no_pattern_match, low_information, etc.
+            public_acceptance_rejected += 1
+            public_acceptance_reject_reasons[rr] = public_acceptance_reject_reasons.get(rr, 0) + 1
+            if len(rejected_urls) < 5:
+                rejected_urls.append(p.url)
+    public_accepted_url_sample = tuple(accepted_urls)
+    public_rejected_url_sample = tuple(rejected_urls)
 
     # Sprint F150J Fix B: branch economics counters
     # Fix weak_pages_skipped: SKIP_WEAK post-fetch pages have error=None (not error!=None)
@@ -3168,6 +3227,13 @@ async def async_run_live_public_pipeline(
         public_fetch_candidate_count=public_fetch_candidate_count,
         public_fetch_gate=public_fetch_gate,
         public_fetch_attempted_urls_sample=public_fetch_attempted_urls_sample,
+        # F207J-C: PUBLIC Acceptance — post-fetch acceptance/rejection telemetry
+        public_acceptance_attempted=public_acceptance_attempted,
+        public_acceptance_accepted=public_acceptance_accepted,
+        public_acceptance_rejected=public_acceptance_rejected,
+        public_acceptance_reject_reasons=public_acceptance_reject_reasons,
+        public_accepted_url_sample=public_accepted_url_sample,
+        public_rejected_url_sample=public_rejected_url_sample,
     )
 
 
