@@ -48,6 +48,15 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+# [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
+# Used inside inner async lane runners (closures), not at module scope.
+from hledac.universal.runtime.source_finding_bridge import (
+    ct_results_to_findings,
+    wayback_results_to_findings,
+    passive_dns_results_to_findings,
+    MAX_SAMPLE_REJECTIONS,
+)
+
 __all__ = [
     "AcquisitionLane",
     "AcquisitionLanePlan",
@@ -294,6 +303,11 @@ class AcquisitionLaneOutcome:
     # [F207F] CT lane telemetry — shaped query and raw hit counts
     ct_query: str = ""
     ct_results_raw: int = 0
+    # [F207K-A] Bridge rejection tracking
+    candidate_findings: tuple = ()
+    rejection_reasons: tuple = ()
+    rejected_count: int = 0
+    sample_rejections: tuple = ()
 
     def to_dict(self) -> dict:
         return {
@@ -309,6 +323,9 @@ class AcquisitionLaneOutcome:
             # [F207F] CT telemetry
             "ct_query": self.ct_query,
             "ct_results_raw": self.ct_results_raw,
+            # [F207K-A] Bridge rejections
+            "rejected_count": self.rejected_count,
+            "sample_rejections": list(self.sample_rejections),
         }
 
 
@@ -683,14 +700,21 @@ async def run_enabled_acquisition_lanes(
     hardware_critical = uma_state in ("critical", "emergency")
 
     async def _run_ct_lane(plan) -> "AcquisitionLaneOutcome":
-        """Run CT/crt.sh lane — wired to call_crtsh() for measurable outcome."""
+        """Run CT/crt.sh lane — wired to call_crtsh() for measurable outcome.
+
+        [F207K-A] Uses bridge helpers to produce CanonicalFinding candidates
+        with rejection tracking. DB write is the lane runner's job (not adapter).
+        """
         start = time.monotonic()
         # [F207I-B] Shape domain-only query via build_lane_query
         _raw = build_lane_query(query, AcquisitionLane.CT)
         shaped_query = _raw if isinstance(_raw, str) else ""
         ct_error: str | None = None
         ct_results_raw = 0
-        accepted = 0
+        candidate_findings: tuple = ()
+        rejection_reasons: tuple = ()
+        rejected_count = 0
+        sample_rejections: tuple = ()
         try:
             async with asyncio.timeout(plan.timeout_s):
                 # [F207I-B] Use call_crtsh for richer CTOutcome
@@ -702,11 +726,22 @@ async def run_enabled_acquisition_lanes(
                     timeout_s=plan.timeout_s,
                 )
                 ct_results_raw = ct_outcome.raw_count
-                if result.hits and store is not None:
-                    findings = _hits_to_ct_findings(result.hits, query)
-                    if findings and hasattr(store, "async_ingest_findings_batch"):
+
+                # [F207K-A] Bridge conversion: raw hits → CanonicalFinding candidates + rejections
+                candidates, rejections = ct_results_to_findings(
+                    result, ct_outcome, query, sprint_id=f"ct-{int(time.time())}"
+                )
+                candidate_findings = tuple(candidates)
+                rejection_reasons = tuple(rejections)
+                rejected_count = len(rejections)
+                sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
+
+                accepted = 0
+                if candidate_findings and store is not None:
+                    # Lane runner writes to DB (this is the orchestrator, not an adapter)
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
-                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                             accepted = sum(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
@@ -727,6 +762,10 @@ async def run_enabled_acquisition_lanes(
                     ct_query=shaped_query,
                     ct_results_raw=ct_results_raw,
                     error=ct_error,
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -739,6 +778,10 @@ async def run_enabled_acquisition_lanes(
                 source_family="ct",
                 ct_query=shaped_query,
                 ct_results_raw=ct_results_raw,
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -750,11 +793,23 @@ async def run_enabled_acquisition_lanes(
                 source_family="ct",
                 ct_query=shaped_query,
                 ct_results_raw=ct_results_raw,
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
 
     async def _run_wayback_lane(plan) -> "AcquisitionLaneOutcome":
-        """Run Wayback diff mining lane — runtime safety check before network call."""
+        """Run Wayback diff mining lane — runtime safety check before network call.
+
+        [F207K-A] Uses bridge helpers to produce CanonicalFinding candidates
+        with rejection tracking.
+        """
         start = time.monotonic()
+        candidate_findings: tuple = ()
+        rejection_reasons: tuple = ()
+        rejected_count = 0
+        sample_rejections: tuple = ()
         # [F207I-B] Runtime safety check: WaybackDiffMiner must be importable and instantiable
         try:
             from hledac.universal.intelligence.wayback_diff_miner import (
@@ -773,6 +828,10 @@ async def run_enabled_acquisition_lanes(
                 duration_s=time.monotonic() - start,
                 source_family="archive",
                 error=f"adapter_not_runtime_safe: {_exc}",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
         try:
             async with asyncio.timeout(plan.timeout_s):
@@ -782,12 +841,20 @@ async def run_enabled_acquisition_lanes(
                 finally:
                     await miner.close()
 
+                # [F207K-A] Bridge conversion: WaybackDiffResult → CanonicalFinding candidates + rejections
+                candidates, rejections = wayback_results_to_findings(
+                    result, query, sprint_id=f"wayback-{int(time.time())}"
+                )
+                candidate_findings = tuple(candidates)
+                rejection_reasons = tuple(rejections)
+                rejected_count = len(rejections)
+                sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
+
                 accepted = 0
-                if result.change_events and store is not None:
-                    findings = result.to_findings(query=query, sprint_id="")
-                    if findings and hasattr(store, "async_ingest_findings_batch"):
+                if candidate_findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
-                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                             accepted = sum(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
@@ -803,6 +870,10 @@ async def run_enabled_acquisition_lanes(
                     produced_items=len(result.change_events),
                     duration_s=time.monotonic() - start,
                     source_family="archive",
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -813,6 +884,10 @@ async def run_enabled_acquisition_lanes(
                 duration_s=time.monotonic() - start,
                 error="timeout",
                 source_family="archive",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -822,17 +897,28 @@ async def run_enabled_acquisition_lanes(
                 error=f"{type(exc).__name__}:{exc}",
                 duration_s=time.monotonic() - start,
                 source_family="archive",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
 
     async def _run_pdns_lane(plan) -> "AcquisitionLaneOutcome":
-        """Run passive DNS lookup lane — wired to call_lookup_passive_dns with domain/IP shaping."""
+        """Run passive DNS lookup lane — wired to call_lookup_passive_dns with domain/IP shaping.
+
+        [F207K-A] Uses bridge helpers to produce CanonicalFinding candidates
+        with rejection tracking.
+        """
         start = time.monotonic()
         # [F207I-B] Shape domain/IP-only query via build_lane_query
         _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
         shaped_query = _raw if isinstance(_raw, str) else ""
         pdns_error: str | None = None
         produced = 0
-        accepted = 0
+        candidate_findings: tuple = ()
+        rejection_reasons: tuple = ()
+        rejected_count = 0
+        sample_rejections: tuple = ()
         try:
             async with asyncio.timeout(plan.timeout_s):
                 # [F207I-B] Use call_lookup_passive_dns for richer PassiveDNSOutcome
@@ -847,11 +933,20 @@ async def run_enabled_acquisition_lanes(
                 elif pdns_outcome.error:
                     pdns_error = pdns_outcome.error
 
-                if ips and store is not None:
-                    findings = _ips_to_pdns_findings(ips, query)
-                    if findings and hasattr(store, "async_ingest_findings_batch"):
+                # [F207K-A] Bridge conversion: IP list → CanonicalFinding candidates + rejections
+                candidates, rejections = passive_dns_results_to_findings(
+                    ips, pdns_outcome, query, sprint_id=f"pdns-{int(time.time())}"
+                )
+                candidate_findings = tuple(candidates)
+                rejection_reasons = tuple(rejections)
+                rejected_count = len(rejections)
+                sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
+
+                accepted = 0
+                if candidate_findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
-                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                             accepted = sum(
                                 1 for r in ingest_results
                                 if isinstance(r, dict) and r.get("accepted")
@@ -868,6 +963,10 @@ async def run_enabled_acquisition_lanes(
                     duration_s=time.monotonic() - start,
                     source_family="passive_dns",
                     error=pdns_error,
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -878,6 +977,10 @@ async def run_enabled_acquisition_lanes(
                 duration_s=time.monotonic() - start,
                 error="timeout",
                 source_family="passive_dns",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -887,6 +990,10 @@ async def run_enabled_acquisition_lanes(
                 error=f"{type(exc).__name__}:{exc}",
                 duration_s=time.monotonic() - start,
                 source_family="passive_dns",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
             )
 
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":

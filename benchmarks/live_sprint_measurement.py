@@ -189,6 +189,9 @@ class LiveMeasurementResult:
     # Live KPI (F207J)
     live_kpi: dict | None = None
 
+    # Public pipeline acceptance telemetry (F207K)
+    public_pipeline: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -379,6 +382,10 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
         # primary_signal_source: runtime_truth is authoritative
         result["primary_signal_source"] = rt.get("primary_signal_source") or summary.get("primary_signal_source")
 
+        # public_pipeline: public branch acceptance telemetry (F207K)
+        pp = data.get("public_pipeline") or {}
+        result["public_pipeline"] = pp if isinstance(pp, dict) else None
+
         return result
     except Exception:
         return None
@@ -433,6 +440,7 @@ def _derive_live_kpi(
     primary_signal_source: str | None,
     run_quality_verdict: str | None,
     hardware_constrained: bool | None,
+    public_pipeline: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -447,16 +455,51 @@ def _derive_live_kpi(
       - nonfeed_attempted_families
       - nonfeed_accepted_findings
       - public_fetch_attempted
-      - public_acceptance_rejected
+      - public_acceptance_attempted       (F207K)
+      - public_acceptance_accepted        (F207K)
+      - public_acceptance_rejected       (F207K)
+      - public_acceptance_reject_reasons  (F207K)
+      - top_public_reject_reason          (F207K)
+      - public_rejected_url_sample        (F207K)
       - feed_dominance_score
+      - feed_balance_recommendation
+      - estimated_per_source_soft_cap
+      - dominant_feed_source
+      - dominant_feed_share_pct
       - run_quality_verdict
       - hardware_constrained
       - next_action
+      - next_action_detail                (F207K)
+
+    Feed telemetry preference (F207K-C):
+    - If runtime_truth contains rich feed_telemetry (F207I path), use it.
+    - Otherwise fall back to branch_mix ratio for feed_dominance_score.
     """
     rt = runtime_truth or {}
     branch_mix = rt.get("branch_mix", {})
 
-    # Basic counts
+    # Rich feed telemetry from feed path (F207I), if present
+    feed_telemetry = rt.get("feed_telemetry")
+    if feed_telemetry:
+        feed_dominance_score: float | None = feed_telemetry.get("feed_dominance_score")
+        feed_balance_recommendation: str | None = feed_telemetry.get("feed_balance_recommendation")
+        estimated_per_source_soft_cap: int | None = feed_telemetry.get("estimated_per_source_soft_cap")
+        dominant_feed_source: str | None = feed_telemetry.get("dominant_feed_source")
+        dominant_feed_share_pct: float | None = feed_telemetry.get("dominant_feed_share_pct")
+    else:
+        # Basic counts from branch_mix (fallback)
+        feed_findings = branch_mix.get("feed_findings", 0)
+        public_findings = branch_mix.get("public_findings", 0)
+        ct_findings = branch_mix.get("ct_findings", 0)
+        total_findings = feed_findings + public_findings + ct_findings
+
+        feed_dominance_score = round(feed_findings / total_findings, 4) if total_findings > 0 else None
+        feed_balance_recommendation = None
+        estimated_per_source_soft_cap = None
+        dominant_feed_source = None
+        dominant_feed_share_pct = None
+
+    # Basic counts (needed for nonfeed fields regardless of path)
     feed_findings = branch_mix.get("feed_findings", 0)
     public_findings = branch_mix.get("public_findings", 0)
     ct_findings = branch_mix.get("ct_findings", 0)
@@ -496,13 +539,24 @@ def _derive_live_kpi(
         public_fetch_attempted and public_findings == 0 and nonfeed_accepted_findings == 0
     )
 
-    # feed_dominance_score: ratio of feed findings to total
-    feed_dominance_score: float | None = None
-    if total_findings > 0:
-        feed_dominance_score = round(feed_findings / total_findings, 4)
+    # Public pipeline telemetry from sprint report (F207K)
+    pp = public_pipeline or {}
+    public_acceptance_attempted: int = pp.get("public_acceptance_attempted", 0)
+    public_acceptance_accepted: int = pp.get("public_acceptance_accepted", 0)
+    public_acceptance_rejected_count: int = pp.get("public_acceptance_rejected", 0)
+    public_acceptance_reject_reasons: dict[str, int] = pp.get("public_acceptance_reject_reasons", {})
+    public_rejected_url_sample: tuple = pp.get("public_rejected_url_sample", ())
 
-    # next_action
-    next_action = _derive_next_action(
+    # top_public_reject_reason: most common rejection reason by count
+    top_public_reject_reason: str | None = None
+    if public_acceptance_reject_reasons:
+        top_public_reject_reason = max(
+            public_acceptance_reject_reasons,
+            key=lambda k: public_acceptance_reject_reasons[k]
+        )
+
+    # next_action + next_action_detail (F207K)
+    next_action, next_action_detail = _derive_next_action(
         status=status,
         is_memory_gate_abort=is_memory_gate_abort,
         nonfeed_accepted_findings=nonfeed_accepted_findings,
@@ -511,6 +565,8 @@ def _derive_live_kpi(
         total_findings=total_findings,
         ct_findings=ct_findings,
         runtime_truth=rt,
+        feed_dominance_score=feed_dominance_score,
+        top_public_reject_reason=top_public_reject_reason,
     )
 
     return {
@@ -523,11 +579,21 @@ def _derive_live_kpi(
         "nonfeed_attempted_families": nonfeed_attempted_families,
         "nonfeed_accepted_findings": nonfeed_accepted_findings,
         "public_fetch_attempted": public_fetch_attempted,
-        "public_acceptance_rejected": public_acceptance_rejected,
+        "public_acceptance_attempted": public_acceptance_attempted,
+        "public_acceptance_accepted": public_acceptance_accepted,
+        "public_acceptance_rejected": public_acceptance_rejected_count,
+        "public_acceptance_reject_reasons": public_acceptance_reject_reasons,
+        "top_public_reject_reason": top_public_reject_reason,
+        "public_rejected_url_sample": public_rejected_url_sample,
         "feed_dominance_score": feed_dominance_score,
+        "feed_balance_recommendation": feed_balance_recommendation,
+        "estimated_per_source_soft_cap": estimated_per_source_soft_cap,
+        "dominant_feed_source": dominant_feed_source,
+        "dominant_feed_share_pct": dominant_feed_share_pct,
         "run_quality_verdict": run_quality_verdict,
         "hardware_constrained": hardware_constrained,
         "next_action": next_action,
+        "next_action_detail": next_action_detail,
     }
 
 
@@ -552,38 +618,56 @@ def _derive_next_action(
     total_findings: int,
     ct_findings: int,
     runtime_truth: dict,
-) -> str:
-    """Derive next_action string based on sprint outcome rules."""
+    feed_dominance_score: float | None = None,
+    top_public_reject_reason: str | None = None,
+) -> tuple[str, str | None]:
+    """Derive (next_action, next_action_detail) based on sprint outcome rules.
+
+    Returns a (action, detail) tuple where detail may be None.
+    Feed-dominance-aware rules (F207K-C):
+    - Rule 2: feed dominance ≥ 0.7, nonfeed attempted but accepted=0 → inspect_nonfeed_rejection_or_raw_counts
+    - Rule 3: feed dominance ≥ 0.7, nonfeed NOT attempted → improve_nonfeed_lanes
+    """
     # Rule 1: memory gate abort
     if is_memory_gate_abort:
-        return "clean_memory"
+        return ("clean_memory", None)
 
-    # Rule 2: public attempted but accepted=0 (only when ct was NOT attempted)
+    # Rule 2: feed dominance high, BOTH public AND ct were attempted, nonfeed accepted=0 → inspect
+    if feed_dominance_score is not None and feed_dominance_score >= 0.7:
+        if nonfeed_accepted_findings == 0:
+            # BOTH nonfeed families must have run (not just one)
+            both_attempted = public_fetch_attempted and _was_family_attempted(runtime_truth, "ct")
+            if both_attempted:
+                return ("inspect_nonfeed_rejection_or_raw_counts", None)
+            return ("improve_nonfeed_lanes", None)
+
+    # Rule 3: public attempted but accepted=0 (only when ct was NOT attempted)
+    # F207K-B: include top rejection reason in detail
     if (public_fetch_attempted and nonfeed_accepted_findings == 0
             and feed_findings == total_findings
             and not _was_family_attempted(runtime_truth, "ct")):
-        return "inspect_public_reject_reasons"
+        return ("inspect_public_reject_reasons", top_public_reject_reason)
 
-    # Rule 3: feed-only with multiple nonfeed families attempted (public AND ct both ran)
+    # Rule 4: feed-only with multiple nonfeed families attempted (public AND ct both ran)
     if (total_findings > 0 and feed_findings == total_findings
             and _was_family_attempted(runtime_truth, "ct")
             and public_fetch_attempted):
-        return "improve_nonfeed_lanes"
+        return ("improve_nonfeed_lanes", None)
 
-    # Rule 4: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
+    # Rule 5: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
     if ct_findings == 0 and _was_family_attempted(runtime_truth, "ct"):
-        return "inspect_ct_query_domain"
+        return ("inspect_ct_query_domain", None)
 
-    # Rule 5: valid multi-source yield
+    # Rule 6: valid multi-source yield
     if nonfeed_accepted_findings > 0:
-        return "run_active600_or_targeted_query"
+        return ("run_active600_or_targeted_query", None)
 
-    # Rule 6: no findings but sprint completed — inspect
+    # Rule 7: no findings but sprint completed — inspect
     if total_findings == 0 and status == MeasurementStatus.COMPLETED:
-        return "inspect_empty_run"
+        return ("inspect_empty_run", None)
 
     # Default: no action determinable
-    return "unknown"
+    return ("unknown", None)
 
 
 def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
@@ -598,6 +682,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         primary_signal_source=result.primary_signal_source,
         run_quality_verdict=result.run_quality_verdict,
         hardware_constrained=result.hardware_constrained,
+        public_pipeline=result.public_pipeline,
     )
     result.live_kpi = kpi
 
@@ -931,6 +1016,7 @@ async def _run_live_sprint(
                 result.timing_truth = parsed.get("timing_truth")
                 result.checkpoint_zero_category = parsed.get("checkpoint_zero_category")
                 result.primary_signal_source = parsed.get("primary_signal_source")
+                result.public_pipeline = parsed.get("public_pipeline")
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
@@ -1175,10 +1261,65 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"| Nonfeed attempted | {kpi.get('nonfeed_attempted_families', [])} |",
             f"| Nonfeed accepted | {kpi.get('nonfeed_accepted_findings', 'N/A')} |",
             f"| Public attempted | {kpi.get('public_fetch_attempted', 'N/A')} |",
-            f"| Public rejected | {kpi.get('public_acceptance_rejected', 'N/A')} |",
+            f"| Public accepted (pages) | {kpi.get('public_acceptance_attempted', 0)} |",
+            f"| Public accepted (findings) | {kpi.get('public_acceptance_accepted', 0)} |",
+            f"| Public rejected (pages) | {kpi.get('public_acceptance_rejected', 0)} |",
+            f"| Top reject reason | {kpi.get('top_public_reject_reason', 'N/A')} |",
             f"| Quality verdict | {kpi.get('run_quality_verdict', 'N/A')} |",
             f"| Hardware constrained | {kpi.get('hardware_constrained', 'N/A')} |",
             f"| **Next action** | **{kpi.get('next_action', 'unknown')}** |",
+        ])
+
+    # PUBLIC Acceptance section (F207K) — detailed breakdown
+    kpi = result.live_kpi
+    if kpi is not None and kpi.get('public_fetch_attempted'):
+        reject_reasons = kpi.get('public_acceptance_reject_reasons', {})
+        rejected_urls = kpi.get('public_rejected_url_sample', ())
+        # Cap URL sample display at 3
+        url_sample_display = list(rejected_urls[:3])
+        top_reason = kpi.get('top_public_reject_reason', 'N/A')
+
+        lines.extend([
+            "",
+            "## PUBLIC Acceptance",
+            "",
+            f"| Metric | Value |",
+            f"| --- | --- |",
+            f"| Pages attempted | {kpi.get('public_acceptance_attempted', 0)} |",
+            f"| Pages accepted | {kpi.get('public_acceptance_accepted', 0)} |",
+            f"| Pages rejected | {kpi.get('public_acceptance_rejected', 0)} |",
+            f"| Top reject reason | {top_reason} |",
+        ])
+        if reject_reasons:
+            lines.append("")
+            lines.append("**Rejection reasons:**")
+            for reason, count in sorted(reject_reasons.items(), key=lambda x: -x[1]):
+                lines.append(f"- {reason}: {count}")
+        if url_sample_display:
+            lines.append("")
+            lines.append("**Rejected URL sample (max 3):**")
+            for url in url_sample_display:
+                lines.append(f"- {url}")
+
+    # Feed Balance section (F207K-C) — only when feed telemetry available
+    kpi = result.live_kpi
+    if kpi is not None and kpi.get('feed_dominance_score') is not None:
+        dom_source = kpi.get('dominant_feed_source', 'N/A')
+        dom_pct = kpi.get('dominant_feed_share_pct')
+        dom_pct_str = f"{round(dom_pct, 1)}%" if dom_pct is not None else 'N/A'
+        soft_cap = kpi.get('estimated_per_source_soft_cap', 'N/A')
+        recommendation = kpi.get('feed_balance_recommendation', 'N/A')
+        lines.extend([
+            "",
+            "## Feed Balance",
+            "",
+            f"| Metric | Value |",
+            f"| --- | --- |",
+            f"| Feed dominance score | {kpi.get('feed_dominance_score')} |",
+            f"| Dominant source | {dom_source} |",
+            f"| Dominant share | {dom_pct_str} |",
+            f"| Soft cap (est.) | {soft_cap} |",
+            f"| Recommendation | {recommendation} |",
         ])
 
     return "\n".join(lines)

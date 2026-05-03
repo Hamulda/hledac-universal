@@ -716,6 +716,8 @@ class SprintScheduler:
         self._acquisition_plan: Any = None
         # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
         self._lane_outcomes: tuple = ()
+        # Sprint F207K-A: Rejection tracking for non-feed bridge outcomes
+        self._lane_rejections: list[dict] = []
         # Sprint F207J-A: Lane verdict accumulators for compute_sprint_intelligence
         # (tag, signal, fallback_use, fallback_waste, quality)
         self._lane_verdicts: list[tuple[str, int, int, int, int]] = []
@@ -1962,11 +1964,13 @@ class SprintScheduler:
     ) -> None:
         """
         Sprint F207J-A: Accumulate accepted lane findings into scheduler truth.
+        [F207K-A] Extended with bridge rejection tracking.
 
         Populates:
           - _result.lane_*_accepted_findings counters
           - _lane_verdicts accumulator (for feed_verdict analog per lane)
           - _all_findings (bounded at 500, same cap as feed findings)
+          - _lane_rejections (source_family, rejection_reason, rejected_count, samples)
 
         Also updates source_family_outcomes in the diagnostic report.
 
@@ -1989,7 +1993,12 @@ class SprintScheduler:
             produced = getattr(outcome, "produced_items", 0) or 0
             error = getattr(outcome, "error", None)
             duration = getattr(outcome, "duration_s", 0.0) or 0.0
-            source_family = getattr(outcome, "source_family", None)
+            source_family = getattr(outcome, "source_family", None) or "unknown"
+
+            # [F207K-A] Extract bridge rejection data
+            rejected_count = getattr(outcome, "rejected_count", 0) or 0
+            rejection_reasons = getattr(outcome, "rejection_reasons", ()) or ()
+            sample_rejections = getattr(outcome, "sample_rejections", ()) or ()
 
             # Update per-lane accepted count on SprintSchedulerResult
             if lane_name == AcquisitionLane.CT:
@@ -2005,19 +2014,38 @@ class SprintScheduler:
             # Shape: (verdict_tag, signal, fallback_use, fallback_waste, quality)
             if accepted > 0:
                 verdict_tag = _LANE_SOURCE_MAP.get(lane_name, "unknown_lane")
-                # signal = accepted findings, fallback_use = 0 (lane-based, no fallback concept)
-                # quality encoded as: 1 if no error else 0 (int, matches _feed_verdicts shape)
                 quality = 1 if not error else 0
                 self._lane_verdicts.append((
                     verdict_tag,
-                    accepted,   # signal
-                    0,          # fallback_use (not applicable for lane)
-                    0,          # fallback_waste (not applicable for lane)
+                    accepted,
+                    0,
+                    0,
                     quality,
                 ))
-                # Bounded accumulation into _all_findings (cap is 500)
-                if len(self._all_findings) <= 499:
-                    finding_entry = {
+                # [F207K-A] Bounded accumulation of CanonicalFinding candidates from bridge
+                candidate_findings = getattr(outcome, "candidate_findings", ()) or ()
+                remaining = 500 - len(self._all_findings)
+                if candidate_findings and remaining > 0:
+                    for cf in candidate_findings[:remaining]:
+                        try:
+                            sf_type = getattr(cf, "source_type", verdict_tag) or verdict_tag
+                            conf = getattr(cf, "confidence", 0.5) or 0.5
+                            ts_val = getattr(cf, "ts", 0.0) or 0.0
+                            desc = getattr(cf, "payload_text", f"bridge finding") or f"bridge finding"
+                            self._all_findings.append({
+                                "type": f"lane_{sf_type}",
+                                "source": sf_type,
+                                "matched_patterns": produced,
+                                "accepted_findings": accepted,
+                                "severity": "medium",
+                                "confidence": conf,
+                                "description": str(desc)[:200] if desc else f"bridge finding from {verdict_tag}",
+                                "ts": ts_val,
+                            })
+                        except Exception:
+                            continue
+                elif remaining > 0:
+                    self._all_findings.append({
                         "type": f"lane_{verdict_tag}",
                         "source": verdict_tag,
                         "matched_patterns": produced,
@@ -2028,8 +2056,25 @@ class SprintScheduler:
                             f"{accepted} accepted findings from {verdict_tag} lane "
                             f"in {duration:.1f}s"
                         ),
-                    }
-                    self._all_findings.append(finding_entry)
+                    })
+
+            # [F207K-A] Record rejections: source_family, rejection_reason, rejected_count, sample
+            if rejected_count > 0 and source_family != "unknown":
+                if not hasattr(self, "_lane_rejections") or self._lane_rejections is None:
+                    self._lane_rejections = []
+                verdict_tag = _LANE_SOURCE_MAP.get(lane_name, "unknown_lane")
+                reason_counts: dict[str, int] = {}
+                for reason in rejection_reasons:
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                for reason, count in reason_counts.items():
+                    self._lane_rejections.append({
+                        "source_family": source_family,
+                        "rejection_reason": reason,
+                        "rejected_count": count,
+                        "sample": list(sample_rejections[:3]),
+                        "verdict_tag": verdict_tag,
+                        "lane_name": str(lane_name) if lane_name else "unknown",
+                    })
 
     # ── F202B: Identity Stitching Sidecar ────────────────────────────────────
 
@@ -6173,6 +6218,8 @@ class SprintScheduler:
         self._peak_rss_gib = 0.0
         # Sprint F207A: Reset multi-source lane outcomes for new sprint
         self._lane_outcomes = ()
+        # Sprint F207K-A: Reset lane rejection tracking
+        self._lane_rejections = []
         self._result.acquisition_lane_outcomes = ()
         # Sprint F207J-A: Clear lane verdict accumulators
         self._lane_verdicts.clear()
