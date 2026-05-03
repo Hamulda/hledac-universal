@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 # [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
 # Used inside inner async lane runners (closures), not at module scope.
@@ -63,6 +63,7 @@ __all__ = [
     "AcquisitionStrategySnapshot",
     "AcquisitionLaneOutcome",
     "SourceFamilyOutcome",
+    "NonfeedPlanDebug",
     "build_acquisition_plan",
     "build_lane_query",
     "is_lane_enabled",
@@ -112,6 +113,26 @@ class AcquisitionLanePlan:
 
 
 @dataclass
+class NonfeedPlanDebug:
+    """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
+
+    Records what the acquisition planner decided and why,
+    so live KPI can diagnose nonfeed_attempted=0 root cause.
+    """
+
+    domain_detected: bool = False
+    wallet_detected: bool = False
+    enabled_nonfeed_lanes: tuple[str, ...] = ()
+    disabled_nonfeed_lanes: tuple[str, ...] = ()
+    disabled_reasons: tuple[str, ...] = ()
+    scheduled_nonfeed_lanes: tuple[str, ...] = ()
+    # hardware_critical lanes that would run but are blocked by hardware state:
+    hardware_skipped_lanes: tuple[str, ...] = ()
+    nonfeed_execution_scheduled: bool = False
+    nonfeed_execution_skip_reason: str | None = None
+
+
+@dataclass
 class AcquisitionStrategySnapshot:
     """Full acquisition strategy snapshot for one sprint/cycle."""
 
@@ -125,6 +146,8 @@ class AcquisitionStrategySnapshot:
     stealth_ready: bool = False  # True when stealth explicitly enabled AND phase >= breaker_seam
     transport_degraded: bool = False  # True when transport authority signals degraded
     plans: tuple[AcquisitionLanePlan, ...] = ()
+    # [F207L] Nonfeed lane planning debug snapshot for live KPI diagnosis
+    nonfeed_plan_debug: NonfeedPlanDebug | None = None
 
 
 # ── Helper APIs for lane admission gating ──────────────────────────────────
@@ -642,6 +665,48 @@ def _build_plan_impl(
         )
     )
 
+    # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
+    _NONFEED_LANES = (
+        AcquisitionLane.CT,
+        AcquisitionLane.WAYBACK,
+        AcquisitionLane.PASSIVE_DNS,
+        AcquisitionLane.BLOCKCHAIN,
+    )
+    _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if hardware_critical else set()
+
+    _enabled_nonfeed = []
+    _disabled_nonfeed = []
+    _disabled_reasons = []
+    _scheduled_nonfeed = []
+    _hardware_skipped = []
+
+    for _plan in plans:
+        if _plan.lane not in _NONFEED_LANES:
+            continue
+        if _plan.enabled:
+            _enabled_nonfeed.append(_plan.lane)
+            if _plan.lane not in _hardware_blocked:
+                _scheduled_nonfeed.append(_plan.lane)
+            else:
+                _hardware_skipped.append(_plan.lane)
+        else:
+            _disabled_nonfeed.append(_plan.lane)
+            _disabled_reasons.append(_plan.reason)
+
+    _nonfeed_debug = NonfeedPlanDebug(
+        domain_detected=has_domain,
+        wallet_detected=has_crypto,
+        enabled_nonfeed_lanes=tuple(_enabled_nonfeed),
+        disabled_nonfeed_lanes=tuple(_disabled_nonfeed),
+        disabled_reasons=tuple(_disabled_reasons),
+        scheduled_nonfeed_lanes=tuple(_scheduled_nonfeed),
+        hardware_skipped_lanes=tuple(_hardware_skipped),
+        nonfeed_execution_scheduled=bool(_scheduled_nonfeed),
+        nonfeed_execution_skip_reason=(
+            "hardware_critical" if hardware_critical else None
+        ),
+    )
+
     return AcquisitionStrategySnapshot(
         query=query,
         duration_s=duration_s,
@@ -653,10 +718,27 @@ def _build_plan_impl(
         stealth_ready=stealth_ready,
         transport_degraded=transport_degraded,
         plans=tuple(plans),
+        nonfeed_plan_debug=_nonfeed_debug,
     )
 
 
 # ── Multi-source lane runner ─────────────────────────────────────────────────
+
+# [F207L] CT adapter indirection for testability.
+# Tests can patch this to a fake async callable.
+# Usage in tests:
+#   with patch.object(acquisition_strategy, "_ct_adapter", fake_crtsh):
+#       results = asyncio.run(run_enabled_acquisition_lanes(...))
+_ct_adapter: Any = None  # None = use real call_crtsh
+
+
+def _get_ct_adapter():
+    """Return the CT adapter: real call_crtsh or the patched fake."""
+    global _ct_adapter
+    if _ct_adapter is not None:
+        return _ct_adapter
+    from hledac.universal.discovery.crtsh_adapter import call_crtsh
+    return call_crtsh
 
 
 async def run_enabled_acquisition_lanes(
@@ -718,9 +800,9 @@ async def run_enabled_acquisition_lanes(
         try:
             async with asyncio.timeout(plan.timeout_s):
                 # [F207I-B] Use call_crtsh for richer CTOutcome
-                from hledac.universal.discovery.crtsh_adapter import call_crtsh
-
-                result, ct_outcome = await call_crtsh(
+                # [F207L] Use adapter indirection so tests can inject fake
+                _ct_call = _get_ct_adapter()
+                result, ct_outcome = await _ct_call(
                     query=shaped_query,
                     max_results=plan.max_items,
                     timeout_s=plan.timeout_s,
