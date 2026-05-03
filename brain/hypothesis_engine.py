@@ -3213,11 +3213,22 @@ Formát (pouze seznam, žádný další text):
             test = self.design_test(target)
 
             # Execute test (async wrapper for sync context)
-            # Sprint 8BG: Avoid nested asyncio.run() — detect running loop
+            # F206L M1-SAFE: detect running loop and use run_until_complete to avoid
+            # nested asyncio.run() which crashes Metal on Apple Silicon M1.
             try:
-                result = asyncio.run(
-                    self.execute_test(test, {**context, "hypothesis": target})
-                )
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    # No running loop — safe to use asyncio.run()
+                    result = asyncio.run(
+                        self.execute_test(test, {**context, "hypothesis": target})
+                    )
+                else:
+                    # Running loop exists — use run_until_complete on existing loop
+                    loop = asyncio.get_running_loop()
+                    result = loop.run_until_complete(
+                        self.execute_test(test, {**context, "hypothesis": target})
+                    )
                 self.update_hypothesis(target, result)
             except RuntimeError as e:
                 if "asyncio.run() cannot be called" in str(e):

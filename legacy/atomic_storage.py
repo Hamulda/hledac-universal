@@ -29,7 +29,6 @@ from dataclasses import dataclass, field, asdict
 from collections import OrderedDict, deque
 from heapq import heappush, heappushpop
 import logging
-import pickle  # always available
 import orjson  # faster than pickle for JSON-serializable data
 
 # Optional delta compressor for snapshot storage

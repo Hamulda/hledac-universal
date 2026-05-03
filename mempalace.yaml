@@ -1,65 +1,160 @@
-wing: hledac
+wing: universal
 rooms:
-- name: cache_storage
-  description: Files from cache_storage/
+- name: research
+  description: Files from research/
   keywords:
-  - cache_storage
-  - cache_storage
-- name: benchmark
-  description: Files from benchmark/
+  - research
+  - research
+- name: probe_f207f_academic_adapter_compat
+  description: Files from probe_f207f_academic_adapter_compat/
   keywords:
-  - benchmark
-  - benchmark
+  - probe_f207f_academic_adapter_compat
+  - probe_f207f_academic_adapter_compat
+- name: probe_f207k_live_clean_run
+  description: Files from probe_f207k_live_clean_run/
+  keywords:
+  - probe_f207k_live_clean_run
+  - probe_f207k_live_clean_run
+- name: probe_transport_fetch_cb_f206as
+  description: Files from probe_transport_fetch_cb_f206as/
+  keywords:
+  - probe_transport_fetch_cb_f206as
+  - probe_transport_fetch_cb_f206as
 - name: benchmark_results
   description: Files from benchmark_results/
   keywords:
   - benchmark_results
   - benchmark_results
+- name: pipeline
+  description: Files from pipeline/
+  keywords:
+  - pipeline
+  - pipeline
+- name: probe_f207h_degraded_mode
+  description: Files from probe_f207h_degraded_mode/
+  keywords:
+  - probe_f207h_degraded_mode
+  - probe_f207h_degraded_mode
+- name: coordinators
+  description: Files from coordinators/
+  keywords:
+  - coordinators
+  - coordinators
+- name: probe_f207i_feed_dominance
+  description: Files from probe_f207i_feed_dominance/
+  keywords:
+  - probe_f207i_feed_dominance
+  - probe_f207i_feed_dominance
+- name: probe_f207f_ct_wayback_pdns
+  description: Files from probe_f207f_ct_wayback_pdns/
+  keywords:
+  - probe_f207f_ct_wayback_pdns
+  - probe_f207f_ct_wayback_pdns
 - name: context_optimization
   description: Files from context_optimization/
   keywords:
   - context_optimization
   - context_optimization
+- name: probe_f207g_public_reality_lock
+  description: Files from probe_f207g_public_reality_lock/
+  keywords:
+  - probe_f207g_public_reality_lock
+  - probe_f207g_public_reality_lock
 - name: temp
   description: Files from temp/
   keywords:
   - temp
   - temp
-- name: staging_config
-  description: Files from staging_config/
-  keywords:
-  - staging_config
-  - staging_config
 - name: scripts
   description: Files from tools/
   keywords:
   - scripts
   - tools
-- name: analysis
-  description: Files from analysis/
+- name: probe_stealth_manager_f206ba
+  description: Files from probe_stealth_manager_f206ba/
   keywords:
-  - analysis
-  - analysis
+  - probe_stealth_manager_f206ba
+  - probe_stealth_manager_f206ba
+- name: probe_f207b_live_multisource
+  description: Files from probe_f207b_live_multisource/
+  keywords:
+  - probe_f207b_live_multisource
+  - probe_f207b_live_multisource
+- name: probe_transport_authority_f206az
+  description: Files from probe_transport_authority_f206az/
+  keywords:
+  - probe_transport_authority_f206az
+  - probe_transport_authority_f206az
+- name: transport
+  description: Files from transport/
+  keywords:
+  - transport
+  - transport
+- name: core
+  description: Files from core/
+  keywords:
+  - core
+  - core
 - name: memory
   description: Files from memory/
   keywords:
   - memory
   - memory
+- name: layers
+  description: Files from layers/
+  keywords:
+  - layers
+  - layers
 - name: cache
   description: Files from cache/
   keywords:
   - cache
   - cache
+- name: patterns
+  description: Files from patterns/
+  keywords:
+  - patterns
+  - patterns
 - name: embedding_cache
   description: Files from embedding_cache/
   keywords:
   - embedding_cache
   - embedding_cache
-- name: hledac.egg_info
-  description: Files from hledac.egg-info/
+- name: probe_graph_authority
+  description: Files from probe_graph_authority/
   keywords:
-  - hledac.egg_info
-  - hledac.egg-info
+  - probe_graph_authority
+  - probe_graph_authority
+- name: probe_qoder_doc_patch_f206ap
+  description: Files from probe_qoder_doc_patch_f206ap/
+  keywords:
+  - probe_qoder_doc_patch_f206ap
+  - probe_qoder_doc_patch_f206ap
+- name: probe_stealth_crawler_f206bf
+  description: Files from probe_stealth_crawler_f206bf/
+  keywords:
+  - probe_stealth_crawler_f206bf
+  - probe_stealth_crawler_f206bf
+- name: shadow_wal.lmdb
+  description: Files from shadow_wal.lmdb/
+  keywords:
+  - shadow_wal.lmdb
+  - shadow_wal.lmdb
+- name: probe_capability_kpi_f206bl
+  description: Files from probe_capability_kpi_f206bl/
+  keywords:
+  - probe_capability_kpi_f206bl
+  - probe_capability_kpi_f206bl
+- name: probe_reality_lock
+  description: Files from probe_reality_lock/
+  keywords:
+  - probe_reality_lock
+  - probe_reality_lock
+- name: intelligence
+  description: Files from intelligence/
+  keywords:
+  - intelligence
+  - intelligence
 - name: configuration
   description: Files from config/
   keywords:
@@ -70,166 +165,396 @@ rooms:
   keywords:
   - security
   - security
-- name: plugins
-  description: Files from plugins/
+- name: probe_f207f_feed_balance
+  description: Files from probe_f207f_feed_balance/
   keywords:
-  - plugins
-  - plugins
-- name: ai_research_platform
-  description: Files from ai-research-platform/
+  - probe_f207f_feed_balance
+  - probe_f207f_feed_balance
+- name: probe_acquisition_enforcement_f206bk
+  description: Files from probe_acquisition_enforcement_f206bk/
   keywords:
-  - ai_research_platform
-  - ai-research-platform
-- name: k8s
-  description: Files from k8s/
+  - probe_acquisition_enforcement_f206bk
+  - probe_acquisition_enforcement_f206bk
+- name: dht
+  description: Files from dht/
   keywords:
-  - k8s
-  - k8s
-- name: test_data
-  description: Files from test_data/
+  - dht
+  - dht
+- name: probe_discovery_fallback
+  description: Files from probe_discovery_fallback/
   keywords:
-  - test_data
-  - test_data
-- name: mcp_server
-  description: Files from mcp-server/
+  - probe_discovery_fallback
+  - probe_discovery_fallback
+- name: probe_curl_cffi_active_runtime
+  description: Files from probe_curl_cffi_active_runtime/
   keywords:
-  - mcp_server
-  - mcp-server
+  - probe_curl_cffi_active_runtime
+  - probe_curl_cffi_active_runtime
+- name: probe_f207c_mlx_import_safety
+  description: Files from probe_f207c_mlx_import_safety/
+  keywords:
+  - probe_f207c_mlx_import_safety
+  - probe_f207c_mlx_import_safety
+- name: network
+  description: Files from network/
+  keywords:
+  - network
+  - network
+- name: graph
+  description: Files from graph/
+  keywords:
+  - graph
+  - graph
+- name: runtime
+  description: Files from runtime/
+  keywords:
+  - runtime
+  - runtime
+- name: discovery
+  description: Files from discovery/
+  keywords:
+  - discovery
+  - discovery
 - name: testing
   description: Files from tests/
   keywords:
   - testing
   - tests
-- name: agents
-  description: Files from agents/
+- name: probe_f207k_feed_kpi
+  description: Files from probe_f207k_feed_kpi/
   keywords:
-  - agents
-  - agents
+  - probe_f207k_feed_kpi
+  - probe_f207k_feed_kpi
+- name: probe_transport_bypass_f206aw
+  description: Files from probe_transport_bypass_f206aw/
+  keywords:
+  - probe_transport_bypass_f206aw
+  - probe_transport_bypass_f206aw
+- name: planning
+  description: Files from planning/
+  keywords:
+  - planning
+  - planning
+- name: runbooks
+  description: Files from runbooks/
+  keywords:
+  - runbooks
+  - runbooks
+- name: probe_f207j_nonfeed_finding_bridge
+  description: Files from probe_f207j_nonfeed_finding_bridge/
+  keywords:
+  - probe_f207j_nonfeed_finding_bridge
+  - probe_f207j_nonfeed_finding_bridge
+- name: probe_acquisition_strategy_f206bg
+  description: Files from probe_acquisition_strategy_f206bg/
+  keywords:
+  - probe_acquisition_strategy_f206bg
+  - probe_acquisition_strategy_f206bg
+- name: legacy
+  description: Files from legacy/
+  keywords:
+  - legacy
+  - legacy
+- name: probe_f207h_source_outcome_consumption
+  description: Files from probe_f207h_source_outcome_consumption/
+  keywords:
+  - probe_f207h_source_outcome_consumption
+  - probe_f207h_source_outcome_consumption
+- name: probe_f207g_source_outcomes
+  description: Files from probe_f207g_source_outcomes/
+  keywords:
+  - probe_f207g_source_outcomes
+  - probe_f207g_source_outcomes
+- name: probe_f207h_memory_gate_verdict
+  description: Files from probe_f207h_memory_gate_verdict/
+  keywords:
+  - probe_f207h_memory_gate_verdict
+  - probe_f207h_memory_gate_verdict
 - name: backend
   description: Files from models/
   keywords:
   - backend
   - models
-- name: documentation
-  description: Files from docs/
+- name: probe_public_fetcher_pools_f206at
+  description: Files from probe_public_fetcher_pools_f206at/
   keywords:
-  - documentation
-  - docs
-- name: schemas
-  description: Files from schemas/
+  - probe_public_fetcher_pools_f206at
+  - probe_public_fetcher_pools_f206at
+- name: probe_transport_bypass_f206ax
+  description: Files from probe_transport_bypass_f206ax/
   keywords:
-  - schemas
-  - schemas
-- name: storage
-  description: Files from storage/
+  - probe_transport_bypass_f206ax
+  - probe_transport_bypass_f206ax
+- name: repowise_export
+  description: Files from repowise_export/
   keywords:
-  - storage
-  - storage
-- name: exports
-  description: Files from exports/
+  - repowise_export
+  - repowise_export
+- name: probe_f206an_stabilization
+  description: Files from probe_f206an_stabilization/
   keywords:
-  - exports
-  - exports
-- name: outdated
-  description: Files from outdated/
+  - probe_f206an_stabilization
+  - probe_f206an_stabilization
+- name: forensics
+  description: Files from forensics/
   keywords:
-  - outdated
-  - outdated
+  - forensics
+  - forensics
+- name: probe_f207g_live_quality_gate
+  description: Files from probe_f207g_live_quality_gate/
+  keywords:
+  - probe_f207g_live_quality_gate
+  - probe_f207g_live_quality_gate
+- name: probe_f207k_public_rejection_kpi
+  description: Files from probe_f207k_public_rejection_kpi/
+  keywords:
+  - probe_f207k_public_rejection_kpi
+  - probe_f207k_public_rejection_kpi
+- name: probe_f206aq_hermetic_regression
+  description: Files from probe_f206aq_hermetic_regression/
+  keywords:
+  - probe_f206aq_hermetic_regression
+  - probe_f206aq_hermetic_regression
+- name: probe_f207h_export_slim_mode
+  description: Files from probe_f207h_export_slim_mode/
+  keywords:
+  - probe_f207h_export_slim_mode
+  - probe_f207h_export_slim_mode
+- name: multimodal
+  description: Files from multimodal/
+  keywords:
+  - multimodal
+  - multimodal
+- name: probe_f207j_live_kpi
+  description: Files from probe_f207j_live_kpi/
+  keywords:
+  - probe_f207j_live_kpi
+  - probe_f207j_live_kpi
+- name: autonomy
+  description: Files from autonomy/
+  keywords:
+  - autonomy
+  - autonomy
 - name: logs
   description: Files from logs/
   keywords:
   - logs
   - logs
-- name: deployment
-  description: Files from deployment/
+- name: knowledge
+  description: Files from knowledge/
   keywords:
-  - deployment
-  - deployment
-- name: examples
-  description: Files from examples/
+  - knowledge
+  - knowledge
+- name: probe_f207f_public_yield
+  description: Files from probe_f207f_public_yield/
   keywords:
-  - examples
-  - examples
+  - probe_f207f_public_yield
+  - probe_f207f_public_yield
+- name: probe_f207d_core_mlx_failsoft
+  description: Files from probe_f207d_core_mlx_failsoft/
+  keywords:
+  - probe_f207d_core_mlx_failsoft
+  - probe_f207d_core_mlx_failsoft
+- name: probe_transport_authority_f206bc
+  description: Files from probe_transport_authority_f206bc/
+  keywords:
+  - probe_transport_authority_f206bc
+  - probe_transport_authority_f206bc
+- name: probe_f206bi_phase2_aggregate
+  description: Files from probe_f206bi_phase2_aggregate/
+  keywords:
+  - probe_f206bi_phase2_aggregate
+  - probe_f206bi_phase2_aggregate
+- name: execution
+  description: Files from execution/
+  keywords:
+  - execution
+  - execution
+- name: probe_f207e_live_multisource_yield
+  description: Files from probe_f207e_live_multisource_yield/
+  keywords:
+  - probe_f207e_live_multisource_yield
+  - probe_f207e_live_multisource_yield
+- name: prefetch
+  description: Files from prefetch/
+  keywords:
+  - prefetch
+  - prefetch
+- name: probe_f207g_adapter_contract
+  description: Files from probe_f207g_adapter_contract/
+  keywords:
+  - probe_f207g_adapter_contract
+  - probe_f207g_adapter_contract
 - name: benchmarks
   description: Files from benchmarks/
   keywords:
   - benchmarks
   - benchmarks
-- name: src_tauri
-  description: Files from src-tauri/
+- name: probe_stealth_manager_f206be
+  description: Files from probe_stealth_manager_f206be/
   keywords:
-  - src_tauri
-  - src-tauri
-- name: dev
-  description: Files from dev/
+  - probe_stealth_manager_f206be
+  - probe_stealth_manager_f206be
+- name: probe_transport_resolver_f206av
+  description: Files from probe_transport_resolver_f206av/
   keywords:
-  - dev
-  - dev
-- name: webui
-  description: Files from webui/
+  - probe_transport_resolver_f206av
+  - probe_transport_resolver_f206av
+- name: probe_f207k_nonfeed_accepted_path
+  description: Files from probe_f207k_nonfeed_accepted_path/
   keywords:
-  - webui
-  - webui
-- name: maintenance
-  description: Files from maintenance/
+  - probe_f207k_nonfeed_accepted_path
+  - probe_f207k_nonfeed_accepted_path
+- name: brain
+  description: Files from brain/
   keywords:
-  - maintenance
-  - maintenance
-- name: hledac
-  description: Files from hledac/
+  - brain
+  - brain
+- name: loops
+  description: Files from loops/
   keywords:
-  - hledac
-  - hledac
-- name: kubernetes
-  description: Files from kubernetes/
+  - loops
+  - loops
+- name: probe_stealth_crawler_f206bb
+  description: Files from probe_stealth_crawler_f206bb/
   keywords:
-  - kubernetes
-  - kubernetes
+  - probe_stealth_crawler_f206bb
+  - probe_stealth_crawler_f206bb
+- name: hypothesis
+  description: Files from hypothesis/
+  keywords:
+  - hypothesis
+  - hypothesis
+- name: stealth
+  description: Files from stealth/
+  keywords:
+  - stealth
+  - stealth
+- name: probe_e2e_readiness
+  description: Files from probe_e2e_readiness/
+  keywords:
+  - probe_e2e_readiness
+  - probe_e2e_readiness
+- name: probe_live_sprint_measurement_f206bh
+  description: Files from probe_live_sprint_measurement_f206bh/
+  keywords:
+  - probe_live_sprint_measurement_f206bh
+  - probe_live_sprint_measurement_f206bh
+- name: probe_stealth_transport_plan_f206ay
+  description: Files from probe_stealth_transport_plan_f206ay/
+  keywords:
+  - probe_stealth_transport_plan_f206ay
+  - probe_stealth_transport_plan_f206ay
+- name: text
+  description: Files from text/
+  keywords:
+  - text
+  - text
+- name: deep_research
+  description: Files from deep_research/
+  keywords:
+  - deep_research
+  - deep_research
+- name: probe_qoder_reality
+  description: Files from probe_qoder_reality/
+  keywords:
+  - probe_qoder_reality
+  - probe_qoder_reality
+- name: export
+  description: Files from export/
+  keywords:
+  - export
+  - export
+- name: monitoring
+  description: Files from monitoring/
+  keywords:
+  - monitoring
+  - monitoring
+- name: probe_hermes_authority
+  description: Files from probe_hermes_authority/
+  keywords:
+  - probe_hermes_authority
+  - probe_hermes_authority
 - name: data
   description: Files from data/
   keywords:
   - data
   - data
+- name: probe_f207a_multisource_acquisition
+  description: Files from probe_f207a_multisource_acquisition/
+  keywords:
+  - probe_f207a_multisource_acquisition
+  - probe_f207a_multisource_acquisition
+- name: probe_passive_dns_authority_f206bd
+  description: Files from probe_passive_dns_authority_f206bd/
+  keywords:
+  - probe_passive_dns_authority_f206bd
+  - probe_passive_dns_authority_f206bd
+- name: probe_m1_memory_authority
+  description: Files from probe_m1_memory_authority/
+  keywords:
+  - probe_m1_memory_authority
+  - probe_m1_memory_authority
+- name: runs
+  description: Files from runs/
+  keywords:
+  - runs
+  - runs
+- name: probe_network_bypass_f206au
+  description: Files from probe_network_bypass_f206au/
+  keywords:
+  - probe_network_bypass_f206au
+  - probe_network_bypass_f206au
+- name: federated
+  description: Files from federated/
+  keywords:
+  - federated
+  - federated
 - name: magicmock
   description: Files from MagicMock/
   keywords:
   - magicmock
   - magicmock
-- name: xray
-  description: Files from xray/
+- name: duckdb_tmp
+  description: Files from duckdb_tmp/
   keywords:
-  - xray
-  - xray
-- name: reports
-  description: Files from reports/
+  - duckdb_tmp
+  - duckdb_tmp
+- name: orchestrator
+  description: Files from orchestrator/
   keywords:
-  - reports
-  - reports
-- name: nas_results
-  description: Files from nas_results/
+  - orchestrator
+  - orchestrator
+- name: probe_f207j_nonfeed_execution
+  description: Files from probe_f207j_nonfeed_execution/
   keywords:
-  - nas_results
-  - nas_results
-- name: src
-  description: Files from src/
+  - probe_f207j_nonfeed_execution
+  - probe_f207j_nonfeed_execution
+- name: policy
+  description: Files from policy/
   keywords:
-  - src
-  - src
-- name: planning
-  description: Files from roadmap/
+  - policy
+  - policy
+- name: probe_discovery_mesh
+  description: Files from probe_discovery_mesh/
   keywords:
-  - planning
-  - roadmap
-- name: frontend
-  description: Files from frontend/
+  - probe_discovery_mesh
+  - probe_discovery_mesh
+- name: probe_f207j_public_acceptance_reasons
+  description: Files from probe_f207j_public_acceptance_reasons/
   keywords:
-  - frontend
-  - frontend
-- name: research
-  description: Files from research/
+  - probe_f207j_public_acceptance_reasons
+  - probe_f207j_public_acceptance_reasons
+- name: probe_transport_policy_f206ar
+  description: Files from probe_transport_policy_f206ar/
   keywords:
-  - research
-  - research
+  - probe_transport_policy_f206ar
+  - probe_transport_policy_f206ar
+- name: fetching
+  description: Files from fetching/
+  keywords:
+  - fetching
+  - fetching
 - name: general
   description: Files that don't fit other rooms
   keywords: []

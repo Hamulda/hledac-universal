@@ -837,7 +837,7 @@ def get_fast_filter() -> FastFilter:
 
 def get_frontier(
     storage_path: Optional[Path] = None,
-    backend: str = "pickle"
+    backend: str = "orjson"
 ) -> EfficientFrontier:
     """Get global EfficientFrontier instance."""
     global _global_frontier

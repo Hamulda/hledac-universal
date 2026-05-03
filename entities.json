@@ -1,15 +1,16 @@
 {
-  "people": [],
+  "people": [
+    "Sprint",
+    "Status",
+    "Coordinators",
+    "Audit",
+    "Metal",
+    "Baseline",
+    "Review",
+    "Optional"
+  ],
   "projects": [
-    "Capability",
-    "Graph",
-    "Tool",
-    "Execution",
-    "Hot",
-    "Scheduler",
-    "Multi",
-    "Thread",
-    "Sub",
-    "Darwin"
+    "Hledac",
+    "Known"
   ]
 }

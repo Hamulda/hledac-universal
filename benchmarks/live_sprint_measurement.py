@@ -532,12 +532,8 @@ def _derive_live_kpi(
     nonfeed_accepted_findings = accepted_findings - feed_findings if accepted_findings else 0
     nonfeed_accepted_findings = max(0, nonfeed_accepted_findings)
 
-    # public_fetch_attempted / public_acceptance_rejected
+    # public_fetch_attempted
     public_fetch_attempted = _was_family_attempted(rt, "public")
-    # public_acceptance_rejected: attempted but no accepted from public
-    public_acceptance_rejected = (
-        public_fetch_attempted and public_findings == 0 and nonfeed_accepted_findings == 0
-    )
 
     # Public pipeline telemetry from sprint report (F207K)
     pp = public_pipeline or {}
@@ -561,6 +557,7 @@ def _derive_live_kpi(
         is_memory_gate_abort=is_memory_gate_abort,
         nonfeed_accepted_findings=nonfeed_accepted_findings,
         public_fetch_attempted=public_fetch_attempted,
+        public_findings=public_findings,
         feed_findings=feed_findings,
         total_findings=total_findings,
         ct_findings=ct_findings,
@@ -614,6 +611,7 @@ def _derive_next_action(
     is_memory_gate_abort: bool,
     nonfeed_accepted_findings: int,
     public_fetch_attempted: bool,
+    public_findings: int,
     feed_findings: int,
     total_findings: int,
     ct_findings: int,
@@ -624,13 +622,20 @@ def _derive_next_action(
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
     Returns a (action, detail) tuple where detail may be None.
-    Feed-dominance-aware rules (F207K-C):
-    - Rule 2: feed dominance ≥ 0.7, nonfeed attempted but accepted=0 → inspect_nonfeed_rejection_or_raw_counts
-    - Rule 3: feed dominance ≥ 0.7, nonfeed NOT attempted → improve_nonfeed_lanes
+    Rule order matters — public rejection (Rule 3) checked BEFORE feed-dominance (Rule 2)
+    so operators see WHY public_findings=0 before generic nonfeed recommendations.
     """
     # Rule 1: memory gate abort
     if is_memory_gate_abort:
         return ("clean_memory", None)
+
+    # Rule 3: public attempted but accepted=0 (only when ct was NOT attempted)
+    # F207K-B: include top rejection reason in detail
+    # Must come BEFORE Rule 2 so public rejection reason surfaces even when feed dominance >= 0.7
+    if (public_fetch_attempted and nonfeed_accepted_findings == 0
+            and feed_findings == total_findings
+            and not _was_family_attempted(runtime_truth, "ct")):
+        return ("inspect_public_reject_reasons", top_public_reject_reason)
 
     # Rule 2: feed dominance high, BOTH public AND ct were attempted, nonfeed accepted=0 → inspect
     if feed_dominance_score is not None and feed_dominance_score >= 0.7:
@@ -641,17 +646,11 @@ def _derive_next_action(
                 return ("inspect_nonfeed_rejection_or_raw_counts", None)
             return ("improve_nonfeed_lanes", None)
 
-    # Rule 3: public attempted but accepted=0 (only when ct was NOT attempted)
-    # F207K-B: include top rejection reason in detail
-    if (public_fetch_attempted and nonfeed_accepted_findings == 0
-            and feed_findings == total_findings
-            and not _was_family_attempted(runtime_truth, "ct")):
-        return ("inspect_public_reject_reasons", top_public_reject_reason)
-
-    # Rule 4: feed-only with multiple nonfeed families attempted (public AND ct both ran)
+    # Rule 4: feed-only with public findings present AND ct was attempted but zero ct findings
+    # Only fires when public had findings (public_findings > 0) — distinguishes from Rule 5
     if (total_findings > 0 and feed_findings == total_findings
             and _was_family_attempted(runtime_truth, "ct")
-            and public_fetch_attempted):
+            and public_findings > 0):
         return ("improve_nonfeed_lanes", None)
 
     # Rule 5: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
