@@ -290,6 +290,12 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_xml_or_rss_detected: int = 0  # JS renderer skipped due to XML/feed URL
     public_fetch_timeout_count: int = 0  # fetch timeouts in public lane
     public_fetch_blocked_by_memory: int = 0  # skipped due to UMA critical
+    # F207I-A: PUBLIC Yield — discovery→fetch transition invariants + telemetry
+    public_discovery_cache_hit: int = 0  # DDG queries served from per-run cache
+    public_discovery_query_count: int = 0  # total DDG queries issued this run
+    public_fetch_candidate_count: int = 0  # URLs queued for fetch
+    public_fetch_gate: str = "none"  # memory gate verdict: ok | critical_limited | emergency_blocked
+    public_fetch_attempted_urls_sample: tuple[str, ...] = ()  # first 5 fetched URLs
 
 
 # -----------------------------------------------------------------------------
@@ -1963,6 +1969,10 @@ async def async_run_live_public_pipeline(
     from hledac.universal.layers import reset_temporal_signal_layer
     reset_temporal_signal_layer()
 
+    # F207I-A: Clear per-run DDG query cache at pipeline run start
+    from hledac.universal.discovery.duckduckgo_adapter import _clear_query_cache
+    _clear_query_cache()
+
     # Sprint F206Q: Restore from persistent snapshot if store is enabled
     persistence_enabled = False
     persistence_restored = False
@@ -2033,6 +2043,13 @@ async def async_run_live_public_pipeline(
             public_fetch_accessibility_blocker=False,
             public_discovery_fallback_state=None,
             dominant_public_failure_mode="uma_emergency_abort",
+            # F207I-A: emergency gate + telemetry
+            public_fetch_gate="emergency_blocked",
+            public_discovered=0,
+            public_fetch_attempted=0,
+            public_fetch_skipped=0,
+            public_fetch_candidate_count=0,
+            public_fetch_attempted_urls_sample=(),
         )
 
     effective_concurrency = fetch_concurrency
@@ -2048,6 +2065,9 @@ async def async_run_live_public_pipeline(
     discovery_attempted: bool = False
     hits: tuple = ()
     _discovery_start: float | None = None
+    # F207I-A: discovery telemetry counters (initialized before try block)
+    public_discovery_cache_hit: int = 0
+    public_discovery_query_count: int = 0
 
     try:
         # 8AC surface — duckduckgo_search passive discovery
@@ -2055,6 +2075,11 @@ async def async_run_live_public_pipeline(
         discovery_attempted = True
         discovery_result = await _ASYNC_DISCOVERY_SEARCH(query, max_results)
         discovery_elapsed_s = time.monotonic() - _discovery_start
+
+        # F207I-A: discovery telemetry
+        cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False
+        public_discovery_cache_hit += int(cache_hit)
+        public_discovery_query_count += 1
 
         if hasattr(discovery_result, "hits"):
             hits = discovery_result.hits
@@ -2360,6 +2385,19 @@ async def async_run_live_public_pipeline(
     if skip_reasons:
         from collections import Counter
         public_fetch_skip_reason = Counter(skip_reasons).most_common(1)[0][0]
+
+    # F207I-A: memory gate verdict
+    if uma_state == UMA_STATE_EMERGENCY:
+        public_fetch_gate = "emergency_blocked"
+    elif uma_state == UMA_STATE_CRITICAL:
+        public_fetch_gate = "critical_limited"
+    else:
+        public_fetch_gate = "ok"
+
+    # F207I-A: new telemetry aggregation
+    public_fetch_candidate_count = len(hits)
+    fetched_urls_sample_list = [p.url for p in all_page_results if p.fetched][:5]
+    public_fetch_attempted_urls_sample = tuple(fetched_urls_sample_list)
 
     # Sprint F150J Fix B: branch economics counters
     # Fix weak_pages_skipped: SKIP_WEAK post-fetch pages have error=None (not error!=None)
@@ -3124,6 +3162,12 @@ async def async_run_live_public_pipeline(
         public_xml_or_rss_detected=public_xml_or_rss_detected,
         public_fetch_timeout_count=public_fetch_timeout_count,
         public_fetch_blocked_by_memory=public_fetch_blocked_by_memory,
+        # F207I-A: new telemetry
+        public_discovery_cache_hit=public_discovery_cache_hit,
+        public_discovery_query_count=public_discovery_query_count,
+        public_fetch_candidate_count=public_fetch_candidate_count,
+        public_fetch_gate=public_fetch_gate,
+        public_fetch_attempted_urls_sample=public_fetch_attempted_urls_sample,
     )
 
 

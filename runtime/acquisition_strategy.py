@@ -683,10 +683,9 @@ async def run_enabled_acquisition_lanes(
     hardware_critical = uma_state in ("critical", "emergency")
 
     async def _run_ct_lane(plan) -> "AcquisitionLaneOutcome":
-        """Run CT/crt.sh lane."""
+        """Run CT/crt.sh lane — wired to call_crtsh() for measurable outcome."""
         start = time.monotonic()
-        # [F207F] Shape domain-only query for CT lane
-        # build_lane_query returns str|dict; CT always returns str, so guard
+        # [F207I-B] Shape domain-only query via build_lane_query
         _raw = build_lane_query(query, AcquisitionLane.CT)
         shaped_query = _raw if isinstance(_raw, str) else ""
         ct_error: str | None = None
@@ -694,17 +693,15 @@ async def run_enabled_acquisition_lanes(
         accepted = 0
         try:
             async with asyncio.timeout(plan.timeout_s):
-                # Local import to avoid cold-import cost
-                from hledac.universal.discovery.crtsh_adapter import (
-                    async_search_crtsh as _crtsh_search,
-                )
+                # [F207I-B] Use call_crtsh for richer CTOutcome
+                from hledac.universal.discovery.crtsh_adapter import call_crtsh
 
-                result = await _crtsh_search(
+                result, ct_outcome = await call_crtsh(
                     query=shaped_query,
                     max_results=plan.max_items,
                     timeout_s=plan.timeout_s,
                 )
-                ct_results_raw = len(result.hits)
+                ct_results_raw = ct_outcome.raw_count
                 if result.hits and store is not None:
                     findings = _hits_to_ct_findings(result.hits, query)
                     if findings and hasattr(store, "async_ingest_findings_batch"):
@@ -716,8 +713,8 @@ async def run_enabled_acquisition_lanes(
                             )
                         except Exception:
                             pass  # fail-soft
-                if result.error:
-                    ct_error = result.error
+                if ct_outcome.error:
+                    ct_error = ct_outcome.error
 
                 return AcquisitionLaneOutcome(
                     lane=AcquisitionLane.CT,
@@ -756,15 +753,30 @@ async def run_enabled_acquisition_lanes(
             )
 
     async def _run_wayback_lane(plan) -> "AcquisitionLaneOutcome":
-        """Run Wayback diff mining lane."""
+        """Run Wayback diff mining lane — runtime safety check before network call."""
         start = time.monotonic()
+        # [F207I-B] Runtime safety check: WaybackDiffMiner must be importable and instantiable
+        try:
+            from hledac.universal.intelligence.wayback_diff_miner import (
+                WaybackDiffMiner as _WDM,
+            )
+            # Verify the class is actually callable (not stub/broken import)
+            if not callable(_WDM):
+                raise ImportError("WaybackDiffMiner not callable")
+        except Exception as _exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.WAYBACK,
+                enabled=plan.enabled,
+                attempted=True,
+                accepted_findings=0,
+                produced_items=0,
+                duration_s=time.monotonic() - start,
+                source_family="archive",
+                error=f"adapter_not_runtime_safe: {_exc}",
+            )
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intelligence.wayback_diff_miner import (
-                    WaybackDiffMiner,
-                )
-
-                miner = WaybackDiffMiner()
+                miner = _WDM()
                 try:
                     result = await miner.mine([query])
                 finally:
@@ -813,17 +825,27 @@ async def run_enabled_acquisition_lanes(
             )
 
     async def _run_pdns_lane(plan) -> "AcquisitionLaneOutcome":
-        """Run passive DNS lookup lane."""
+        """Run passive DNS lookup lane — wired to call_lookup_passive_dns with domain/IP shaping."""
         start = time.monotonic()
+        # [F207I-B] Shape domain/IP-only query via build_lane_query
+        _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
+        shaped_query = _raw if isinstance(_raw, str) else ""
+        pdns_error: str | None = None
+        produced = 0
+        accepted = 0
         try:
             async with asyncio.timeout(plan.timeout_s):
+                # [F207I-B] Use call_lookup_passive_dns for richer PassiveDNSOutcome
                 from hledac.universal.security.passive_dns import (
-                    lookup_passive_dns,
+                    call_lookup_passive_dns as _pdns_lookup,
                 )
 
-                ips = await lookup_passive_dns(query)
-                accepted = 0
-                produced = len(ips)
+                ips, pdns_outcome = await _pdns_lookup(shaped_query)
+                produced = pdns_outcome.result_count
+                if pdns_outcome.skip_reason:
+                    pdns_error = pdns_outcome.skip_reason
+                elif pdns_outcome.error:
+                    pdns_error = pdns_outcome.error
 
                 if ips and store is not None:
                     findings = _ips_to_pdns_findings(ips, query)
@@ -845,6 +867,7 @@ async def run_enabled_acquisition_lanes(
                     produced_items=produced,
                     duration_s=time.monotonic() - start,
                     source_family="passive_dns",
+                    error=pdns_error,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(

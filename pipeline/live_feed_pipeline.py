@@ -869,6 +869,12 @@ class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
     dominant_feed_share_pct: float = 0.0
     feed_sources_successful: int = 0
     feed_source_cap_applied: bool = False
+    # Sprint F207I: feed dominance scoring
+    feed_dominance_score: float = 0.0
+    feed_balance_recommendation: str = "feed_yield_ok"
+    # Sprint F207I: dry-run cap estimator (does not enforce)
+    estimated_per_source_soft_cap: int = 0
+
 
 
 # ---------------------------------------------------------------------------
@@ -2430,7 +2436,95 @@ def _coerce_source_to_tuple(
 
 
 # ---------------------------------------------------------------------------
-# Batch runner (Sprint 8AL — unchanged public signature)
+# Feed Dominance Scoring (Sprint F207I)
+# ---------------------------------------------------------------------------
+
+def compute_feed_dominance_score(
+    dominant_feed_share_pct: float,
+    total_feed_findings: int,
+    feed_sources_successful: int,
+) -> float:
+    """
+    Compute a 0.0-1.0 feed dominance score.
+
+    Combines dominant share (60%) and source concentration (40%) into a single
+    score where 0 = balanced multi-source, 1 = single-source domination.
+
+    Inputs:
+      dominant_feed_share_pct -- 0.0-100.0, from FeedSourceBatchRunResult
+      total_feed_findings -- total accepted findings across all feed sources
+      feed_sources_successful -- count of sources that returned without error
+    """
+    if total_feed_findings == 0:
+        return 0.0
+
+    # Dominant-share component: 0=balanced(<=50%), 1=full dominance(100%)
+    # Linear from 50% -> 100% maps to 0.0 -> 1.0
+    _dom_component = max(0.0, (dominant_feed_share_pct - 50.0) / 50.0)
+
+    # Concentration component: 1/source_count -- 1 source = max concentration (1.0)
+    # More sources = lower concentration = lower dominance score
+    _source_count = max(1, feed_sources_successful)
+    _concentration_component = 1.0 / _source_count
+
+    # Weighted combination: 60% dominant share, 40% concentration
+    _score = (_dom_component * 0.6) + (_concentration_component * 0.4)
+    return round(min(1.0, max(0.0, _score)), 3)
+
+
+def compute_feed_balance_recommendation(
+    feed_dominance_score: float,
+    dominant_feed_share_pct: float,
+    feed_sources_successful: int,
+    total_feed_findings: int,
+) -> str:
+    """
+    Produce an actionable recommendation string from dominance metrics.
+
+    Recommendation strings:
+      "balanced"               -- no action needed, sources well-distributed
+      "dominant_source_watch"  -- one source leading (50-80%), monitor next run
+      "recommend_soft_cap_next_run" -- dominance >= 0.7, suggest per-source cap
+      "low_feed_diversity"     -- only 1 source succeeded, consider adding feeds
+      "feed_yield_ok"          -- no findings yet, ok state
+    """
+    if total_feed_findings == 0:
+        return "feed_yield_ok"
+
+    if feed_sources_successful <= 1:
+        return "low_feed_diversity"
+
+    if feed_dominance_score >= 0.7:
+        return "recommend_soft_cap_next_run"
+
+    if dominant_feed_share_pct >= 50.0:
+        return "dominant_source_watch"
+
+    return "balanced"
+
+
+def estimate_per_source_soft_cap(
+    total_budget: int,
+    source_count: int,
+) -> int:
+    """
+    Dry-run per-source soft cap estimator.
+
+    Returns a suggested per-source ceiling. Does NOT enforce -- callers use
+    this value only for reporting/recommendation purposes.
+
+    The formula: equal share with 20% headroom for top sources.
+    """
+    if total_budget <= 0 or source_count <= 0:
+        return 0
+
+    _equal_share = total_budget // source_count
+    _soft_cap = int(_equal_share * 1.2)
+    return max(1, _soft_cap)
+
+
+# ---------------------------------------------------------------------------
+# Batch runner (Sprint 8AL -- unchanged public signature)
 # ---------------------------------------------------------------------------
 
 
@@ -2627,6 +2721,15 @@ async def async_run_feed_source_batch(
         _dom_share_pct = round(_dominant.accepted_findings / total_accepted * 100.0, 2)
     _successful = sum(1 for r in results if r.error is None)
 
+    # Sprint F207I: compute dominance score and recommendation
+    _dominance_score = compute_feed_dominance_score(
+        _dom_share_pct, total_accepted, _successful,
+    )
+    _recommendation = compute_feed_balance_recommendation(
+        _dominance_score, _dom_share_pct, _successful, total_accepted,
+    )
+    _soft_cap = estimate_per_source_soft_cap(total_accepted, _successful)
+
     return FeedSourceBatchRunResult(
         total_sources=len(normalized),
         completed_sources=completed,
@@ -2644,6 +2747,10 @@ async def async_run_feed_source_batch(
         dominant_feed_share_pct=_dom_share_pct,
         feed_sources_successful=_successful,
         feed_source_cap_applied=False,
+        # Sprint F207I: feed dominance scoring
+        feed_dominance_score=_dominance_score,
+        feed_balance_recommendation=_recommendation,
+        estimated_per_source_soft_cap=_soft_cap,
     )
 
 

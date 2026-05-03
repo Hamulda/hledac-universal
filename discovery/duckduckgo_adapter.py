@@ -100,6 +100,8 @@ class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
     hits: tuple[DiscoveryHit, ...]
     error: str | None = None
     fallback_triggered: str | None = None
+    # F207I-A: per-run cache hit flag (True when result came from cache)
+    cache_hit: bool = False
     # F206AM: additive fields for providerless mesh
     provider_name: str | None = None
     provider_chain: tuple[str, ...] = ()
@@ -631,6 +633,42 @@ async def _ddgs_text_search(
 
 
 # ---------------------------------------------------------------------------
+# Per-run query cache (F207I-A): deduplicate identical DDG queries within one run.
+# Lightweight: keyed by normalized query string, bounded to MAX_CACHE entries.
+# Does NOT survive across runs — no persistent cache required.
+# ---------------------------------------------------------------------------
+from collections import OrderedDict
+
+_QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
+_QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full
+
+
+def _get_cached_discovery(query: str) -> DiscoveryBatchResult | None:
+    """Return cached result for query if present, else None. Moves entry to end."""
+    key = query.strip().lower()
+    if key in _QUERY_CACHE:
+        result = _QUERY_CACHE.pop(key)
+        _QUERY_CACHE[key] = result  # re-insert at end (most-recently-used)
+        return result
+    return None
+
+
+def _set_cached_discovery(query: str, result: DiscoveryBatchResult) -> None:
+    """Cache a discovery result. Evicts oldest entry when at capacity."""
+    key = query.strip().lower()
+    if key in _QUERY_CACHE:
+        _QUERY_CACHE.pop(key)
+    elif len(_QUERY_CACHE) >= _QUERY_CACHE_MAX:
+        _QUERY_CACHE.popitem(last=False)  # evict oldest
+    _QUERY_CACHE[key] = result
+
+
+def _clear_query_cache() -> None:
+    """Clear the per-run query cache. Called by pipeline on run start."""
+    _QUERY_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -644,31 +682,26 @@ async def async_search_public_web(
     """
     Public web discovery via DuckDuckGo.
 
-    Args:
-        query:        Search query string (stripped; empty -> fail-soft no call).
-        max_results:  Number of results to return (default 10, hard cap 50).
-        timeout_s:    Per-request timeout in seconds (default 35).
-        proxy:        Optional proxy URL (passed to backend if supported).
-
-    Returns:
-        DiscoveryBatchResult with hits tuple and optional error string.
-
-    Fail-soft errors (F206AB taxonomy):
-        - "empty_query"        : query was blank after strip
-        - "rate_limited"       : RatelimitException from backend
-        - "timeout"            : TimeoutException / asyncio.TimeoutError
-        - "proxy_error"        : Proxy-related failure
-        - "network_error"      : Network/connection failure
-        - "server_error"       : HTTP 5xx response from backend
-        - "unknown_backend_error": Any other DuckDuckGoSearchException
-
-    Note: max_results is silently clamped to [1, HARD_MAX_RESULTS] — no error is returned.
-
-    CancelledError is always re-raised (not swallowed).
-
-    Per-call URL dedup is applied after normalisation, preserving first-seen rank.
+    F207I-A per-run cache: same normalized query returns cached result without
+    calling the backend again within one pipeline run.
     """
     global _last_error
+
+    # ---- per-run query cache check (F207I-A) ---------------------------------
+    cached = _get_cached_discovery(query)
+    if cached is not None:
+        cached_cache_hit = DiscoveryBatchResult(
+            hits=cached.hits,
+            error=cached.error,
+            fallback_triggered=cached.fallback_triggered,
+            provider_name=cached.provider_name,
+            provider_chain=cached.provider_chain,
+            source_family=cached.source_family,
+            elapsed_s=cached.elapsed_s,
+            error_type=cached.error_type,
+            cache_hit=True,
+        )
+        return cached_cache_hit
 
     # ---- input validation ---------------------------------------------------
     if query is None:
@@ -847,7 +880,9 @@ async def async_search_public_web(
         for i, h in enumerate(hits_list[:max_results])
     )
 
-    return DiscoveryBatchResult(hits=final_hits, error=None)
+    result = DiscoveryBatchResult(hits=final_hits, error=None)
+    _set_cached_discovery(query, result)
+    return result
 
 
 # ── Sprint 8VB: Multi-Engine Search ───────────────────────────────────────────
