@@ -376,7 +376,9 @@ class LightpandaPool:
 
     def __init__(self, size: int = 2):
         self._size = size
-        self._available = asyncio.Queue()
+        # F207N-D: bounded for M1 8GB safety — pool size is small (default 2),
+        # so maxsize=8 gives headroom without starving the pool.
+        self._available = asyncio.Queue(maxsize=max(4, size * 4))
         self._all_instances = []
         self._started = False
 

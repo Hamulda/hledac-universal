@@ -151,8 +151,9 @@ class CommunicationLayer:
         self._batch_size = config.model_batch_size if hasattr(config, 'model_batch_size') else 5
         self._batch_timeout = config.model_batch_timeout if hasattr(config, 'model_batch_timeout') else 0.05
 
-        # Sprint 26: Adaptive batching with asyncio.Queue
-        self._batch_queue: asyncio.Queue = asyncio.Queue()
+        # Sprint 26: Adaptive batching with asyncio.Queue (F207N-D: bounded for M1 8GB)
+        # maxsize=256: control-path queue for model queries, bounded to prevent OOM
+        self._batch_queue: asyncio.Queue = asyncio.Queue(maxsize=256)
         self._batch_threshold = 10  # process immediately if queue >= this
         self._batch_timeout_new = 0.02  # 20ms max wait
         self._batch_task: Optional[asyncio.Task] = None

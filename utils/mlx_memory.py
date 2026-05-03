@@ -12,9 +12,8 @@ API:
 - get_mlx_memory_pressure() -> tuple[int, str]
 - get_mlx_memory_metrics() -> dict (optional convenience)
 
-M1 8GB UMA thresholds:
-- WARNING >= 80%
-- CRITICAL >= 90%
+M1 8GB UMA thresholds: WARNING >= 80%, CRITICAL >= 90% of MLX budget.
+Derived from uma_budget.py canonical thresholds (Sprint F207N-C).
 """
 
 from __future__ import annotations
@@ -28,6 +27,23 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 logger = logging.getLogger(__name__)
+
+# Sprint F207N-C: Canonical threshold import — single source of truth.
+# Fail-open: if uma_budget is unavailable, fall back to safe defaults.
+try:
+    from .uma_budget import UMA_WARN_GIB, UMA_CRITICAL_GIB
+
+    # MLX budget is a conservative fraction of total UMA (6.0 GiB warn threshold).
+    # WARNING at 80% of MLX budget (~4.0 GiB), CRITICAL at 90% (~4.5 GiB).
+    _MLX_BUDGET_GIB: float = 5.0
+    MLX_WARNING_GIB: float = _MLX_BUDGET_GIB * 0.8
+    MLX_CRITICAL_GIB: float = _MLX_BUDGET_GIB * 0.9
+    MAX_MEMORY_MB: int = int(_MLX_BUDGET_GIB * 1024)
+except Exception:
+    # Fail-open: no hardcoded thresholds at module level
+    MLX_WARNING_GIB = 5.0
+    MLX_CRITICAL_GIB = 5.625
+    MAX_MEMORY_MB = 6_250
 
 # Lazy availability singleton
 _MLX_AVAILABLE: Optional[bool] = None
@@ -152,11 +168,7 @@ def get_mlx_memory_pressure() -> tuple[int, str]:
         if active is None:
             return 0, "UNKNOWN"
 
-        # M1 8GB UMA budget: ~6.25GB max pro LLM + KV cache
-        # Warning threshold: 80% → ~5GB
-        # Critical threshold: 90% → ~5.6GB
-        MAX_MEMORY_MB = 6_250  # 6.25GB unified budget
-
+        # Use module-level MAX_MEMORY_MB (set from canonical thresholds above)
         usage_pct = int((active / MAX_MEMORY_MB) * 100)
         if usage_pct >= 90:
             return usage_pct, "CRITICAL"

@@ -25,6 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import numpy as np
 
+# M1 8GB memory ceiling — canonical from uma_budget.py (Sprint F207N-C).
+# Import from uma_budget to get canonical threshold; fallback for hermetic/no-MLX env.
+try:
+    from hledac.universal.utils.uma_budget import UMA_CRITICAL_GIB
+    M1_8GB_CEILING_MB: float = UMA_CRITICAL_GIB * 1024
+except Exception:
+    M1_8GB_CEILING_MB: float = 6.5 * 1024  # experimental fallback
+
 
 def get_rss_mb() -> float:
     """Get current RSS in MB."""

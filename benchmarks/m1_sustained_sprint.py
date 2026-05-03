@@ -45,8 +45,10 @@ try:
 except ImportError:
     pass
 
-# M1 8GB memory ceiling
-M1_8GB_CEILING_MB = 6.5 * 1024
+# M1 8GB memory ceiling — canonical threshold from uma_budget.py (Sprint F207N-C).
+# This is an EXPERIMENTAL CEILING for benchmark measurement, not the UmaSampler authority.
+# Canonical authority: UMA_CRITICAL_GIB = 6.5 GiB in utils/uma_budget.py.
+M1_8GB_CEILING_MB: float = 6.5 * 1024
 
 # Benchmark constants
 DEFAULT_DURATION_S = 300.0  # 5-minute sustained sprint
