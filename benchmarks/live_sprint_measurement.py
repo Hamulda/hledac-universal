@@ -201,6 +201,9 @@ class LiveMeasurementResult:
     # Return guard observation telemetry (F207T)
     return_guard_observation: dict | None = None
 
+    # Scheduler exit path telemetry (F207V-B)
+    scheduler_exit: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -496,6 +499,19 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                 }
         result["return_guard_observation"] = rg_obs
 
+        # F207V-B: Extract scheduler_exit from raw report
+        # Tries multiple locations where scheduler writes exit path telemetry:
+        #   1. scheduler_exit (top-level key written by F207V-A)
+        #   2. runtime_truth.scheduler_exit (nested)
+        #   3. diagnostics.scheduler_exit (legacy nesting)
+        se = (
+            data.get("scheduler_exit")
+            or rt.get("scheduler_exit")
+            or (data.get("diagnostics") or {}).get("scheduler_exit")
+        )
+        if isinstance(se, dict):
+            result["scheduler_exit"] = se
+
         return result
     except Exception:
         return None
@@ -555,6 +571,7 @@ def _derive_live_kpi(
     acquisition_strategy: dict | None = None,
     windup_guard_observation: dict | None = None,
     return_guard_observation: dict | None = None,
+    scheduler_exit: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -599,6 +616,14 @@ def _derive_live_kpi(
       - return_guard_attempted_lanes        (F207T)
       - return_guard_skipped_lanes          (F207T)
       - return_guard_errors                 (F207T)
+      - scheduler_exit_path                  (F207V-B)
+      - scheduler_exit_reason                 (F207V-B)
+      - scheduler_exit_phase                  (F207V-B)
+      - scheduler_exit_cycle                  (F207V-B)
+      - scheduler_exit_elapsed_s              (F207V-B)
+      - scheduler_exit_guard_checked          (F207V-B)
+      - scheduler_exit_guard_required         (F207V-B)
+      - scheduler_exit_guard_satisfied        (F207V-B)
 
     Feed telemetry preference (F207K-C):
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
@@ -761,6 +786,7 @@ def _derive_live_kpi(
         prewindup_attempted_lanes=prewindup_attempted_lanes,
         acquisition_strategy=as_dict,
         return_guard_observation=rg,
+        scheduler_exit=scheduler_exit,
     )
 
     return {
@@ -821,6 +847,15 @@ def _derive_live_kpi(
         "return_guard_attempted_lanes": rg.get("attempted_lanes", []),
         "return_guard_skipped_lanes": rg.get("skipped_lanes", {}),
         "return_guard_errors": rg.get("errors", []),
+        # F207V-B: Scheduler exit path
+        "scheduler_exit_path": (scheduler_exit or {}).get("exit_path", ""),
+        "scheduler_exit_reason": (scheduler_exit or {}).get("exit_reason", ""),
+        "scheduler_exit_phase": (scheduler_exit or {}).get("exit_phase", ""),
+        "scheduler_exit_cycle": (scheduler_exit or {}).get("exit_cycle", ""),
+        "scheduler_exit_elapsed_s": (scheduler_exit or {}).get("elapsed_s", ""),
+        "scheduler_exit_guard_checked": (scheduler_exit or {}).get("guard_checked", ""),
+        "scheduler_exit_guard_required": (scheduler_exit or {}).get("guard_required", ""),
+        "scheduler_exit_guard_satisfied": (scheduler_exit or {}).get("guard_satisfied", ""),
     }
 
 
@@ -855,6 +890,7 @@ def _derive_next_action(
     prewindup_attempted_lanes: list[str] | None = None,
     acquisition_strategy: dict | None = None,
     return_guard_observation: dict | None = None,
+    scheduler_exit: dict | None = None,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
@@ -909,6 +945,29 @@ def _derive_next_action(
             and ct_findings == 0
             and public_findings == 0):
         return ("fix_return_guard_report_mapping", None)
+
+    # F207V-B: Scheduler exit path rules — fire before return guard rules
+    # so operators see which exit path was taken when guard was bypassed.
+    # Rule -1d: scheduler_exit dict is present but exit_path is missing/empty
+    # This means the F207V-A tracer has not been wired up yet.
+    # Only fire when scheduler_exit was explicitly provided (not None).
+    # If scheduler_exit is None (no telemetry available), fall through.
+    se = scheduler_exit
+    if se is not None and not se.get("exit_path"):
+        return ("add_scheduler_exit_tracer", None)
+
+    # Rule -1e (F207V-B): feed-only + nonfeed eligible + return_guard not checked
+    # The scheduler exit path bypassed the return guard. Include the specific path.
+    if (se is not None
+            and se.get("exit_path")
+            and not rg_checked
+            and runtime_truth.get("cycles_started", 0) > 0
+            and runtime_truth.get("primary_signal_source")
+            and feed_findings > 0
+            and ct_findings == 0
+            and public_findings == 0):
+        exit_path = se.get("exit_path", "unknown")
+        return (f"patch_scheduler_exit_path:{exit_path}", None)
 
     # Rule 0: Pre-windup barrier not called (F207Q)
     # Only fire when acquisition_strategy telemetry is PRESENT (not None/empty).
@@ -1009,6 +1068,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         acquisition_strategy=result.acquisition_strategy,
         windup_guard_observation=getattr(result, "windup_guard_observation", None),
         return_guard_observation=getattr(result, "return_guard_observation", None),
+        scheduler_exit=getattr(result, "scheduler_exit", None),
     )
     result.live_kpi = kpi
 
@@ -1346,6 +1406,7 @@ async def _run_live_sprint(
                 result.acquisition_strategy = parsed.get("acquisition_strategy")
                 result.windup_guard_observation = parsed.get("windup_guard_observation")
                 result.return_guard_observation = parsed.get("return_guard_observation")
+                result.scheduler_exit = parsed.get("scheduler_exit")
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
@@ -1716,6 +1777,39 @@ def _render_md(result: LiveMeasurementResult) -> str:
                 lines.append(f"| **Next action** | **fix_return_guard_terminal_state** |")
             elif rg_checked and rg_satisfied and not any(lane in rg_attempted for lane in ("public", "ct")):
                 lines.append(f"| **Next action** | **fix_return_guard_report_mapping** |")
+
+    # Scheduler Exit Path section (F207V-B)
+    kpi = result.live_kpi
+    if kpi is not None:
+        se_path = kpi.get('scheduler_exit_path', '')
+        se_reason = kpi.get('scheduler_exit_reason', '')
+        se_phase = kpi.get('scheduler_exit_phase', '')
+        se_cycle = kpi.get('scheduler_exit_cycle', '')
+        se_elapsed = kpi.get('scheduler_exit_elapsed_s', '')
+        se_guard_checked = kpi.get('scheduler_exit_guard_checked', '')
+        se_guard_required = kpi.get('scheduler_exit_guard_required', '')
+        se_guard_satisfied = kpi.get('scheduler_exit_guard_satisfied', '')
+        # Always render the section when kpi is present — even when exit_path is missing,
+        # operators need to see N/A values and the next_action.
+        lines.extend([
+            "",
+            "## Scheduler Exit Path",
+            "",
+            f"| Metric | Value |",
+            f"| --- | --- |",
+            f"| Exit path | {se_path or 'N/A'} |",
+            f"| Exit reason | {se_reason or 'N/A'} |",
+            f"| Exit phase | {se_phase or 'N/A'} |",
+            f"| Exit cycle | {se_cycle or 'N/A'} |",
+            f"| Elapsed (s) | {se_elapsed or 'N/A'} |",
+            f"| Guard checked | {se_guard_checked or 'N/A'} |",
+            f"| Guard required | {se_guard_required or 'N/A'} |",
+            f"| Guard satisfied | {se_guard_satisfied or 'N/A'} |",
+        ])
+        if not se_path:
+            lines.append(f"| **Next action** | **add_scheduler_exit_tracer** |")
+        elif not se_guard_checked:
+            lines.append(f"| **Next action** | **patch_scheduler_exit_path:{se_path}** |")
 
     # PUBLIC Acceptance section (F207K) — detailed breakdown
     kpi = result.live_kpi

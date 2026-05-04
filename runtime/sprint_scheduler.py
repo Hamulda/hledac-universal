@@ -495,6 +495,17 @@ class SprintSchedulerResult:
     return_guard_attempted_lanes: tuple[str, ...] = ()
     return_guard_skipped_lanes: dict[str, str] = field(default_factory=dict)
     return_guard_errors: dict[str, str] = field(default_factory=dict)
+    # Sprint F207V-A: Scheduler exit path tracer
+    # Identifies exact break/return branch used in live execution
+    # to diagnose why return_guard fields are absent in live runs
+    scheduler_exit_path: str | None = None
+    scheduler_exit_reason: str | None = None
+    scheduler_exit_phase: str | None = None
+    scheduler_exit_cycle: int | None = None
+    scheduler_exit_elapsed_s: float | None = None
+    scheduler_exit_guard_checked: bool = False
+    scheduler_exit_guard_required: tuple[str, ...] = ()
+    scheduler_exit_guard_satisfied: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1108,6 +1119,8 @@ class SprintScheduler:
         # Start lifecycle via runner (BOOT→WARMUP)
         self._runner.setup()
         self._reset_result()
+        # Sprint F207V-D: Initialize wall-clock anchor for scheduler_exit_elapsed_s
+        self._run_started_at: float = _time.monotonic()
 
         # Sprint F202J: Initialize M1 resource governor (lazy, advisory only)
         try:
@@ -1249,6 +1262,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "stop_requested"
                     ):
+                        self._record_scheduler_exit("stop_requested_break", "stop_requested guard passed", "GATHER")
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1263,6 +1277,7 @@ class SprintScheduler:
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "lifecycle_abort"
                     )
+                    self._record_scheduler_exit("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER")
                     break
 
                 # Periodic tick
@@ -1334,6 +1349,18 @@ class SprintScheduler:
                     self.evaluate_advisory_gate()
                     # Sprint F195B: write partial on early windup so latest state survives
                     await self._maybe_export_partial(lifecycle)
+                    # Sprint F207V-D: Return guard — windup barrier is terminal; ensure
+                    # mandatory nonfeed lanes before breaking out of work loop
+                    if await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "windup_barrier"
+                    ):
+                        self._record_scheduler_exit("windup_barrier_break", "pre-windup barrier unsatisfied, entered windup", "WINDUP")
+                        break  # exit work loop → teardown
+                    # Guard blocked — force one bounded terminalization pass then break
+                    await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "windup_barrier_forced"
+                    )
+                    self._record_scheduler_exit("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP")
                     break  # exit work loop → teardown
 
                 # ── Sprint 8SA: Source scoring re-ordering ───────────────────
@@ -1352,6 +1379,7 @@ class SprintScheduler:
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "max_cycles"
                     )
+                    self._record_scheduler_exit("max_cycles_break", "cycles >= max_cycles reached", "GATHER")
                     break
 
                 self._result.cycles_started += 1
@@ -1380,6 +1408,7 @@ class SprintScheduler:
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "duration_budget"
                     )
+                    self._record_scheduler_exit("duration_budget_break", "duration_budget exhausted", "GATHER")
                     break
                 # Sprint 8XE: Store sources for public discovery query hint
                 self._last_sources = list(ordered_sources)
@@ -1413,6 +1442,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "cycle_ok_false"
                     ):
+                        self._record_scheduler_exit("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER")
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1427,6 +1457,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "stop_on_first_accepted"
                     ):
+                        self._record_scheduler_exit("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER")
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1447,6 +1478,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "post_sleep_windup"
                     ):
+                        self._record_scheduler_exit("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP")
                         break
                     # Guard blocked — continue loop once to satisfy nonfeed lanes
                     continue
@@ -1567,7 +1599,30 @@ class SprintScheduler:
         except Exception as e:
             log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
+        self._record_scheduler_exit("run_complete", "run() finished normally", "TEARDOWN")
         return self._result
+
+    def _record_scheduler_exit(
+        self,
+        path: str,
+        reason: str,
+        phase: str | None = None,
+    ) -> None:
+        """
+        Sprint F207V-A: Record the exact exit path taken by the scheduler.
+
+        Side-effect light — only updates in-memory telemetry fields.
+        No network, no DB write, no graph write.
+        """
+        self._result.scheduler_exit_path = path
+        self._result.scheduler_exit_reason = reason
+        self._result.scheduler_exit_phase = phase
+        self._result.scheduler_exit_elapsed_s = _time.monotonic() - self._run_started_at
+        self._result.scheduler_exit_cycle = self._result.cycles_started
+        # Capture guard state at exit
+        self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
+        self._result.scheduler_exit_guard_required = self._result.return_guard_required_lanes
+        self._result.scheduler_exit_guard_satisfied = self._result.return_guard_satisfied
 
     # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
 
@@ -5463,6 +5518,17 @@ class SprintScheduler:
             "attempted_lanes": list(getattr(self._result, "return_guard_attempted_lanes", ())),
             "skipped_lanes": dict(getattr(self._result, "return_guard_skipped_lanes", {})),
             "errors": dict(getattr(self._result, "return_guard_errors", {})),
+        }
+        # Sprint F207V-A: Scheduler exit path tracer
+        report["scheduler_exit"] = {
+            "path": getattr(self._result, "scheduler_exit_path", None),
+            "reason": getattr(self._result, "scheduler_exit_reason", None),
+            "phase": getattr(self._result, "scheduler_exit_phase", None),
+            "cycle": getattr(self._result, "scheduler_exit_cycle", None),
+            "elapsed_s": getattr(self._result, "scheduler_exit_elapsed_s", None),
+            "guard_checked": getattr(self._result, "scheduler_exit_guard_checked", False),
+            "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
+            "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
         }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:
