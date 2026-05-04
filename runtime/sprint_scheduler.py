@@ -466,6 +466,36 @@ class SprintSchedulerResult:
     windup_blocked_until_nonfeed_attempted: bool = False
     # Sprint F207L: Nonfeed lane planning debug snapshot for live KPI diagnosis
     nonfeed_plan_debug: "NonfeedPlanDebug | None" = None
+    # Sprint F207Q-A: Pre-windup barrier telemetry
+    prewindup_barrier_checked: bool = False
+    prewindup_barrier_required_lanes: tuple[str, ...] = ()
+    prewindup_barrier_satisfied: bool = False
+    prewindup_barrier_attempted_lanes: tuple[str, ...] = ()
+    prewindup_barrier_skipped_lanes: dict[str, str] = field(default_factory=dict)
+    prewindup_barrier_errors: dict[str, str] = field(default_factory=dict)
+    prewindup_barrier_duration_s: float = 0.0
+    windup_delayed_for_nonfeed: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Sprint F207Q-A: Pre-windup barrier result dataclass
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PreWindupBarrierResult:
+    """
+    Result of a pre-windup barrier check.
+
+    Returned by _ensure_pre_windup_lane_terminal_states() to inform
+    the windup decision whether required lanes are satisfied.
+    """
+    required_lanes: tuple[str, ...] = ()
+    satisfied: bool = False
+    attempted_lanes: tuple[str, ...] = ()
+    skipped_lanes: tuple[str, ...] = ()
+    error_lanes: tuple[str, ...] = ()
+    duration_s: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -1219,6 +1249,34 @@ class SprintScheduler:
                         log.debug("[F207M-A] Windup signalled but pre-dispatch not done — yielding")
                         # Give pre-dispatch a chance before entering windup
                         await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
+
+                    # ── Sprint F207Q-A: Pre-windup barrier ─────────────────
+                    # Before entering windup, ensure required lanes (public, ct for domain
+                    # queries) have terminal state. Block windup one more dispatch attempt.
+                    _uma = "ok"
+                    if self._governor is not None:
+                        try:
+                            _snap = self._governor.evaluate()
+                            _uma = getattr(_snap, "uma_state", "ok")
+                        except Exception:
+                            pass
+                    barrier_result = await self._ensure_pre_windup_lane_terminal_states(
+                        query, self._acquisition_plan, _uma
+                    )
+                    if not barrier_result.satisfied and barrier_result.required_lanes:
+                        # Required lanes not satisfied — block windup for one dispatch attempt
+                        self._result.windup_delayed_for_nonfeed = True
+                        log.debug(
+                            "[F207Q-A] Windup blocked: required lanes not terminal %s — attempting",
+                            barrier_result.required_lanes,
+                        )
+                        # Do another nonfeed attempt before windup
+                        await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
+                        # Re-check barrier
+                        barrier_result = await self._ensure_pre_windup_lane_terminal_states(
+                            query, self._acquisition_plan, _uma
+                        )
+
                     # Phase already advanced via tick(); let scheduler handle pre-windup ops
                     # Sprint 8RA: Flush dedup at WINDUP entry
                     await self._flush_dedup()
@@ -1683,6 +1741,257 @@ class SprintScheduler:
             "[F207M-A] Nonfeed pre-dispatch done: lanes=%s, skipped=%s, dur=%.2fs",
             _attempted_lanes, _skipped, _duration,
         )
+
+    # ── Sprint F207Q-A: Pre-windup barrier helpers ─────────────────────────────
+
+    def _required_pre_windup_lanes(
+        self,
+        query: str,
+        acquisition_plan: Any,
+        memory_state: str,
+    ) -> tuple[str, ...]:
+        """
+        Sprint F207Q-A: Determine required lanes before windup.
+
+        Rules:
+          - domain query + ok/warn memory: require ("public", "ct")
+          - domain query + critical/emergency: lanes may skip with explicit reason
+          - non-domain query: public may require, ct may skip with no_domain
+          - stealth never required
+
+        Returns tuple of required lane names.
+        """
+        if acquisition_plan is None:
+            return ()
+
+        # STEALTH is never required
+        if acquisition_plan.stealth_ready:
+            pass  # stealth exists but is never required
+
+        # Determine if domain query
+        from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
+        domain_detected = getattr(acquisition_plan, "nonfeed_plan_debug", None)
+        is_domain = False
+        if domain_detected is not None:
+            is_domain = getattr(domain_detected, "domain_detected", False)
+
+        required: list[str] = []
+        memory_critical = memory_state in ("critical", "emergency")
+
+        if is_domain:
+            # Domain query: PUBLIC and CT are both required (unless critical memory)
+            if memory_critical:
+                # Critical memory: CT/public may skip but must record reason
+                required = ["public", "ct"]
+            else:
+                # ok/warn: both required
+                required = ["public", "ct"]
+        else:
+            # Non-domain query: public may be required, ct skips with no_domain
+            public_plan = None
+            ct_plan = None
+            if hasattr(acquisition_plan, "plans"):
+                for p in acquisition_plan.plans:
+                    if p.lane == "PUBLIC":
+                        public_plan = p
+                    elif p.lane == "CT":
+                        ct_plan = p
+            # Public required if enabled
+            if public_plan is not None and public_plan.enabled:
+                required.append("public")
+            # CT skips for non-domain (no_domain reason)
+            # CT may still be attempted if non-domain but plan is enabled
+
+        return tuple(required)
+
+    async def _ensure_pre_windup_lane_terminal_states(
+        self,
+        query: str,
+        acquisition_plan: Any,
+        memory_state: str,
+    ) -> PreWindupBarrierResult:
+        """
+        Sprint F207Q-A: Ensure required lanes have terminal state before windup.
+
+        This is the hard pre-windup barrier — it attempts required cheap lanes
+        (PUBLIC, CT) if they have not yet reached terminal state.
+
+        Invariants:
+          - Never calls stealth lane
+          - Never directly writes DB or graph
+          - Uses existing lane runner / adapter indirection
+          - Bounded timeout per lane (max 15s per lane)
+          - Fail-soft: adapter error becomes terminal error, not crash
+          - Records all telemetry on self._result
+
+        Args:
+            query: Sprint query
+            acquisition_plan: Acquisition plan from build_acquisition_plan
+            memory_state: "ok" | "warn" | "critical" | "emergency"
+
+        Returns:
+            PreWindupBarrierResult describing what happened
+        """
+        import time as _time
+
+        required = self._required_pre_windup_lanes(query, acquisition_plan, memory_state)
+        if not required:
+            return PreWindupBarrierResult(satisfied=True)
+
+        t0 = _time.monotonic()
+        attempted: list[str] = []
+        skipped: dict[str, str] = {}
+        errors: dict[str, str] = {}
+
+        # Check if lanes already have terminal state
+        # PUBLIC terminal = _public_outcome is not None
+        # CT terminal = ct_log_discovered > 0 or lane_ct_accepted_findings > 0
+        _ct_done = (
+            self._result.ct_log_discovered > 0
+            or self._result.lane_ct_accepted_findings > 0
+        )
+        _public_done = self._public_outcome is not None
+
+        for lane in required:
+            if lane == "public" and _public_done:
+                skipped["public"] = "already_terminal"
+                continue
+            if lane == "ct" and _ct_done:
+                skipped["ct"] = "already_terminal"
+                continue
+
+            # Attempt the lane
+            if lane == "public":
+                outcome = await self._attempt_public_prewindup_barrier(query)
+                if outcome is None:
+                    skipped["public"] = "adapter_error"
+                    errors["public"] = "prewindup_barrier_public_error"
+                elif outcome.get("error"):
+                    errors["public"] = outcome["error"]
+                    attempted.append("public")
+                else:
+                    attempted.append("public")
+            elif lane == "ct":
+                outcome = await self._attempt_ct_prewindup_barrier(query)
+                if outcome is None:
+                    skipped["ct"] = "adapter_error"
+                    errors["ct"] = "prewindup_barrier_ct_error"
+                elif outcome.get("timeout"):
+                    skipped["ct"] = "timeout"
+                    attempted.append("ct")
+                elif outcome.get("error"):
+                    errors["ct"] = outcome["error"]
+                    attempted.append("ct")
+                else:
+                    attempted.append("ct")
+
+        duration = _time.monotonic() - t0
+        satisfied = len(attempted) >= len(required) or all(
+            r in skipped or r in attempted for r in required
+        )
+
+        # Record telemetry
+        self._result.prewindup_barrier_checked = True
+        self._result.prewindup_barrier_required_lanes = required
+        self._result.prewindup_barrier_satisfied = satisfied
+        self._result.prewindup_barrier_attempted_lanes = tuple(attempted)
+        self._result.prewindup_barrier_skipped_lanes = skipped
+        self._result.prewindup_barrier_errors = errors
+        self._result.prewindup_barrier_duration_s = duration
+
+        return PreWindupBarrierResult(
+            required_lanes=required,
+            satisfied=satisfied,
+            attempted_lanes=tuple(attempted),
+            skipped_lanes=tuple(skipped.keys()),
+            error_lanes=tuple(errors.keys()),
+            duration_s=duration,
+        )
+
+    async def _attempt_public_prewindup_barrier(self, query: str) -> dict | None:
+        """
+        Sprint F207Q-A: Attempt PUBLIC lane as part of pre-windup barrier.
+
+        Args:
+            query: Sprint query for lane query shaping.
+
+        Returns dict with keys: attempted, error, timeout, or None on exception.
+        Uses tiny bounds (max 3 results, 10s timeout).
+        """
+        try:
+            from hledac.universal.runtime.acquisition_strategy import (
+                build_lane_query,
+                AcquisitionLane,
+            )
+            from hledac.universal.pipeline.live_public_pipeline import (
+                async_run_live_public_pipeline,
+            )
+
+            shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
+            if isinstance(shaped, dict) or not shaped:
+                return {"error": "empty_public_query"}
+
+            # Run with tiny bounds - no store, no engine (barrier is read-only)
+            try:
+                async with asyncio.timeout(10.0):
+                    result = await async_run_live_public_pipeline(
+                        query=shaped,
+                        store=None,  # barrier doesn't write to DB
+                        max_results=3,
+                        fetch_timeout_s=10.0,
+                        fetch_concurrency=2,
+                        hermes_engine=None,
+                        memory_manager=None,
+                        enqueue_hypothesis_pivot=None,
+                    )
+                return {
+                    "attempted": True,
+                    "accepted": getattr(result, "accepted_findings", 0),
+                }
+            except asyncio.TimeoutError:
+                return {"attempted": True, "timeout": True}
+        except Exception as exc:
+            return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
+
+    async def _attempt_ct_prewindup_barrier(self, query: str) -> dict | None:
+        """
+        Sprint F207Q-A: Attempt CT lane as part of pre-windup barrier.
+
+        Args:
+            query: Sprint query for lane query shaping.
+
+        Returns dict with keys: attempted, error, timeout, or None on exception.
+        Uses tiny bounds (max 5 results, 15s timeout).
+        """
+        try:
+            from hledac.universal.runtime.acquisition_strategy import (
+                build_lane_query,
+                AcquisitionLane,
+            )
+            from hledac.universal.runtime.source_finding_bridge import (
+                ct_results_to_findings,
+            )
+
+            shaped = build_lane_query(query, AcquisitionLane.CT)
+            if isinstance(shaped, dict) or not shaped:
+                return {"error": "empty_ct_query"}
+
+            _ct_call = _get_ct_adapter()
+            try:
+                async with asyncio.timeout(15.0):
+                    ct_result, ct_outcome = await _ct_call(
+                        query=shaped,
+                        max_results=5,
+                        timeout_s=15.0,
+                    )
+                return {
+                    "attempted": True,
+                    "raw_count": getattr(ct_outcome, "raw_count", 0),
+                }
+            except asyncio.TimeoutError:
+                return {"attempted": True, "timeout": True}
+        except Exception as exc:
+            return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
 
     # ── Cycle logic ────────────────────────────────────────────────────────
 
@@ -4550,6 +4859,27 @@ class SprintScheduler:
             if adapter._abort_requested or adapter.is_terminal():
                 return
 
+    # ── Sprint F207Q-A: Pre-windup barrier result accessor for diagnostic report ─
+
+    def _get_prewindup_barrier_report(self) -> dict | None:
+        """
+        Sprint F207Q-A: Read prewindup barrier telemetry for diagnostic report.
+
+        Returns dict under acquisition_strategy.prewindup_barrier key.
+        Fails soft: returns None if barrier was never checked.
+        """
+        if not getattr(self._result, "prewindup_barrier_checked", False):
+            return None
+        return {
+            "required_lanes": list(getattr(self._result, "prewindup_barrier_required_lanes", ())),
+            "satisfied": getattr(self._result, "prewindup_barrier_satisfied", False),
+            "attempted_lanes": list(getattr(self._result, "prewindup_barrier_attempted_lanes", ())),
+            "skipped_lanes": dict(getattr(self._result, "prewindup_barrier_skipped_lanes", {})),
+            "errors": dict(getattr(self._result, "prewindup_barrier_errors", {})),
+            "duration_s": round(getattr(self._result, "prewindup_barrier_duration_s", 0.0), 3),
+            "windup_delayed": getattr(self._result, "windup_delayed_for_nonfeed", False),
+        }
+
     def _final_phase(self, lifecycle) -> None:
         """Mark teardown on lifecycle."""
         # Sprint F206C: Delegated to runner.teardown()
@@ -4809,6 +5139,8 @@ class SprintScheduler:
                     if self._acquisition_plan.nonfeed_plan_debug is not None
                     else None
                 ),
+                # [F207Q-A] Pre-windup barrier telemetry for live KPI diagnosis
+                "prewindup_barrier": self._get_prewindup_barrier_report(),
             }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:

@@ -192,6 +192,9 @@ class LiveMeasurementResult:
     # Public pipeline acceptance telemetry (F207K)
     public_pipeline: dict | None = None
 
+    # Acquisition strategy telemetry (F207Q)
+    acquisition_strategy: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -386,6 +389,10 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
         pp = data.get("public_pipeline") or {}
         result["public_pipeline"] = pp if isinstance(pp, dict) else None
 
+        # acquisition_strategy: prewindup barrier + lane plan telemetry (F207Q)
+        acq = data.get("acquisition_strategy") or {}
+        result["acquisition_strategy"] = acq if isinstance(acq, dict) else None
+
         return result
     except Exception:
         return None
@@ -442,6 +449,7 @@ def _derive_live_kpi(
     hardware_constrained: bool | None,
     public_pipeline: dict | None = None,
     timing_truth: dict | None = None,
+    acquisition_strategy: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -567,6 +575,17 @@ def _derive_live_kpi(
     active_window_budget_s: int | None = tt.get("active_window_budget_s")
     active_runtime_occurred: bool = tt.get("active_runtime_occurred", False)
 
+    # F207Q: Pre-windup barrier telemetry from acquisition_strategy
+    as_dict = acquisition_strategy or {}
+    prewindup_barrier_checked: bool = as_dict.get("prewindup_barrier_checked", False)
+    prewindup_barrier_satisfied: bool = as_dict.get("prewindup_barrier_satisfied", False)
+    prewindup_required_lanes: list[str] = as_dict.get("prewindup_required_lanes", [])
+    prewindup_attempted_lanes: list[str] = as_dict.get("prewindup_attempted_lanes", [])
+    prewindup_skipped_lanes: dict[str, str] = as_dict.get("prewindup_skipped_lanes", {})
+    windup_delayed_for_nonfeed: bool = as_dict.get("windup_delayed_for_nonfeed", False)
+    nonfeed_scheduler_gap_resolved: bool | None = as_dict.get("nonfeed_scheduler_gap_resolved", None)
+    source_family_outcomes: list[dict] = as_dict.get("source_family_outcomes", [])
+
     # nonfeed_eligible_families: nonfeed families that exist in branch_mix
     nonfeed_eligible_families: list[str] = []
     nonfeed_skipped_reasons: dict[str, str] = {}
@@ -579,15 +598,18 @@ def _derive_live_kpi(
     # If PASS_VALID_CAPABILITY_RUN AND nonfeed_attempted_families empty AND
     # active_runtime_occurred true AND feed_findings > 0 AND both public/ct NOT timed out
     # THEN starvation suspected — early windup consumed the window before nonfeed dispatch
+    # F207Q: suppress starvation false positive when barrier was checked and satisfied
     nonfeed_starvation_suspected: bool = False
     nonfeed_starvation_reason: str | None = None
     nonfeed_findings = public_findings + ct_findings
+    starvation_suppressed = prewindup_barrier_checked and prewindup_barrier_satisfied
     if (
         run_quality_verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN.value
         and not nonfeed_attempted_families
         and active_runtime_occurred
         and feed_findings > 0
         and nonfeed_findings == 0
+        and not starvation_suppressed
     ):
         public_not_timed = not rt.get("public_branch_timed_out", False)
         ct_not_timed = not rt.get("ct_branch_timed_out", False)
@@ -595,7 +617,7 @@ def _derive_live_kpi(
             nonfeed_starvation_suspected = True
             nonfeed_starvation_reason = "early_windup_or_scheduler_order"
 
-    # next_action + next_action_detail (F207K, F207M)
+    # next_action + next_action_detail (F207K, F207M, F207Q)
     next_action, next_action_detail = _derive_next_action(
         status=status,
         is_memory_gate_abort=is_memory_gate_abort,
@@ -609,6 +631,11 @@ def _derive_live_kpi(
         feed_dominance_score=feed_dominance_score,
         top_public_reject_reason=top_public_reject_reason,
         nonfeed_starvation_suspected=nonfeed_starvation_suspected,
+        prewindup_barrier_checked=prewindup_barrier_checked,
+        prewindup_barrier_satisfied=prewindup_barrier_satisfied,
+        prewindup_required_lanes=prewindup_required_lanes,
+        prewindup_attempted_lanes=prewindup_attempted_lanes,
+        acquisition_strategy=as_dict,
     )
 
     return {
@@ -644,6 +671,15 @@ def _derive_live_kpi(
         "active_window_budget_s": active_window_budget_s,
         "nonfeed_eligible_families": nonfeed_eligible_families,
         "nonfeed_skipped_reasons": nonfeed_skipped_reasons,
+        # F207Q: Pre-windup barrier
+        "prewindup_barrier_checked": prewindup_barrier_checked,
+        "prewindup_barrier_satisfied": prewindup_barrier_satisfied,
+        "prewindup_required_lanes": prewindup_required_lanes,
+        "prewindup_attempted_lanes": prewindup_attempted_lanes,
+        "prewindup_skipped_lanes": prewindup_skipped_lanes,
+        "windup_delayed_for_nonfeed": windup_delayed_for_nonfeed,
+        "nonfeed_scheduler_gap_resolved": nonfeed_scheduler_gap_resolved,
+        "source_family_outcomes": source_family_outcomes,
     }
 
 
@@ -672,6 +708,11 @@ def _derive_next_action(
     feed_dominance_score: float | None = None,
     top_public_reject_reason: str | None = None,
     nonfeed_starvation_suspected: bool = False,
+    prewindup_barrier_checked: bool = False,
+    prewindup_barrier_satisfied: bool = False,
+    prewindup_required_lanes: list[str] | None = None,
+    prewindup_attempted_lanes: list[str] | None = None,
+    acquisition_strategy: dict | None = None,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
@@ -679,8 +720,45 @@ def _derive_next_action(
     Rule order matters — public rejection (Rule 3) checked BEFORE feed-dominance (Rule 2)
     so operators see WHY public_findings=0 before generic nonfeed recommendations.
     F207M: starvation rule fires before most other rules to surface scheduler-order fixes.
+    F207Q: prewindup barrier rules fire before starvation to surface barrier-not-called issues.
     """
-    # Rule 0: nonfeed starvation (F207M) — must fire early so operators see it
+    prewindup_required_lanes = prewindup_required_lanes or []
+    prewindup_attempted_lanes = prewindup_attempted_lanes or []
+
+    # Rule 0: Pre-windup barrier not called (F207Q)
+    # Only fire when acquisition_strategy telemetry is PRESENT (not None/empty).
+    # If no barrier telemetry exists, we cannot determine whether barrier was called —
+    # fall through to other rules so existing tests are not broken.
+    has_barrier_telemetry = acquisition_strategy is not None and bool(acquisition_strategy)
+    if (has_barrier_telemetry
+            and runtime_truth.get("cycles_started", 0) > 0
+            and runtime_truth.get("primary_signal_source")
+            and not prewindup_barrier_checked):
+        return ("fix_prewindup_barrier_not_called", None)
+
+    # Rule 0b: Pre-windup barrier checked but NOT satisfied (F207Q)
+    if prewindup_barrier_checked and not prewindup_barrier_satisfied:
+        return ("fix_required_lane_terminal_state", None)
+
+    # Rule 0c: Barrier checked and satisfied but ALL required lanes are missing from attempted_lanes (F207Q)
+    # "satisfied" but nothing was actually dispatched → report mapping gap
+    # Condition: barrier checked+satisfied, required lanes exist, attempted_lanes doesn't include any required lanes,
+    #           AND both ct_findings and public_findings are 0 (no nonfeed findings despite barrier satisfied)
+    if (prewindup_barrier_checked
+            and prewindup_barrier_satisfied
+            and prewindup_required_lanes
+            and not any(lane in prewindup_attempted_lanes for lane in prewindup_required_lanes)
+            and ct_findings == 0
+            and public_findings == 0):
+        return ("fix_report_mapping", None)
+
+    # Rule 0d: Barrier checked and satisfied, no starvation (F207Q)
+    # If barrier was checked AND satisfied AND ct/public were attempted/skipped → starvation is false
+    if prewindup_barrier_checked and prewindup_barrier_satisfied:
+        # starvation was false positive — barrier did its job
+        pass  # fall through to other rules
+
+    # Rule 1: nonfeed starvation (F207M) — must fire early so operators see it
     if nonfeed_starvation_suspected:
         return ("fix_nonfeed_scheduler_order", None)
 
@@ -743,6 +821,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         hardware_constrained=result.hardware_constrained,
         public_pipeline=result.public_pipeline,
         timing_truth=result.timing_truth,
+        acquisition_strategy=result.acquisition_strategy,
     )
     result.live_kpi = kpi
 
@@ -1077,6 +1156,7 @@ async def _run_live_sprint(
                 result.checkpoint_zero_category = parsed.get("checkpoint_zero_category")
                 result.primary_signal_source = parsed.get("primary_signal_source")
                 result.public_pipeline = parsed.get("public_pipeline")
+                result.acquisition_strategy = parsed.get("acquisition_strategy")
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
@@ -1349,6 +1429,31 @@ def _render_md(result: LiveMeasurementResult) -> str:
             if suspected:
                 starvation_rows.insert(7, f"| Starvation reason | {kpi.get('nonfeed_starvation_reason', 'N/A')} |")
             lines.extend(starvation_rows)
+
+        # Pre-windup Barrier section (F207Q)
+        barrier_checked = kpi.get('prewindup_barrier_checked', False)
+        if barrier_checked or kpi.get('prewindup_required_lanes') or kpi.get('prewindup_skipped_lanes'):
+            barrier_rows = [
+                "",
+                "## Pre-windup Barrier",
+                "",
+                f"| Metric | Value |",
+                f"| --- | --- |",
+                f"| Barrier checked | {barrier_checked} |",
+                f"| Barrier satisfied | {kpi.get('prewindup_barrier_satisfied', 'N/A')} |",
+                f"| Required lanes | {kpi.get('prewindup_required_lanes', [])} |",
+                f"| Attempted lanes | {kpi.get('prewindup_attempted_lanes', [])} |",
+            ]
+            skipped = kpi.get('prewindup_skipped_lanes', {})
+            if skipped:
+                barrier_rows.append(f"| Skipped lanes | {json.dumps(skipped)} |")
+            windup_delayed = kpi.get('windup_delayed_for_nonfeed')
+            if windup_delayed is not None:
+                barrier_rows.append(f"| Windup delayed for nonfeed | {windup_delayed} |")
+            gap_resolved = kpi.get('nonfeed_scheduler_gap_resolved')
+            if gap_resolved is not None:
+                barrier_rows.append(f"| Nonfeed scheduler gap resolved | {gap_resolved} |")
+            lines.extend(barrier_rows)
 
     # PUBLIC Acceptance section (F207K) — detailed breakdown
     kpi = result.live_kpi
