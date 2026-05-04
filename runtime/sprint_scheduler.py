@@ -484,6 +484,17 @@ class SprintSchedulerResult:
     windup_guard_last_reason: str = ""
     windup_guard_last_phase: str = ""
     windup_guard_last_allowed: bool | None = None
+    # Sprint F207T-A: Return guard for mandatory nonfeed terminal state
+    # Scheduler cannot return a valid result for domain query until PUBLIC and CT
+    # have terminal state (attempted | skipped | error | timeout)
+    return_guard_checked: bool = False
+    return_guard_required_lanes: tuple[str, ...] = ()
+    return_guard_satisfied: bool = False
+    return_guard_delayed_for_nonfeed: bool = False
+    return_guard_block_reason: str = ""
+    return_guard_attempted_lanes: tuple[str, ...] = ()
+    return_guard_skipped_lanes: dict[str, str] = field(default_factory=dict)
+    return_guard_errors: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1234,13 +1245,24 @@ class SprintScheduler:
 
             while not self._runner.is_terminal():
                 if self._stop_requested:
-                    break
+                    # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal state
+                    if await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "stop_requested"
+                    ):
+                        break
+                    # Guard blocked: continue loop to satisfy nonfeed lanes
+                    continue
                 # Detect abort requested via lifecycle flag
                 if self._runner.abort_requested:
                     self._result.aborted = True
                     self._result.abort_reason = self._runner.abort_reason or "lifecycle_abort"
                     # Sprint F195B: write partial on abort so latest state survives
                     await self._maybe_export_partial(lifecycle)
+                    # Sprint F207T-A: Return guard — ensure mandatory nonfeed before abort return
+                    # Abort is terminal; attempt guard but do not block abort
+                    await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "lifecycle_abort"
+                    )
                     break
 
                 # Periodic tick
@@ -1325,6 +1347,11 @@ class SprintScheduler:
                 # ── Run one cycle ───────────────────────────────────────────
                 # Enforce max_cycles BEFORE starting new work
                 if self._result.cycles_started >= self._config.max_cycles:
+                    # Sprint F207T-A: Return guard — max cycles is terminal, force one final
+                    # barrier dispatch to satisfy mandatory lanes, then break
+                    await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "max_cycles"
+                    )
                     break
 
                 self._result.cycles_started += 1
@@ -1347,6 +1374,11 @@ class SprintScheduler:
                         f"[8BK] Duration budget exceeded: {elapsed_wall:.1f}s "
                         f"> {self._config.sprint_duration_s + self._config.cycle_sleep_s:.1f}s "
                         f"(grace={self._config.cycle_sleep_s:.1f}s). Forcing windup."
+                    )
+                    # Sprint F207T-A: Return guard — duration budget is terminal urgency,
+                    # force one final barrier dispatch, then proceed to windup
+                    await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "duration_budget"
                     )
                     break
                 # Sprint 8XE: Store sources for public discovery query hint
@@ -1377,7 +1409,13 @@ class SprintScheduler:
                         log.debug(f"Pivot queue drained: {pivot_n} tasks, stats={self._pivot_stats}")
 
                 if not cycle_ok:
-                    break
+                    # Sprint F207T-A: Return guard — cycle failed, check nonfeed terminal
+                    if await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "cycle_ok_false"
+                    ):
+                        break
+                    # Guard blocked: continue loop to satisfy nonfeed lanes
+                    continue
 
                 # Early exit check
                 if (
@@ -1385,7 +1423,13 @@ class SprintScheduler:
                     and self._result.accepted_findings > 0
                 ):
                     self._result.stop_requested = True
-                    break
+                    # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal
+                    if await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "stop_on_first_accepted"
+                    ):
+                        break
+                    # Guard blocked: continue loop to satisfy nonfeed lanes
+                    continue
 
                 # Sleep between cycles (short interval, not one long sleep)
                 # Sprint F206C: Delegated to runner.sleep_or_abort()
@@ -1396,6 +1440,10 @@ class SprintScheduler:
                 if self._runner.post_sleep_gate(now_monotonic):
                     # Sprint F195B: write partial on windup so latest state survives
                     await self._maybe_export_partial(lifecycle)
+                    # Sprint F207T-A: Return guard — entering windup, record nonfeed state
+                    await self._ensure_mandatory_nonfeed_before_return(
+                        query, duckdb_store, "post_sleep_windup"
+                    )
                     break
 
                 # Sprint 8UC B.4: Speculative prefetch every 15s
@@ -2018,6 +2066,183 @@ class SprintScheduler:
                 return {"attempted": True, "timeout": True}
         except Exception as exc:
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
+
+    # ── Sprint F207T-A: Return Guard for Mandatory Nonfeed Terminal State ────
+    # ---------------------------------------------------------------------------
+
+    async def _ensure_mandatory_nonfeed_before_return(
+        self,
+        query: str,
+        duckdb_store: Any,
+        reason: str,
+    ) -> bool:
+        """
+        Sprint F207T-A: Ensure mandatory nonfeed lanes have terminal state before
+        the scheduler can return a meaningful result for a domain query.
+
+        This is the return-path analog of the pre-windup barrier — it prevents
+        the scheduler from returning ACTIVE-phase results when PUBLIC/CT have
+        not yet been attempted (even if the windup guard was never reached).
+
+        Rules:
+          - domain query + ok/warn memory: both PUBLIC and CT must have terminal state
+          - domain query + critical/emergency: may skip with explicit reason recorded
+          - non-domain: only PUBLIC required (CT skips with no_domain)
+          - Feed-only result: may return if domain query but PUBLIC+CT already terminal
+
+        Semantics:
+          - Returns True if the scheduler MAY return (all required lanes terminal)
+          - Returns False if return must be DELAYED (required lanes not terminal)
+          - On False: sets return_guard telemetry and continues loop if possible
+
+        Args:
+            query: Sprint query
+            duckdb_store: DuckDB store (may be None)
+            reason: Human-readable reason for the return check (e.g. "stop_requested",
+                    "max_cycles", "stop_on_first_accepted", "post_sleep_windup")
+
+        Returns:
+            True if return is allowed, False if blocked
+        """
+        import time as _time
+
+        # Record that we checked the return guard
+        self._result.return_guard_checked = True
+
+        # Determine memory state for skipping rules
+        _uma = "ok"
+        if self._governor is not None:
+            try:
+                _snap = self._governor.evaluate()
+                _uma = getattr(_snap, "uma_state", "ok")
+            except Exception:
+                pass
+
+        _memory_state = _uma if _uma in ("ok", "warn", "critical", "emergency") else "ok"
+        _memory_critical = _memory_state in ("critical", "emergency")
+
+        # Check if this is a domain query
+        _is_domain = False
+        if self._acquisition_plan is not None:
+            _debug = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
+            if _debug is not None:
+                _is_domain = getattr(_debug, "domain_detected", False)
+
+        if not _is_domain:
+            # Non-domain query: return allowed without blocking
+            # (PUBLIC may still be checked but CT is not required)
+            self._result.return_guard_satisfied = True
+            self._result.return_guard_block_reason = ""
+            return True
+
+        # Domain query: check required lanes
+        _required: list[str] = []
+        if _memory_critical:
+            # Critical memory: required but may skip with explicit reason
+            _required = ["public", "ct"]
+        else:
+            # ok/warn: both required
+            _required = ["public", "ct"]
+
+        self._result.return_guard_required_lanes = tuple(_required)
+
+        # Check terminal state for each required lane
+        # PUBLIC terminal: _public_outcome is not None
+        # CT terminal: ct_log_discovered > 0 or lane_ct_accepted_findings > 0
+        _public_done = self._public_outcome is not None
+        _ct_done = (
+            self._result.ct_log_discovered > 0
+            or self._result.lane_ct_accepted_findings > 0
+        )
+
+        _unsatisfied: list[str] = []
+        for lane in _required:
+            if lane == "public" and not _public_done:
+                _unsatisfied.append("public")
+            elif lane == "ct" and not _ct_done:
+                _unsatisfied.append("ct")
+
+        if not _unsatisfied:
+            # All required lanes have terminal state
+            self._result.return_guard_satisfied = True
+            self._result.return_guard_block_reason = ""
+            return True
+
+        # Not all lanes are terminal — try to satisfy them
+        _attempted: list[str] = []
+        _skipped: dict[str, str] = {}
+        _errors: dict[str, str] = {}
+
+        # Try PUBLIC
+        if "public" in _unsatisfied:
+            try:
+                outcome = await self._attempt_public_prewindup_barrier(query)
+                if outcome is None:
+                    _skipped["public"] = "adapter_error"
+                    _errors["public"] = "return_guard_public_adapter_error"
+                elif outcome.get("error"):
+                    _errors["public"] = outcome["error"]
+                    _attempted.append("public")
+                elif outcome.get("timeout"):
+                    _skipped["public"] = "timeout"
+                    _attempted.append("public")
+                else:
+                    _attempted.append("public")
+            except Exception as exc:
+                _skipped["public"] = f"exception:{type(exc).__name__}"
+                _errors["public"] = f"{type(exc).__name__}:{exc}"
+
+        # Try CT
+        if "ct" in _unsatisfied:
+            try:
+                outcome = await self._attempt_ct_prewindup_barrier(query)
+                if outcome is None:
+                    _skipped["ct"] = "adapter_error"
+                    _errors["ct"] = "return_guard_ct_adapter_error"
+                elif outcome.get("timeout"):
+                    _skipped["ct"] = "timeout"
+                    _attempted.append("ct")
+                elif outcome.get("error"):
+                    _errors["ct"] = outcome["error"]
+                    _attempted.append("ct")
+                else:
+                    _attempted.append("ct")
+            except Exception as exc:
+                _skipped["ct"] = f"exception:{type(exc).__name__}"
+                _errors["ct"] = f"{type(exc).__name__}:{exc}"
+
+        # Re-check terminal state after attempted barrier
+        _public_done = self._public_outcome is not None
+        _ct_done = (
+            self._result.ct_log_discovered > 0
+            or self._result.lane_ct_accepted_findings > 0
+        )
+
+        _still_unsatisfied: list[str] = []
+        for lane in _required:
+            if lane == "public" and not _public_done:
+                _still_unsatisfied.append("public")
+            elif lane == "ct" and not _ct_done:
+                _still_unsatisfied.append("ct")
+
+        if _still_unsatisfied:
+            # Cannot return — set block telemetry and return False
+            self._result.return_guard_delayed_for_nonfeed = True
+            self._result.return_guard_block_reason = (
+                f"nonfeed_not_terminal:{','.join(_still_unsatisfied)}"
+            )
+            self._result.return_guard_attempted_lanes = tuple(_attempted)
+            self._result.return_guard_skipped_lanes = dict(_skipped)
+            self._result.return_guard_errors = dict(_errors)
+            return False
+
+        # All required lanes now terminal
+        self._result.return_guard_satisfied = True
+        self._result.return_guard_block_reason = ""
+        self._result.return_guard_attempted_lanes = tuple(_attempted)
+        self._result.return_guard_skipped_lanes = dict(_skipped)
+        self._result.return_guard_errors = dict(_errors)
+        return True
 
     # ── Cycle logic ────────────────────────────────────────────────────────
 
@@ -5222,6 +5447,17 @@ class SprintScheduler:
             "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
             "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
             "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
+        }
+        # Sprint F207T-A: Return guard telemetry for mandatory nonfeed terminal state
+        report["return_guard"] = {
+            "checked": getattr(self._result, "return_guard_checked", False),
+            "required_lanes": list(getattr(self._result, "return_guard_required_lanes", ())),
+            "satisfied": getattr(self._result, "return_guard_satisfied", False),
+            "delayed_for_nonfeed": getattr(self._result, "return_guard_delayed_for_nonfeed", False),
+            "block_reason": getattr(self._result, "return_guard_block_reason", ""),
+            "attempted_lanes": list(getattr(self._result, "return_guard_attempted_lanes", ())),
+            "skipped_lanes": dict(getattr(self._result, "return_guard_skipped_lanes", {})),
+            "errors": dict(getattr(self._result, "return_guard_errors", {})),
         }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:

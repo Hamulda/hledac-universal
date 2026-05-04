@@ -198,6 +198,9 @@ class LiveMeasurementResult:
     # Windup guard observation telemetry (F207S)
     windup_guard_observation: dict | None = None
 
+    # Return guard observation telemetry (F207T)
+    return_guard_observation: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -429,6 +432,26 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                 }
         result["windup_guard_observation"] = wg_obs
 
+        # F207T: Extract return_guard from acquisition_strategy
+        # Maps scheduler return_guard state → live KPI return guard telemetry.
+        # return_guard is a separate guard from windup_guard: it fires at scheduler
+        # return path (ACTIVE→WINDUP transition), not at the windup_lead boundary.
+        rg_obs = None
+        if isinstance(acq, dict):
+            rg_raw = acq.get("return_guard")
+            if rg_raw and isinstance(rg_raw, dict):
+                rg_obs = {
+                    "checked": rg_raw.get("checked", False),
+                    "required_lanes": rg_raw.get("required_lanes", []),
+                    "satisfied": rg_raw.get("satisfied", False),
+                    "delayed_for_nonfeed": rg_raw.get("delayed_for_nonfeed", False),
+                    "block_reason": rg_raw.get("block_reason", ""),
+                    "attempted_lanes": rg_raw.get("attempted_lanes", []),
+                    "skipped_lanes": rg_raw.get("skipped_lanes", {}),
+                    "errors": rg_raw.get("errors", []),
+                }
+        result["return_guard_observation"] = rg_obs
+
         return result
     except Exception:
         return None
@@ -487,6 +510,7 @@ def _derive_live_kpi(
     timing_truth: dict | None = None,
     acquisition_strategy: dict | None = None,
     windup_guard_observation: dict | None = None,
+    return_guard_observation: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -523,6 +547,14 @@ def _derive_live_kpi(
       - active_window_budget_s            (F207M)
       - nonfeed_eligible_families         (F207M)
       - nonfeed_skipped_reasons           (F207M)
+      - return_guard_checked               (F207T)
+      - return_guard_required_lanes        (F207T)
+      - return_guard_satisfied              (F207T)
+      - return_guard_delayed_for_nonfeed    (F207T)
+      - return_guard_block_reason           (F207T)
+      - return_guard_attempted_lanes        (F207T)
+      - return_guard_skipped_lanes          (F207T)
+      - return_guard_errors                 (F207T)
 
     Feed telemetry preference (F207K-C):
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
@@ -626,6 +658,14 @@ def _derive_live_kpi(
     # F207S: Windup guard observation telemetry
     wg = windup_guard_observation or {}
 
+    # F207T: Return guard observation telemetry
+    # Return guard fires at scheduler return path (ACTIVE→WINDUP), distinct from windup_guard
+    # which fires at the windup_lead boundary. The key distinction:
+    # - windup_guard_call_count=0 → windup callsite never reached (windup_guard not called)
+    # - return_guard_checked=false → scheduler return guard never reached (return_guard not called)
+    # Both must be checked to distinguish windup miss from return-guard miss.
+    rg = return_guard_observation or {}
+
     # nonfeed_eligible_families: nonfeed families that exist in branch_mix
     nonfeed_eligible_families: list[str] = []
     nonfeed_skipped_reasons: dict[str, str] = {}
@@ -676,6 +716,7 @@ def _derive_live_kpi(
         prewindup_required_lanes=prewindup_required_lanes,
         prewindup_attempted_lanes=prewindup_attempted_lanes,
         acquisition_strategy=as_dict,
+        return_guard_observation=rg,
     )
 
     return {
@@ -727,6 +768,15 @@ def _derive_live_kpi(
         "windup_guard_last_reason": wg.get("last_reason", ""),
         "windup_guard_last_phase": wg.get("last_phase", ""),
         "windup_guard_last_allowed": wg.get("last_allowed"),
+        # F207T: Return guard observation
+        "return_guard_checked": rg.get("checked", False),
+        "return_guard_required_lanes": rg.get("required_lanes", []),
+        "return_guard_satisfied": rg.get("satisfied", False),
+        "return_guard_delayed_for_nonfeed": rg.get("delayed_for_nonfeed", False),
+        "return_guard_block_reason": rg.get("block_reason", ""),
+        "return_guard_attempted_lanes": rg.get("attempted_lanes", []),
+        "return_guard_skipped_lanes": rg.get("skipped_lanes", {}),
+        "return_guard_errors": rg.get("errors", []),
     }
 
 
@@ -760,6 +810,7 @@ def _derive_next_action(
     prewindup_required_lanes: list[str] | None = None,
     prewindup_attempted_lanes: list[str] | None = None,
     acquisition_strategy: dict | None = None,
+    return_guard_observation: dict | None = None,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
@@ -771,6 +822,49 @@ def _derive_next_action(
     """
     prewindup_required_lanes = prewindup_required_lanes or []
     prewindup_attempted_lanes = prewindup_attempted_lanes or []
+
+    # F207T: Return guard rules — fire BEFORE prewindup barrier rules
+    # because return_guard_checked=false with windup_guard_call_count=0 means
+    # the scheduler return path guard was never reached (distinct from windup_guard miss).
+    # Return guard fires at ACTIVE→WINDUP transition; windup_guard fires at windup_lead boundary.
+    # Rule -1 ONLY fires when return_guard_observation telemetry is PRESENT (not None/empty).
+    # If return_guard_observation=None, we cannot determine whether return guard was called — fall through.
+    rg = return_guard_observation or {}
+    has_rg_telemetry = bool(rg)
+    rg_checked: bool = bool(rg.get("checked")) if has_rg_telemetry else False
+    rg_satisfied: bool = rg.get("satisfied", False) if has_rg_telemetry else False
+    rg_required_lanes: list[str] = rg.get("required_lanes", []) if has_rg_telemetry else []
+    rg_attempted_lanes: list[str] = rg.get("attempted_lanes", []) if has_rg_telemetry else []
+    rg_nonfeed_attempted: bool = any(lane in rg_attempted_lanes for lane in ("public", "ct"))
+
+    # Rule -1 (F207T): Return guard never checked — scheduler return guard not called
+    # ONLY when we have return_guard telemetry AND checked=False.
+    # This means the scheduler's return guard was reached but never called (not that we don't know).
+    # Conditions: return_guard telemetry present, cycles_started > 0, primary_signal_source present,
+    # feed-only (windup_guard_call_count=0 proxy), nonfeed not dispatched.
+    if (has_rg_telemetry
+            and rg_checked is False
+            and runtime_truth.get("cycles_started", 0) > 0
+            and runtime_truth.get("primary_signal_source")
+            and feed_findings > 0
+            and ct_findings == 0
+            and public_findings == 0):
+        return ("fix_scheduler_return_guard_not_called", None)
+
+    # Rule -1b (F207T): Return guard checked but NOT satisfied — terminal state issue
+    if has_rg_telemetry and rg_checked and not rg_satisfied:
+        return ("fix_return_guard_terminal_state", None)
+
+    # Rule -1c (F207T): Return guard checked and satisfied but nonfeed lanes never attempted
+    # "satisfied" but no nonfeed dispatched despite feed-only run → report mapping gap
+    if (has_rg_telemetry
+            and rg_checked
+            and rg_satisfied
+            and rg_required_lanes
+            and not rg_nonfeed_attempted
+            and ct_findings == 0
+            and public_findings == 0):
+        return ("fix_return_guard_report_mapping", None)
 
     # Rule 0: Pre-windup barrier not called (F207Q)
     # Only fire when acquisition_strategy telemetry is PRESENT (not None/empty).
@@ -870,6 +964,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         timing_truth=result.timing_truth,
         acquisition_strategy=result.acquisition_strategy,
         windup_guard_observation=getattr(result, "windup_guard_observation", None),
+        return_guard_observation=getattr(result, "return_guard_observation", None),
     )
     result.live_kpi = kpi
 
@@ -1206,6 +1301,7 @@ async def _run_live_sprint(
                 result.public_pipeline = parsed.get("public_pipeline")
                 result.acquisition_strategy = parsed.get("acquisition_strategy")
                 result.windup_guard_observation = parsed.get("windup_guard_observation")
+                result.return_guard_observation = parsed.get("return_guard_observation")
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
@@ -1540,6 +1636,42 @@ def _render_md(result: LiveMeasurementResult) -> str:
                 lines.append(f"| **Next action** | **no_windup_starvation** |")
             elif wg_allowed is False:
                 lines.append(f"| **Next action** | **fix_barrier_semantics** |")
+
+    # Scheduler Return Guard section (F207T)
+    kpi = result.live_kpi
+    if kpi is not None:
+        rg_checked = kpi.get('return_guard_checked', False)
+        rg_satisfied = kpi.get('return_guard_satisfied', False)
+        rg_block = kpi.get('return_guard_block_reason', '')
+        rg_required = kpi.get('return_guard_required_lanes', [])
+        rg_attempted = kpi.get('return_guard_attempted_lanes', [])
+        rg_skipped = kpi.get('return_guard_skipped_lanes', {})
+        rg_errors = kpi.get('return_guard_errors', [])
+        # Only render if we have evidence of return guard activity
+        if rg_checked or rg_required or rg_block or rg_attempted or rg_skipped or rg_errors:
+            lines.extend([
+                "",
+                "## Scheduler Return Guard",
+                "",
+                f"| Metric | Value |",
+                f"| --- | --- |",
+                f"| Return guard checked | {rg_checked} |",
+                f"| Return guard satisfied | {rg_satisfied} |",
+                f"| Block reason | {rg_block or 'N/A'} |",
+                f"| Required lanes | {rg_required or 'N/A'} |",
+                f"| Attempted lanes | {rg_attempted or 'N/A'} |",
+            ])
+            if rg_skipped:
+                lines.append(f"| Skipped lanes | {json.dumps(rg_skipped)} |")
+            if rg_errors:
+                lines.append(f"| Errors | {json.dumps(rg_errors)} |")
+            # Diagnostic next-action based on return guard chain
+            if not rg_checked:
+                lines.append(f"| **Next action** | **fix_scheduler_return_guard_not_called** |")
+            elif rg_checked and not rg_satisfied:
+                lines.append(f"| **Next action** | **fix_return_guard_terminal_state** |")
+            elif rg_checked and rg_satisfied and not any(lane in rg_attempted for lane in ("public", "ct")):
+                lines.append(f"| **Next action** | **fix_return_guard_report_mapping** |")
 
     # PUBLIC Acceptance section (F207K) — detailed breakdown
     kpi = result.live_kpi
