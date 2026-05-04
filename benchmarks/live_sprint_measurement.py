@@ -195,6 +195,9 @@ class LiveMeasurementResult:
     # Acquisition strategy telemetry (F207Q)
     acquisition_strategy: dict | None = None
 
+    # Windup guard observation telemetry (F207S)
+    windup_guard_observation: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -410,6 +413,22 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             acq["nonfeed_scheduler_gap_resolved"] = barrier.get("nonfeed_scheduler_gap_resolved")
             result["acquisition_strategy"] = acq
 
+        # F207S: Extract windup_guard_observation from acquisition_strategy report
+        # Maps scheduler result fields → live KPI windup guard telemetry
+        wg_obs = None
+        if isinstance(acq, dict):
+            wg_raw = acq.get("windup_guard_observation")
+            if wg_raw and isinstance(wg_raw, dict):
+                wg_obs = {
+                    "call_count": wg_raw.get("call_count", 0),
+                    "callback_supplied_count": wg_raw.get("callback_supplied_count", 0),
+                    "callback_executed_count": wg_raw.get("callback_executed_count", 0),
+                    "last_reason": wg_raw.get("last_reason", ""),
+                    "last_phase": wg_raw.get("last_phase", ""),
+                    "last_allowed": wg_raw.get("last_allowed"),
+                }
+        result["windup_guard_observation"] = wg_obs
+
         return result
     except Exception:
         return None
@@ -467,6 +486,7 @@ def _derive_live_kpi(
     public_pipeline: dict | None = None,
     timing_truth: dict | None = None,
     acquisition_strategy: dict | None = None,
+    windup_guard_observation: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -603,6 +623,9 @@ def _derive_live_kpi(
     nonfeed_scheduler_gap_resolved: bool | None = as_dict.get("nonfeed_scheduler_gap_resolved", None)
     source_family_outcomes: list[dict] = as_dict.get("source_family_outcomes", [])
 
+    # F207S: Windup guard observation telemetry
+    wg = windup_guard_observation or {}
+
     # nonfeed_eligible_families: nonfeed families that exist in branch_mix
     nonfeed_eligible_families: list[str] = []
     nonfeed_skipped_reasons: dict[str, str] = {}
@@ -697,6 +720,13 @@ def _derive_live_kpi(
         "windup_delayed_for_nonfeed": windup_delayed_for_nonfeed,
         "nonfeed_scheduler_gap_resolved": nonfeed_scheduler_gap_resolved,
         "source_family_outcomes": source_family_outcomes,
+        # F207S: Windup guard observation
+        "windup_guard_call_count": wg.get("call_count", 0),
+        "windup_guard_callback_supplied_count": wg.get("callback_supplied_count", 0),
+        "windup_guard_callback_executed_count": wg.get("callback_executed_count", 0),
+        "windup_guard_last_reason": wg.get("last_reason", ""),
+        "windup_guard_last_phase": wg.get("last_phase", ""),
+        "windup_guard_last_allowed": wg.get("last_allowed"),
     }
 
 
@@ -839,6 +869,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         public_pipeline=result.public_pipeline,
         timing_truth=result.timing_truth,
         acquisition_strategy=result.acquisition_strategy,
+        windup_guard_observation=getattr(result, "windup_guard_observation", None),
     )
     result.live_kpi = kpi
 
@@ -1174,6 +1205,7 @@ async def _run_live_sprint(
                 result.primary_signal_source = parsed.get("primary_signal_source")
                 result.public_pipeline = parsed.get("public_pipeline")
                 result.acquisition_strategy = parsed.get("acquisition_strategy")
+                result.windup_guard_observation = parsed.get("windup_guard_observation")
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
@@ -1471,6 +1503,43 @@ def _render_md(result: LiveMeasurementResult) -> str:
             if gap_resolved is not None:
                 barrier_rows.append(f"| Nonfeed scheduler gap resolved | {gap_resolved} |")
             lines.extend(barrier_rows)
+
+    # Windup Guard Observation section (F207S)
+    kpi = result.live_kpi
+    if kpi is not None:
+        wg_call = kpi.get('windup_guard_call_count', 0)
+        wg_supplied = kpi.get('windup_guard_callback_supplied_count', 0)
+        wg_exec = kpi.get('windup_guard_callback_executed_count', 0)
+        wg_reason = kpi.get('windup_guard_last_reason', '')
+        wg_phase = kpi.get('windup_guard_last_phase', '')
+        wg_allowed = kpi.get('windup_guard_last_allowed')
+        # Only render if we have evidence of any windup guard activity
+        if wg_call > 0 or wg_supplied > 0 or wg_exec > 0:
+            lines.extend([
+                "",
+                "## Windup Guard Observation",
+                "",
+                f"| Metric | Value |",
+                f"| --- | --- |",
+                f"| Call count | {wg_call} |",
+                f"| Callback supplied | {wg_supplied} |",
+                f"| Callback executed | {wg_exec} |",
+                f"| Last reason | {wg_reason or 'N/A'} |",
+                f"| Last phase | {wg_phase or 'N/A'} |",
+                f"| Last allowed | {wg_allowed} |",
+            ])
+            # Diagnostic next-action based on windup guard chain
+            if wg_call == 0:
+                lines.append(f"| **Next action** | **fix_scheduler_windup_callsite** |")
+            elif wg_supplied == 0:
+                lines.append(f"| **Next action** | **fix_callback_wiring** |")
+            elif wg_exec == 0:
+                lines.append(f"| **Next action** | **fix_callback_execution** |")
+            elif wg_allowed is True:
+                # barrier=true, allowed=true → windup proceeded; starvation check in next section
+                lines.append(f"| **Next action** | **no_windup_starvation** |")
+            elif wg_allowed is False:
+                lines.append(f"| **Next action** | **fix_barrier_semantics** |")
 
     # PUBLIC Acceptance section (F207K) — detailed breakdown
     kpi = result.live_kpi

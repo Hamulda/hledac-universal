@@ -475,6 +475,15 @@ class SprintSchedulerResult:
     prewindup_barrier_errors: dict[str, str] = field(default_factory=dict)
     prewindup_barrier_duration_s: float = 0.0
     windup_delayed_for_nonfeed: bool = False
+    # Sprint F207S-B: Scheduler-owned prewindup barrier — delayed cycle once
+    prewindup_barrier_delayed_cycle: bool = False
+    # Sprint F207S-A: Windup guard callsite telemetry — accumulated across the run
+    windup_guard_call_count: int = 0
+    windup_guard_callback_supplied_count: int = 0
+    windup_guard_callback_executed_count: int = 0
+    windup_guard_last_reason: str = ""
+    windup_guard_last_phase: str = ""
+    windup_guard_last_allowed: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +706,8 @@ class SprintScheduler:
         self._last_ooda: float = 0.0
         # Sprint F207M-A: Nonfeed pre-dispatch guard — set True after first predispatch runs
         self._nonfeed_predispatch_done: bool = False
+        # Sprint F207S-B: Scheduler-owned prewindup barrier — set True after one delayed cycle
+        self._prewindup_barrier_delayed: bool = False
         # Sprint 8VB: Adaptive timeout EMA
         # F196C: Bounded to prevent unbounded growth across sprints
         self._fetch_latency_ema: dict[str, float] = {}
@@ -1240,17 +1251,52 @@ class SprintScheduler:
                 # Called once per sprint; subsequent calls are no-ops.
                 await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
 
-                # ── Wind-down guard ────────────────────────────────────────
-                # Sprint F206C: Delegated to runner.windup_guard()
-                # Sprint F207M-A: Extended to also block windup until nonfeed pre-dispatch runs
-                # Sprint F207R-A: windup_guard now accepts a pre_windup_barrier callback
-                #                 that blocks windup when required lanes are not terminal.
-                if self._runner.windup_guard(
+                # ── Sprint F207S-B: Scheduler-owned prewindup barrier ───────
+                # Primary windup gate: scheduler ensures barrier terminal state BEFORE
+                # it asks the lifecycle runner whether windup is allowed.
+                # Even if the lifecycle runner's callback is missed, the scheduler
+                # cannot enter windup until required lanes are terminal.
+                #
+                # Sprint F206C: windup_guard delegated to runner
+                # Sprint F207M-A: nonfeed pre-dispatch guard
+                # Sprint F207R-A: windup_guard accepts pre_windup_barrier callback
+                # Sprint F207S-A: telemetry for callback observation
+                # Sprint F207S-B: scheduler barrier is the primary gate; callback is secondary
+                self._result.windup_guard_call_count += 1
+
+                _barrier_result = await self._ensure_pre_windup_lane_terminal_states(
+                    query, self._acquisition_plan, "ok"
+                )
+                _barrier_satisfied = getattr(_barrier_result, "satisfied", False)
+                _barrier_required = getattr(_barrier_result, "required_lanes", ())
+                _barrier_delayed = self._prewindup_barrier_delayed
+
+                if _barrier_required and not _barrier_satisfied and not _barrier_delayed:
+                    # Not satisfied and first delay — mark delayed, yield one cycle
+                    self._prewindup_barrier_delayed = True
+                    self._result.prewindup_barrier_delayed_cycle = True
+                    log.debug(
+                        "[F207S-B] Prewindup barrier not satisfied (required=%s) — delaying cycle once",
+                        _barrier_required,
+                    )
+                    # Continue the active loop once instead of entering windup
+                    continue
+
+                # Barrier satisfied or already delayed once — delegate to runner
+                self._result.windup_guard_callback_supplied_count += 1
+                _guard_result = self._runner.windup_guard(
                     now_monotonic,
                     pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(
                         query, duckdb_store
                     ),
-                ):
+                )
+                _obs = self._runner.last_guard_observation
+                if _obs:
+                    self._result.windup_guard_callback_executed_count += 1 if _obs.get("callback_executed") else 0
+                    self._result.windup_guard_last_reason = _obs.get("reason", "")
+                    self._result.windup_guard_last_phase = _obs.get("phase", "")
+                    self._result.windup_guard_last_allowed = _obs.get("allowed")
+                if _guard_result:
                     # If nonfeed pre-dispatch hasn't run yet, yield to it first
                     if not self._nonfeed_predispatch_done:
                         log.debug("[F207M-A] Windup signalled but pre-dispatch not done — yielding")
@@ -5168,6 +5214,15 @@ class SprintScheduler:
                 # [F207Q-A] Pre-windup barrier telemetry for live KPI diagnosis
                 "prewindup_barrier": self._get_prewindup_barrier_report(),
             }
+        # Sprint F207S-A: Windup guard callsite observation telemetry (top-level key)
+        report["windup_guard_observation"] = {
+            "call_count": getattr(self._result, "windup_guard_call_count", 0),
+            "callback_supplied_count": getattr(self._result, "windup_guard_callback_supplied_count", 0),
+            "callback_executed_count": getattr(self._result, "windup_guard_callback_executed_count", 0),
+            "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
+            "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
+            "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
+        }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:
             _outcomes_list = [o.to_dict() if hasattr(o, "to_dict") else dict(o) for o in self._lane_outcomes]
@@ -6848,6 +6903,8 @@ class SprintScheduler:
         self._public_outcome = None
         # Sprint F207M-A: Reset nonfeed pre-dispatch guard for new sprint
         self._nonfeed_predispatch_done = False
+        # Sprint F207S-B: Reset scheduler-owned barrier delayed flag for new sprint
+        self._prewindup_barrier_delayed = False
         # Sprint F160C: Clear per-sprint source economics
         self._source_economics.clear()
         # Sprint F203D: Reset evidence chain builder for new sprint

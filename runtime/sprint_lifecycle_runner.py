@@ -43,7 +43,7 @@ class SprintLifecycleRunner:
     Scheduler remains canonical owner for branches, sidecars, advisory, export.
     """
 
-    __slots__ = ("_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier")
+    __slots__ = ("_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier", "_guard_observation")
 
     def __init__(
         self,
@@ -55,6 +55,7 @@ class SprintLifecycleRunner:
         self._adapter = adapter
         self._wall_clock_start: Optional[float] = None
         self._pre_windup_barrier: Optional[Callable[[], bool]] = pre_windup_barrier
+        self._guard_observation: dict = {}
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,11 @@ class SprintLifecycleRunner:
         Returns the current phase after ticking.
         """
         return self._adapter.tick(now_monotonic)
+
+    @property
+    def last_guard_observation(self) -> dict:
+        """Return the last windup_guard() observation dict (sprint F207S-A)."""
+        return self._guard_observation
 
     # ── WARMUP → ACTIVE ─────────────────────────────────────────────────────
 
@@ -110,23 +116,54 @@ class SprintLifecycleRunner:
 
         Call this BEFORE scheduler-specific pre-windup operations
         (flush dedup, flush forensics, advisory gate, partial export).
+
+        Sprint F207S-A: Writes observation to _guard_observation dict
+        readable via last_guard_observation property.
         """
+        phase = str(self._adapter._current_phase) if hasattr(self._adapter, "_current_phase") else "UNKNOWN"
+        self._guard_observation = {
+            "phase": phase,
+            "should_enter_windup": False,
+            "callback_supplied": False,
+            "callback_executed": False,
+            "barrier_ok": None,
+            "reason": "not_windup_time",
+            "allowed": False,
+        }
+
         if not self._adapter.should_enter_windup(now_monotonic):
+            self._guard_observation["reason"] = "not_windup_time"
             return False
+
+        self._guard_observation["should_enter_windup"] = True
+        self._guard_observation["reason"] = "allowed_by_adapter"
 
         # Check pre-windup barrier if provided
         _callback = pre_windup_barrier if pre_windup_barrier is not None else self._pre_windup_barrier
         if _callback is not None:
+            self._guard_observation["callback_supplied"] = True
             try:
                 barrier_ok = _callback()
+                self._guard_observation["callback_executed"] = True
+                self._guard_observation["barrier_ok"] = barrier_ok
                 if not barrier_ok:
+                    self._guard_observation["reason"] = "barrier_blocked"
+                    self._guard_observation["allowed"] = False
                     log.debug(
                         "[SprintLifecycleRunner] Windup blocked by pre-windup barrier"
                     )
                     return False
-            except Exception:
-                pass  # fail-soft: allow windup on callback error
+                else:
+                    self._guard_observation["reason"] = "barrier_passed"
+            except Exception as exc:
+                self._guard_observation["callback_executed"] = True
+                self._guard_observation["barrier_ok"] = None
+                self._guard_observation["reason"] = f"callback_exception:{type(exc).__name__}"
+                # fail-soft: allow windup on callback error
+                self._guard_observation["allowed"] = True
+                return True
 
+        self._guard_observation["allowed"] = True
         return True
 
     # ── Post-sleep windup gate ──────────────────────────────────────────────
