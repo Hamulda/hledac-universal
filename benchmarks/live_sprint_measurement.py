@@ -393,6 +393,23 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
         acq = data.get("acquisition_strategy") or {}
         result["acquisition_strategy"] = acq if isinstance(acq, dict) else None
 
+        # F207R: Promote prewindup_barrier sub-object fields to acquisition_strategy top-level
+        # so live KPI parser finds barrier telemetry that was written under prewindup_barrier key
+        # in scheduler diagnostic report (sprint_scheduler.py:5143).
+        # If live_kpi has barrier fields but acquisition_strategy doesn't → report mapping bug.
+        prewindup_barrier = acq.get("prewindup_barrier") if isinstance(acq, dict) else None
+        if prewindup_barrier and isinstance(prewindup_barrier, dict):
+            barrier = prewindup_barrier
+            acq = dict(acq)  # always copy to avoid mutating source dict
+            acq["prewindup_barrier_checked"] = bool(getattr(barrier, "checked", False) or barrier.get("checked", False) or barrier.get("satisfied") is not None)
+            acq["prewindup_barrier_satisfied"] = bool(barrier.get("satisfied", False))
+            acq["prewindup_required_lanes"] = barrier.get("required_lanes", [])
+            acq["prewindup_attempted_lanes"] = barrier.get("attempted_lanes", [])
+            acq["prewindup_skipped_lanes"] = barrier.get("skipped_lanes", {})
+            acq["windup_delayed_for_nonfeed"] = bool(barrier.get("windup_delayed", False))
+            acq["nonfeed_scheduler_gap_resolved"] = barrier.get("nonfeed_scheduler_gap_resolved")
+            result["acquisition_strategy"] = acq
+
         return result
     except Exception:
         return None

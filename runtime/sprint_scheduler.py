@@ -1243,39 +1243,19 @@ class SprintScheduler:
                 # ── Wind-down guard ────────────────────────────────────────
                 # Sprint F206C: Delegated to runner.windup_guard()
                 # Sprint F207M-A: Extended to also block windup until nonfeed pre-dispatch runs
-                if self._runner.windup_guard(now_monotonic):
+                # Sprint F207R-A: windup_guard now accepts a pre_windup_barrier callback
+                #                 that blocks windup when required lanes are not terminal.
+                if self._runner.windup_guard(
+                    now_monotonic,
+                    pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(
+                        query, duckdb_store
+                    ),
+                ):
                     # If nonfeed pre-dispatch hasn't run yet, yield to it first
                     if not self._nonfeed_predispatch_done:
                         log.debug("[F207M-A] Windup signalled but pre-dispatch not done — yielding")
                         # Give pre-dispatch a chance before entering windup
                         await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
-
-                    # ── Sprint F207Q-A: Pre-windup barrier ─────────────────
-                    # Before entering windup, ensure required lanes (public, ct for domain
-                    # queries) have terminal state. Block windup one more dispatch attempt.
-                    _uma = "ok"
-                    if self._governor is not None:
-                        try:
-                            _snap = self._governor.evaluate()
-                            _uma = getattr(_snap, "uma_state", "ok")
-                        except Exception:
-                            pass
-                    barrier_result = await self._ensure_pre_windup_lane_terminal_states(
-                        query, self._acquisition_plan, _uma
-                    )
-                    if not barrier_result.satisfied and barrier_result.required_lanes:
-                        # Required lanes not satisfied — block windup for one dispatch attempt
-                        self._result.windup_delayed_for_nonfeed = True
-                        log.debug(
-                            "[F207Q-A] Windup blocked: required lanes not terminal %s — attempting",
-                            barrier_result.required_lanes,
-                        )
-                        # Do another nonfeed attempt before windup
-                        await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
-                        # Re-check barrier
-                        barrier_result = await self._ensure_pre_windup_lane_terminal_states(
-                            query, self._acquisition_plan, _uma
-                        )
 
                     # Phase already advanced via tick(); let scheduler handle pre-windup ops
                     # Sprint 8RA: Flush dedup at WINDUP entry
@@ -1994,6 +1974,52 @@ class SprintScheduler:
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
 
     # ── Cycle logic ────────────────────────────────────────────────────────
+
+    # ---------------------------------------------------------------------------
+    # Sprint F207R-A: Sync barrier check callable for lifecycle runner windup_guard
+    # ---------------------------------------------------------------------------
+
+    def _check_prewindup_barrier_sync(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> bool:
+        """
+        Sprint F207R-A: Synchronous pre-windup barrier check.
+
+        Called by the windup_guard() callback from the lifecycle runner.
+        Returns True if windup is allowed (barrier satisfied or not required).
+        Returns False if windup must be blocked (required lanes not terminal).
+
+        Uses asyncio.run() to execute the async barrier check from a sync context.
+        asyncio.run() creates its own event loop — safe here since the call happens
+        from a sync lambda inside an async loop, and no other async work depends
+        on the current loop during this call.
+
+        Raises:
+            Any exception is caught and logged — fail-soft returns True (allow windup).
+        """
+        try:
+            result = asyncio.run(
+                self._ensure_pre_windup_lane_terminal_states(
+                    query, self._acquisition_plan, "ok"
+                ),
+            )
+            if result is None:
+                return True  # fail-soft: allow windup
+            satisfied = getattr(result, "satisfied", False)
+            required_lanes = getattr(result, "required_lanes", ())
+            if required_lanes and not satisfied:
+                self._result.windup_delayed_for_nonfeed = True
+                log.debug(
+                    "[F207R-A] Windup blocked by barrier: required lanes not terminal %s",
+                    required_lanes,
+                )
+                return False
+            return True
+        except Exception as exc:
+            log.debug("[F207R-A] Barrier check error (allowing windup): %s", exc)
+            return True  # fail-soft: allow windup on error
 
     async def _run_one_cycle(
         self,

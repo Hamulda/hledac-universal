@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 __all__ = ["SprintLifecycleRunner"]
 
@@ -43,12 +43,18 @@ class SprintLifecycleRunner:
     Scheduler remains canonical owner for branches, sidecars, advisory, export.
     """
 
-    __slots__ = ("_lc", "_adapter", "_wall_clock_start")
+    __slots__ = ("_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier")
 
-    def __init__(self, lifecycle: Any, adapter: Any) -> None:
+    def __init__(
+        self,
+        lifecycle: Any,
+        adapter: Any,
+        pre_windup_barrier: Optional[Callable[[], bool]] = None,
+    ) -> None:
         self._lc = lifecycle
         self._adapter = adapter
         self._wall_clock_start: Optional[float] = None
+        self._pre_windup_barrier: Optional[Callable[[], bool]] = pre_windup_barrier
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -89,6 +95,7 @@ class SprintLifecycleRunner:
     def windup_guard(
         self,
         now_monotonic: Optional[float] = None,
+        pre_windup_barrier: Optional[Callable[[], bool]] = None,
     ) -> bool:
         """
         Check if lifecycle should enter wind-down.
@@ -96,12 +103,31 @@ class SprintLifecycleRunner:
         Returns True if the scheduler should break out of the main loop
         to begin teardown. Returns False to continue the work loop.
 
+        If a pre_windup_barrier callback is provided it is called to check
+        whether required lanes (PUBLIC, CT) have reached terminal state.
+        If the callback returns False the windup is blocked — returns False.
+        If the callback raises or returns True the windup is allowed.
+
         Call this BEFORE scheduler-specific pre-windup operations
         (flush dedup, flush forensics, advisory gate, partial export).
         """
-        if self._adapter.should_enter_windup(now_monotonic):
-            return True
-        return False
+        if not self._adapter.should_enter_windup(now_monotonic):
+            return False
+
+        # Check pre-windup barrier if provided
+        _callback = pre_windup_barrier if pre_windup_barrier is not None else self._pre_windup_barrier
+        if _callback is not None:
+            try:
+                barrier_ok = _callback()
+                if not barrier_ok:
+                    log.debug(
+                        "[SprintLifecycleRunner] Windup blocked by pre-windup barrier"
+                    )
+                    return False
+            except Exception:
+                pass  # fail-soft: allow windup on callback error
+
+        return True
 
     # ── Post-sleep windup gate ──────────────────────────────────────────────
 
