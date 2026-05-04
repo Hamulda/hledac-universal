@@ -345,10 +345,14 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
     """
     Parse sprint JSON report for measurement metrics.
 
-    Robust extraction strategy — tries multiple schema locations:
-    1. runtime_truth (top-level dict) for cycles, accepted_findings, primary_signal_source
-    2. timing_truth (top-level dict) for timing data
-    3. canonical_run_summary for checkpoint_zero_category and any missing fields
+    F208C: Canonical acquisition report path checked FIRST.
+    Legacy fallback paths preserved for backward compatibility.
+
+    Canonical extraction strategy (F208C):
+    1. acquisition_report (top-level key from build_acquisition_report()) — canonical
+    2. runtime_truth (top-level dict) for cycles, accepted_findings, primary_signal_source
+    3. timing_truth (top-level dict) for timing data
+    4. canonical_run_summary for checkpoint_zero_category and any missing fields
 
     Fail-soft: returns partial dict if some fields are missing.
     """
@@ -358,14 +362,135 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
         with open(report_path) as f:
             data = json.load(f)
 
-        # Primary source: runtime_truth (top-level dict) — authoritative for sprint metrics
+        # F208C: Canonical acquisition_report — checked FIRST before legacy paths
+        acq_report = data.get("acquisition_report")
+        if isinstance(acq_report, dict):
+            # Canonical F208C path: extract all acquisition telemetry from one schema
+            result: dict = {}
+
+            # Extract runtime_truth from the report (still authoritative for sprint metrics)
+            rt = data.get("runtime_truth") or {}
+            tt = data.get("timing_truth") or {}
+            summary = data.get("canonical_run_summary") or {}
+
+            # findings_count
+            branch_mix = rt.get("branch_mix", {})
+            result["findings_count"] = (
+                summary.get("findings_count")
+                or data.get("findings_count")
+                or branch_mix.get("feed_findings", 0)
+                + branch_mix.get("public_findings", 0)
+                + branch_mix.get("ct_findings", 0)
+            )
+
+            result["cycles_completed"] = rt.get("cycles_completed")
+            result["cycles_started"] = rt.get("cycles_started")
+            result["accepted_findings"] = rt.get("accepted_findings")
+            result["runtime_truth"] = rt if isinstance(rt, dict) else None
+            result["timing_truth"] = tt if isinstance(tt, dict) else None
+            result["checkpoint_zero_category"] = summary.get("checkpoint_zero_category")
+            result["primary_signal_source"] = (
+                rt.get("primary_signal_source") or summary.get("primary_signal_source")
+            )
+
+            # public_pipeline
+            pp = data.get("public_pipeline") or {}
+            result["public_pipeline"] = pp if isinstance(pp, dict) else None
+
+            # F208C: Extract acquisition telemetry from canonical acquisition_report
+            result["acquisition_strategy"] = {
+                "schema_version": acq_report.get("schema_version"),
+                "plan": acq_report.get("plan", []),
+                "terminality": acq_report.get("terminality"),
+                "nonfeed_plan_debug": acq_report.get("nonfeed_plan_debug"),
+                "source_family_outcomes": acq_report.get("source_family_outcomes", []),
+            }
+
+            # prewindup_barrier promotion from canonical report
+            pwb = acq_report.get("prewindup_barrier")
+            if isinstance(pwb, dict):
+                acq_strat = result["acquisition_strategy"]
+                acq_strat["prewindup_barrier_checked"] = bool(
+                    pwb.get("checked", False) or pwb.get("satisfied") is not None
+                )
+                acq_strat["prewindup_barrier_satisfied"] = bool(pwb.get("satisfied", False))
+                acq_strat["prewindup_required_lanes"] = pwb.get("required_lanes", [])
+                acq_strat["prewindup_attempted_lanes"] = pwb.get("attempted_lanes", [])
+                acq_strat["prewindup_skipped_lanes"] = pwb.get("skipped_lanes", {})
+                acq_strat["windup_delayed_for_nonfeed"] = bool(pwb.get("windup_delayed", False))
+                acq_strat["nonfeed_scheduler_gap_resolved"] = pwb.get("nonfeed_scheduler_gap_resolved")
+
+            # windup_guard_observation from canonical report
+            wg_obs = acq_report.get("windup_guard_observation")
+            if isinstance(wg_obs, dict):
+                result["windup_guard_observation"] = {
+                    "call_count": wg_obs.get("call_count", 0),
+                    "callback_supplied_count": wg_obs.get("callback_supplied_count", 0),
+                    "callback_executed_count": wg_obs.get("callback_executed_count", 0),
+                    "last_reason": wg_obs.get("last_reason", ""),
+                    "last_phase": wg_obs.get("last_phase", ""),
+                    "last_allowed": wg_obs.get("last_allowed"),
+                }
+            else:
+                # Legacy: try runtime_truth sibling fields
+                wg_call_count = rt.get("windup_guard_call_count")
+                if wg_call_count is not None:
+                    result["windup_guard_observation"] = {
+                        "call_count": wg_call_count,
+                        "callback_supplied_count": rt.get("windup_guard_callback_supplied_count", 0),
+                        "callback_executed_count": rt.get("windup_guard_callback_executed_count", 0),
+                        "last_reason": rt.get("windup_guard_last_reason", ""),
+                        "last_phase": rt.get("windup_guard_last_phase", ""),
+                        "last_allowed": rt.get("windup_guard_last_allowed"),
+                    }
+                else:
+                    result["windup_guard_observation"] = None
+
+            # return_guard from canonical report
+            rg = acq_report.get("return_guard")
+            if isinstance(rg, dict):
+                checked = rg.get("checked", False)
+                result["return_guard_observation"] = {
+                    "checked": bool(checked),
+                    "required_lanes": rg.get("required_lanes", []),
+                    "satisfied": bool(rg.get("satisfied", False)),
+                    "delayed_for_nonfeed": bool(rg.get("delayed_for_nonfeed", False)),
+                    "block_reason": rg.get("block_reason", ""),
+                    "attempted_lanes": rg.get("attempted_lanes", []),
+                    "skipped_lanes": rg.get("skipped_lanes", {}),
+                    "errors": rg.get("errors", []),
+                }
+            else:
+                # Legacy: try runtime_truth sibling fields
+                rt_rg_checked = rt.get("return_guard_checked")
+                if rt_rg_checked is not None:
+                    result["return_guard_observation"] = {
+                        "checked": bool(rt_rg_checked),
+                        "required_lanes": rt.get("return_guard_required_lanes", []),
+                        "satisfied": bool(rt.get("return_guard_satisfied", False)),
+                        "delayed_for_nonfeed": bool(rt.get("return_guard_delayed_for_nonfeed", False)),
+                        "block_reason": rt.get("return_guard_block_reason", ""),
+                        "attempted_lanes": rt.get("return_guard_attempted_lanes", []),
+                        "skipped_lanes": rt.get("return_guard_skipped_lanes", {}),
+                        "errors": rt.get("return_guard_errors", []),
+                    }
+                else:
+                    result["return_guard_observation"] = None
+
+            # scheduler_exit from canonical report
+            se = acq_report.get("scheduler_exit")
+            result["scheduler_exit"] = se if isinstance(se, dict) else None
+
+            return result
+
+        # ── Legacy fallback: no acquisition_report ────────────────────────────
+        # (all the legacy multi-path extraction code below)
         rt = data.get("runtime_truth") or {}
         tt = data.get("timing_truth") or {}
         summary = data.get("canonical_run_summary") or {}
 
-        result: dict = {}
+        result = {}
 
-        # findings_count: try canonical_run_summary, then top-level, then derive from branch_mix
         branch_mix = rt.get("branch_mix", {})
         result["findings_count"] = (
             summary.get("findings_count")
@@ -375,42 +500,31 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             + branch_mix.get("ct_findings", 0)
         )
 
-        # cycles_completed / cycles_started: runtime_truth is authoritative
         result["cycles_completed"] = rt.get("cycles_completed")
         result["cycles_started"] = rt.get("cycles_started")
-
-        # accepted_findings: runtime_truth is authoritative
         result["accepted_findings"] = rt.get("accepted_findings")
-
-        # runtime_truth: return the dict directly (LiveMeasurementResult now holds dict | None)
         result["runtime_truth"] = rt if isinstance(rt, dict) else None
-
-        # timing_truth: return the dict directly
         result["timing_truth"] = tt if isinstance(tt, dict) else None
-
-        # checkpoint_zero_category: canonical_run_summary
         result["checkpoint_zero_category"] = summary.get("checkpoint_zero_category")
+        result["primary_signal_source"] = (
+            rt.get("primary_signal_source") or summary.get("primary_signal_source")
+        )
 
-        # primary_signal_source: runtime_truth is authoritative
-        result["primary_signal_source"] = rt.get("primary_signal_source") or summary.get("primary_signal_source")
-
-        # public_pipeline: public branch acceptance telemetry (F207K)
         pp = data.get("public_pipeline") or {}
         result["public_pipeline"] = pp if isinstance(pp, dict) else None
 
-        # acquisition_strategy: prewindup barrier + lane plan telemetry (F207Q)
         acq = data.get("acquisition_strategy") or {}
         result["acquisition_strategy"] = acq if isinstance(acq, dict) else None
 
-        # F207R: Promote prewindup_barrier sub-object fields to acquisition_strategy top-level
-        # so live KPI parser finds barrier telemetry that was written under prewindup_barrier key
-        # in scheduler diagnostic report (sprint_scheduler.py:5143).
-        # If live_kpi has barrier fields but acquisition_strategy doesn't → report mapping bug.
         prewindup_barrier = acq.get("prewindup_barrier") if isinstance(acq, dict) else None
         if prewindup_barrier and isinstance(prewindup_barrier, dict):
             barrier = prewindup_barrier
-            acq = dict(acq)  # always copy to avoid mutating source dict
-            acq["prewindup_barrier_checked"] = bool(getattr(barrier, "checked", False) or barrier.get("checked", False) or barrier.get("satisfied") is not None)
+            acq = dict(acq)
+            acq["prewindup_barrier_checked"] = bool(
+                getattr(barrier, "checked", False)
+                or barrier.get("checked", False)
+                or barrier.get("satisfied") is not None
+            )
             acq["prewindup_barrier_satisfied"] = bool(barrier.get("satisfied", False))
             acq["prewindup_required_lanes"] = barrier.get("required_lanes", [])
             acq["prewindup_attempted_lanes"] = barrier.get("attempted_lanes", [])
@@ -419,9 +533,6 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             acq["nonfeed_scheduler_gap_resolved"] = barrier.get("nonfeed_scheduler_gap_resolved")
             result["acquisition_strategy"] = acq
 
-        # F207S: Extract windup_guard_observation from acquisition_strategy report
-        # Maps scheduler result fields → live KPI windup guard telemetry.
-        # Also check runtime_truth level (windup_guard_call_count lives there, not under acquisition_strategy).
         wg_obs = None
         wg_from_acq = isinstance(acq, dict) and acq.get("windup_guard_observation")
         wg_from_rt = rt.get("windup_guard_observation")
@@ -435,8 +546,6 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                 "last_phase": wg_raw.get("last_phase", ""),
                 "last_allowed": wg_raw.get("last_allowed"),
             }
-        # F207S: Also check runtime_truth for windup_guard_call_count directly
-        # (scheduler writes windup_guard_call_count as sibling field in runtime_truth)
         if wg_obs is None:
             wg_call_count = rt.get("windup_guard_call_count")
             if wg_call_count is not None:
@@ -450,15 +559,6 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                 }
         result["windup_guard_observation"] = wg_obs
 
-        # F207T: Extract return_guard from multiple possible report layouts.
-        # The scheduler can store return_guard telemetry in any of:
-        #   1. acquisition_strategy.return_guard         (preferred canonical path)
-        #   2. return_guard                                (top-level sibling of windup_guard_call_count)
-        #   3. runtime_truth.return_guard_checked/etc.     (F207U truth-diff discovered path)
-        #   4. diagnostics.acquisition_strategy.return_guard
-        #   5. scheduler.return_guard
-        #   6. acquisition_strategy.windup_guard_observation (nested alongside prewindup_barrier)
-        # The parser tries each path in order; first populated dict wins.
         rg_obs = None
         rg_candidates = [
             (isinstance(acq, dict) and acq.get("return_guard")),
@@ -482,8 +582,6 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                         "errors": candidate.get("errors", []),
                     }
                     break
-        # F207U: Also try direct runtime_truth sibling fields
-        # (raw report: runtime_truth.return_guard_checked, runtime_truth.return_guard_satisfied, etc.)
         if rg_obs is None:
             rt_rg_checked = rt.get("return_guard_checked")
             if rt_rg_checked is not None:
@@ -499,18 +597,12 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                 }
         result["return_guard_observation"] = rg_obs
 
-        # F207V-B: Extract scheduler_exit from raw report
-        # Tries multiple locations where scheduler writes exit path telemetry:
-        #   1. scheduler_exit (top-level key written by F207V-A)
-        #   2. runtime_truth.scheduler_exit (nested)
-        #   3. diagnostics.scheduler_exit (legacy nesting)
         se = (
             data.get("scheduler_exit")
             or rt.get("scheduler_exit")
             or (data.get("diagnostics") or {}).get("scheduler_exit")
         )
-        if isinstance(se, dict):
-            result["scheduler_exit"] = se
+        result["scheduler_exit"] = se if isinstance(se, dict) else None
 
         return result
     except Exception:

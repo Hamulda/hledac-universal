@@ -79,6 +79,7 @@ from hledac.universal.runtime.shadow_pre_decision import compose_pre_decision
 from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionLane,
     AcquisitionLaneOutcome,
+    MandatoryLaneTerminality,
     NonfeedPlanDebug,
     normalize_source_family_outcome,
     build_acquisition_plan,
@@ -87,6 +88,8 @@ from hledac.universal.runtime.acquisition_strategy import (
     get_lane_plan,
     build_lane_query,
     run_enabled_acquisition_lanes,
+    required_terminal_lanes,
+    terminality_report,
     _get_ct_adapter,
 )
 from hledac.universal.runtime.source_finding_bridge import (
@@ -506,6 +509,12 @@ class SprintSchedulerResult:
     scheduler_exit_guard_checked: bool = False
     scheduler_exit_guard_required: tuple[str, ...] = ()
     scheduler_exit_guard_satisfied: bool | None = None
+    # Sprint F208B: Acquisition terminality consumer — scheduler enforces terminality
+    # from AcquisitionStrategy rather than owning hardcoded PUBLIC/CT policy
+    acquisition_terminality_checked: bool = False
+    acquisition_terminality_satisfied: bool = False
+    acquisition_terminality_missing_lanes: tuple[str, ...] = ()
+    acquisition_terminality_report: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1599,6 +1608,74 @@ class SprintScheduler:
         except Exception as e:
             log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
+        # Sprint F208B: Compute acquisition terminality before successful completion.
+        # Scheduler is consumer/enforcer of the terminality contract from AcquisitionStrategy.
+        # This runs at the end of run(), right before returning a successful result.
+        try:
+            uma_state = "ok"
+            swap_detected = False
+            if self._governor is not None:
+                try:
+                    _snap = self._governor.evaluate()
+                    uma_state = getattr(_snap, "uma_state", "ok")
+                    swap_detected = getattr(_snap, "swap_detected", False)
+                except Exception:
+                    pass
+
+            _mlt_required = required_terminal_lanes(
+                snapshot=self._acquisition_plan,
+                query=getattr(self, "_query", ""),
+                uma_state=uma_state,
+                swap_detected=swap_detected,
+            )
+            # Build observed outcomes from live scheduler state
+            # Deduplicate by lane name to avoid double-reporting if acquisition_lane_outcomes
+            # already contains an entry for a lane we've already added via _public_outcome
+            _observed_outcomes: list[dict] = []
+            _seen_outcome_lanes: set[str] = set()
+            if self._public_outcome is not None:
+                _observed_outcomes.append(self._public_outcome)
+                _seen_outcome_lanes.add("PUBLIC")
+            # Check if any lane outcomes indicate CT terminal state
+            if self._result.ct_log_discovered > 0 or self._result.lane_ct_accepted_findings > 0:
+                _observed_outcomes.append({
+                    "attempted": True,
+                    "skipped": False,
+                    "error": None,
+                    "timeout": False,
+                    "lane": "CT",
+                })
+                _seen_outcome_lanes.add("CT")
+            # Also include lane outcomes from acquisition_lane_outcomes, skipping lanes
+            # already represented via _public_outcome or the CT check above
+            for _o in self._result.acquisition_lane_outcomes or ():
+                _lane_name: str | None = getattr(_o, "lane", None)
+                if _lane_name is None and isinstance(_o, dict):
+                    _lane_name = _o.get("lane")
+                if _lane_name and _lane_name not in _seen_outcome_lanes:
+                    _observed_outcomes.append(_o.to_dict() if hasattr(_o, "to_dict") else dict(_o))
+                    _seen_outcome_lanes.add(_lane_name)
+
+            _term_report = terminality_report(
+                required_lanes=_mlt_required,
+                observed_outcomes=tuple(_observed_outcomes),
+            )
+            self._result.acquisition_terminality_checked = True
+            self._result.acquisition_terminality_satisfied = (
+                len(_term_report.get("missing_lanes", [])) == 0
+            )
+            self._result.acquisition_terminality_missing_lanes = tuple(
+                _term_report.get("missing_lanes", [])
+            )
+            self._result.acquisition_terminality_report = _term_report
+        except Exception as exc:
+            # Fail-soft: terminality check errors don't block return
+            log.debug("[F208B] acquisition_terminality check failed: %s", exc)
+            self._result.acquisition_terminality_checked = True
+            self._result.acquisition_terminality_satisfied = False
+            self._result.acquisition_terminality_missing_lanes = ()
+            self._result.acquisition_terminality_report = {"error": str(exc)}
+
         self._record_scheduler_exit("run_complete", "run() finished normally", "TEARDOWN")
         return self._result
 
@@ -1885,58 +1962,35 @@ class SprintScheduler:
         memory_state: str,
     ) -> tuple[str, ...]:
         """
-        Sprint F207Q-A: Determine required lanes before windup.
+        Sprint F208B: Determine required lanes before windup.
 
-        Rules:
-          - domain query + ok/warn memory: require ("public", "ct")
-          - domain query + critical/emergency: lanes may skip with explicit reason
-          - non-domain query: public may require, ct may skip with no_domain
-          - stealth never required
+        Delegates to required_terminal_lanes() from acquisition_strategy,
+        which owns the canonical terminality policy (not the scheduler).
 
-        Returns tuple of required lane names.
+        Returns tuple of required lane names (lowercase).
         """
         if acquisition_plan is None:
             return ()
 
-        # STEALTH is never required
-        if acquisition_plan.stealth_ready:
-            pass  # stealth exists but is never required
+        # Derive uma_state and swap_detected from governor if available
+        uma_state = memory_state
+        swap_detected = False
+        if self._governor is not None:
+            try:
+                _snap = self._governor.evaluate()
+                uma_state = getattr(_snap, "uma_state", memory_state)
+                swap_detected = getattr(_snap, "swap_detected", False)
+            except Exception:
+                pass
 
-        # Determine if domain query
-        from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
-        domain_detected = getattr(acquisition_plan, "nonfeed_plan_debug", None)
-        is_domain = False
-        if domain_detected is not None:
-            is_domain = getattr(domain_detected, "domain_detected", False)
-
-        required: list[str] = []
-        memory_critical = memory_state in ("critical", "emergency")
-
-        if is_domain:
-            # Domain query: PUBLIC and CT are both required (unless critical memory)
-            if memory_critical:
-                # Critical memory: CT/public may skip but must record reason
-                required = ["public", "ct"]
-            else:
-                # ok/warn: both required
-                required = ["public", "ct"]
-        else:
-            # Non-domain query: public may be required, ct skips with no_domain
-            public_plan = None
-            ct_plan = None
-            if hasattr(acquisition_plan, "plans"):
-                for p in acquisition_plan.plans:
-                    if p.lane == "PUBLIC":
-                        public_plan = p
-                    elif p.lane == "CT":
-                        ct_plan = p
-            # Public required if enabled
-            if public_plan is not None and public_plan.enabled:
-                required.append("public")
-            # CT skips for non-domain (no_domain reason)
-            # CT may still be attempted if non-domain but plan is enabled
-
-        return tuple(required)
+        # Delegate to acquisition strategy — it owns the terminality policy
+        mlt_tuples = required_terminal_lanes(
+            snapshot=acquisition_plan,
+            query=query,
+            uma_state=uma_state,
+            swap_detected=swap_detected,
+        )
+        return tuple(mlt.lane.lower() for mlt in mlt_tuples)
 
     async def _ensure_pre_windup_lane_terminal_states(
         self,
@@ -2195,18 +2249,30 @@ class SprintScheduler:
             self._result.return_guard_block_reason = ""
             return True
 
-        # Domain query: check required lanes
-        _required: list[str] = []
-        if _memory_critical:
-            # Critical memory: required but may skip with explicit reason
-            _required = ["public", "ct"]
-        else:
-            # ok/warn: both required
-            _required = ["public", "ct"]
+        # Domain query: check required lanes via acquisition strategy terminality contract
+        # Sprint F208B: Scheduler no longer owns hardcoded PUBLIC/CT policy —
+        # it delegates to required_terminal_lanes() from acquisition_strategy
+        uma_state = _memory_state
+        swap_detected = False
+        if self._governor is not None:
+            try:
+                _snap = self._governor.evaluate()
+                uma_state = getattr(_snap, "uma_state", _memory_state)
+                swap_detected = getattr(_snap, "swap_detected", False)
+            except Exception:
+                pass
+
+        _mlt_required = required_terminal_lanes(
+            snapshot=self._acquisition_plan,
+            query=query,
+            uma_state=uma_state,
+            swap_detected=swap_detected,
+        )
+        _required = [mlt.lane.lower() for mlt in _mlt_required if mlt.required]
 
         self._result.return_guard_required_lanes = tuple(_required)
 
-        # Check terminal state for each required lane
+        # Check terminal state for each required lane using lane_is_terminal()
         # PUBLIC terminal: _public_outcome is not None
         # CT terminal: ct_log_discovered > 0 or lane_ct_accepted_findings > 0
         _public_done = self._public_outcome is not None
@@ -2214,6 +2280,19 @@ class SprintScheduler:
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
         )
+
+        # Build observed outcomes dict for terminality_report
+        _observed: dict[str, dict] = {}
+        if _public_done and self._public_outcome is not None:
+            _observed["PUBLIC"] = self._public_outcome
+        if _ct_done:
+            _observed["CT"] = {
+                "attempted": True,
+                "skipped": False,
+                "error": None,
+                "timeout": False,
+                "lane": "CT",
+            }
 
         _unsatisfied: list[str] = []
         for lane in _required:
@@ -5529,6 +5608,12 @@ class SprintScheduler:
             "guard_checked": getattr(self._result, "scheduler_exit_guard_checked", False),
             "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
             "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
+        }
+        # Sprint F208B: Acquisition terminality consumer report
+        # Scheduler enforces terminality from AcquisitionStrategy, not its own policy
+        _term_rep = getattr(self._result, "acquisition_terminality_report", {}) or {}
+        report["acquisition_strategy"] = {
+            "terminality": _term_rep,
         }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:

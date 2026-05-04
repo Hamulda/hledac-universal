@@ -8,7 +8,110 @@ calls pytest_configure() before importing any test modules.
 
 import asyncio
 import os
+import sys
+import types
 import pytest
+
+
+def _mock_hledac_namespace() -> None:
+    """
+    Mock the hledac.universal.* namespace so probe tests can import
+    runtime.acquisition_strategy and other hledac.universal packages
+    without requiring hledac-universal to be pip-installed.
+
+    Strategy: pre-register every possible hledac.universal.* package as a
+    fake module with __path__=[] so Python's package-import machinery finds
+    them directly in sys.modules without needing __getattr__ fallthrough.
+    """
+    if "hledac" in sys.modules:
+        return
+
+    def _make_fake_pkg(name: str) -> types.ModuleType:
+        """Create a fake package-like module (can be traversed as a namespace)."""
+        pkg = types.ModuleType(name)
+        pkg.__file__ = f"<mock {name}>"
+        pkg.__path__ = []  # <-- makes Python treat it as a package for submodule lookup
+        return pkg
+
+    class _FakeBridge:
+        ct_results_to_findings = None
+        wayback_results_to_findings = None
+        passive_dns_results_to_findings = None
+        MAX_SAMPLE_REJECTIONS = 100
+
+    _fake_session_runtime = _make_fake_pkg("hledac.universal.network.session_runtime")
+    _fake_session_runtime.async_get_aiohttp_session = lambda: None
+
+    # hledac.universal subpackages referenced by __init__.py imports
+    for _sub in ("patterns", "fetching", "knowledge", "config",
+                 "resource_allocator", "utils", "network", "export", "coordinators",
+                 "graph", "security", "discovery", "intelligence", "pipeline",
+                 "rendering", "discovery"):
+        _pkg = _make_fake_pkg(f"hledac.universal.{_sub}")
+        sys.modules[f"hledac.universal.{_sub}"] = _pkg
+
+    # Also create second-level subpackages commonly imported, with stub attributes
+    _stubs = {
+        "hledac.universal.patterns.pattern_matcher": {
+            "match_text": None,
+            "get_pattern_pack_metadata": None,
+            "extract_high_precision_entities": None,
+            "get_pattern_matcher": None,
+            "configure_patterns": None,
+            "reset_pattern_matcher": None,
+            "get_default_bootstrap_patterns": None,
+            "configure_default_bootstrap_patterns_if_empty": None,
+            "benchmark_build": None,
+            "benchmark_match": None,
+        },
+        "hledac.universal.fetching.public_fetcher": {
+            "async_fetch_public_text": None,
+            "process_html_payload": None,
+            "DEFAULT_UA": "",
+            "MAX_BYTES_DEFAULT": 0,
+            "MAX_BYTES_HARD": 0,
+            "MAX_RETRIES": 0,
+            "FetchResult": None,
+        },
+        "hledac.universal.knowledge.duckdb_store": {
+            "DuckDBShadowStore": None,
+            "ActivationResult": None,
+            "ReplayResult": None,
+            "CanonicalFinding": None,
+            "create_owned_store": None,
+        },
+        "hledac.universal.config": {
+            "UniversalConfig": None,
+            "create_config": None,
+            "load_config_from_file": None,
+        },
+        "hledac.universal.resource_allocator": {
+            "AdaptiveSemaphore": None,
+        },
+        "hledac.universal.utils.concurrency": {
+            "FETCH_SEMAPHORE": None,
+            "adjust_fetch_workers": None,
+        },
+    }
+    for _sub2 in _stubs:
+        _pkg2 = _make_fake_pkg(_sub2)
+        for _attr, _val in _stubs[_sub2].items():
+            setattr(_pkg2, _attr, _val)
+        sys.modules[_sub2] = _pkg2
+
+    # Wire up parent chain
+    _fake_hledac = _make_fake_pkg("hledac")
+    _fake_universal = _make_fake_pkg("hledac.universal")
+    _fake_hledac.universal = _fake_universal
+
+    _fake_runtime = _make_fake_pkg("hledac.universal.runtime")
+    _fake_runtime.source_finding_bridge = _FakeBridge()
+
+    sys.modules["hledac"] = _fake_hledac
+    sys.modules["hledac.universal"] = _fake_universal
+    sys.modules["hledac.universal.runtime"] = _fake_runtime
+    sys.modules["hledac.universal.runtime.source_finding_bridge"] = _FakeBridge()
+    sys.modules["hledac.universal.network.session_runtime"] = _fake_session_runtime
 
 
 def pytest_configure(config=None) -> None:
@@ -16,7 +119,13 @@ def pytest_configure(config=None) -> None:
     Called before any test module is imported.
     Sets cache root env vars so that HuggingFace/transformers/sentence-transformers
     use the declared runtime root instead of ~/.cache/.
+
+    Also mocks the hledac.universal namespace for probe tests that import
+    from runtime/ and other hledac.universal packages not installed as pip eggs.
     """
+    # Install hledac mock so probe tests can import hledac.universal modules
+    # without requiring the package to be pip-installed.
+    _mock_hledac_namespace()
     # Determine runtime root - must match paths.py FALLBACK_ROOT logic
     # but without triggering the OPSEC warning (we're in test context)
     _ramdisk_env = os.environ.get("GHOST_RAMDISK", "")

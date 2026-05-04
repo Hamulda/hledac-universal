@@ -64,13 +64,22 @@ __all__ = [
     "AcquisitionLaneOutcome",
     "SourceFamilyOutcome",
     "NonfeedPlanDebug",
+    "MandatoryLaneTerminality",
+    "required_terminal_lanes",
+    "lane_is_terminal",
+    "terminality_report",
+    "ACQUISITION_REPORT_SCHEMA_VERSION",
     "build_acquisition_plan",
+    "build_acquisition_report",
     "build_lane_query",
     "is_lane_enabled",
     "get_lane_plan",
     "lane_skip_reason",
     "normalize_source_family_outcome",
 ]
+
+# Stable canonical schema version for acquisition report (F208C)
+ACQUISITION_REPORT_SCHEMA_VERSION = "f208.v1"
 
 # ── Lane constants ────────────────────────────────────────────────────────────
 
@@ -148,6 +157,392 @@ class AcquisitionStrategySnapshot:
     plans: tuple[AcquisitionLanePlan, ...] = ()
     # [F207L] Nonfeed lane planning debug snapshot for live KPI diagnosis
     nonfeed_plan_debug: NonfeedPlanDebug | None = None
+
+
+@dataclass
+class MandatoryLaneTerminality:
+    """[F208A] Canonical terminality contract for mandatory lanes.
+
+    A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
+    before a sprint is considered complete. This dataclass defines the contract.
+    """
+
+    lane: str
+    required: bool
+    reason: str
+    allowed_terminal_states: tuple[str, ...]
+    max_attempts: int = 1
+    timeout_s: int = 60
+
+
+def required_terminal_lanes(
+    snapshot: AcquisitionStrategySnapshot,
+    query: str,
+    uma_state: str,
+    swap_detected: bool,
+) -> tuple[MandatoryLaneTerminality, ...]:
+    """[F208A] Determine which lanes are mandatory for terminality.
+
+    Rules:
+      - domain query + ok/warn memory: PUBLIC required, CT required
+      - domain query + critical: CT required (as attempted or explicit skip),
+        PUBLIC explicit skip allowed with memory_critical
+      - emergency: all non-feed lanes explicit skip with memory_emergency
+      - non-domain: CT not required (skip reason no_domain)
+      - STEALTH: never required by default
+      - FEED: not part of terminality guard
+
+    Args:
+        snapshot:    Current acquisition strategy snapshot.
+        query:       Sprint query string.
+        uma_state:   Current UMA state (ok, warn, critical, emergency).
+        swap_detected: True if swap has been detected.
+
+    Returns:
+        Tuple of MandatoryLaneTerminality, one per lane that has terminality requirements.
+    """
+    has_domain = _has_domain_or_ip(query)
+    is_emergency = uma_state == "emergency"
+    is_critical = uma_state == "critical"
+    is_warn = uma_state == "warn"
+
+    lanes: list[MandatoryLaneTerminality] = []
+
+    # FEED — not part of terminality guard
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.FEED,
+            required=False,
+            reason="feed_not_part_of_terminality_guard",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+
+    # PUBLIC — required for domain queries under ok/warn
+    if has_domain and uma_state in ("ok", "warn"):
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=True,
+                reason="domain_query_requires_public",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    # critical: explicit skip allowed with memory_critical
+    elif has_domain and is_critical:
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="critical_allows_explicit_skip",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
+    # emergency: explicit skip
+    elif is_emergency:
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="memory_emergency",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
+    else:
+        # non-domain or non-critical: not required
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="not_required_for_query_type",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+
+    # CT — required for domain queries unless emergency or non-domain
+    if is_emergency:
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=False,
+                reason="memory_emergency",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
+    elif not has_domain:
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=False,
+                reason="no_domain",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    elif is_critical:
+        # CT required as attempted or explicit skip under critical
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=True,
+                reason="critical_requires_ct_terminal",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    else:
+        # ok/warn with domain: CT required
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=True,
+                reason="domain_query_requires_ct",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+
+    # WAYBACK — not part of terminality guard (advisory only)
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.WAYBACK,
+            required=False,
+            reason="wayback_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+
+    # PASSIVE_DNS — not part of terminality guard
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.PASSIVE_DNS,
+            required=False,
+            reason="passive_dns_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+
+    # BLOCKCHAIN — not part of terminality guard
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.BLOCKCHAIN,
+            required=False,
+            reason="blockchain_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+
+    # STEALTH — never mandatory by default
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.STEALTH,
+            required=False,
+            reason="stealth_never_mandatory_by_default",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+
+    # PIVOT_EXECUTOR — not part of terminality guard
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.PIVOT_EXECUTOR,
+            required=False,
+            reason="pivot_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+
+    return tuple(lanes)
+
+
+def lane_is_terminal(outcome_or_dict) -> bool:
+    """[F208A] Return True if the lane outcome is in a terminal state.
+
+    Terminal states:
+      - attempted=True (lane ran at least once)
+      - skipped=True (lane was intentionally skipped)
+      - error is not None (lane encountered an error)
+      - timeout=True (lane exceeded its time limit)
+    """
+    if outcome_or_dict is None:
+        return False
+
+    d: dict
+    if hasattr(outcome_or_dict, "to_dict"):
+        d = outcome_or_dict.to_dict()
+    elif isinstance(outcome_or_dict, dict):
+        d = outcome_or_dict
+    else:
+        return False
+
+    if d.get("attempted"):
+        return True
+    if d.get("skipped"):
+        return True
+    if d.get("error") is not None:
+        return True
+    if d.get("timeout"):
+        return True
+    return False
+
+
+def terminality_report(
+    required_lanes: tuple[MandatoryLaneTerminality, ...],
+    observed_outcomes: tuple[dict, ...],
+) -> dict:
+    """[F208A] Produce a terminality report comparing required vs observed lane states.
+
+    Args:
+        required_lanes:    Tuple of MandatoryLaneTerminality from required_terminal_lanes().
+        observed_outcomes: Tuple of outcome dicts (from AcquisitionLaneOutcome.to_dict()).
+
+    Returns:
+        Dict with:
+          checked: list of lane names checked
+          satisfied: list of lane names with terminal outcomes
+          required_lanes: list of mandatory lane specs
+          terminal_lanes: list of lanes at terminal state
+          missing_lanes: list of mandatory lanes NOT at terminal state
+          skipped_lanes: list of lanes that were skipped
+          errors: list of lanes with errors
+          reasons: dict mapping lane → terminality reason string
+    """
+    checked: list[str] = []
+    satisfied: list[str] = []
+    terminal_lanes: list[str] = []
+    missing_lanes: list[str] = []
+    skipped_lanes: list[str] = []
+    errors: list[str] = []
+    reasons: dict[str, str] = {}
+
+    # Index observed outcomes by lane name
+    outcomes_by_lane: dict[str, dict] = {}
+    for outcome in observed_outcomes:
+        lane = outcome.get("lane", "")
+        if lane:
+            outcomes_by_lane[lane] = outcome
+
+    for mlt in required_lanes:
+        checked.append(mlt.lane)
+        reasons[mlt.lane] = mlt.reason
+
+        # Check if this lane has a terminal state in observed outcomes
+        outcome = outcomes_by_lane.get(mlt.lane, {})
+        is_term = lane_is_terminal(outcome)
+
+        if is_term:
+            satisfied.append(mlt.lane)
+            terminal_lanes.append(mlt.lane)
+            if outcome.get("skipped"):
+                skipped_lanes.append(mlt.lane)
+            if outcome.get("error") is not None:
+                errors.append(mlt.lane)
+        elif mlt.required:
+            # Mandatory but not terminal
+            missing_lanes.append(mlt.lane)
+
+    return {
+        "checked": checked,
+        "satisfied": satisfied,
+        "required_lanes": [mlt.lane for mlt in required_lanes if mlt.required],
+        "terminal_lanes": terminal_lanes,
+        "missing_lanes": missing_lanes,
+        "skipped_lanes": skipped_lanes,
+        "errors": errors,
+        "reasons": reasons,
+    }
+
+
+# ── F208C: Canonical acquisition report builder ──────────────────────────────
+
+
+def build_acquisition_report(
+    plan: AcquisitionStrategySnapshot | None = None,
+    terminality: dict | None = None,
+    nonfeed_plan_debug: NonfeedPlanDebug | None = None,
+    source_family_outcomes: list[dict] | None = None,
+    return_guard: dict | None = None,
+    prewindup_barrier: dict | None = None,
+    scheduler_exit: dict | None = None,
+    windup_guard_observation: dict | None = None,
+) -> dict:
+    """
+    [F208C] Build a stable canonical acquisition report dict.
+
+    This is the ONE canonical schema for acquisition telemetry. The benchmark
+    parser checks report["acquisition_report"] FIRST before falling back to
+    legacy sibling fields. This stops the parser whack-a-mole.
+
+    Output shape::
+
+        {
+            "schema_version": "f208.v1",
+            "plan": ...          # AcquisitionStrategySnapshot plans as dicts
+            "terminality": ...   # terminality report from terminality_report()
+            "nonfeed_plan_debug": ...  # NonfeedPlanDebug as dict
+            "source_family_outcomes": ...  # list of SourceFamilyOutcome.to_dict()
+            "return_guard": ...  # return guard observation dict
+            "prewindup_barrier": ...  # prewindup barrier dict
+            "scheduler_exit": ...  # scheduler exit telemetry dict
+            "windup_guard_observation": ...  # windup guard observation dict
+        }
+
+    Args:
+        plan:                          AcquisitionStrategySnapshot from build_acquisition_plan().
+        terminality:                    Result of terminality_report().
+        nonfeed_plan_debug:             NonfeedPlanDebug snapshot.
+        source_family_outcomes:         List of SourceFamilyOutcome.to_dict() dicts.
+        return_guard:                  Return guard observation dict.
+        prewindup_barrier:             Pre-windup barrier dict.
+        scheduler_exit:                Scheduler exit telemetry dict.
+        windup_guard_observation:      Windup guard observation dict.
+
+    Returns:
+        Canonical acquisition report dict with schema_version="f208.v1".
+    """
+    # Serialize plan.plans to dicts
+    plan_dicts: list[dict] = []
+    if plan is not None:
+        for p in plan.plans:
+            plan_dicts.append(
+                {
+                    "lane": p.lane,
+                    "enabled": p.enabled,
+                    "reason": p.reason,
+                    "max_items": p.max_items,
+                    "timeout_s": p.timeout_s,
+                    "concurrency": p.concurrency,
+                    "risk_level": p.risk_level,
+                }
+            )
+
+    # Serialize nonfeed_plan_debug
+    nonfeed_debug_dict: dict | None = None
+    if nonfeed_plan_debug is not None:
+        nd = nonfeed_plan_debug
+        nonfeed_debug_dict = {
+            "domain_detected": nd.domain_detected,
+            "wallet_detected": nd.wallet_detected,
+            "enabled_nonfeed_lanes": list(nd.enabled_nonfeed_lanes),
+            "disabled_nonfeed_lanes": list(nd.disabled_nonfeed_lanes),
+            "disabled_reasons": list(nd.disabled_reasons),
+            "scheduled_nonfeed_lanes": list(nd.scheduled_nonfeed_lanes),
+            "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
+            "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
+            "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
+        }
+
+    return {
+        "schema_version": ACQUISITION_REPORT_SCHEMA_VERSION,
+        "plan": plan_dicts,
+        "terminality": terminality,
+        "nonfeed_plan_debug": nonfeed_debug_dict,
+        "source_family_outcomes": source_family_outcomes or [],
+        "return_guard": return_guard,
+        "prewindup_barrier": prewindup_barrier,
+        "scheduler_exit": scheduler_exit,
+        "windup_guard_observation": windup_guard_observation,
+    }
 
 
 # ── Helper APIs for lane admission gating ──────────────────────────────────
