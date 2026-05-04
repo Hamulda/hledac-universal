@@ -204,6 +204,12 @@ class LiveMeasurementResult:
     # Scheduler exit path telemetry (F207V-B)
     scheduler_exit: dict | None = None
 
+    # F208F: active300 acquisition terminality wiring
+    acquisition_terminality_checked: bool | None = None
+    acquisition_terminality_satisfied: bool | None = None
+    acquisition_terminality_missing_lanes: tuple[str, ...] | None = None
+    acquisition_terminality_report: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -664,6 +670,10 @@ def _derive_live_kpi(
     windup_guard_observation: dict | None = None,
     return_guard_observation: dict | None = None,
     scheduler_exit: dict | None = None,
+    acquisition_terminality_checked: bool | None = None,
+    acquisition_terminality_satisfied: bool | None = None,
+    acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
+    acquisition_terminality_report: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -879,6 +889,9 @@ def _derive_live_kpi(
         acquisition_strategy=as_dict,
         return_guard_observation=rg,
         scheduler_exit=scheduler_exit,
+        acquisition_terminality_checked=acquisition_terminality_checked,
+        acquisition_terminality_satisfied=acquisition_terminality_satisfied,
+        acquisition_terminality_missing_lanes=list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
     )
 
     return {
@@ -948,6 +961,11 @@ def _derive_live_kpi(
         "scheduler_exit_guard_checked": (scheduler_exit or {}).get("guard_checked", ""),
         "scheduler_exit_guard_required": (scheduler_exit or {}).get("guard_required", ""),
         "scheduler_exit_guard_satisfied": (scheduler_exit or {}).get("guard_satisfied", ""),
+        # F208F: active300 acquisition terminality wiring
+        "acquisition_terminality_checked": bool(acquisition_terminality_checked) if acquisition_terminality_checked is not None else None,
+        "acquisition_terminality_satisfied": bool(acquisition_terminality_satisfied) if acquisition_terminality_satisfied is not None else None,
+        "acquisition_terminality_missing_lanes": list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
+        "acquisition_terminality_report": acquisition_terminality_report,
     }
 
 
@@ -983,6 +1001,9 @@ def _derive_next_action(
     acquisition_strategy: dict | None = None,
     return_guard_observation: dict | None = None,
     scheduler_exit: dict | None = None,
+    acquisition_terminality_checked: bool | None = None,
+    acquisition_terminality_satisfied: bool | None = None,
+    acquisition_terminality_missing_lanes: list[str] | None = None,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
@@ -1094,6 +1115,24 @@ def _derive_next_action(
         # starvation was false positive — barrier did its job
         pass  # fall through to other rules
 
+    # F208F: Acquisition terminality wiring — active300 domain queries must check terminality
+    # Rule 0e: active300 domain query has eligible PUBLIC or CT but terminality was never checked
+    # Conditions: acquisition_terminality_checked is False AND domain query (ct_findings > 0 or public_findings > 0)
+    # This means the F208B terminality check never ran for an active300 query.
+    if (acquisition_terminality_checked is False
+            and runtime_truth.get("cycles_started", 0) > 0
+            and runtime_truth.get("primary_signal_source")
+            and (ct_findings > 0 or public_findings > 0)):
+        return ("fix_terminality_wiring", None)
+
+    # Rule 0f: Terminality checked but NOT satisfied — mandatory lanes missing terminal state
+    # This is the active300 signal that required lanes (PUBLIC/CT) didn't reach terminal state.
+    if acquisition_terminality_checked is True and acquisition_terminality_satisfied is False:
+        missing = acquisition_terminality_missing_lanes or []
+        if missing:
+            return ("fix_terminality_wiring", f"missing:{','.join(missing)}")
+        return ("fix_terminality_wiring", None)
+
     # Rule 1: nonfeed starvation (F207M) — must fire early so operators see it
     if nonfeed_starvation_suspected:
         return ("fix_nonfeed_scheduler_order", None)
@@ -1161,6 +1200,10 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         windup_guard_observation=getattr(result, "windup_guard_observation", None),
         return_guard_observation=getattr(result, "return_guard_observation", None),
         scheduler_exit=getattr(result, "scheduler_exit", None),
+        acquisition_terminality_checked=getattr(result, "acquisition_terminality_checked", None),
+        acquisition_terminality_satisfied=getattr(result, "acquisition_terminality_satisfied", None),
+        acquisition_terminality_missing_lanes=getattr(result, "acquisition_terminality_missing_lanes", None),
+        acquisition_terminality_report=getattr(result, "acquisition_terminality_report", None),
     )
     result.live_kpi = kpi
 
@@ -1499,6 +1542,20 @@ async def _run_live_sprint(
                 result.windup_guard_observation = parsed.get("windup_guard_observation")
                 result.return_guard_observation = parsed.get("return_guard_observation")
                 result.scheduler_exit = parsed.get("scheduler_exit")
+                # F208F: active300 acquisition terminality wiring
+                _acq_strat = parsed.get("acquisition_strategy") or {}
+                result.acquisition_terminality_checked = _acq_strat.get(
+                    "acquisition_terminality_checked"
+                )
+                result.acquisition_terminality_satisfied = _acq_strat.get(
+                    "acquisition_terminality_satisfied"
+                )
+                result.acquisition_terminality_missing_lanes = _acq_strat.get(
+                    "acquisition_terminality_missing_lanes"
+                )
+                result.acquisition_terminality_report = _acq_strat.get(
+                    "acquisition_terminality_report"
+                )
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",

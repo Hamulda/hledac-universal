@@ -1363,7 +1363,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "windup_barrier"
                     ):
-                        self._record_scheduler_exit("windup_barrier_break", "pre-windup barrier unsatisfied, entered windup", "WINDUP")
+                        self._record_scheduler_exit("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP")
                         break  # exit work loop → teardown
                     # Guard blocked — force one bounded terminalization pass then break
                     await self._ensure_mandatory_nonfeed_before_return(
@@ -5600,21 +5600,37 @@ class SprintScheduler:
         }
         # Sprint F207V-A: Scheduler exit path tracer
         report["scheduler_exit"] = {
-            "path": getattr(self._result, "scheduler_exit_path", None),
-            "reason": getattr(self._result, "scheduler_exit_reason", None),
-            "phase": getattr(self._result, "scheduler_exit_phase", None),
-            "cycle": getattr(self._result, "scheduler_exit_cycle", None),
+            "exit_path": getattr(self._result, "scheduler_exit_path", None),
+            "exit_reason": getattr(self._result, "scheduler_exit_reason", None),
+            "exit_phase": getattr(self._result, "scheduler_exit_phase", None),
+            "exit_cycle": getattr(self._result, "scheduler_exit_cycle", None),
             "elapsed_s": getattr(self._result, "scheduler_exit_elapsed_s", None),
             "guard_checked": getattr(self._result, "scheduler_exit_guard_checked", False),
             "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
             "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
         }
         # Sprint F208B: Acquisition terminality consumer report
-        # Scheduler enforces terminality from AcquisitionStrategy, not its own policy
+        # Merge terminality into the existing acquisition_strategy block
         _term_rep = getattr(self._result, "acquisition_terminality_report", {}) or {}
-        report["acquisition_strategy"] = {
-            "terminality": _term_rep,
-        }
+        if "acquisition_strategy" in report:
+            report["acquisition_strategy"]["terminality"] = _term_rep
+            # F208F: also surface individual terminality fields so live_sprint_measurement can find them
+            report["acquisition_strategy"]["acquisition_terminality_checked"] = getattr(
+                self._result, "acquisition_terminality_checked", False
+            )
+            report["acquisition_strategy"]["acquisition_terminality_satisfied"] = getattr(
+                self._result, "acquisition_terminality_satisfied", False
+            )
+            report["acquisition_strategy"]["acquisition_terminality_missing_lanes"] = list(
+                getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()
+            )
+        else:
+            report["acquisition_strategy"] = {
+                "terminality": _term_rep,
+                "acquisition_terminality_checked": getattr(self._result, "acquisition_terminality_checked", False),
+                "acquisition_terminality_satisfied": getattr(self._result, "acquisition_terminality_satisfied", False),
+                "acquisition_terminality_missing_lanes": list(getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()),
+            }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:
             _outcomes_list = [o.to_dict() if hasattr(o, "to_dict") else dict(o) for o in self._lane_outcomes]
@@ -5656,6 +5672,79 @@ class SprintScheduler:
         # Academic is always skipped unless explicitly enabled
         _sfo["academic"] = normalize_source_family_outcome("academic", None)
         report["source_family_outcomes"] = _sfo
+
+        # Sprint F208F: Canonical acquisition_report — wired using build_acquisition_report()
+        # so live_sprint_measurement.py can find it at report["acquisition_report"] first
+        try:
+            from hledac.universal.runtime.acquisition_strategy import (
+                build_acquisition_report,
+            )
+            # Build windup guard observation dict
+            _wg_obs = {
+                "call_count": getattr(self._result, "windup_guard_call_count", 0),
+                "callback_supplied_count": getattr(self._result, "windup_guard_callback_supplied_count", 0),
+                "callback_executed_count": getattr(self._result, "windup_guard_callback_executed_count", 0),
+                "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
+                "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
+                "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
+            }
+            # Build return guard dict
+            _rg_dict = {
+                "checked": getattr(self._result, "return_guard_checked", False),
+                "required_lanes": list(getattr(self._result, "return_guard_required_lanes", ())),
+                "satisfied": getattr(self._result, "return_guard_satisfied", False),
+                "delayed_for_nonfeed": getattr(self._result, "return_guard_delayed_for_nonfeed", False),
+                "block_reason": getattr(self._result, "return_guard_block_reason", ""),
+                "attempted_lanes": list(getattr(self._result, "return_guard_attempted_lanes", ())),
+                "skipped_lanes": dict(getattr(self._result, "return_guard_skipped_lanes", {})),
+                "errors": dict(getattr(self._result, "return_guard_errors", {})),
+            }
+            # Build prewindup_barrier dict
+            _pwb = self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None
+            # Build scheduler_exit dict (same as report["scheduler_exit"])
+            _se_dict = {
+                "exit_path": getattr(self._result, "scheduler_exit_path", None),
+                "exit_reason": getattr(self._result, "scheduler_exit_reason", None),
+                "exit_phase": getattr(self._result, "scheduler_exit_phase", None),
+                "exit_cycle": getattr(self._result, "scheduler_exit_cycle", None),
+                "elapsed_s": getattr(self._result, "scheduler_exit_elapsed_s", None),
+                "guard_checked": getattr(self._result, "scheduler_exit_guard_checked", False),
+                "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
+                "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
+            }
+            # Build terminality dict
+            _term_rep = getattr(self._result, "acquisition_terminality_report", {}) or {}
+            # Build nonfeed_plan_debug
+            _nd = None
+            if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
+                nd = self._acquisition_plan.nonfeed_plan_debug
+                _nd = {
+                    "domain_detected": nd.domain_detected,
+                    "wallet_detected": nd.wallet_detected,
+                    "enabled_nonfeed_lanes": list(nd.enabled_nonfeed_lanes),
+                    "disabled_nonfeed_lanes": list(nd.disabled_nonfeed_lanes),
+                    "disabled_reasons": list(nd.disabled_reasons),
+                    "scheduled_nonfeed_lanes": list(nd.scheduled_nonfeed_lanes),
+                    "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
+                    "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
+                    "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
+                }
+            # source_family_outcomes as list of dicts (normalize_source_family_outcome returns dict)
+            _sfo_list = list(_sfo.values())
+
+            report["acquisition_report"] = build_acquisition_report(
+                plan=self._acquisition_plan,
+                terminality=_term_rep,
+                nonfeed_plan_debug=_nd,
+                source_family_outcomes=_sfo_list,
+                return_guard=_rg_dict,
+                prewindup_barrier=_pwb,
+                scheduler_exit=_se_dict,
+                windup_guard_observation=_wg_obs,
+            )
+        except Exception:
+            pass  # fail-soft: acquisition_report is diagnostic only
+
         return report
 
     # ── Sprint 8RC: IOC-aware prioritisation ───────────────────────────────
