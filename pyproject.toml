@@ -48,42 +48,40 @@ dependencies = [
     "aiosqlite>=0.19.0",
     "aiohttp>=3.9.0",
     "aiohttp-socks>=0.8.0",
-
     # HTTP/stealth (optional in FetchCoordinator, fallback exists)
     "httpx>=0.27.0",
-
     # Storage
     "lancedb>=0.2.5",        # ANN fast path (optional, fail-soft)
     "duckdb>=1.2.0",         # Sprint F198A cross-sprint graph accumulation
-
     # Serialization
     "orjson>=3.9.0",
-
+    "msgspec>=0.21.1,<0.22.0",   # Canonical DTO/msgspec.Struct serialization
     # Browser automation
     # camoufox is the primary browser (JA3 fingerprint, JS rendering).
     # Browser binary is bundled with camoufox — NOT a separate chromium dep.
     # Fails soft if missing (nodriver fallback in public_fetcher).
-    "camoufox[geoip]>=1.0.0",
-
+    # MOVED_TO_OPTIONAL_BROWSER_BY_CP314_CLEANUP: "camoufox[geoip]",
     # Web search
     "duckduckgo-search>=8.0.0",
-
     # Parsing
     "beautifulsoup4>=4.12.0",
     "pytesseract>=0.3.10",
-
     # Networking
     "dnspython>=2.4.0",
     "stem>=1.8.0",
-    "aiobtcdht>=0.1.0",
-
+    # DISABLED_BY_CP314_CLEANUP: "aiobtcdht>=0.1.0",  # likely typo/dead package; investigate aiobtdht GitHub source
     # Core models
     "pydantic>=2.0.0",
-
+    "PyYAML>=6.0,<7.0",       # yaml import in utils/execution_optimizer.py
     # Required utilities (proven imports)
-    "pyprobables>=4.0.0",    # url_dedup RotatingBloomFilter
-    "pyzipper>=1.4.0",       # vault_manager AES/ZIP encryption
+    "pyprobables>=0.7.0,<0.8.0",    # url_dedup RotatingBloomFilter
+    "pyzipper>=0.3.6,<0.4.0",       # vault_manager AES/ZIP encryption
     "psutil>=5.9.0",         # memory monitoring
+    "pyahocorasick>=2.3.1,<2.4.0",
+    "xxhash>=3.6.0,<4.0.0",
+    "lmdb>=2.2.0,<3.0.0",
+    # Fallback browser (nodriver — camoufox is primary, see browser extra)
+    "nodriver>=0.1.0",
 ]
 
 # ------------------------------------------------------------------ optionals
@@ -143,6 +141,10 @@ all = [
 ]
 
 # ------------------------------------------------------------------ entry points
+browser = [
+    "camoufox[geoip]",
+]
+
 [project.scripts]
 hledac = "hledac.universal.__main__:main"
 
@@ -171,3 +173,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q --tb=short"
+
+[tool.uv]
+python-preference = "only-managed"
+package = false

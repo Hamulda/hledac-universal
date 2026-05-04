@@ -417,38 +417,82 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             result["acquisition_strategy"] = acq
 
         # F207S: Extract windup_guard_observation from acquisition_strategy report
-        # Maps scheduler result fields → live KPI windup guard telemetry
+        # Maps scheduler result fields → live KPI windup guard telemetry.
+        # Also check runtime_truth level (windup_guard_call_count lives there, not under acquisition_strategy).
         wg_obs = None
-        if isinstance(acq, dict):
-            wg_raw = acq.get("windup_guard_observation")
-            if wg_raw and isinstance(wg_raw, dict):
+        wg_from_acq = isinstance(acq, dict) and acq.get("windup_guard_observation")
+        wg_from_rt = rt.get("windup_guard_observation")
+        wg_raw = wg_from_acq if wg_from_acq else wg_from_rt
+        if wg_raw and isinstance(wg_raw, dict):
+            wg_obs = {
+                "call_count": wg_raw.get("call_count", 0),
+                "callback_supplied_count": wg_raw.get("callback_supplied_count", 0),
+                "callback_executed_count": wg_raw.get("callback_executed_count", 0),
+                "last_reason": wg_raw.get("last_reason", ""),
+                "last_phase": wg_raw.get("last_phase", ""),
+                "last_allowed": wg_raw.get("last_allowed"),
+            }
+        # F207S: Also check runtime_truth for windup_guard_call_count directly
+        # (scheduler writes windup_guard_call_count as sibling field in runtime_truth)
+        if wg_obs is None:
+            wg_call_count = rt.get("windup_guard_call_count")
+            if wg_call_count is not None:
                 wg_obs = {
-                    "call_count": wg_raw.get("call_count", 0),
-                    "callback_supplied_count": wg_raw.get("callback_supplied_count", 0),
-                    "callback_executed_count": wg_raw.get("callback_executed_count", 0),
-                    "last_reason": wg_raw.get("last_reason", ""),
-                    "last_phase": wg_raw.get("last_phase", ""),
-                    "last_allowed": wg_raw.get("last_allowed"),
+                    "call_count": wg_call_count,
+                    "callback_supplied_count": rt.get("windup_guard_callback_supplied_count", 0),
+                    "callback_executed_count": rt.get("windup_guard_callback_executed_count", 0),
+                    "last_reason": rt.get("windup_guard_last_reason", ""),
+                    "last_phase": rt.get("windup_guard_last_phase", ""),
+                    "last_allowed": rt.get("windup_guard_last_allowed"),
                 }
         result["windup_guard_observation"] = wg_obs
 
-        # F207T: Extract return_guard from acquisition_strategy
-        # Maps scheduler return_guard state → live KPI return guard telemetry.
-        # return_guard is a separate guard from windup_guard: it fires at scheduler
-        # return path (ACTIVE→WINDUP transition), not at the windup_lead boundary.
+        # F207T: Extract return_guard from multiple possible report layouts.
+        # The scheduler can store return_guard telemetry in any of:
+        #   1. acquisition_strategy.return_guard         (preferred canonical path)
+        #   2. return_guard                                (top-level sibling of windup_guard_call_count)
+        #   3. runtime_truth.return_guard_checked/etc.     (F207U truth-diff discovered path)
+        #   4. diagnostics.acquisition_strategy.return_guard
+        #   5. scheduler.return_guard
+        #   6. acquisition_strategy.windup_guard_observation (nested alongside prewindup_barrier)
+        # The parser tries each path in order; first populated dict wins.
         rg_obs = None
-        if isinstance(acq, dict):
-            rg_raw = acq.get("return_guard")
-            if rg_raw and isinstance(rg_raw, dict):
+        rg_candidates = [
+            (isinstance(acq, dict) and acq.get("return_guard")),
+            data.get("return_guard"),
+            data.get("diagnostics", {}).get("acquisition_strategy", {}).get("return_guard"),
+            data.get("scheduler", {}).get("return_guard"),
+            data.get("acquisition_strategy", {}).get("windup_guard_observation"),
+        ]
+        for candidate in rg_candidates:
+            if candidate and isinstance(candidate, dict):
+                checked = candidate.get("checked", False)
+                if checked is not None:
+                    rg_obs = {
+                        "checked": bool(checked),
+                        "required_lanes": candidate.get("required_lanes", []),
+                        "satisfied": bool(candidate.get("satisfied", False)),
+                        "delayed_for_nonfeed": bool(candidate.get("delayed_for_nonfeed", False)),
+                        "block_reason": candidate.get("block_reason", ""),
+                        "attempted_lanes": candidate.get("attempted_lanes", []),
+                        "skipped_lanes": candidate.get("skipped_lanes", {}),
+                        "errors": candidate.get("errors", []),
+                    }
+                    break
+        # F207U: Also try direct runtime_truth sibling fields
+        # (raw report: runtime_truth.return_guard_checked, runtime_truth.return_guard_satisfied, etc.)
+        if rg_obs is None:
+            rt_rg_checked = rt.get("return_guard_checked")
+            if rt_rg_checked is not None:
                 rg_obs = {
-                    "checked": rg_raw.get("checked", False),
-                    "required_lanes": rg_raw.get("required_lanes", []),
-                    "satisfied": rg_raw.get("satisfied", False),
-                    "delayed_for_nonfeed": rg_raw.get("delayed_for_nonfeed", False),
-                    "block_reason": rg_raw.get("block_reason", ""),
-                    "attempted_lanes": rg_raw.get("attempted_lanes", []),
-                    "skipped_lanes": rg_raw.get("skipped_lanes", {}),
-                    "errors": rg_raw.get("errors", []),
+                    "checked": bool(rt_rg_checked),
+                    "required_lanes": rt.get("return_guard_required_lanes", []),
+                    "satisfied": bool(rt.get("return_guard_satisfied", False)),
+                    "delayed_for_nonfeed": bool(rt.get("return_guard_delayed_for_nonfeed", False)),
+                    "block_reason": rt.get("return_guard_block_reason", ""),
+                    "attempted_lanes": rt.get("return_guard_attempted_lanes", []),
+                    "skipped_lanes": rt.get("return_guard_skipped_lanes", {}),
+                    "errors": rt.get("return_guard_errors", []),
                 }
         result["return_guard_observation"] = rg_obs
 

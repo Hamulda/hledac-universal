@@ -1440,11 +1440,16 @@ class SprintScheduler:
                 if self._runner.post_sleep_gate(now_monotonic):
                     # Sprint F195B: write partial on windup so latest state survives
                     await self._maybe_export_partial(lifecycle)
-                    # Sprint F207T-A: Return guard — entering windup, record nonfeed state
-                    await self._ensure_mandatory_nonfeed_before_return(
+                    # Sprint F207U-C: Return guard — check return value; if guard
+                    # blocked, continue loop once more to satisfy nonfeed lanes before
+                    # allowing windup break. This prevents post_sleep_gate from
+                    # bypassing the mandatory PUBLIC/CT terminal-state requirement.
+                    if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "post_sleep_windup"
-                    )
-                    break
+                    ):
+                        break
+                    # Guard blocked — continue loop once to satisfy nonfeed lanes
+                    continue
 
                 # Sprint 8UC B.4: Speculative prefetch every 15s
                 now_mono = _time.monotonic()

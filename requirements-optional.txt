@@ -44,7 +44,7 @@ pyvis>=0.3.2        # Interactive graph visualization (networkx + pyvis HTML exp
 markdown2>=2.4.12   # Markdown to HTML conversion for Obsidian-compatible exports
 
 # Security: Strong encryption for vault files (replaces XOR fallback in vault_manager.py)
-pyzipper>=1.4.0     # AES/ZIP encryption for sensitive file storage
+pyzipper>=0.3.6,<0.4.0     # AES/ZIP encryption for sensitive file storage
 
 # Sprint F206K: HTTP/2 support for optional httpx_h2 transport lane
 h2>=4.1.0           # HTTP/2 (required for httpx[http2] lane — falls back if missing)
