@@ -18,6 +18,9 @@ Tests only probe/analysis code; Pydantic/msgspec schemas are NOT modified.
 from __future__ import annotations
 
 import sys
+if sys.version_info < (3, 14):
+    raise SystemExit("Requires Python 3.14+ for annotationlib probes")
+
 import time
 import typing
 from dataclasses import dataclass, field

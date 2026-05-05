@@ -525,6 +525,19 @@ class SprintSchedulerResult:
     nonfeed_predispatch_ran: bool = False
     nonfeed_predispatch_reason: str | None = None
     nonfeed_predispatch_outcomes_count: int = 0
+    # Sprint F209A: Mandatory Acquisition Prelude
+    # Runs before main feed cycle loop to establish early terminal state for PUBLIC/CT.
+    # Canonical for domain queries: PUBLIC and CT must get one bounded attempt
+    # before feed cycles dominate runtime (~120s windup lead).
+    acquisition_prelude_checked: bool = False
+    acquisition_prelude_ran: bool = False
+    acquisition_prelude_required_lanes: tuple[str, ...] = ()
+    acquisition_prelude_terminal_lanes: tuple[str, ...] = ()
+    acquisition_prelude_missing_lanes: tuple[str, ...] = ()
+    acquisition_prelude_skipped_lanes: dict[str, str] = field(default_factory=dict)
+    acquisition_prelude_errors: dict[str, str] = field(default_factory=dict)
+    acquisition_prelude_duration_s: float = 0.0
+    acquisition_prelude_reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -1268,6 +1281,14 @@ class SprintScheduler:
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
         except Exception:
             self._acquisition_plan = None
+
+        # Sprint F209A: Run Mandatory Acquisition Prelude BEFORE main feed cycle loop
+        # This establishes early terminal state for PUBLIC/CT before feed cycles dominate runtime
+        await self._run_mandatory_acquisition_prelude(
+            self._result, query, duckdb_store, self._ct_log_client
+        )
+        # Capture initial terminality after prelude
+        self._finalize_result_truth("prelude_complete", "acquisition prelude finished", "BOOT", query)
 
         try:
             # Sprint 8VD §C: Start memory pressure monitoring loop
@@ -2449,6 +2470,272 @@ class SprintScheduler:
                 return {"attempted": True, "timeout": True}
         except Exception as exc:
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
+
+    # ── Sprint F209A: Mandatory Acquisition Prelude ───────────────────────────
+
+    async def _run_mandatory_acquisition_prelude(
+        self,
+        result: SprintSchedulerResult,
+        query: str,
+        duckdb_store: Any,
+        ct_log_client: Any,
+    ) -> None:
+        """
+        Sprint F209A: Mandatory Acquisition Prelude.
+
+        Runs BEFORE the main feed cycle loop to establish early terminal state for
+        PUBLIC and CT lanes on domain queries.
+
+        This fixes the active300 window issue where windup_lead_s=180s means the
+        feed loop dominates before PUBLIC/CT can get a reliable execution slot.
+
+        Rules:
+          - PUBLIC and CT required for domain queries (per required_terminal_lanes)
+          - Each lane gets ONE bounded attempt before cycles_started is incremented
+          - PUBLIC: max 3 results, 10s timeout via live_public_pipeline
+          - CT: max 5 results, 15s timeout via crtsh adapter
+          - CancelledError is re-raised (prelude is mandatory for domain queries)
+          - Skipped/error outcomes are recorded as terminal state
+          - No stealth, no browser, no MLX load
+
+        Integration:
+          - _public_outcome dict (same shape as _attempt_public_prewindup_barrier)
+          - _lane_outcomes tuple with AcquisitionLaneOutcome (same as predispatch)
+          - _result.acquisition_lane_outcomes (SSOT for terminality_report)
+          - After prelude, _finalize_result_truth captures initial terminality
+        """
+        import time as _time
+
+        _t0 = _time.monotonic()
+        self._result.acquisition_prelude_checked = True
+
+        # Determine memory state
+        _uma = "ok"
+        if self._governor is not None:
+            try:
+                _snap = self._governor.evaluate()
+                _uma = getattr(_snap, "uma_state", "ok")
+            except Exception:
+                pass
+
+        _has_domain = False
+        if self._acquisition_plan is not None:
+            try:
+                from hledac.universal.runtime.acquisition_strategy import _has_domain_or_ip
+                _has_domain = _has_domain_or_ip(query)
+            except Exception:
+                _has_domain = False
+
+        # If not a domain query, skip prelude (CT not required)
+        if not _has_domain:
+            self._result.acquisition_prelude_ran = False
+            self._result.acquisition_prelude_reason = "non_domain_query"
+            self._result.acquisition_prelude_required_lanes = ()
+            self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
+            return
+
+        # Derive required lanes
+        _required: tuple[str, ...] = ()
+        _mlt_tuples: tuple = ()
+        if self._acquisition_plan is not None:
+            try:
+                from hledac.universal.runtime.acquisition_strategy import (
+                    required_terminal_lanes as _rtl,
+                    AcquisitionLane,
+                )
+                _mlt_tuples = _rtl(
+                    snapshot=self._acquisition_plan,
+                    query=query,
+                    uma_state=_uma,
+                    swap_detected=False,
+                )
+                _required = tuple(
+                    mlt.lane.value if hasattr(mlt.lane, 'value')
+                    else str(mlt.lane).upper()
+                    for mlt in _mlt_tuples
+                    if getattr(mlt, 'required', False)
+                )
+            except Exception:
+                _required = ("PUBLIC", "CT")
+
+        _needs_public = "PUBLIC" in _required or "public" in [r.lower() for r in _required]
+        _needs_ct = "CT" in _required or "ct" in [r.lower() for r in _required]
+
+        self._result.acquisition_prelude_required_lanes = _required
+        self._result.acquisition_prelude_reason = f"domain_query_requires_prelude"
+
+        _attempted_lanes: list[str] = []
+        _terminal_lanes: list[str] = []
+        _skipped: dict[str, str] = {}
+        _errors: dict[str, str] = {}
+        _prelude_outcomes: list = []
+
+        # ── PUBLIC prelude ────────────────────────────────────────────────────
+        if _needs_public:
+            _public_result: dict | None = None
+            try:
+                from hledac.universal.runtime.acquisition_strategy import (
+                    build_lane_query,
+                    AcquisitionLane,
+                )
+                from hledac.universal.pipeline.live_public_pipeline import (
+                    async_run_live_public_pipeline,
+                )
+
+                _shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
+                if isinstance(_shaped, dict) or not _shaped:
+                    _skipped["PUBLIC"] = "empty_public_query"
+                else:
+                    try:
+                        async with asyncio.timeout(10.0):
+                            _pipeline_result = await async_run_live_public_pipeline(
+                                query=_shaped,
+                                store=None,
+                                max_results=3,
+                                fetch_timeout_s=10.0,
+                                fetch_concurrency=2,
+                                hermes_engine=None,
+                                memory_manager=None,
+                                enqueue_hypothesis_pivot=None,
+                            )
+                        _public_result = {
+                            "lane": "PUBLIC",
+                            "attempted": True,
+                            "skipped": False,
+                            "skip_reason": None,
+                            "raw_count": getattr(_pipeline_result, 'discovered', 0) or 0,
+                            "built_count": getattr(_pipeline_result, 'fetched', 0) or 0,
+                            "accepted_count": getattr(_pipeline_result, 'accepted_findings', 0) or 0,
+                            "error": getattr(_pipeline_result, 'error', None),
+                            "timeout": getattr(_pipeline_result, 'timed_out', False),
+                            "duration_s": getattr(_pipeline_result, 'elapsed_s', None),
+                        }
+                        _attempted_lanes.append("PUBLIC")
+                        _terminal_lanes.append("PUBLIC")
+                    except asyncio.TimeoutError:
+                        _public_result = {
+                            "lane": "PUBLIC",
+                            "attempted": True,
+                            "skipped": False,
+                            "timeout": True,
+                            "error": None,
+                        }
+                        _attempted_lanes.append("PUBLIC")
+                        _terminal_lanes.append("PUBLIC")
+            except asyncio.CancelledError:
+                raise  # Re-raise CancelledError
+            except Exception as exc:
+                _errors["PUBLIC"] = f"{type(exc).__name__}:{exc}"
+                _skipped["PUBLIC"] = f"prelude_error:{type(exc).__name__}"
+
+            # Record _public_outcome
+            if _public_result is not None:
+                self._public_outcome = _public_result
+
+        # ── CT prelude ───────────────────────────────────────────────────────
+        if _needs_ct:
+            _ct_outcome_prelude: Any = None
+            try:
+                from hledac.universal.runtime.acquisition_strategy import (
+                    build_lane_query,
+                    AcquisitionLane,
+                    AcquisitionLaneOutcome,
+                )
+                from hledac.universal.runtime.source_finding_bridge import (
+                    ct_results_to_findings,
+                )
+
+                _shaped = build_lane_query(query, AcquisitionLane.CT)
+                if isinstance(_shaped, dict) or not _shaped:
+                    _skipped["CT"] = "empty_ct_query"
+                else:
+                    _ct_call = _get_ct_adapter()
+                    try:
+                        async with asyncio.timeout(15.0):
+                            _ct_result, _ct_outcome_obj = await _ct_call(
+                                query=_shaped,
+                                max_results=5,
+                                timeout_s=15.0,
+                            )
+                        _ct_results_raw = getattr(_ct_outcome_obj, 'raw_count', 0) or 0
+                        _ct_error = getattr(_ct_outcome_obj, 'error', None)
+
+                        # Convert to CanonicalFinding candidates (not stored in DB during prelude)
+                        _candidates, _rejections = ct_results_to_findings(
+                            _ct_result, _ct_outcome_obj, query, sprint_id=f"prelude-{int(_time.time())}"
+                        )
+                        _accepted = 0
+
+                        _ct_outcome_prelude = AcquisitionLaneOutcome(
+                            lane=AcquisitionLane.CT,
+                            enabled=True,
+                            attempted=True,
+                            accepted_findings=_accepted,
+                            produced_items=_ct_results_raw,
+                            duration_s=0.0,
+                            source_family="ct",
+                            ct_query=str(_shaped),
+                            ct_results_raw=_ct_results_raw,
+                            error=_ct_error,
+                            candidate_findings=tuple(_candidates),
+                            rejection_reasons=tuple(_rejections),
+                            rejected_count=len(_rejections),
+                            sample_rejections=tuple(_rejections[:3]),
+                        )
+                        _attempted_lanes.append("CT")
+                        # raw>0 and accepted=0 is success_empty terminal
+                        if _ct_results_raw > 0 and _accepted == 0:
+                            _terminal_lanes.append("CT")
+                        elif _ct_results_raw == 0 and _ct_error is None:
+                            _terminal_lanes.append("CT")
+                    except asyncio.TimeoutError:
+                        _ct_outcome_prelude = AcquisitionLaneOutcome(
+                            lane=AcquisitionLane.CT,
+                            enabled=True,
+                            attempted=True,
+                            timeout=True,
+                            duration_s=15.0,
+                            error="prelude_timeout",
+                            source_family="ct",
+                            ct_query=str(_shaped),
+                            ct_results_raw=0,
+                        )
+                        _attempted_lanes.append("CT")
+                        _terminal_lanes.append("CT")
+            except asyncio.CancelledError:
+                raise  # Re-raise CancelledError
+            except Exception as exc:
+                _errors["CT"] = f"{type(exc).__name__}:{exc}"
+                _skipped["CT"] = f"prelude_error:{type(exc).__name__}"
+
+            # Record CT outcome
+            if _ct_outcome_prelude is not None:
+                _prelude_outcomes.append(_ct_outcome_prelude)
+                # Also update counters
+                self._result.ct_log_discovered = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
+
+        # Accumulate outcomes
+        if _prelude_outcomes:
+            self._lane_outcomes = tuple(_prelude_outcomes)
+            self._result.acquisition_lane_outcomes = tuple(_prelude_outcomes)
+
+        # Record telemetry
+        self._result.acquisition_prelude_ran = True
+        self._result.acquisition_prelude_terminal_lanes = tuple(_terminal_lanes)
+        self._result.acquisition_prelude_skipped_lanes = dict(_skipped)
+        self._result.acquisition_prelude_errors = dict(_errors)
+        self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
+
+        # Missing lanes = required but not in terminal_lanes
+        _missing = [r for r in _required if r not in _terminal_lanes]
+        self._result.acquisition_prelude_missing_lanes = tuple(_missing)
+
+        log.debug(
+            "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, "
+            "skipped=%s, errors=%s, dur=%.2fs",
+            _required, _terminal_lanes, _missing, _skipped, _errors,
+            self._result.acquisition_prelude_duration_s,
+        )
 
     # ── Sprint F207T-A: Return Guard for Mandatory Nonfeed Terminal State ────
     # ---------------------------------------------------------------------------

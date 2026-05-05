@@ -30,6 +30,10 @@ METRICS:
 
 from __future__ import annotations
 
+import sys
+if sys.version_info < (3, 14):
+    raise SystemExit("Requires Python 3.14+ for InterpreterPoolExecutor probes")
+
 import gc
 import hashlib
 import importlib
