@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Live Multisource Validator — F208H
+Live Multisource Validator — F208H + F208K
 Reads a live_sprint_measurement JSON artifact and emits PASS/FAIL verdict.
 Supports both internal sprint report JSON and benchmark live measurement JSON shapes.
 Does NOT execute sprints, network calls, or MLX loads.
+
+F208K additions: guard alias fallback for return_guard_checked and
+windup_guard_call_count from canonical nested locations.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from pathlib import Path
 class Verdict(str, Enum):
     PASS_MULTISOURCE_TERMINALITY   = "PASS_MULTISOURCE_TERMINALITY"
     FAIL_TERMINALITY_NOT_CHECKED   = "FAIL_TERMINALITY_NOT_CHECKED"
+    FAIL_TERMINALITY_NOT_SATISFIED = "FAIL_TERMINALITY_NOT_SATISFIED"
     FAIL_MISSING_SOURCE_OUTCOMES   = "FAIL_MISSING_SOURCE_OUTCOMES"
     FAIL_PUBLIC_NOT_TERMINAL       = "FAIL_PUBLIC_NOT_TERMINAL"
     FAIL_CT_NOT_TERMINAL          = "FAIL_CT_NOT_TERMINAL"
@@ -44,7 +48,7 @@ class ValidationResult:
     def to_dict(self) -> dict:
         return {
             "validator": "live_multisource_validator",
-            "version": "f208h.v1",
+            "version": "f208k.v1",
             "overall_verdict": self.overall.value,
             "pass": self.overall == Verdict.PASS_MULTISOURCE_TERMINALITY,
             "failure_count": len(self.failures),
@@ -59,7 +63,6 @@ class ValidationResult:
             "metadata": self.metadata,
         }
 
-
 # ── Terminal state helpers ──────────────────────────────────────────────────
 
 TERMINAL_STATES = frozenset([
@@ -70,11 +73,201 @@ TERMINAL_STATES = frozenset([
     "NEVER_ATTEMPTED",  # explicit never-attempted is also terminal
 ])
 
-
 def is_terminal(state: str | None) -> bool:
     if state is None:
         return False
     return state.upper() in TERMINAL_STATES
+
+
+# ── F208K: Guard alias helpers ──────────────────────────────────────────────
+
+def _extract_return_guard_checked(data: dict) -> bool | None:
+    """Extract return_guard_checked from canonical aliases.
+
+    Supported aliases (checked in order):
+      data["return_guard"]["return_guard_checked"]
+      data["return_guard"]["checked"]
+      data["acquisition_report"]["return_guard"]["return_guard_checked"]
+      data["canonical_run_summary"]["return_guard"]["return_guard_checked"]
+      data["live_kpi"]["return_guard_checked"]
+      data["return_guard_checked"]  (top-level)
+    Returns None if no alias resolves to a truthy value.
+    """
+    # Direct top-level
+    val = data.get("return_guard_checked")
+    if isinstance(val, bool):
+        return val
+
+    # return_guard nested
+    rg = data.get("return_guard")
+    if isinstance(rg, dict):
+        val = rg.get("return_guard_checked")
+        if isinstance(val, bool):
+            return val
+        val = rg.get("checked")
+        if isinstance(val, bool):
+            return val
+
+    # acquisition_report nested return_guard (canonical — before live_kpi)
+    acq = data.get("acquisition_report") or {}
+    if isinstance(acq, dict):
+        rg_nested = acq.get("return_guard") or {}
+        if isinstance(rg_nested, dict):
+            val = rg_nested.get("return_guard_checked")
+            if isinstance(val, bool):
+                return val
+
+    # canonical_run_summary nested return_guard (canonical — before live_kpi)
+    crs = data.get("canonical_run_summary") or {}
+    if isinstance(crs, dict):
+        rg_crs = crs.get("return_guard") or {}
+        if isinstance(rg_crs, dict):
+            val = rg_crs.get("return_guard_checked")
+            if isinstance(val, bool):
+                return val
+
+    # live_kpi fallback (checked after canonical sources — live_kpi may be stale)
+    live_kpi = data.get("live_kpi") or {}
+    if isinstance(live_kpi, dict):
+        val = live_kpi.get("return_guard_checked")
+        if isinstance(val, bool):
+            return val
+
+    return None
+
+
+def _extract_windup_guard_call_count(data: dict) -> int | None:
+    """Extract windup_guard_call_count from canonical aliases.
+
+    Supported aliases (checked in order):
+      data["windup_guard_observation"]["windup_guard_call_count"]
+      data["windup_guard_observation"]["call_count"]
+      data["acquisition_report"]["windup_guard_observation"]["windup_guard_call_count"]
+      data["canonical_run_summary"]["windup_guard_observation"]["windup_guard_call_count"]
+      data["live_kpi"]["windup_guard_call_count"]
+      data["windup_guard_call_count"]  (top-level)
+    Returns None if no alias resolves to an int.
+    """
+    # Direct top-level
+    val = data.get("windup_guard_call_count")
+    if isinstance(val, (int, float)):
+        return int(val)
+
+    # windup_guard_observation nested
+    wg = data.get("windup_guard_observation")
+    if isinstance(wg, dict):
+        # Full field (windup_guard_call_count) before alias (call_count)
+        # call_count=0 is not reliable in benchmark shape — skip so we reach
+        # canonical sources. Full field windup_guard_call_count=0 is valid and returned.
+        val = wg.get("windup_guard_call_count")
+        if isinstance(val, (int, float)):
+            return int(val)
+        val = wg.get("call_count")
+        if isinstance(val, (int, float)) and val != 0:
+            return int(val)
+
+    # acquisition_report nested windup_guard_observation (canonical — before live_kpi)
+    acq = data.get("acquisition_report") or {}
+    if isinstance(acq, dict):
+        wg_nested = acq.get("windup_guard_observation") or {}
+        if isinstance(wg_nested, dict):
+            val = wg_nested.get("windup_guard_call_count")
+            if isinstance(val, (int, float)):
+                return int(val)
+
+    # canonical_run_summary nested windup_guard_observation (canonical — before live_kpi)
+    crs = data.get("canonical_run_summary") or {}
+    if isinstance(crs, dict):
+        wg_crs = crs.get("windup_guard_observation") or {}
+        if isinstance(wg_crs, dict):
+            val = wg_crs.get("windup_guard_call_count")
+            if isinstance(val, (int, float)):
+                return int(val)
+
+    # live_kpi fallback (checked after canonical sources — live_kpi may be stale)
+    live_kpi = data.get("live_kpi") or {}
+    if isinstance(live_kpi, dict):
+        val = live_kpi.get("windup_guard_call_count")
+        if isinstance(val, (int, float)):
+            return int(val)
+
+    return None
+
+
+def _extract_windup_irrelevant_reason(data: dict) -> tuple[str | None, bool | None]:
+    """Extract windup irrelevant reason + windup_not_applicable from canonical aliases.
+
+    Returns (reason_string, windup_not_applicable_bool) or (None, None).
+
+    Supported reason aliases:
+      data["windup_guard_observation"]["last_reason"]
+      data["windup_guard_reason"]
+      data["live_kpi"]["windup_guard_last_reason"]
+    Supported not_applicable aliases:
+      data["windup_guard_observation"]["windup_guard_not_applicable"]
+      data["windup_guard_not_applicable"]
+      data["live_kpi"]["windup_guard_not_applicable"]
+    """
+    reason: str | None = None
+    not_applicable: bool | None = None
+
+    # live_kpi first (most common in benchmark shape)
+    live_kpi = data.get("live_kpi") or {}
+    if isinstance(live_kpi, dict):
+        reason = live_kpi.get("windup_guard_last_reason")
+        if not isinstance(reason, str):
+            reason = None
+        nap = live_kpi.get("windup_guard_not_applicable")
+        if isinstance(nap, bool):
+            not_applicable = nap
+
+    # windup_guard_observation nested (internal report shape)
+    wg = data.get("windup_guard_observation")
+    if isinstance(wg, dict):
+        if reason is None:
+            reason = wg.get("last_reason")
+            if not isinstance(reason, str):
+                reason = None
+        nap = wg.get("windup_guard_not_applicable")
+        if isinstance(nap, bool) and not_applicable is None:
+            not_applicable = nap
+
+    # top-level windup_guard_reason
+    if reason is None:
+        reason = data.get("windup_guard_reason")
+        if not isinstance(reason, str):
+            reason = None
+
+    # top-level windup_guard_not_applicable
+    nap = data.get("windup_guard_not_applicable")
+    if isinstance(nap, bool) and not_applicable is None:
+        not_applicable = nap
+
+    # acquisition_report nested windup_guard_observation
+    acq = data.get("acquisition_report") or {}
+    if isinstance(acq, dict):
+        wg_nested = acq.get("windup_guard_observation") or {}
+        if isinstance(wg_nested, dict) and reason is None:
+            reason = wg_nested.get("windup_guard_last_reason")
+            if not isinstance(reason, str):
+                reason = None
+        nap = wg_nested.get("windup_guard_not_applicable") if isinstance(wg_nested, dict) else None
+        if isinstance(nap, bool) and not_applicable is None:
+            not_applicable = nap
+
+    # canonical_run_summary nested windup_guard_observation
+    crs = data.get("canonical_run_summary") or {}
+    if isinstance(crs, dict):
+        wg_crs = crs.get("windup_guard_observation") or {}
+        if isinstance(wg_crs, dict) and reason is None:
+            reason = wg_crs.get("windup_guard_last_reason")
+            if not isinstance(reason, str):
+                reason = None
+        nap = wg_crs.get("windup_guard_not_applicable") if isinstance(wg_crs, dict) else None
+        if isinstance(nap, bool) and not_applicable is None:
+            not_applicable = nap
+
+    return reason, not_applicable
 
 
 # ── Shape-aware extraction helpers ─────────────────────────────────────────
@@ -147,12 +340,12 @@ def _extract_terminality_fields(data: dict) -> tuple:
     # Derive from acquisition_report.terminality when top-level fields are absent
     if checked is None or satisfied is None or missing_lanes is None:
         acq_report = _extract_acquisition_report(data)
-        terminality = acq_report.get("terminality") if isinstance(acq_report, dict) else {}
+        terminality = (acq_report.get("terminality") or {}) if isinstance(acq_report, dict) else {}
         if checked is None:
             checked = True if isinstance(terminality.get("checked"), list) else None
         if satisfied is None:
             ml = terminality.get("missing_lanes")
-            satisfied = True if isinstance(ml, list) and len(ml) == 0 else False
+            satisfied = True if isinstance(ml, list) and len(ml) == 0 else None
         if missing_lanes is None:
             missing_lanes = terminality.get("missing_lanes")
 
@@ -207,25 +400,27 @@ def _resolve_branch_count(branch_mix: dict | None, live_kpi: dict, key: str) -> 
 
 
 def _extract_guard_fields(data: dict) -> tuple:
-    """Extract windup/return guard fields from benchmark or internal shape."""
-    windup_count = data.get("windup_guard_call_count")
-    windup_reason = data.get("windup_guard_reason")
-    windup_not_applicable = data.get("windup_guard_not_applicable")
-    return_guard_checked = data.get("return_guard_checked")
-    scheduler_exit = data.get("scheduler_exit_path")
+    """Extract windup/return guard fields from benchmark or internal shape.
 
-    if windup_count is None or return_guard_checked is None or scheduler_exit is None:
+    Uses F208K alias helpers to resolve all canonical nested locations.
+    Returns (windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit).
+    """
+    # F208K: use dedicated alias helpers
+    windup_count = _extract_windup_guard_call_count(data)
+    windup_reason, windup_not_applicable = _extract_windup_irrelevant_reason(data)
+    return_guard_checked = _extract_return_guard_checked(data)
+
+    # scheduler_exit still from top-level / live_kpi (no change needed)
+    scheduler_exit = data.get("scheduler_exit_path")
+    if scheduler_exit is None:
         live_kpi = _extract_live_kpi(data)
-        if windup_count is None:
-            windup_count = live_kpi.get("windup_guard_call_count")
-        if windup_reason is None:
-            windup_reason = live_kpi.get("windup_guard_reason")
-        if windup_not_applicable is None:
-            windup_not_applicable = live_kpi.get("windup_guard_not_applicable")
-        if return_guard_checked is None:
-            return_guard_checked = live_kpi.get("return_guard_checked")
+        scheduler_exit = live_kpi.get("scheduler_exit_path")
         if scheduler_exit is None:
-            scheduler_exit = live_kpi.get("scheduler_exit_path")
+            # acquisition_report.scheduler_exit path (internal shape)
+            acq = _extract_acquisition_report(data)
+            sc_exit = acq.get("scheduler_exit") or {}
+            if isinstance(sc_exit, dict):
+                scheduler_exit = sc_exit.get("exit_path")
 
     return windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit
 
@@ -284,7 +479,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
     # ── 5. acquisition_terminality_satisfied == true ───────────────────────
     if term_satisfied is not True:
         failures_append(ValidationFailure(
-            Verdict.FAIL_TERMINALITY_NOT_CHECKED,
+            Verdict.FAIL_TERMINALITY_NOT_SATISFIED,
             f"acquisition_terminality_satisfied is {term_satisfied!r}, expected true",
             "acquisition_terminality_satisfied",
         ))
@@ -378,7 +573,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             "scheduler_exit_path",
         ))
 
-    # ── 12. return_guard_checked == true ─────────────────────────────────────
+    # ── 12. return_guard_checked == true (F208K: reads all canonical aliases) ──
     if return_guard_checked is not True:
         failures_append(ValidationFailure(
             Verdict.FAIL_RETURN_GUARD_MISSING,
@@ -386,7 +581,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             "return_guard_checked",
         ))
 
-    # ── 13. windup_guard_call_count > 0 OR explicit reason ──────────────────
+    # ── 13. windup_guard_call_count > 0 OR explicit reason (F208K: reads all canonical aliases) ──
     if windup_count is None:
         windup_count = 0
     windup_irrelevant_reasons = frozenset({"not_applicable", "no_lanes_ran", "disabled", "skipped"})
@@ -402,7 +597,6 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
         ))
 
     return failures
-
 
 # ── Main validation ────────────────────────────────────────────────────────
 
@@ -468,17 +662,16 @@ def emit_markdown(result: ValidationResult, output_path: str | Path) -> None:
 
     lines.append("")
     lines.append("---")
-    lines.append("*Generated by live_multisource_validator.py F208H*")
+    lines.append("*Generated by live_multisource_validator.py F208K*")
 
     with Path(output_path).open("w") as fh:
         fh.write("\n".join(lines))
-
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Live Multisource Validator — F208H",
+        description="Live Multisource Validator — F208K",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--input-json", required=True, help="Path to live_sprint_measurement JSON artifact")
@@ -511,7 +704,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # Always print verdict to stdout
     print(result.overall.value)
-
     return 0 if result.overall == Verdict.PASS_MULTISOURCE_TERMINALITY else 1
 
 

@@ -277,4 +277,6 @@ PYTHONPATH=/Users/vojtechhamada/PycharmProjects/Hledac python -c "import hledac.
 - [x] 2 patches identified (F214S-6, F214S-7), both in `vault_manager.py` with `_safe_extractall` helper
 - [x] `.docx`/`.xlsx` reading preserved (BytesIO path)
 - [x] pyzipper encryption semantics untouched
-- [ ] Probe test for zip-slip path traversal (deferred until PATCH-7 is applied)
+- [x] Probe test for zip-slip path traversal (deferred until PATCH-7 is applied)
+
+**PATCH_APPLIED:** F214S-6 and F214S-7 patched. `_safe_extractall` helper added as `@staticmethod` to `LootManager`. Guards: NUL byte check, absolute path check, ".." segment check, `is_relative_to` resolved-path check. Both `_decrypt_fernet` and `_decrypt_pyzipper` call `LootManager._safe_extractall`. Temp file cleanup in `_decrypt_fernet` preserved via try/except. Tests: 10 passing in `probe_f214s_vault_zip_slip`, 5 passing in `test_vault_manager` (4 skipped crypto unavailable).

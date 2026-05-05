@@ -82,6 +82,7 @@ dependencies = [
     "lmdb>=2.2.0,<3.0.0",
     # Fallback browser (nodriver — camoufox is primary, see browser extra)
     "nodriver>=0.1.0",
+    "cryptography>=48.0.0",
 ]
 
 # ------------------------------------------------------------------ optionals

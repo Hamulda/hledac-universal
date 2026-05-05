@@ -554,9 +554,23 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             wg_obs = acq_report.get("windup_guard_observation")
             if isinstance(wg_obs, dict):
                 result["windup_guard_observation"] = {
-                    "call_count": wg_obs.get("call_count", 0),
-                    "callback_supplied_count": wg_obs.get("callback_supplied_count", 0),
-                    "callback_executed_count": wg_obs.get("callback_executed_count", 0),
+                    # F208K: Canonical acquisition_report uses windup_guard_* names.
+                    # Prefer long names first, fall back to short names for legacy compatibility.
+                    "call_count": (
+                        wg_obs.get("windup_guard_call_count")
+                        if wg_obs.get("windup_guard_call_count") is not None
+                        else wg_obs.get("call_count", 0)
+                    ),
+                    "callback_supplied_count": (
+                        wg_obs.get("windup_guard_callback_supplied_count")
+                        if wg_obs.get("windup_guard_callback_supplied_count") is not None
+                        else wg_obs.get("callback_supplied_count", 0)
+                    ),
+                    "callback_executed_count": (
+                        wg_obs.get("windup_guard_callback_executed_count")
+                        if wg_obs.get("windup_guard_callback_executed_count") is not None
+                        else wg_obs.get("callback_executed_count", 0)
+                    ),
                     "last_reason": wg_obs.get("last_reason", ""),
                     "last_phase": wg_obs.get("last_phase", ""),
                     "last_allowed": wg_obs.get("last_allowed"),
@@ -579,16 +593,25 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             # return_guard from canonical report
             rg = acq_report.get("return_guard")
             if isinstance(rg, dict):
-                checked = rg.get("checked", False)
+                # F208K: Canonical acquisition_report uses return_guard_* names.
+                # Prefer long names first, fall back to short names for legacy compatibility.
+                checked = (
+                    rg.get("return_guard_checked")
+                    if rg.get("return_guard_checked") is not None
+                    else rg.get("checked", False)
+                )
                 result["return_guard_observation"] = {
                     "checked": bool(checked),
-                    "required_lanes": rg.get("required_lanes", []),
-                    "satisfied": bool(rg.get("satisfied", False)),
-                    "delayed_for_nonfeed": bool(rg.get("delayed_for_nonfeed", False)),
-                    "block_reason": rg.get("block_reason", ""),
-                    "attempted_lanes": rg.get("attempted_lanes", []),
-                    "skipped_lanes": rg.get("skipped_lanes", {}),
-                    "errors": rg.get("errors", []),
+                    "required_lanes": rg.get("required_lanes") or rg.get("return_guard_required_lanes", []),
+                    "satisfied": bool(rg.get("satisfied") or rg.get("return_guard_satisfied", False)),
+                    "delayed_for_nonfeed": bool(
+                        rg.get("delayed_for_nonfeed") if rg.get("delayed_for_nonfeed") is not None
+                        else rg.get("return_guard_delayed_for_nonfeed", False)
+                    ),
+                    "block_reason": rg.get("block_reason") or rg.get("return_guard_block_reason", ""),
+                    "attempted_lanes": rg.get("attempted_lanes") or rg.get("return_guard_attempted_lanes", []),
+                    "skipped_lanes": rg.get("skipped_lanes") or rg.get("return_guard_skipped_lanes", {}),
+                    "errors": rg.get("errors") or rg.get("return_guard_errors", []),
                 }
             else:
                 # Legacy: try runtime_truth sibling fields

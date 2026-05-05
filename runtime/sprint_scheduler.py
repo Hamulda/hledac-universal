@@ -1688,8 +1688,17 @@ class SprintScheduler:
             if self._public_outcome is not None:
                 _observed_outcomes.append(self._public_outcome)
                 _seen_outcome_lanes.add("PUBLIC")
-            # CT terminal if any discoveries or accepted findings exist
-            if self._result.ct_log_discovered > 0 or self._result.lane_ct_accepted_findings > 0:
+            # [F208K-A] CT terminal if:
+            #  - ct_log_discovered > 0 or lane_ct_accepted_findings > 0 (findings produced), OR
+            #  - any acquisition_lane_outcomes has lane="CT" with attempted=True
+            #    (CT was attempted but produced zero accepted findings — terminal=success_empty)
+            # CT is MISSING only when no CT outcome with attempted=True exists at all.
+            _ct_has_attempted_outcome = any(
+                (_o.lane == "CT" and getattr(_o, "attempted", False))
+                or (_o.get("lane") == "CT" and _o.get("attempted", False))
+                for _o in (self._result.acquisition_lane_outcomes or ())
+            )
+            if (self._result.ct_log_discovered or 0) > 0 or (self._result.lane_ct_accepted_findings or 0) > 0 or _ct_has_attempted_outcome:
                 _observed_outcomes.append({
                     "attempted": True,
                     "skipped": False,

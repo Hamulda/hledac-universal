@@ -5,11 +5,13 @@ report_truth_trace.py — F208 Truth Boundary Diagnostic
 Traces where F208 acquisition fields disappear across benchmark → internal report → validation boundaries.
 
 Verdicts:
-  TRACE_PASS_ALL_PRESENT
-  TRACE_DROP_BEFORE_EXPORT   — fields absent in internal report
-  TRACE_DROP_AT_BENCHMARK_PARSE — fields present in internal report but missing benchmark
-  TRACE_DROP_AT_EXPORT       — fields in scorecard but absent after export
-  TRACE_VALIDATOR_ALIAS_ONLY — only validator fields present, no real acquisition data
+  TRACE_PASS_ALL_PRESENT              — all fields present, terminality satisfied
+  TRACE_TERMINALITY_UNSATISFIED      — acquisition_report exists in both, terminality.satisfied=false
+  TRACE_BENCHMARK_SHAPE_GAP          — internal has return_guard/windup/source that benchmark is missing
+  TRACE_DROP_BEFORE_EXPORT           — acquisition_report missing in internal
+  TRACE_DROP_AT_EXPORT               — acquisition_report present in internal, missing in exported report
+  TRACE_DROP_AT_BENCHMARK_PARSE      — acquisition_report present in internal, missing in benchmark
+  TRACE_VALIDATOR_ALIAS_ONLY          — only validator fields present, no real acquisition data
 """
 
 import argparse
@@ -42,6 +44,13 @@ TERMINALITY_FIELDS = [
     "acquisition_terminality_report",
 ]
 
+# Fields whose absence in benchmark but presence in internal indicates a shape propagation gap
+SHAPE_GAP_FIELDS = [
+    "return_guard",
+    "windup_guard_observation",
+    "source_family_outcomes",
+]
+
 
 @dataclass
 class BoundarySnapshot:
@@ -57,9 +66,14 @@ class TraceResult:
     verdict: str
     drop_boundary: Optional[str]
     boundary_snapshots: dict
-    acquisition_missing_in: list  # which boundaries have acquisition_report null
+    acquisition_missing_in: list
     terminality_state: dict
     details: dict
+    # Extended classification fields
+    terminality_satisfied: Optional[bool] = None
+    missing_lanes: Optional[list] = None
+    benchmark_shape_gaps: Optional[list] = None
+    internal_runtime_failures: Optional[list] = None
 
 
 def extract_fields(obj: dict, fields: list, source: str) -> BoundarySnapshot:
@@ -77,52 +91,115 @@ def extract_fields(obj: dict, fields: list, source: str) -> BoundarySnapshot:
     return snap
 
 
-def trace_verdict(snapshots: dict, raw_benchmark: Optional[dict] = None) -> tuple[str, Optional[str]]:
+def trace_verdict(
+    snapshots: dict,
+    raw_benchmark: Optional[dict] = None,
+    raw_internal: Optional[dict] = None,
+) -> tuple[str, Optional[str], dict]:
     """Determine TRACE verdict from boundary snapshots.
 
     Args:
         snapshots: boundary -> BoundarySnapshot
         raw_benchmark: optional raw benchmark dict for terminality fields not in F208_FIELDS
+        raw_internal: optional raw internal report dict for terminality and shape gap fields
+
+    Returns:
+        (verdict, drop_boundary, extended_fields)
+        extended_fields: dict with terminality_satisfied, missing_lanes,
+                        benchmark_shape_gaps, internal_runtime_failures
     """
     bench = snapshots.get("benchmark_json")
     internal = snapshots.get("internal_report_json")
     validation = snapshots.get("validation_json")
 
+    # Default extended fields
+    extended = {
+        "terminality_satisfied": None,
+        "missing_lanes": None,
+        "benchmark_shape_gaps": None,
+        "internal_runtime_failures": None,
+    }
+
     if bench is None:
-        return "TRACE_DROP_AT_BENCHMARK_PARSE", "benchmark_json (file not readable)"
+        return "TRACE_DROP_AT_BENCHMARK_PARSE", "benchmark_json (file not readable)", extended
 
     bench_acq = bench.present.get("acquisition_report")
 
-    # Case: acquisition_report is a populated dict in benchmark → check terminality via raw_benchmark
+    # Case: acquisition_report is a populated dict in benchmark
     if bench_acq is not None and bench_acq != "MISSING" and bench_acq != "null":
-        # Terminality fields may not be in F208_FIELDS — use raw_benchmark if available
+        # Determine terminality state — prefer internal report's terminality when available
         bm = raw_benchmark if raw_benchmark is not None else {}
-        terminality_ok = all(
-            bm.get(tf) not in (None, "MISSING", "null", False)
-            for tf in TERMINALITY_FIELDS
-        )
-        if terminality_ok:
-            return "TRACE_PASS_ALL_PRESENT", None
-        # Terminality not all set → treat as drop (terminality not satisfied)
-        return "TRACE_DROP_BEFORE_EXPORT", "internal_report_json (terminality not satisfied)"
+        int_raw = raw_internal if raw_internal is not None else {}
+
+        # Use internal's terminality if benchmark's is None/missing but internal's is populated
+        term_checked = bm.get("acquisition_terminality_checked")
+        if term_checked is None and int_raw.get("acquisition_terminality_checked") is not None:
+            term_checked = int_raw["acquisition_terminality_checked"]
+        term_satisfied = bm.get("acquisition_terminality_satisfied")
+        if term_satisfied is None and int_raw.get("acquisition_terminality_satisfied") is not None:
+            term_satisfied = int_raw["acquisition_terminality_satisfied"]
+        term_missing_lanes = bm.get("acquisition_terminality_missing_lanes")
+        if term_missing_lanes is None and int_raw.get("acquisition_terminality_missing_lanes") is not None:
+            term_missing_lanes = int_raw["acquisition_terminality_missing_lanes"]
+
+        terminality_ok = term_checked not in (None, "MISSING", "null", False) and \
+                         term_satisfied not in (None, "MISSING", "null", False) and \
+                         term_satisfied is True
+
+        # Check for benchmark shape gaps: internal has fields benchmark doesn't
+        gaps = []
+        if internal is not None:
+            for gf in SHAPE_GAP_FIELDS:
+                bench_has = bench.present.get(gf) not in (None, "MISSING", "null")
+                int_has = internal.present.get(gf) not in (None, "MISSING", "null")
+                if int_has and not bench_has:
+                    gaps.append(gf)
+
+        # Check for internal runtime failures (return_guard/windup outcomes)
+        # Only flag windup failures when terminality is not satisfied
+        runtime_failures = []
+        if int_raw.get("return_guard") and int_raw["return_guard"].get("return_guard_checked") is True:
+            if int_raw["return_guard"].get("return_guard_satisfied") is False:
+                runtime_failures.append("return_guard_unsatisfied")
+        if not terminality_ok and int_raw.get("windup_guard_observation", {}).get("windup_guard_call_count", 0) == 0:
+            if not int_raw.get("windup_guard_observation", {}).get("windup_guard_not_applicable"):
+                runtime_failures.append("windup_guard_not_called")
+
+        extended["terminality_satisfied"] = term_satisfied if term_satisfied is not None else False
+        extended["missing_lanes"] = term_missing_lanes if term_missing_lanes else []
+        extended["benchmark_shape_gaps"] = gaps if gaps else []
+        extended["internal_runtime_failures"] = runtime_failures if runtime_failures else []
+
+        if terminality_ok and not gaps:
+            return "TRACE_PASS_ALL_PRESENT", None, extended
+
+        if not terminality_ok:
+            # acquisition_report exists in both, but terminality not satisfied → runtime failure
+            return "TRACE_TERMINALITY_UNSATISFIED", "internal_report_json (terminality not satisfied)", extended
+
+        if gaps:
+            # Shape propagation gap — fields present in internal but not in benchmark
+            return "TRACE_BENCHMARK_SHAPE_GAP", "benchmark_json (missing shape fields from internal)", extended
+
+        return "TRACE_PASS_ALL_PRESENT", None, extended
 
     # Case: acquisition_report is null/missing in benchmark
     if bench_acq in (None, "null", "MISSING"):
         if internal is not None:
             int_acq = internal.present.get("acquisition_report")
             if int_acq not in (None, "null", "MISSING"):
-                return "TRACE_DROP_AT_BENCHMARK_PARSE", "benchmark_json (internal report has it, benchmark doesn't)"
+                return "TRACE_DROP_AT_BENCHMARK_PARSE", "benchmark_json (internal report has it, benchmark doesn't)", extended
             if int_acq in (None, "null", "MISSING"):
-                return "TRACE_DROP_BEFORE_EXPORT", "internal_report_json (scheduler never populated acquisition_report)"
-        return "TRACE_DROP_BEFORE_EXPORT", "scheduler (acquisition_report never written to benchmark)"
+                return "TRACE_DROP_BEFORE_EXPORT", "internal_report_json (scheduler never populated acquisition_report)", extended
+        return "TRACE_DROP_BEFORE_EXPORT", "scheduler (acquisition_report never written to benchmark)", extended
 
     # Check for validator-only alias pattern
     if validation is not None:
         val_failures = validation.get("failures") or []
         if val_failures and all("acquisition_report" in f.get("field_path", "") for f in val_failures):
-            return "TRACE_VALIDATOR_ALIAS_ONLY", "validation_json (only validator field paths, no real acquisition data)"
+            return "TRACE_VALIDATOR_ALIAS_ONLY", "validation_json (only validator field paths, no real acquisition data)", extended
 
-    return "TRACE_DROP_AT_EXPORT", "export boundary (scorecard fields not persisted)"
+    return "TRACE_DROP_AT_EXPORT", "export boundary (scorecard fields not persisted)", extended
 
 
 def load_json(path: str) -> Optional[dict]:
@@ -148,7 +225,7 @@ def trace_boundaries(
 
     if benchmark is None:
         snapshots["benchmark_json"] = None
-        verdict, drop = trace_verdict(snapshots, raw_benchmark=benchmark)
+        verdict, drop, extended = trace_verdict(snapshots, raw_benchmark=None)
         result = TraceResult(
             verdict=verdict,
             drop_boundary=drop,
@@ -156,6 +233,7 @@ def trace_boundaries(
             acquisition_missing_in=[],
             terminality_state={},
             details={"error": f"benchmark JSON not readable: {benchmark_path}"},
+            **extended,
         )
     else:
         # Extract benchmark fields
@@ -163,15 +241,19 @@ def trace_boundaries(
         snapshots["benchmark_json"] = bench_snap
 
         # Try to load internal report
-        internal = None
+        internal_raw = None
         if benchmark.get("report_json_path"):
-            internal = load_json(benchmark["report_json_path"])
+            internal_raw = load_json(benchmark["report_json_path"])
 
-        if internal:
-            int_snap = extract_fields(internal, F208_FIELDS, "internal_report_json")
+        if internal_raw:
+            int_snap = extract_fields(internal_raw, F208_FIELDS, "internal_report_json")
             # Internal report stores runtime truth differently (canonical_run_summary, not runtime_truth)
-            if "canonical_run_summary" in internal:
-                int_snap.present["canonical_run_summary"] = internal["canonical_run_summary"]
+            if "canonical_run_summary" in internal_raw:
+                int_snap.present["canonical_run_summary"] = internal_raw["canonical_run_summary"]
+            # Handle shape gap fields that might not be in F208_FIELDS
+            for gf in SHAPE_GAP_FIELDS:
+                if gf not in F208_FIELDS and gf in internal_raw:
+                    int_snap.present[gf] = internal_raw[gf]
             snapshots["internal_report_json"] = int_snap
 
         # Load validation if provided
@@ -181,15 +263,17 @@ def trace_boundaries(
                 val_snap = extract_fields(val_data, ["overall_verdict", "pass", "failure_count"], "validation_json")
                 snapshots["validation_json"] = val_snap
 
-        # Determine terminality state
+        # Determine terminality state — prefer internal's values when benchmark's is missing
         terminality = {}
         for tf in TERMINALITY_FIELDS:
             if benchmark.get(tf) is not None:
                 terminality[tf] = benchmark[tf]
+            elif internal_raw and internal_raw.get(tf) is not None:
+                terminality[tf] = internal_raw[tf]
             else:
                 terminality[tf] = None
 
-        verdict, drop = trace_verdict(snapshots, raw_benchmark=benchmark)
+        verdict, drop, extended = trace_verdict(snapshots, raw_benchmark=benchmark, raw_internal=internal_raw)
 
         # Build missing-in list
         missing_in = []
@@ -210,30 +294,33 @@ def trace_boundaries(
                 "status": benchmark.get("status"),
                 "run_quality_verdict": benchmark.get("run_quality_verdict"),
                 "benchmark_has_acquisition_report": benchmark.get("acquisition_report") is not None,
-                "internal_report_has_acquisition_report": internal.get("acquisition_report") is not None if internal else False,
+                "internal_report_has_acquisition_report": internal_raw.get("acquisition_report") is not None if internal_raw else False,
                 "validation_verdict": validation_path and (load_json(validation_path) or {}).get("overall_verdict"),
             },
+            **extended,
         )
 
     # Write outputs
+    output_data = {
+        "verdict": result.verdict,
+        "drop_boundary": result.drop_boundary,
+        "measurement_id": result.details.get("measurement_id"),
+        "status": result.details.get("status"),
+        "run_quality_verdict": result.details.get("run_quality_verdict"),
+        "acquisition_report_in_benchmark": result.details.get("benchmark_has_acquisition_report"),
+        "acquisition_report_in_internal": result.details.get("internal_report_has_acquisition_report"),
+        "boundary_snapshots": result.boundary_snapshots,
+        "acquisition_missing_in": result.acquisition_missing_in,
+        "terminality_state": result.terminality_state,
+        "validation_verdict": result.details.get("validation_verdict"),
+        "terminality_satisfied": result.terminality_satisfied,
+        "missing_lanes": result.missing_lanes,
+        "benchmark_shape_gaps": result.benchmark_shape_gaps,
+        "internal_runtime_failures": result.internal_runtime_failures,
+    }
+
     with open(output_json_path, "w") as fh:
-        json.dump(
-            {
-                "verdict": result.verdict,
-                "drop_boundary": result.drop_boundary,
-                "measurement_id": result.details.get("measurement_id"),
-                "status": result.details.get("status"),
-                "run_quality_verdict": result.details.get("run_quality_verdict"),
-                "acquisition_report_in_benchmark": result.details.get("benchmark_has_acquisition_report"),
-                "acquisition_report_in_internal": result.details.get("internal_report_has_acquisition_report"),
-                "boundary_snapshots": result.boundary_snapshots,
-                "acquisition_missing_in": result.acquisition_missing_in,
-                "terminality_state": result.terminality_state,
-                "validation_verdict": result.details.get("validation_verdict"),
-            },
-            fh,
-            indent=2,
-        )
+        json.dump(output_data, fh, indent=2)
 
     # Write markdown
     md = f"""# F208 Truth Boundary Trace
@@ -282,10 +369,22 @@ def trace_boundaries(
         md += "\n"
 
     md += "## Acquisition Missing In\n\n"
-    for item in result.acquisition_missing_in:
-        md += f"- {item}\n"
+    if result.acquisition_missing_in:
+        for item in result.acquisition_missing_in:
+            md += f"- {item}\n"
+    else:
+        md += "_none_\n"
 
     md += f"""
+## Classification
+
+| Field | Value |
+|-------|-------|
+| terminality_satisfied | `{result.terminality_satisfied}` |
+| missing_lanes | `{result.missing_lanes}` |
+| benchmark_shape_gaps | `{result.benchmark_shape_gaps}` |
+| internal_runtime_failures | `{result.internal_runtime_failures}` |
+
 ## Terminality State
 
 | Field | Value |
