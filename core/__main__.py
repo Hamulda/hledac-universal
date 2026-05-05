@@ -60,6 +60,11 @@ from hledac.universal.runtime.sprint_scheduler import (
 )
 from hledac.universal.transport.tor_transport import TorTransport
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, _PHASE_ORDER
+from hledac.universal.runtime.acquisition_strategy import (
+    build_acquisition_report,
+    normalize_source_family_outcome,
+    ACQUISITION_REPORT_SCHEMA_VERSION,
+)
 from hledac.universal.export.sprint_exporter import export_sprint
 
 logger = logging.getLogger(__name__)
@@ -127,6 +132,247 @@ def _is_meaningful_run(
         f"{cycles_completed}/{cycles_started} cycles completed, "
         f"no findings but within normal parameters"
     )
+
+
+def _scheduler_result_acquisition_payload(
+    result: "SprintSchedulerResult",
+    scheduler: "SprintScheduler",
+    query: str,
+    duration_s: float,
+) -> dict:
+    """
+    [F208I-A] Extract acquisition terminality and report fields from SprintSchedulerResult.
+
+    Fails soft — missing fields produce None/empty defaults, never crash.
+    Returns a flat dict with top-level keys for all acquisition terminality fields
+    so run_sprint() can spread them into the final report JSON.
+
+    Return keys:
+        acquisition_report          -- canonical acquisition report dict (build_acquisition_report or fallback)
+        acquisition_terminality_checked   -- bool
+        acquisition_terminality_satisfied -- bool
+        acquisition_terminality_missing_lanes -- list
+        acquisition_terminality_report    -- dict
+        source_family_outcomes      -- list of SourceFamilyOutcome.to_dict() dicts
+        scheduler_exit             -- dict with exit path/reason/phase/cycle
+        return_guard               -- dict with return guard observation
+        windup_guard_observation   -- dict with windup guard call counts
+        prewindup_barrier          -- dict with prewindup barrier state
+    """
+    # ── 1. Source family outcomes ────────────────────────────────────────────
+    # Synthesize from acquisition_lane_outcomes and result counters
+    _sfo_list: list[dict] = []
+
+    # Feed family — always present if scheduler ran
+    _feed_raw = result.accepted_findings
+    if _feed_raw > 0 or result.total_pattern_hits > 0:
+        _sfo_list.append(
+            normalize_source_family_outcome(
+                "FEED",
+                {
+                    "family": "FEED",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": result.total_pattern_hits,
+                    "built_count": 0,
+                    "accepted_count": _feed_raw,
+                    "error": None,
+                    "timeout": False,
+                    "duration_s": None,
+                },
+            )
+        )
+
+    # Public family — if public findings were discovered
+    if getattr(result, "public_discovered", 0) > 0 or getattr(result, "public_accepted_findings", 0) > 0:
+        _pub_raw = {
+            "family": "PUBLIC",
+            "attempted": True,
+            "skipped": False,
+            "skip_reason": None,
+            "raw_count": getattr(result, "public_discovered", 0),
+            "built_count": 0,
+            "accepted_count": getattr(result, "public_accepted_findings", 0),
+            "error": getattr(result, "public_error", None),
+            "timeout": False,
+            "duration_s": None,
+        }
+        _sfo_list.append(normalize_source_family_outcome("PUBLIC", _pub_raw))
+
+    # CT log family
+    if getattr(result, "ct_log_discovered", 0) > 0 or getattr(result, "ct_log_accepted_findings", 0) > 0:
+        _ct_raw = {
+            "family": "CT",
+            "attempted": True,
+            "skipped": False,
+            "skip_reason": None,
+            "raw_count": getattr(result, "ct_log_discovered", 0),
+            "built_count": 0,
+            "accepted_count": getattr(result, "ct_log_accepted_findings", 0),
+            "error": getattr(result, "ct_log_error", None),
+            "timeout": False,
+            "duration_s": None,
+        }
+        _sfo_list.append(normalize_source_family_outcome("CT", _ct_raw))
+
+    # Map acquisition_lane_outcomes (AcquisitionLaneOutcome tuples) to SourceFamilyOutcome
+    # Each AcquisitionLaneOutcome has .lane, .source_family, .accepted_findings, etc.
+    _lanes_seen: set[str] = set()
+    for _o in getattr(result, "acquisition_lane_outcomes", None) or ():
+        if not hasattr(_o, "lane"):
+            continue
+        _lane = _o.lane
+        if _lane in _lanes_seen:
+            continue
+        _lanes_seen.add(_lane)
+        _raw_dict = {
+            "family": getattr(_o, "source_family", _lane.upper()),
+            "attempted": getattr(_o, "attempted", False),
+            "skipped": not getattr(_o, "attempted", False),
+            "skip_reason": None if getattr(_o, "attempted", False) else "lane_not_attempted",
+            "raw_count": getattr(_o, "ct_results_raw", 0),
+            "built_count": getattr(_o, "produced_items", 0),
+            "accepted_count": getattr(_o, "accepted_findings", 0),
+            "error": getattr(_o, "error", None),
+            "timeout": getattr(_o, "timeout", False),
+            "duration_s": getattr(_o, "duration_s", None),
+        }
+        _sfo_list.append(normalize_source_family_outcome(_raw_dict["family"], _raw_dict))
+
+    # ── 2. Scheduler exit ─────────────────────────────────────────────────
+    _se_dict: dict = {
+        "exit_path": getattr(result, "scheduler_exit_path", None),
+        "exit_reason": getattr(result, "scheduler_exit_reason", None),
+        "exit_phase": getattr(result, "scheduler_exit_phase", None),
+        "exit_cycle": getattr(result, "scheduler_exit_cycle", None),
+        "exit_elapsed_s": getattr(result, "scheduler_exit_elapsed_s", None),
+        "exit_guard_checked": getattr(result, "scheduler_exit_guard_checked", None),
+        "exit_guard_satisfied": getattr(result, "scheduler_exit_guard_satisfied", None),
+    }
+
+    # ── 3. Return guard ────────────────────────────────────────────────────
+    _rg_dict: dict = {
+        "return_guard_checked": getattr(result, "return_guard_checked", False),
+        "return_guard_satisfied": getattr(result, "return_guard_satisfied", False),
+        "return_guard_block_reason": getattr(result, "return_guard_block_reason", ""),
+        "return_guard_attempted_lanes": list(getattr(result, "return_guard_attempted_lanes", ()) or ()),
+        "return_guard_skipped_lanes": dict(getattr(result, "return_guard_skipped_lanes", {}) or {}),
+        "return_guard_errors": dict(getattr(result, "return_guard_errors", {}) or {}),
+        "return_guard_delayed_for_nonfeed": getattr(result, "return_guard_delayed_for_nonfeed", False),
+    }
+
+    # ── 4. Windup guard observation ───────────────────────────────────────
+    _wg_last_reason = getattr(result, "windup_guard_last_reason", None)
+    _wg_last_allowed = getattr(result, "windup_guard_last_allowed", None)
+    _wg_dict: dict = {
+        "windup_guard_call_count": getattr(result, "windup_guard_call_count", 0),
+        "windup_guard_callback_supplied_count": getattr(
+            result, "windup_guard_callback_supplied_count", 0
+        ),
+        "windup_guard_callback_executed_count": getattr(
+            result, "windup_guard_callback_executed_count", 0
+        ),
+        "windup_guard_required_lanes": list(
+            getattr(result, "windup_guard_required_lanes", ()) or ()
+        ),
+        "windup_guard_not_applicable": getattr(result, "windup_guard_not_applicable", False),
+        "windup_guard_last_reason": _wg_last_reason,
+        "windup_guard_last_allowed": _wg_last_allowed,
+    }
+
+    # ── 5. Pre-windup barrier ───────────────────────────────────────────────
+    _pwb: dict = {
+        "prewindup_barrier_checked": getattr(result, "prewindup_barrier_checked", False),
+        "prewindup_barrier_required_lanes": list(
+            getattr(result, "prewindup_barrier_required_lanes", ()) or ()
+        ),
+        "prewindup_barrier_satisfied": getattr(result, "prewindup_barrier_satisfied", False),
+        "prewindup_barrier_attempted_lanes": list(
+            getattr(result, "prewindup_barrier_attempted_lanes", ()) or ()
+        ),
+        "prewindup_barrier_skipped_lanes": dict(
+            getattr(result, "prewindup_barrier_skipped_lanes", {}) or {}
+        ),
+        "prewindup_barrier_errors": dict(getattr(result, "prewindup_barrier_errors", {}) or {}),
+        "prewindup_barrier_duration_s": getattr(result, "prewindup_barrier_duration_s", 0.0),
+    }
+
+    # ── 6. Acquisition terminality ───────────────────────────────────────────
+    _term_rep: dict = getattr(result, "acquisition_terminality_report", {}) or {}
+
+    # ── 7. Try build_acquisition_report from acquisition_strategy ────────────
+    _acq_report: dict = {}
+    try:
+        _plan = getattr(scheduler, "_acquisition_plan", None)
+        _nd: dict | None = None
+        if _plan is not None and hasattr(_plan, "nonfeed_plan_debug"):
+            _nd = {
+                "domain_detected": getattr(_plan.nonfeed_plan_debug, "domain_detected", False),
+                "wallet_detected": getattr(_plan.nonfeed_plan_debug, "wallet_detected", False),
+                "enabled_nonfeed_lanes": list(
+                    getattr(_plan.nonfeed_plan_debug, "enabled_nonfeed_lanes", ()) or ()
+                ),
+                "disabled_nonfeed_lanes": list(
+                    getattr(_plan.nonfeed_plan_debug, "disabled_nonfeed_lanes", ()) or ()
+                ),
+                "disabled_reasons": list(
+                    getattr(_plan.nonfeed_plan_debug, "disabled_reasons", ()) or ()
+                ),
+                "scheduled_nonfeed_lanes": list(
+                    getattr(_plan.nonfeed_plan_debug, "scheduled_nonfeed_lanes", ()) or ()
+                ),
+                "hardware_skipped_lanes": list(
+                    getattr(_plan.nonfeed_plan_debug, "hardware_skipped_lanes", ()) or ()
+                ),
+                "nonfeed_execution_scheduled": getattr(
+                    _plan.nonfeed_plan_debug, "nonfeed_execution_scheduled", False
+                ),
+                "nonfeed_execution_skip_reason": getattr(
+                    _plan.nonfeed_plan_debug, "nonfeed_execution_skip_reason", None
+                ),
+            }
+        _acq_report = build_acquisition_report(
+            plan=_plan,
+            terminality=_term_rep,
+            nonfeed_plan_debug=_nd,
+            source_family_outcomes=_sfo_list,
+            return_guard=_rg_dict,
+            prewindup_barrier=_pwb,
+            scheduler_exit=_se_dict,
+            windup_guard_observation=_wg_dict,
+        )
+    except Exception:
+        # Fallback: emit explicit fallback acquisition_report
+        _acq_report = {
+            "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
+            "terminality": _term_rep,
+            "source_family_outcomes": _sfo_list,
+            "return_guard": _rg_dict,
+            "prewindup_barrier": _pwb,
+            "scheduler_exit": _se_dict,
+            "windup_guard_observation": _wg_dict,
+            "fallback_reason": "canonical_owner_missing_scheduler_report",
+            "plan": None,
+            "nonfeed_plan_debug": None,
+        }
+
+    return {
+        "acquisition_report": _acq_report,
+        "acquisition_terminality_checked": getattr(result, "acquisition_terminality_checked", False),
+        "acquisition_terminality_satisfied": getattr(
+            result, "acquisition_terminality_satisfied", False
+        ),
+        "acquisition_terminality_missing_lanes": list(
+            getattr(result, "acquisition_terminality_missing_lanes", ()) or ()
+        ),
+        "acquisition_terminality_report": _term_rep,
+        "source_family_outcomes": _sfo_list,
+        "scheduler_exit": _se_dict,
+        "return_guard": _rg_dict,
+        "windup_guard_observation": _wg_dict,
+        "prewindup_barrier": _pwb,
+    }
 
 
 def _runtime_truth(
@@ -1018,6 +1264,10 @@ async def run_sprint(
                 # Sprint F160E: Canonical timing truth — separates active window from full run
                 "timing_truth": timing_truth,
             },
+            # [F208I-A] Canonical acquisition terminality and report truth.
+            # _scheduler_result_acquisition_payload() is pure, fail-soft — missing scheduler
+            # fields produce None/empty defaults, never crash.
+            **_scheduler_result_acquisition_payload(result, scheduler, query, duration_s),
             # Sprint F206S: Additive canonical truth surfaces for benchmark artifact hygiene.
             # The nested canonical_run_summary above (lines 964-1004) is a VALUE, not a top-level key.
             # Add canonical_run_summary as a top-level key so it surfaces in the JSON artifact.

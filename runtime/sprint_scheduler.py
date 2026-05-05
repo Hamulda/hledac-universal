@@ -1271,7 +1271,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "stop_requested"
                     ):
-                        self._record_scheduler_exit("stop_requested_break", "stop_requested guard passed", "GATHER")
+                        self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1286,7 +1286,7 @@ class SprintScheduler:
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "lifecycle_abort"
                     )
-                    self._record_scheduler_exit("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER")
+                    self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
                     break
 
                 # Periodic tick
@@ -1363,13 +1363,13 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "windup_barrier"
                     ):
-                        self._record_scheduler_exit("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP")
+                        self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
                         break  # exit work loop → teardown
                     # Guard blocked — force one bounded terminalization pass then break
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "windup_barrier_forced"
                     )
-                    self._record_scheduler_exit("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP")
+                    self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
                     break  # exit work loop → teardown
 
                 # ── Sprint 8SA: Source scoring re-ordering ───────────────────
@@ -1388,7 +1388,7 @@ class SprintScheduler:
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "max_cycles"
                     )
-                    self._record_scheduler_exit("max_cycles_break", "cycles >= max_cycles reached", "GATHER")
+                    self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
                     break
 
                 self._result.cycles_started += 1
@@ -1417,7 +1417,7 @@ class SprintScheduler:
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "duration_budget"
                     )
-                    self._record_scheduler_exit("duration_budget_break", "duration_budget exhausted", "GATHER")
+                    self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
                     break
                 # Sprint 8XE: Store sources for public discovery query hint
                 self._last_sources = list(ordered_sources)
@@ -1451,7 +1451,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "cycle_ok_false"
                     ):
-                        self._record_scheduler_exit("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER")
+                        self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1466,7 +1466,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "stop_on_first_accepted"
                     ):
-                        self._record_scheduler_exit("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER")
+                        self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1487,7 +1487,7 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "post_sleep_windup"
                     ):
-                        self._record_scheduler_exit("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP")
+                        self._finalize_result_truth("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP", query)
                         break
                     # Guard blocked — continue loop once to satisfy nonfeed lanes
                     continue
@@ -1608,75 +1608,15 @@ class SprintScheduler:
         except Exception as e:
             log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
-        # Sprint F208B: Compute acquisition terminality before successful completion.
-        # Scheduler is consumer/enforcer of the terminality contract from AcquisitionStrategy.
-        # This runs at the end of run(), right before returning a successful result.
-        try:
-            uma_state = "ok"
-            swap_detected = False
-            if self._governor is not None:
-                try:
-                    _snap = self._governor.evaluate()
-                    uma_state = getattr(_snap, "uma_state", "ok")
-                    swap_detected = getattr(_snap, "swap_detected", False)
-                except Exception:
-                    pass
-
-            _mlt_required = required_terminal_lanes(
-                snapshot=self._acquisition_plan,
-                query=getattr(self, "_query", ""),
-                uma_state=uma_state,
-                swap_detected=swap_detected,
-            )
-            # Build observed outcomes from live scheduler state
-            # Deduplicate by lane name to avoid double-reporting if acquisition_lane_outcomes
-            # already contains an entry for a lane we've already added via _public_outcome
-            _observed_outcomes: list[dict] = []
-            _seen_outcome_lanes: set[str] = set()
-            if self._public_outcome is not None:
-                _observed_outcomes.append(self._public_outcome)
-                _seen_outcome_lanes.add("PUBLIC")
-            # Check if any lane outcomes indicate CT terminal state
-            if self._result.ct_log_discovered > 0 or self._result.lane_ct_accepted_findings > 0:
-                _observed_outcomes.append({
-                    "attempted": True,
-                    "skipped": False,
-                    "error": None,
-                    "timeout": False,
-                    "lane": "CT",
-                })
-                _seen_outcome_lanes.add("CT")
-            # Also include lane outcomes from acquisition_lane_outcomes, skipping lanes
-            # already represented via _public_outcome or the CT check above
-            for _o in self._result.acquisition_lane_outcomes or ():
-                _lane_name: str | None = getattr(_o, "lane", None)
-                if _lane_name is None and isinstance(_o, dict):
-                    _lane_name = _o.get("lane")
-                if _lane_name and _lane_name not in _seen_outcome_lanes:
-                    _observed_outcomes.append(_o.to_dict() if hasattr(_o, "to_dict") else dict(_o))
-                    _seen_outcome_lanes.add(_lane_name)
-
-            _term_report = terminality_report(
-                required_lanes=_mlt_required,
-                observed_outcomes=tuple(_observed_outcomes),
-            )
-            self._result.acquisition_terminality_checked = True
-            self._result.acquisition_terminality_satisfied = (
-                len(_term_report.get("missing_lanes", [])) == 0
-            )
-            self._result.acquisition_terminality_missing_lanes = tuple(
-                _term_report.get("missing_lanes", [])
-            )
-            self._result.acquisition_terminality_report = _term_report
-        except Exception as exc:
-            # Fail-soft: terminality check errors don't block return
-            log.debug("[F208B] acquisition_terminality check failed: %s", exc)
-            self._result.acquisition_terminality_checked = True
-            self._result.acquisition_terminality_satisfied = False
-            self._result.acquisition_terminality_missing_lanes = ()
-            self._result.acquisition_terminality_report = {"error": str(exc)}
-
-        self._record_scheduler_exit("run_complete", "run() finished normally", "TEARDOWN")
+        # Sprint F208I-B: Finalize result ONCE before returning.
+        # _finalize_result_truth computes terminality + calls _record_scheduler_exit.
+        # Call it here so it runs for the normal completion path.
+        self._finalize_result_truth(
+            exit_path="run_complete",
+            exit_reason="run() finished normally",
+            exit_phase="TEARDOWN",
+            query=query,
+        )
         return self._result
 
     def _record_scheduler_exit(
@@ -1700,6 +1640,98 @@ class SprintScheduler:
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
         self._result.scheduler_exit_guard_required = self._result.return_guard_required_lanes
         self._result.scheduler_exit_guard_satisfied = self._result.return_guard_satisfied
+
+    # ── Sprint F208I-B: Result finalization ──────────────────────────────────
+
+    def _finalize_result_truth(
+        self,
+        exit_path: str,
+        exit_reason: str,
+        exit_phase: str,
+        query: str = "",
+    ) -> None:
+        """
+        Sprint F208I-B: Finalize SprintSchedulerResult before run() returns.
+
+        Computes terminality from acquisition strategy and records scheduler exit
+        path. Called once before every return from run() — both normal completion
+        and all early exit paths (stop_requested, abort, windup_barrier, etc.).
+
+        Invariants (GHOST_INVARIANTS):
+          - No network I/O
+          - No model/MLX load
+          - No browser launch
+          - No blocking ops
+          - Fail-safe: terminality errors don't prevent return
+        """
+        # Compute acquisition terminality first
+        try:
+            uma_state = "ok"
+            swap_detected = False
+            if self._governor is not None:
+                try:
+                    _snap = self._governor.evaluate()
+                    uma_state = getattr(_snap, "uma_state", "ok")
+                    swap_detected = getattr(_snap, "swap_detected", False)
+                except Exception:
+                    pass
+
+            _mlt_required = required_terminal_lanes(
+                snapshot=self._acquisition_plan,
+                query=query,
+                uma_state=uma_state,
+                swap_detected=swap_detected,
+            )
+            # Build observed outcomes from live scheduler state
+            _observed_outcomes: list[dict] = []
+            _seen_outcome_lanes: set[str] = set()
+            if self._public_outcome is not None:
+                _observed_outcomes.append(self._public_outcome)
+                _seen_outcome_lanes.add("PUBLIC")
+            # CT terminal if any discoveries or accepted findings exist
+            if self._result.ct_log_discovered > 0 or self._result.lane_ct_accepted_findings > 0:
+                _observed_outcomes.append({
+                    "attempted": True,
+                    "skipped": False,
+                    "error": None,
+                    "timeout": False,
+                    "lane": "CT",
+                })
+                _seen_outcome_lanes.add("CT")
+            # Also include lane outcomes from acquisition_lane_outcomes, skipping
+            # lanes already represented via _public_outcome or CT check above
+            for _o in self._result.acquisition_lane_outcomes or ():
+                _lane_name: str | None = getattr(_o, "lane", None)
+                if _lane_name is None and isinstance(_o, dict):
+                    _lane_name = _o.get("lane")
+                if _lane_name and _lane_name not in _seen_outcome_lanes:
+                    _observed_outcomes.append(
+                        _o.to_dict() if hasattr(_o, "to_dict") else dict(_o)
+                    )
+                    _seen_outcome_lanes.add(_lane_name)
+
+            _term_report = terminality_report(
+                required_lanes=_mlt_required,
+                observed_outcomes=tuple(_observed_outcomes),
+            )
+            self._result.acquisition_terminality_checked = True
+            self._result.acquisition_terminality_satisfied = (
+                len(_term_report.get("missing_lanes", [])) == 0
+            )
+            self._result.acquisition_terminality_missing_lanes = tuple(
+                _term_report.get("missing_lanes", [])
+            )
+            self._result.acquisition_terminality_report = _term_report
+        except Exception as exc:
+            # Fail-soft: terminality errors don't block return
+            log.debug("[F208I-B] acquisition_terminality check failed: %s", exc)
+            self._result.acquisition_terminality_checked = True
+            self._result.acquisition_terminality_satisfied = False
+            self._result.acquisition_terminality_missing_lanes = ()
+            self._result.acquisition_terminality_report = {"error": str(exc)}
+
+        # Record scheduler exit path
+        self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
 
     # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
 
@@ -2812,6 +2844,7 @@ class SprintScheduler:
         # Sprint F207H: Populate _public_outcome for source_family_outcomes consumption
         # Maps PipelineRunResult fields to the shape normalize_source_family_outcome expects
         self._public_outcome = {
+            "lane": "PUBLIC",
             "attempted": True,
             "skipped": False,
             "skip_reason": None,

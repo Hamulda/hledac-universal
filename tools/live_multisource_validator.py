@@ -158,6 +158,43 @@ def _extract_terminality_fields(data: dict) -> tuple:
     return checked, satisfied, missing_lanes
 
 
+def _resolve_branch_count(branch_mix: dict | None, live_kpi: dict, key: str) -> int:
+    """Resolve branch count from branch_mix aliases with live_kpi fallback.
+
+    Resolves these aliases for feed/public/ct keys:
+      branch_mix["feed"]           → feed_count
+      branch_mix["feed_findings"]  → feed_count  (benchmark shape)
+      branch_mix["public_findings"]→ public_count (benchmark shape)
+      branch_mix["ct_findings"]    → ct_count     (benchmark shape)
+      live_kpi["source_family_counts"]["feed"] → feed_count (live_kpi shape)
+    """
+    if not isinstance(branch_mix, dict):
+        return 0
+
+    # Primary key (internal shape: branch_mix["feed"])
+    if key in branch_mix:
+        val = branch_mix.get(key)
+        if isinstance(val, (int, float)):
+            return int(val)
+
+    # _findings suffix (benchmark shape: feed_findings, public_findings, ct_findings)
+    findings_key = f"{key}_findings"
+    if findings_key in branch_mix:
+        val = branch_mix.get(findings_key)
+        if isinstance(val, (int, float)):
+            return int(val)
+
+    # live_kpi.source_family_counts fallback (live_kpi shape)
+    if isinstance(live_kpi, dict):
+        sfc = live_kpi.get("source_family_counts") or {}
+        if isinstance(sfc, dict) and key in sfc:
+            val = sfc.get(key)
+            if isinstance(val, (int, float)):
+                return int(val)
+
+    return 0
+
+
 def _extract_guard_fields(data: dict) -> tuple:
     """Extract windup/return guard fields from benchmark or internal shape."""
     windup_count = data.get("windup_guard_call_count")
@@ -270,7 +307,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
         ))
 
     # ── 8. feed attempted OR feed count > 0 ─────────────────────────────────
-    feed_count = branch_mix.get("feed", 0) if isinstance(branch_mix, dict) else 0
+    feed_count = _resolve_branch_count(branch_mix, live_kpi, "feed")
     sf_outcomes_keys = list(sf_outcomes.keys()) if isinstance(sf_outcomes, dict) else []
     feed_in_outcomes = "feed" in sf_outcomes_keys
 
@@ -281,6 +318,8 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             f"No feed findings attempted. feed_count={feed_count}, feed_in_outcomes={feed_in_outcomes}",
             "branch_mix.feed",
         ))
+    elif feed_count == 0 and feed_in_outcomes:
+        pass  # feed_in_outcomes proves feed was attempted even when count is 0
 
     # ── 9. PUBLIC terminal state for domain query ───────────────────────────
     if profile == "active300" and query_type == "domain":

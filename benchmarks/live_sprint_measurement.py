@@ -115,6 +115,11 @@ class RunQualityVerdict(Enum):
     FAIL_RUNTIME_ERROR = "FAIL_RUNTIME_ERROR"
     FAIL_MEASUREMENT_ERROR = "FAIL_MEASUREMENT_ERROR"
     ABORTED_MEMORY_GATE = "ABORTED_MEMORY_GATE"
+    # F208I: active300/active600 domain query terminality downgrade verdicts
+    FAIL_TERMINALITY_NOT_CHECKED = "FAIL_TERMINALITY_NOT_CHECKED"
+    FAIL_TERMINALITY_UNSATISFIED = "FAIL_TERMINALITY_UNSATISFIED"
+    FAIL_MISSING_SOURCE_OUTCOMES = "FAIL_MISSING_SOURCE_OUTCOMES"
+    FAIL_SCHEDULER_EXIT_MISSING = "FAIL_SCHEDULER_EXIT_MISSING"
 
 
 @dataclass
@@ -307,6 +312,61 @@ def _uma_state_is_critical_or_emergency(state: str | None) -> bool:
     return state in ("critical", "emergency")
 
 
+def _is_active_domain_query(runtime_truth: dict | None, profile_verdict: str | None) -> bool:
+    """
+    Detect whether the run was an active300/active600 domain query.
+
+    A domain query has meaningful runtime (cycles_started > 0) OR explicit ct/public
+    findings in branch_mix, indicating the non-feed acquisition lanes were targeted.
+    smoke180 profiles are NOT domain queries (they are just entry smoke checks).
+    """
+    if profile_verdict == "ENTRY_SMOKE_ONLY":
+        return False
+    rt = runtime_truth or {}
+    cycles = rt.get("cycles_started", 0)
+    branch_mix = rt.get("branch_mix", {})
+    ct_findings = branch_mix.get("ct_findings", 0) if isinstance(branch_mix, dict) else 0
+    public_findings = branch_mix.get("public_findings", 0) if isinstance(branch_mix, dict) else 0
+    return cycles > 0 or ct_findings > 0 or public_findings > 0
+
+
+def _has_terminal_source_outcomes(acquisition_strategy: dict | None) -> bool:
+    """
+    Return True if acquisition_strategy has non-empty source_family_outcomes.
+
+    source_family_outcomes is the canonical record of which lanes were
+    dispatched and their terminal state. An empty/missing dict means the
+    acquisition never reached the point of recording lane outcomes.
+    """
+    if not acquisition_strategy or not isinstance(acquisition_strategy, dict):
+        return False
+    sf_outcomes = acquisition_strategy.get("source_family_outcomes")
+    if isinstance(sf_outcomes, dict):
+        return bool(sf_outcomes)
+    if isinstance(sf_outcomes, list):
+        return bool(sf_outcomes)
+    return False
+
+
+def _has_scheduler_exit_path(scheduler_exit: dict | None) -> bool:
+    """
+    Return True if scheduler_exit contains a non-empty path string.
+
+    scheduler_exit_path is the canonical record of how the scheduler exited
+    (which guard/condition triggered windup). An empty/missing path means
+    the scheduler exit was never recorded.
+    """
+    if not scheduler_exit or not isinstance(scheduler_exit, dict):
+        return False
+    path = (
+        scheduler_exit.get("path")
+        or scheduler_exit.get("exit_path")  # canonical field in scheduler_exit dict
+        or scheduler_exit.get("scheduler_exit_path")  # legacy live_kpi alias
+        or ""
+    )
+    return bool(str(path).strip())
+
+
 def _derive_run_quality_verdict(
     status: MeasurementStatus,
     profile_verdict: str | None,
@@ -314,6 +374,12 @@ def _derive_run_quality_verdict(
     runtime_truth: dict | None,
     swap_pre_gib: float | None,
     is_memory_gate_abort: bool = False,
+    acquisition_report: dict | None = None,
+    acquisition_terminality_checked: bool | None = None,
+    acquisition_terminality_satisfied: bool | None = None,
+    acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
+    acquisition_strategy: dict | None = None,
+    scheduler_exit: dict | None = None,
 ) -> tuple[RunQualityVerdict | None, bool, str | None, bool, str | None, str | None]:
     """
     Derive run quality verdict from measurement state.
@@ -376,6 +442,32 @@ def _derive_run_quality_verdict(
                 recommended_next_profile = "active300"
 
     # PLANNED/RUNNING with no runtime_truth → verdict stays None (no execution occurred)
+    # F208I Rule 4: Terminality downgrade for active300/active600 domain queries
+    # Downgrades PASS_VALID_CAPABILITY_RUN to specific FAIL when terminality contract is missing/unsatisfied.
+    # smoke180 (ENTRY_SMOKE_ONLY) is already handled in Rule 1 and takes priority.
+    # Hardware-constrained verdict takes priority over terminality downgrade.
+    if verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN:
+        _is_domain_query = _is_active_domain_query(runtime_truth, profile_verdict)
+        if _is_domain_query:
+            # 4a: acquisition_report.schema_version must be present
+            if acquisition_report is None or not isinstance(acquisition_report, dict) or not acquisition_report.get("schema_version"):
+                verdict = RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED
+            # 4b: acquisition_terminality_checked must be True
+            elif acquisition_terminality_checked is not True:
+                verdict = RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED
+            # 4c: acquisition_terminality_satisfied must be True AND missing_lanes must be empty
+            elif acquisition_terminality_satisfied is not True or (
+                acquisition_terminality_missing_lanes is not None
+                and acquisition_terminality_missing_lanes != ()
+            ):
+                verdict = RunQualityVerdict.FAIL_TERMINALITY_UNSATISFIED
+            # 4d: source_family_outcomes must be present and non-empty
+            elif not _has_terminal_source_outcomes(acquisition_strategy):
+                verdict = RunQualityVerdict.FAIL_MISSING_SOURCE_OUTCOMES
+            # 4e: scheduler_exit_path must be non-empty
+            elif not _has_scheduler_exit_path(scheduler_exit):
+                verdict = RunQualityVerdict.FAIL_SCHEDULER_EXIT_MISSING
+
     return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
 
@@ -678,6 +770,12 @@ def _stamp_run_quality_verdict(
         runtime_truth=result.runtime_truth,
         swap_pre_gib=result.uma_pre_swap_gib,
         is_memory_gate_abort=is_memory_gate_abort,
+        acquisition_report=result.acquisition_report,
+        acquisition_terminality_checked=result.acquisition_terminality_checked,
+        acquisition_terminality_satisfied=result.acquisition_terminality_satisfied,
+        acquisition_terminality_missing_lanes=result.acquisition_terminality_missing_lanes,
+        acquisition_strategy=result.acquisition_strategy,
+        scheduler_exit=result.scheduler_exit,
     )
     result.run_quality_verdict = verdict.value if verdict is not None else None
     result.hardware_constrained = hardware_constrained
@@ -702,6 +800,8 @@ def _derive_live_kpi(
     windup_guard_observation: dict | None = None,
     return_guard_observation: dict | None = None,
     scheduler_exit: dict | None = None,
+    acquisition_report: dict | None = None,
+    profile_verdict: str | None = None,
     acquisition_terminality_checked: bool | None = None,
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
@@ -758,6 +858,9 @@ def _derive_live_kpi(
       - scheduler_exit_guard_checked          (F207V-B)
       - scheduler_exit_guard_required         (F207V-B)
       - scheduler_exit_guard_satisfied        (F207V-B)
+      - terminality_quality_verdict           (F208I)
+      - terminality_failure_reasons           (F208I)
+      - acquisition_report_schema_version      (F208I)
 
     Feed telemetry preference (F207K-C):
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
@@ -926,6 +1029,40 @@ def _derive_live_kpi(
         acquisition_terminality_missing_lanes=list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
     )
 
+    # F208I: terminality_quality_verdict + failure reasons for domain queries
+    # terminality_failure_reasons explains WHY a terminality verdict was assigned
+    terminality_quality_verdict: str | None = None
+    terminality_failure_reasons: list[str] = []
+    _is_domain = _is_active_domain_query(runtime_truth, profile_verdict)
+    if _is_domain:
+        _base_verdict = run_quality_verdict or ""
+        if _base_verdict in (
+            RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED.value,
+            RunQualityVerdict.FAIL_TERMINALITY_UNSATISFIED.value,
+            RunQualityVerdict.FAIL_MISSING_SOURCE_OUTCOMES.value,
+            RunQualityVerdict.FAIL_SCHEDULER_EXIT_MISSING.value,
+        ):
+            terminality_quality_verdict = _base_verdict
+            # Collect specific failure reasons
+            if not (acquisition_report and isinstance(acquisition_report, dict) and acquisition_report.get("schema_version")):
+                terminality_failure_reasons.append("acquisition_report.schema_version missing")
+            if acquisition_terminality_checked is not True:
+                terminality_failure_reasons.append(
+                    f"acquisition_terminality_checked={acquisition_terminality_checked!r}, expected True"
+                )
+            if acquisition_terminality_satisfied is not True:
+                terminality_failure_reasons.append(
+                    f"acquisition_terminality_satisfied={acquisition_terminality_satisfied!r}, expected True"
+                )
+            if not _has_terminal_source_outcomes(acquisition_strategy):
+                terminality_failure_reasons.append("source_family_outcomes missing or empty")
+            if not _has_scheduler_exit_path(scheduler_exit):
+                terminality_failure_reasons.append("scheduler_exit_path missing or empty")
+
+    acquisition_report_schema_version: str | None = None
+    if acquisition_report and isinstance(acquisition_report, dict):
+        acquisition_report_schema_version = acquisition_report.get("schema_version")
+
     return {
         "total_findings": total_findings,
         "accepted_findings": accepted_findings,
@@ -998,6 +1135,10 @@ def _derive_live_kpi(
         "acquisition_terminality_satisfied": bool(acquisition_terminality_satisfied) if acquisition_terminality_satisfied is not None else None,
         "acquisition_terminality_missing_lanes": list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
         "acquisition_terminality_report": acquisition_terminality_report,
+        # F208I: terminality quality verdict and failure reasons for domain queries
+        "terminality_quality_verdict": terminality_quality_verdict,
+        "terminality_failure_reasons": terminality_failure_reasons,
+        "acquisition_report_schema_version": acquisition_report_schema_version,
     }
 
 
@@ -1232,6 +1373,8 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         windup_guard_observation=getattr(result, "windup_guard_observation", None),
         return_guard_observation=getattr(result, "return_guard_observation", None),
         scheduler_exit=getattr(result, "scheduler_exit", None),
+        acquisition_report=result.acquisition_report,
+        profile_verdict=result.profile_verdict,
         acquisition_terminality_checked=getattr(result, "acquisition_terminality_checked", None),
         acquisition_terminality_satisfied=getattr(result, "acquisition_terminality_satisfied", None),
         acquisition_terminality_missing_lanes=getattr(result, "acquisition_terminality_missing_lanes", None),
