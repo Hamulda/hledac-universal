@@ -139,21 +139,32 @@ def _extract_source_family_outcomes(acq_report: dict, data: dict | None = None) 
 
 
 def _extract_terminality_fields(data: dict) -> tuple:
-    """Extract all terminality-related fields, checking both benchmark and internal shapes."""
+    """Extract terminality fields from top-level, acquisition_report.terminality, or live_kpi fallback."""
     checked = data.get("acquisition_terminality_checked")
-    if checked is None:
-        live_kpi = _extract_live_kpi(data)
-        checked = live_kpi.get("acquisition_terminality_checked")
-
     satisfied = data.get("acquisition_terminality_satisfied")
-    if satisfied is None:
-        live_kpi = _extract_live_kpi(data)
-        satisfied = live_kpi.get("acquisition_terminality_satisfied")
-
     missing_lanes = data.get("acquisition_terminality_missing_lanes")
-    if missing_lanes is None:
+
+    # Derive from acquisition_report.terminality when top-level fields are absent
+    if checked is None or satisfied is None or missing_lanes is None:
+        acq_report = _extract_acquisition_report(data)
+        terminality = acq_report.get("terminality") if isinstance(acq_report, dict) else {}
+        if checked is None:
+            checked = True if isinstance(terminality.get("checked"), list) else None
+        if satisfied is None:
+            ml = terminality.get("missing_lanes")
+            satisfied = True if isinstance(ml, list) and len(ml) == 0 else False
+        if missing_lanes is None:
+            missing_lanes = terminality.get("missing_lanes")
+
+    # Final live_kpi fallback
+    if checked is None or satisfied is None or missing_lanes is None:
         live_kpi = _extract_live_kpi(data)
-        missing_lanes = live_kpi.get("acquisition_terminality_missing_lanes")
+        if checked is None:
+            checked = live_kpi.get("acquisition_terminality_checked")
+        if satisfied is None:
+            satisfied = live_kpi.get("acquisition_terminality_satisfied")
+        if missing_lanes is None:
+            missing_lanes = live_kpi.get("acquisition_terminality_missing_lanes")
 
     return checked, satisfied, missing_lanes
 

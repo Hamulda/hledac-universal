@@ -290,6 +290,33 @@ class LootManager:
             logger.error(f"Decryption failed: {e}")
             return None
 
+    @staticmethod
+    def _safe_extractall(zf, extract_to: Path) -> None:
+        """
+        Extract ZIP with zip-slip and path-traversal protection.
+
+        Works with zipfile.ZipFile and pyzipper.AESZipFile (both share namelist/extractall).
+
+        Rejects:
+        - NUL bytes in member names
+        - Absolute paths
+        - Any ".." path segment
+        - Resolved paths outside extract_to
+        """
+        extract_to = extract_to.resolve()
+        for member in zf.namelist():
+            if "\x00" in member:
+                raise zipfile.BadZipFile(f"NUL byte in member name: {member!r}")
+            if os.path.isabs(member):
+                raise zipfile.BadZipFile(f"Absolute path in ZIP: {member}")
+            parts = member.split("/")
+            if ".." in parts:
+                raise zipfile.BadZipFile(f"Path traversal attempt: {member}")
+            member_path = (extract_to / member).resolve()
+            if not member_path.is_relative_to(extract_to):
+                raise zipfile.BadZipFile(f"Path traversal attempt: {member}")
+        zf.extractall(extract_to)
+
     def _decrypt_fernet(self, encrypted_data: bytes, password: str, output_path: Path) -> Optional[str]:
         temp_path = None
         try:
@@ -306,7 +333,7 @@ class LootManager:
             temp_path.write_bytes(decrypted)
 
             with zipfile.ZipFile(temp_path, 'r') as zipf:
-                zipf.extractall(extract_path)
+                LootManager._safe_extractall(zipf, extract_path)
 
             os.unlink(temp_path)
             return str(extract_path)
@@ -323,7 +350,7 @@ class LootManager:
             
             with pyzipper.AESZipFile(encrypted_file) as zipf:
                 zipf.setpassword(password.encode())
-                zipf.extractall(extract_path)
+                LootManager._safe_extractall(zipf, extract_path)
             
             return str(extract_path)
         except Exception as e:

@@ -772,8 +772,8 @@ async def _extract_live_public_findings_from_page(
 
     finding_id = _make_finding_id(query, url, hit_label, hit_pattern, hit_value)
 
-    # provenance: (source, url, hit_label, hit_pattern)
-    provenance: tuple[str, ...] = ("duckduckgo", url, hit_label or "", hit_pattern)
+    # provenance: (source_family, source, url, hit_label, hit_pattern)
+    provenance: tuple[str, ...] = ("source_family:public", "duckduckgo", url, hit_label or "", hit_pattern)
 
     finding = CanonicalFinding(
         finding_id=finding_id,
@@ -1706,7 +1706,7 @@ async def _generate_and_store_report(
                 source_type=_REPORT_SOURCE_TYPE,
                 confidence=0.7,  # Moderate confidence for generated content
                 ts=time.time(),
-                provenance=("report_generation", hermes_engine.__class__.__name__),
+                provenance=("source_family:public", "report_generation", hermes_engine.__class__.__name__),
                 payload_text=report_text,
             )
 

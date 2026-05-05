@@ -309,6 +309,12 @@ async def export_sprint(
                     sanitized_obj["timing_truth"] = eh.canonical_run_summary["timing_truth"]
             if eh.runtime_truth:
                 sanitized_obj["runtime_truth"] = eh.runtime_truth
+            # Sprint F208J-C: Pass through acquisition truth fields.
+            # Do not overwrite existing top-level fields unless they are None/empty.
+            acq_truth = _get_acquisition_truth(eh)
+            for _field, _value in acq_truth.items():
+                if _field not in sanitized_obj or not sanitized_obj[_field]:
+                    sanitized_obj[_field] = _value
         elif isinstance(sanitized_obj, list):
             sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs}
 
@@ -1440,6 +1446,119 @@ def _get_runtime_truth(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: i
     if rt and isinstance(rt, dict):
         return rt
     return None
+
+
+def _get_acquisition_truth(eh: "ExportHandoff") -> dict[str, Any]:
+    """
+    Sprint F208J-C: Acquisition truth pass-through — handoff-first truth order.
+
+    Priority for each field (fail-soft, no store access):
+      acquisition_report:
+        1. eh.scorecard["acquisition_report"]
+        2. eh.canonical_run_summary["acquisition_report"]
+        3. eh.runtime_truth["acquisition_report"]
+
+      acquisition_terminality_checked / _satisfied / _missing_lanes:
+        1. eh.scorecard (top-level keys)
+        2. eh.canonical_run_summary
+        3. eh.runtime_truth
+
+      source_family_outcomes / scheduler_exit / return_guard /
+      windup_guard_observation / prewindup_barrier:
+        1. eh.scorecard (top-level keys)
+        2. eh.canonical_run_summary
+        3. eh.runtime_truth
+
+    NO scheduler import. NO store read. NO network. NO MLX load.
+    """
+    scorecard = eh.scorecard if eh.scorecard else {}
+    crs = eh.canonical_run_summary if eh.canonical_run_summary else {}
+    rt = eh.runtime_truth if eh.runtime_truth else {}
+
+    result: dict[str, Any] = {}
+
+    # acquisition_report — scorecard first, then canonical_run_summary, then runtime_truth
+    ar = scorecard.get("acquisition_report")
+    if not ar and isinstance(crs, dict):
+        ar = crs.get("acquisition_report")
+    if not ar and isinstance(rt, dict):
+        ar = rt.get("acquisition_report")
+    if ar and isinstance(ar, dict):
+        result["acquisition_report"] = _make_serializable(ar)
+
+    # acquisition_terminality_checked
+    atc = scorecard.get("acquisition_terminality_checked")
+    if atc is None:
+        atc = crs.get("acquisition_terminality_checked") if isinstance(crs, dict) else None
+    if atc is None:
+        atc = rt.get("acquisition_terminality_checked") if isinstance(rt, dict) else None
+    if atc is not None:
+        result["acquisition_terminality_checked"] = atc
+
+    # acquisition_terminality_satisfied
+    ats = scorecard.get("acquisition_terminality_satisfied")
+    if ats is None:
+        ats = crs.get("acquisition_terminality_satisfied") if isinstance(crs, dict) else None
+    if ats is None:
+        ats = rt.get("acquisition_terminality_satisfied") if isinstance(rt, dict) else None
+    if ats is not None:
+        result["acquisition_terminality_satisfied"] = ats
+
+    # acquisition_terminality_missing_lanes
+    atm = scorecard.get("acquisition_terminality_missing_lanes")
+    if atm is None:
+        atm = crs.get("acquisition_terminality_missing_lanes") if isinstance(crs, dict) else None
+    if atm is None:
+        atm = rt.get("acquisition_terminality_missing_lanes") if isinstance(rt, dict) else None
+    if atm is not None:
+        result["acquisition_terminality_missing_lanes"] = atm
+
+    # source_family_outcomes
+    sfo = scorecard.get("source_family_outcomes")
+    if not sfo and isinstance(crs, dict):
+        sfo = crs.get("source_family_outcomes")
+    if not sfo and isinstance(rt, dict):
+        sfo = rt.get("source_family_outcomes")
+    if sfo:
+        result["source_family_outcomes"] = _make_serializable(sfo)
+
+    # scheduler_exit
+    se = scorecard.get("scheduler_exit")
+    if not se and isinstance(crs, dict):
+        se = crs.get("scheduler_exit")
+    if not se and isinstance(rt, dict):
+        se = rt.get("scheduler_exit")
+    if se:
+        result["scheduler_exit"] = _make_serializable(se)
+
+    # return_guard
+    rg = scorecard.get("return_guard")
+    if not rg and isinstance(crs, dict):
+        rg = crs.get("return_guard")
+    if not rg and isinstance(rt, dict):
+        rg = rt.get("return_guard")
+    if rg:
+        result["return_guard"] = _make_serializable(rg)
+
+    # windup_guard_observation
+    wg = scorecard.get("windup_guard_observation")
+    if not wg and isinstance(crs, dict):
+        wg = crs.get("windup_guard_observation")
+    if not wg and isinstance(rt, dict):
+        wg = rt.get("windup_guard_observation")
+    if wg:
+        result["windup_guard_observation"] = _make_serializable(wg)
+
+    # prewindup_barrier
+    pwb = scorecard.get("prewindup_barrier")
+    if not pwb and isinstance(crs, dict):
+        pwb = crs.get("prewindup_barrier")
+    if not pwb and isinstance(rt, dict):
+        pwb = rt.get("prewindup_barrier")
+    if pwb:
+        result["prewindup_barrier"] = _make_serializable(pwb)
+
+    return result
 
 
 def _get_feed_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]

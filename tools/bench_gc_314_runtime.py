@@ -35,8 +35,10 @@ Benchmark targets:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import gc
+import json
 import os
 import signal
 import sys
@@ -456,8 +458,23 @@ def _sigint_handler(signum, frame):
 # =============================================================================
 
 async def main() -> int:
+    parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark")
+    parser.add_argument(
+        "--label",
+        default="auto",
+        help="Label for this benchmark run (default: auto = python version)",
+    )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Optional JSON file to write raw BenchmarkReport as JSON",
+    )
+    args = parser.parse_args()
+    label = args.label
+    out_path = args.out
+
     print("=" * 60, flush=True)
-    print("F214G GC Reality Benchmark — Python 3.14.4", flush=True)
+    print(f"F214G GC Reality Benchmark — {label}", flush=True)
     print("=" * 60, flush=True)
 
     signal.signal(signal.SIGINT, _sigint_handler)
@@ -630,6 +647,36 @@ async def main() -> int:
         recommendation=recommendation,
         notes=notes,
     )
+
+    # Write JSON output if --out specified
+    if out_path:
+        report_json = {
+            "python_version": report.python_version,
+            "python_version_info": list(report.python_version_info),
+            "gc_threshold": list(report.gc_threshold),
+            "swap_peak_mb": report.swap_peak_mb,
+            "overall_pass": report.overall_pass,
+            "recommendation": report.recommendation,
+            "notes": report.notes,
+            "gc_sites_audited": report.gc_sites_audited,
+            "gc_categories": report.gc_categories,
+            "phases": [
+                {
+                    "name": p.name,
+                    "wall_clock_s": p.wall_clock_s,
+                    "gc_collections_delta": p.gc_collections_delta,
+                    "gc_threshold_before": list(p.gc_before.threshold),
+                    "gc_threshold_after": list(p.gc_after.threshold),
+                    "rss_peak_mb": p.mem_peak_mb,
+                    "errors": p.errors,
+                }
+                for p in phases
+            ],
+        }
+        with open(out_path, "w") as f:
+            json.dump(report_json, f, indent=2)
+        print(f"JSON report written to: {out_path}", flush=True)
+
     report_md = render_report(report)
     report_path = os.path.join(os.path.dirname(__file__), "..", "reports", "F214G_GC_314_REALITY_BENCHMARK.md")
     os.makedirs(os.path.dirname(report_path), exist_ok=True)

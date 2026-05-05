@@ -210,6 +210,81 @@ No GC policy changes required at this time.
 
 ---
 
+## F214G-3 — 3.14.5 final rerun protocol
+
+### Pre-flight validation (run on current 3.14.4 .venv first)
+
+```bash
+# Smoke: verify current .venv is healthy before any 3.14.5 setup
+cd /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
+source .venv/bin/activate
+python -c "import gc; print('gc.threshold:', gc.get_threshold())"
+# Expected output: gc.threshold: (2000, 10, 0)
+```
+
+### Availability check (do NOT install until this shows 3.14.5)
+
+```bash
+uv python list | grep '3.14.5\|3.14'
+# Wait until 3.14.5 appears in the list before proceeding.
+# Do NOT proceed if only 3.14.4 and 3.13.5 are shown.
+```
+
+### 3.14.5 final benchmark rerun
+
+```bash
+# 1. Install 3.14.5 into uv's managed Python pool
+uv python install 3.14.5
+
+# 2. Create isolated venv — does NOT touch .venv or .venv-py3135
+rm -rf .venv-py3145
+uv venv .venv-py3145 --python 3.14.5 --managed-python
+
+# 3. Activate and sync dependencies into the new venv
+source .venv-py3145/bin/activate
+VIRTUAL_ENV="$PWD/.venv-py3145" uv sync --active
+
+# 4. Run benchmark from project root with the new venv activated
+cd /Users/vojtechhamada/PychobProjects/Hledac
+source hledac/universal/.venv-py3145/bin/activate
+PYTHONPATH="$PWD" PYTHON_DISABLE_REMOTE_DEBUG=1 \
+  python hledac/universal/tools/bench_gc_314_runtime.py \
+  --label py3145-generational \
+  --out hledac/universal/reports/f214g_py3145_gc_result.json
+
+# 5. After benchmark, deactivate and remove venv
+deactivate
+rm -rf .venv-py3145
+```
+
+### What this does NOT do
+
+| Action | Status |
+|--------|--------|
+| Overwrites `.venv` (3.14.4) | ❌ No — `.venv-py3145` is a separate venv |
+| Overwrites `.venv-py3135` | ❌ No — separate venv |
+| Installs from python.org | ❌ No — `uv python install` only |
+| Uses pyenv or Homebrew | ❌ No — `uv` only |
+| Applies GC patch | ❌ No — benchmark only |
+
+### Three-way comparison slot
+
+After 3.14.5 final benchmark completes, fill in this table from `f214g_py3145_gc_result.json`:
+
+| Metric | 3.14.4 (incremental) | 3.13.5 (generational) | 3.14.5 final (generational) |
+|--------|---------------------|----------------------|----------------------------|
+| gc.threshold | `(2000, 10, 0)` | `(2000, 10, 10)` | _(from 3.14.5 run)_ |
+| Boot wall clock | 35.01s | 35.01s | _(from 3.14.5 run)_ |
+| Sprint wall clock | 15.33s | 15.33s | _(from 3.14.5 run)_ |
+| Sprint GC collections delta | ~39 | 39,700 | _(from 3.14.5 run)_ |
+| RSS peak (boot) | 97.7 MB | 97.7 MB | _(from 3.14.5 run)_ |
+| RSS peak (sprint) | 82.5 MB | 82.5 MB | _(from 3.14.5 run)_ |
+| Swap peak | 3894.8 MB | 3894.8 MB | _(from 3.14.5 run)_ |
+| SIGINT warnings | 0 | 0 | _(from 3.14.5 run)_ |
+| Recommendation | KEEP | Reference | _(from 3.14.5 run)_ |
+
+---
+
 ## GC Sites Audit (applies to both versions)
 
 Total `gc.collect()` call sites found: **24**

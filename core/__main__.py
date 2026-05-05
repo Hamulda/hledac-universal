@@ -1328,6 +1328,12 @@ async def run_sprint(
             # Sprint F155: Determine handoff enrichment level (canonical_run_summary built inline)
             _handoff_enriched = bool(runtime_truth and intel)
 
+            # [F208J-B] Compute acquisition payload BEFORE ExportHandoff construction
+            # so it can be spread into both scorecard and canonical_run_summary.
+            # This ensures acquisition truth enters the actual ExportHandoff passed to export_sprint(),
+            # not just the local report_dict that was written to disk.
+            _acq_payload = _scheduler_result_acquisition_payload(result, scheduler, query, duration_s)
+
             handoff = ExportHandoff(
                 sprint_id=sprint_id,
                 scorecard={
@@ -1341,6 +1347,8 @@ async def run_sprint(
                     # Sprint F202B: Identity stitching sidecar counters
                     "identity_candidates_found": result.identity_candidates_found,
                     "identity_findings_produced": result.identity_findings_produced,
+                    # [F208J-B] Canonical acquisition terminality and report truth
+                    **_acq_payload,
                 },
                 top_nodes=top_seed_nodes,
                 phase_durations={
@@ -1400,6 +1408,10 @@ async def run_sprint(
                     "ct_log_accepted_findings": result.ct_log_accepted_findings,
                     # Sprint F160E: Canonical timing truth — separates active window from full run
                     "timing_truth": timing_truth,
+                    # [F208J-B] Canonical acquisition terminality and report truth — same payload
+                    # as what entered scorecard above, ensuring export_sprint() receives consistent
+                    # acquisition truth via both the scorecard and canonical_run_summary seams.
+                    **_acq_payload,
                 },
                 synthesis_outcome_payload=None,  # synthesis_runner not exposed on lifecycle/scheduler
                 # Sprint F153: Top-level sprint verdict propagated to export
