@@ -334,7 +334,15 @@ class GlobalPriorityScheduler:
 
             try:
                 if inspect.iscoroutinefunction(func):
-                    loop = asyncio.get_event_loop()
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        new_loop = asyncio.new_event_loop()
+                        try:
+                            new_loop.run_until_complete(func(*args, **kwargs))
+                        finally:
+                            new_loop.close()
+                        continue
                     loop.run_until_complete(func(*args, **kwargs))
                 else:
                     func(*args, **kwargs)

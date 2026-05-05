@@ -1,0 +1,114 @@
+======================================================================
+SPRINT 82J: E2E BENCHMARK RESULTS
+======================================================================
+
+## TIMING SUMMARY (Sprint 8B - Truthful)
+  Total wall clock:      0.4s
+  Research loop:         0.0s  # actual loop time
+  Synthesis:             0.0s
+  Teardown:             0.4s
+  Teardown substeps:   stop_collector=0.000s cleanup=0.000s metrics=0.000s trace=0.000s
+  Live tasks at exit:   0  []
+  Research runtime:      0.0s
+  Time to first finding: 0.0s
+  Final synthesis:       0.0s
+  Echo rejection rate:   0.0%  # l1_echo_rejects/(admits+rejects)
+
+## LOOP YIELD COUNTERS
+  sleep0_count:         0  # cooperative yields
+  idle_sleep_count:     0  # backoff sleeps
+
+## PER-ACTION ECHO (Sprint 8C)
+  (no telemetry)
+
+## PHASE BREAKDOWN
+
+## GATING / ADMISSION
+  L0 rejects:           0
+  L1 echo rejects:      0
+  L2 holds:            0
+  Admits:               0
+  Backlog pushes:       0
+  Backlog evictions:    0
+  Deep read candidates: 0
+
+## ACQUISITION LAYERS
+  CT discovery:          0 attempts, 0 success
+  Wayback quick:         0 attempts
+  Wayback CDX:           0 attempts, 0 lines
+  Common Crawl:          0 attempts
+  Necromancer:           0 attempts, 0 rescues
+  PRF expansions:        0 invocations
+  Onion preflight:      0 checks
+
+## LANE ACTIVITY
+
+## MEMORY
+  RSS start:            113 MB
+  RSS peak:             142 MB
+  RSS before synthesis: 0 MB
+  RSS after synthesis:  0 MB
+  Memory delta synth:   0 MB
+  Memory WARN events:   0
+  Memory CRIT events:   0
+  MLX cache clears:     0
+
+## SYNTHESIS
+  Invoked:              False
+  Fallback used:        False
+  Context chars:        0
+  Context claims:       0
+  Knapsack selected:    0
+  Knapsack dropped:     0
+  Latency:              0.0s
+  Winner-only evidence: 0
+
+## ITERATIONS
+  Total iterations:     0
+  Findings count:      0
+  Sources count:       0
+
+## FPS METRICS (Sprint 7C)
+  benchmark_fps:       0.0 iter/s
+  findings_fps:        0.0 findings/s
+  sources_fps:         0.0 sources/s
+  p95 latency:          0.0 ms
+
+## THERMAL
+  Start state:         unknown
+  Peak state:          unknown
+
+## RUN CORRELATION
+  Run ID:              unknown
+
+## TOOL EXECUTION LOG (from file)
+  Total events:        0
+  Success:             0
+  Errors:              0
+  Chain valid:         True
+  First event:        N/A
+  Last event:         N/A
+  Top tools: N/A
+
+## EVIDENCE LOG (from live object)
+  Total events:        0
+  Tool calls:         0
+  Observations:       0
+  Syntheses:          0
+  Decisions:           0
+  Evidence packets:   0
+  First event:        N/A
+  Last event:         N/A
+
+## METRICS REGISTRY (from file)
+  Counters:           0
+  Gauges:             0
+  Total samples:      0
+  First flush:        N/A
+  Last flush:         N/A
+
+======================================================================
+TOP BOTTLENECKS
+======================================================================
+
+======================================================================

@@ -591,7 +591,7 @@ class ModelManager:
 
         try:
             # Download the model
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 None,
                 lambda: mlx_lm.download(model_id)

@@ -23,13 +23,18 @@ try:
 except ImportError:
     SELECTOLAX_AVAILABLE = False
 
-# Optional lxml for faster HTML parsing (Fix 5)
+# Optional lxml for faster HTML parsing (Fix 5) — lazy import avoids
+# failed-import cost when lxml is absent (Python still executes the import
+# statement and catches in except, even though lxml_html = None is set).
+LXML_AVAILABLE = False
+lxml_html = None
 try:
-    from lxml import html as lxml_html
+    from lxml import html as _lxml_html
+
+    lxml_html = _lxml_html
     LXML_AVAILABLE = True
 except ImportError:
-    lxml_html = None
-    LXML_AVAILABLE = False
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -1170,7 +1175,7 @@ import os
 import sys
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
@@ -1325,23 +1330,24 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             return None
 
     if use_parallel:
-        # Parallel processing
-        executor = ThreadPoolExecutor(max_workers=max_workers)
-        futures = {executor.submit(_process_file, p, e): (p, e) for p, e in candidates}
-
+        # Parallel processing — executor.map(buffersize=8) bounds queue depth for M1 8GB
         remaining_ms = time_budget_ms - (time.monotonic() - start_time) * 1000
-        try:
-            for future in as_completed(futures, timeout=remaining_ms / 1000):
-                result = future.result()
-                if result:
-                    files_data.append(result)
-        except TimeoutError:
-            truncated = True
-            truncation_reason = "time_budget"
-        except Exception:
-            pass
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            try:
+                for result in executor.map(
+                    _process_file,
+                    [p for p, _ in candidates],
+                    [e for _, e in candidates],
+                    buffersize=8,
+                    timeout=remaining_ms / 1000,
+                ):
+                    if result:
+                        files_data.append(result)
+            except TimeoutError:
+                truncated = True
+                truncation_reason = "time_budget"
+            except Exception:
+                pass
     else:
         # Sequential processing
         for path, entry in candidates:

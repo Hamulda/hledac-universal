@@ -730,7 +730,7 @@ class _UmaSampler:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._sample_loop())
+        self._task = asyncio.create_task(self._sample_loop(), name="main:sampler_loop")
 
     async def stop(self) -> None:
         """Stop sampler task gracefully."""
@@ -2793,12 +2793,12 @@ async def _run_sprint_mode(
                                 query=target,
                                 store=store_instance,
                                 max_results=5,
-                            ))
+                            ), name="main:live_public_pipeline")
                             tg.create_task(async_run_default_feed_batch(
                                 store=store_instance,
                                 max_entries_per_feed=10,
                                 query_context=target,
-                            ))
+                            ), name="main:feed_batch")
                         _boot_record("sprint_mode", "pipeline_run_ok")
                     except Exception as e:
                         _boot_record("sprint_mode", "pipeline_run_error", error=str(e))
@@ -3058,6 +3058,10 @@ def main() -> None:
         setproctitle.setproctitle("kernel_worker")
     except ImportError:
         pass
+
+    # F214E: Python 3.14 asyncio introspection — log PID once at boot
+    import os
+    logger.info(f"[BOOT] PID={os.getpid()} — python -m asyncio ps {os.getpid()} | python -m asyncio pstree {os.getpid()}")
 
     # Sprint 8PC: CLI parsing for --sprint flag
     sprint_target: Optional[str] = None

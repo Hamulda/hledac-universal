@@ -2545,7 +2545,8 @@ async def async_run_live_public_pipeline(
                 discovery_reason=hit_reason,
                 vector_store=vector_store,
                 graph=graph,
-            )
+            ),
+            name="fetch:public_page",
         )
         tasks.append(task)
 

@@ -210,10 +210,42 @@ class LiveMeasurementResult:
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None
     acquisition_terminality_report: dict | None = None
 
+    # F208H: Full acquisition report (canonical, not reconstructed)
+    # Stored at top-level for validator self-containment
+    acquisition_report: dict | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
         d["status"] = self.status.value
+        # F208H: Alias for validator compatibility — maps internal status to live_run_status
+        d["live_run_status"] = self.status.value
+        # F208H: branch_mix alias for validator compatibility (looks for feed count at top level)
+        # Validator checks branch_mix.get("feed", 0) — ensure feed key exists if feed_findings does
+        if self.runtime_truth and isinstance(self.runtime_truth, dict):
+            _bm = self.runtime_truth.get("branch_mix", {})
+            if isinstance(_bm, dict):
+                _d_bm = dict(_bm)
+                # Map feed_findings → feed for validator compatibility
+                if "feed" not in _d_bm and "feed_findings" in _d_bm:
+                    _d_bm["feed"] = _d_bm["feed_findings"]
+                d["branch_mix"] = _d_bm
+        # F208H: public_terminal_state and ct_terminal_state derived from source_family_outcomes
+        # These are read by validator for active300 domain queries
+        _lk = self.live_kpi or {}
+        _sfo = _lk.get("source_family_outcomes", [])
+        if isinstance(_sfo, list) and _sfo:
+            # Normalize list of dicts to determine terminal state
+            _pub = next((x for x in _sfo if isinstance(x, dict) and x.get("family") == "public"), None)
+            _ct = next((x for x in _sfo if isinstance(x, dict) and x.get("family") == "ct"), None)
+            if _pub is not None:
+                d["public_terminal_state"] = "COMPLETED" if (_pub.get("attempted") and not _pub.get("skipped")) else "NEVER_ATTEMPTED"
+            if _ct is not None:
+                d["ct_terminal_state"] = "COMPLETED" if (_ct.get("attempted") and not _ct.get("skipped")) else "NEVER_ATTEMPTED"
+        elif isinstance(_sfo, dict) and _sfo:
+            # Dict form: {"public": {...}, "ct": {...}}
+            d["public_terminal_state"] = "COMPLETED" if _sfo.get("public", {}).get("attempted") else "NEVER_ATTEMPTED"
+            d["ct_terminal_state"] = "COMPLETED" if _sfo.get("ct", {}).get("attempted") else "NEVER_ATTEMPTED"
         return d
 
     def to_json(self) -> str:
@@ -1556,6 +1588,14 @@ async def _run_live_sprint(
                 result.acquisition_terminality_report = _acq_strat.get(
                     "acquisition_terminality_report"
                 )
+                # F208H: Read full canonical acquisition_report from sprint JSON
+                # for validator self-containment (not just the sanitized subset)
+                try:
+                    with open(report_path) as _ar_f:
+                        _ar_data = json.load(_ar_f)
+                    result.acquisition_report = _ar_data.get("acquisition_report")
+                except Exception:
+                    result.acquisition_report = None
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",

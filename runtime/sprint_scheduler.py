@@ -1261,7 +1261,7 @@ class SprintScheduler:
 
         try:
             # Sprint 8VD §C: Start memory pressure monitoring loop
-            _t = asyncio.create_task(self._memory_pressure_loop())
+            _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
             self._bg_tasks.add(_t)
             _t.add_done_callback(self._bg_tasks.discard)
 
@@ -1495,14 +1495,14 @@ class SprintScheduler:
                 # Sprint 8UC B.4: Speculative prefetch every 15s
                 now_mono = _time.monotonic()
                 if (now_mono - self._last_speculative) >= 15.0:
-                    _t = asyncio.create_task(self._speculative_prefetch(n=3))
+                    _t = asyncio.create_task(self._speculative_prefetch(n=3), name="sprint:speculative_prefetch")
                     self._bg_tasks.add(_t)
                     _t.add_done_callback(self._bg_tasks.discard)
                     self._last_speculative = now_mono
 
                 # Sprint 8UC B.5: OODA cycle every 60s
                 if (now_mono - self._last_ooda) >= self._ooda_interval:
-                    _t = asyncio.create_task(self._run_ooda_cycle(self._pivot_ioc_graph))
+                    _t = asyncio.create_task(self._run_ooda_cycle(self._pivot_ioc_graph), name="sprint:ooda_cycle")
                     self._bg_tasks.add(_t)
                     _t.add_done_callback(self._bg_tasks.discard)
                     self._last_ooda = now_mono
@@ -2686,9 +2686,9 @@ class SprintScheduler:
                 self._result.ct_log_error = f"{type(exc).__name__}:{exc}"
 
         # Launch all branches concurrently
-        feed_branch = _asyncio.create_task(_run_feed_branch())
-        public_branch = _asyncio.create_task(_run_public_branch())
-        ct_branch = _asyncio.create_task(_run_ct_branch())
+        feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
+        public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
+        ct_branch = _asyncio.create_task(_run_ct_branch(), name="sprint:ct_branch")
 
         # Wait for all branches with overall timeout
         # Use shield so cancellation of one branch doesn't affect others
@@ -2769,7 +2769,8 @@ class SprintScheduler:
                         hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
                         memory_manager=memory_manager,  # P11: session history for RAG context
                         enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
-                    )
+                    ),
+                    name="sprint:public",
                 )
         except ExceptionGroup as eg:
             # F196A: TaskGroup ExceptionGroup handler for Python 3.11+.
@@ -5576,8 +5577,18 @@ class SprintScheduler:
                     else None
                 ),
                 # [F207Q-A] Pre-windup barrier telemetry for live KPI diagnosis
-                "prewindup_barrier": self._get_prewindup_barrier_report(),
+                "prewindup_barrier": self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None,
             }
+        # Sprint F208H: Surface terminality fields at TOP LEVEL so validator can find them
+        report["acquisition_terminality_checked"] = getattr(
+            self._result, "acquisition_terminality_checked", False
+        )
+        report["acquisition_terminality_satisfied"] = getattr(
+            self._result, "acquisition_terminality_satisfied", False
+        )
+        report["acquisition_terminality_missing_lanes"] = list(
+            getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()
+        )
         # Sprint F207S-A: Windup guard callsite observation telemetry (top-level key)
         report["windup_guard_observation"] = {
             "call_count": getattr(self._result, "windup_guard_call_count", 0),
@@ -5672,6 +5683,28 @@ class SprintScheduler:
         # Academic is always skipped unless explicitly enabled
         _sfo["academic"] = normalize_source_family_outcome("academic", None)
         report["source_family_outcomes"] = _sfo
+
+        # Sprint F208H: Surface terminality and guard fields at TOP LEVEL for validator consumption
+        # PUBLIC terminal state (active300 domain queries)
+        report["public_terminal_state"] = (
+            _sfo.get("public", {}).get("terminal_state") or "NEVER_ATTEMPTED"
+        )
+        # CT terminal state (active300 domain queries)
+        report["ct_terminal_state"] = (
+            _sfo.get("ct", {}).get("terminal_state") or "NEVER_ATTEMPTED"
+        )
+        # Scheduler exit path at top level (validator check)
+        report["scheduler_exit_path"] = getattr(self._result, "scheduler_exit_path", None)
+        # Return guard checked at top level (validator check)
+        report["return_guard_checked"] = getattr(self._result, "return_guard_checked", False)
+        # Windup guard fields at top level (validator check)
+        _wg_last_reason = getattr(self._result, "windup_guard_last_reason", "") or ""
+        _wg_irrelevant = frozenset({"not_applicable", "no_lanes_ran", "disabled", "skipped"})
+        report["windup_guard_call_count"] = getattr(self._result, "windup_guard_call_count", 0)
+        report["windup_guard_reason"] = _wg_last_reason
+        report["windup_guard_not_applicable"] = (
+            _wg_last_reason.lower() in _wg_irrelevant
+        )
 
         # Sprint F208F: Canonical acquisition_report — wired using build_acquisition_report()
         # so live_sprint_measurement.py can find it at report["acquisition_report"] first
@@ -6224,7 +6257,7 @@ class SprintScheduler:
                 except Exception as e:
                     log.debug(f"Speculative miss {key}: {e}")
 
-            task = asyncio.create_task(_speculative_run())
+            task = asyncio.create_task(_speculative_run(), name="sprint:speculative_run")
             self._bg_tasks.add(task)
             task.add_done_callback(self._bg_tasks.discard)
 
@@ -6333,7 +6366,7 @@ class SprintScheduler:
         self._arrow_batch.append(finding)
         # Kick off async flush without awaiting
         try:
-            _t = asyncio.create_task(self._maybe_flush_to_parquet())
+            _t = asyncio.create_task(self._maybe_flush_to_parquet(), name="sprint:flush_arrow")
             self._bg_tasks.add(_t)
             _t.add_done_callback(self._bg_tasks.discard)
         except RuntimeError:
@@ -6383,7 +6416,7 @@ class SprintScheduler:
 
         self._arrow_batch.append(ioc_entry)
         try:
-            _t = asyncio.create_task(self._maybe_flush_to_parquet())
+            _t = asyncio.create_task(self._maybe_flush_to_parquet(), name="sprint:flush_arrow_ioc")
             self._bg_tasks.add(_t)
             _t.add_done_callback(self._bg_tasks.discard)
         except RuntimeError:
