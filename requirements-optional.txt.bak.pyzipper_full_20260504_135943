@@ -1,0 +1,53 @@
+# Optional acceleration dependencies for Hledac
+# Install with: pip install -r requirements-optional.txt
+# or: pip install hledac[optional]
+
+# Language detection (optional)
+fast-langdetect
+
+# Near-duplicate detection / LSH (optional)
+datasketch
+
+# Fuzzy string matching (optional)
+rapidfuzz
+
+# PyTorch with CPU-only support (optional — not required for baseline)
+# Install GPU/MPS version separately for Apple Silicon:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# or full version:
+#   pip install torch torchvision
+# torch>=2.1.0
+
+# Sprint 8VD: Arrow/Parquet columnar buffer + DuckDB vectorized queries + Polars streaming
+pyarrow>=16.0.0    # ARM64 wheel, pa.timestamp tz-aware
+duckdb>=1.2.0      # ARM64 native, singleton connection
+polars>=1.0.0      # collect(engine='streaming') API
+
+# Sprint 8VE: Rust HTML parser (ARM64 native, 10-50x faster than BS4) + xxhash
+selectolax>=0.3.21  # Rust HTML parser, ARM64 native, ProcessPool optional
+xxhash>=3.4.0       # pro ID generování (deterministické hashování)
+
+# Sprint 8VF: NER + ANE CoreML embedder
+spacy>=3.7.0        # SECONDARY attribution NER (en_core_web_sm ~8MB)
+coremltools>=8.0    # ANE CoreML MiniLM-L6-v2 (~22MB, <5ms/embed)
+# mlx>=0.16.0        # already in requirements (MLX LM inference)
+
+# Sprint 8VG-B: Dark/Hidden Internet + Extended OSINT Sources
+aiodns>=3.1.0        # Team Cymru DNS TXT (fallback: nslookup subprocess na macOS)
+websockets>=12.0     # certstream_monitor() — již v ti_feed_adapter.py
+
+# P16: Network & P2P Intelligence
+pybgpstream>=3.0.0  # arm64 unavailable — graceful fallback when missing
+
+# FÁZE P18: Export & Vizualizace
+pyvis>=0.3.2        # Interactive graph visualization (networkx + pyvis HTML export)
+markdown2>=2.4.12   # Markdown to HTML conversion for Obsidian-compatible exports
+
+# Security: Strong encryption for vault files (replaces XOR fallback in vault_manager.py)
+pyzipper>=1.4.0     # AES/ZIP encryption for sensitive file storage
+
+# Sprint F206K: HTTP/2 support for optional httpx_h2 transport lane
+h2>=4.1.0           # HTTP/2 (required for httpx[http2] lane — falls back if missing)
+
+# Sprint F206L: Optional TLS impersonation stealth lane (M1-safe escalation)
+curl_cffi>=0.7.0    # optional TLS fingerprint impersonation; project falls back if missing

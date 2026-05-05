@@ -209,6 +209,9 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     # F207J-C: PUBLIC Acceptance — per-page acceptance rejection reason
     # None = accepted | rejection reason string
     rejection_reason: str | None = None
+    # F208G-A: PUBLIC Yield Taxonomy — canonical terminal classification per URL
+    # None = still processing | "accepted" | "skipped_*" | "rejected_*"
+    terminal_reason: str | None = None
 
 
 class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
@@ -308,6 +311,31 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # bounded URL samples (max 5 each)
     public_accepted_url_sample: tuple[str, ...] = ()
     public_rejected_url_sample: tuple[str, ...] = ()
+    # F208G-A: PUBLIC Yield Taxonomy — run-level terminal classification
+    # URL-level counts
+    public_terminal_classified_count: int = 0  # URLs with terminal_reason != None
+    public_unclassified_count: int = 0  # URLs with terminal_reason == None
+    public_terminal_reason_counts: dict = {}  # {terminal_reason: count} for all classified URLs
+    # Fetch outcome counts
+    public_fetch_success: int = 0  # fetched=True with text available
+    public_fetch_failed: int = 0  # fetched=False (all skip/error reasons)
+    # Skipped reason breakdown
+    public_skipped_duplicate: int = 0  # dedup bloom filter hit
+    public_skipped_unsupported_scheme: int = 0  # non-http(s) URL
+    public_skipped_memory_gate: int = 0  # UMA emergency/critical blocked
+    public_skipped_quality_gate: int = 0  # discovery score too low
+    public_skipped_browser_unavailable: int = 0  # JS renderer unavailable
+    public_skipped_xml_or_feed: int = 0  # XML/feed URL detected
+    public_skipped_timeout: int = 0  # fetch timed out
+    public_skipped_fetch_error: int = 0  # fetch exception/error
+    # Rejected reason breakdown (fetched but not accepted)
+    public_rejected_no_pattern_match: int = 0  # fetched text had no pattern matches
+    public_rejected_low_information: int = 0  # page quality too low (SKIP_WEAK)
+    public_rejected_duplicate: int = 0  # per-page dedup exhausted
+    public_rejected_storage_rejected: int = 0  # DuckDB storage rejected findings
+    # Bounded URL samples (max 5 each)
+    public_skipped_url_sample: tuple[str, ...] = ()  # skipped URL samples
+    public_rejected_url_samples: tuple[str, ...] = ()  # rejected URL samples
 
 
 # -----------------------------------------------------------------------------
@@ -846,6 +874,44 @@ async def _fetch_and_process_page(
                 redirect_target=None,
                 fetch_blocked_reason="quality_skip",  # F207F
                 rejection_reason="no_fetch_result",  # F207J-C: not fetched due to quality gate
+                terminal_reason="skipped_quality_gate",  # F208G-A: canonical terminal classification
+            )
+            return ppr
+
+        # F208G-A: Validate URL scheme before attempting fetch
+        from urllib.parse import urlparse
+        _parsed_url = urlparse(hit_url)
+        if not _parsed_url.scheme or _parsed_url.scheme.lower() not in ("http", "https"):
+            usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+                fetched=False, matched_patterns=0, stored_findings=0,
+                quality_reason=None, discovery_signal=has_signal,
+                discovery_score=discovery_score,
+                error=f"url_unsupported_scheme:{_parsed_url.scheme}",
+                extracted_text_len=0,
+            )
+            ppr = PipelinePageResult(
+                url=hit_url,
+                fetched=False,
+                matched_patterns=0,
+                accepted_findings=0,
+                stored_findings=0,
+                error=f"url_unsupported_scheme:{_parsed_url.scheme}",
+                quality_reason=None,
+                discovery_score=discovery_score,
+                discovery_reason=discovery_reason,
+                discovery_signal=has_signal,
+                usable_signal=usable_signal,
+                value_tier=value_tier,
+                resolution_reason=resolution_reason,
+                discovery_false_positive=discovery_false_positive,
+                waste_category=waste_category,
+                structural_quality=structural_quality,
+                failure_stage=None,
+                redirected=False,
+                redirect_target=None,
+                fetch_blocked_reason="unsupported_scheme",
+                rejection_reason="fetch_error",
+                terminal_reason="skipped_unsupported_scheme",  # F208G-A
             )
             return ppr
 
@@ -888,6 +954,7 @@ async def _fetch_and_process_page(
                 redirect_target=None,
                 fetch_blocked_reason="timeout",  # F207F
                 rejection_reason="fetch_error",  # F207J-C: fetch failed due to timeout
+                terminal_reason="skipped_timeout",  # F208G-A
             )
             # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
             # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
@@ -920,6 +987,7 @@ async def _fetch_and_process_page(
                 redirect_target=None,
                 fetch_blocked_reason="exception",  # F207F
                 rejection_reason="fetch_error",  # F207J-C: fetch failed due to exception
+                terminal_reason="skipped_fetch_error",  # F208G-A
             )
             # [F207F] ppr._fetch_result removed — PipelinePageResult is frozen msgspec.Struct;
             # FetchResult is not needed in verdict telemetry; use p.error and p.failure_stage directly
@@ -969,6 +1037,7 @@ async def _fetch_and_process_page(
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
                 rejection_reason="empty_text",  # F207J-C: fetched but text extraction returned nothing
+                terminal_reason="rejected_empty_text",  # F208G-A
             )
             return ppr
 
@@ -1004,6 +1073,7 @@ async def _fetch_and_process_page(
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
                 rejection_reason="extraction_failed",  # F207J-C: HTML text extraction failed
+                terminal_reason="rejected_extraction_failed",  # F208G-A
             )
             return ppr
 
@@ -1033,6 +1103,16 @@ async def _fetch_and_process_page(
                 error=None,
                 extracted_text_len=len(extracted_text),
             )
+            # F208G-A: js_renderer_skip_reason takes precedence over low_information
+            # when page quality is weak (browser_unavailable, xml_or_feed_url are
+            # operational skips that explain the weak quality)
+            _tr_skipped: str | None = None
+            if fetched_js_skip_reason == "browser_unavailable":
+                _tr_skipped = "skipped_browser_unavailable"
+            elif fetched_js_skip_reason in ("xml_or_feed_url", "xml_recovered"):
+                _tr_skipped = "skipped_xml_or_feed"
+            _terminal_reason = _tr_skipped if _tr_skipped else "rejected_low_information"
+            _rejection_reason = _tr_skipped if _tr_skipped else "low_information"
             ppr = PipelinePageResult(
                 url=hit_url, fetched=True, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
@@ -1050,7 +1130,8 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                rejection_reason="low_information",  # F207J-C: page quality too low (SKIP_WEAK)
+                rejection_reason=_rejection_reason,  # F207J-C
+                terminal_reason=_terminal_reason,  # F208G-A
             )
             return ppr
 
@@ -1088,6 +1169,16 @@ async def _fetch_and_process_page(
                 error=None,
                 extracted_text_len=len(extracted_text),
             )
+            # F208G-A: js_renderer_skip_reason takes precedence as terminal_reason
+            # when no content patterns matched (browser_unavailable, xml_or_feed_url are
+            # operational skips that explain why no pattern match occurred)
+            _tr_skipped: str | None = None
+            if fetched_js_skip_reason == "browser_unavailable":
+                _tr_skipped = "skipped_browser_unavailable"
+            elif fetched_js_skip_reason in ("xml_or_feed_url", "xml_recovered"):
+                _tr_skipped = "skipped_xml_or_feed"
+            _terminal_reason = _tr_skipped if _tr_skipped else "rejected_no_pattern_match"
+            _rejection_reason = _tr_skipped if _tr_skipped else "no_pattern_match"
             ppr = PipelinePageResult(
                 url=hit_url, fetched=True, matched_patterns=0,
                 accepted_findings=0, stored_findings=0,
@@ -1105,7 +1196,8 @@ async def _fetch_and_process_page(
                 redirected=fetched_redirected,
                 redirect_target=fetched_redirect_target,
                 js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-                rejection_reason="no_pattern_match",  # F207J-C: fetched text had no pattern matches
+                rejection_reason=_rejection_reason,  # F207J-C
+                terminal_reason=_terminal_reason,  # F208G-A
             )
             return ppr
 
@@ -1137,6 +1229,8 @@ async def _fetch_and_process_page(
         # These are SEPARATE — accepted does NOT imply stored (DuckDB may fail)
         accepted_count = 0
         stored_count = 0
+        storage_error: bool = False  # F208G-A: track storage exceptions for terminal_reason
+        quality_gate_rejected: bool = False  # F208G-A: track quality-gate rejections
 
         # ---- Storage ---------------------------------------------------------
         if store is not None and unique_findings:
@@ -1160,6 +1254,15 @@ async def _fetch_and_process_page(
                             accepted_count += 1
                         if getattr(sr, "lmdb_success", False):
                             stored_count += 1
+                # F208G-A: quality gate rejection — storage succeeded but no findings accepted
+                if unique_findings and accepted_count == 0:
+                    quality_gate_rejected = True
+
+                # F208G-A: storage error — DuckDB/LMDB rejected write (stored_count=0
+                # means lmdb_success=False despite no exception = storage layer rejection,
+                # distinct from quality gate which is about accepted=False)
+                if stored_count == 0 and unique_findings:
+                    storage_error = True
 
                 # P11: Write to memory manager after DuckDB storage succeeds
                 # This enables RAG context for future queries
@@ -1191,7 +1294,7 @@ async def _fetch_and_process_page(
             except Exception:
                 # Fail-soft: storage error does not fail the page
                 # accepted_count/stored_count already set to 0 (pre-loop init) on error
-                pass
+                storage_error = True  # F208G-A: mark storage failure for terminal_reason
 
             # F197C: Per-finding embeddings — stored AFTER DuckDB quality gate.
             # Embed only accepted findings (quality-gated payload_text).
@@ -1300,6 +1403,33 @@ async def _fetch_and_process_page(
             error=None,
             extracted_text_len=len(extracted_text),
         )
+        # F208G-A: terminal_reason = None if accepted, else rejected_storage_rejected
+        _terminal: str | None
+        _rej_reason: str | None
+        # F208G-A: js_renderer_skipped_reason takes precedence as terminal_reason
+        # when set (browser_unavailable/xml_or_feed means renderer was unavailable
+        # during fetch — this operational skip explains the page state regardless
+        # of whether patterns were matched and accepted)
+        if fetched_js_skip_reason == "browser_unavailable":
+            _terminal = "skipped_browser_unavailable"
+            _rej_reason = "browser_unavailable"
+        elif fetched_js_skip_reason in ("xml_or_feed_url", "xml_recovered"):
+            _terminal = "skipped_xml_or_feed"
+            _rej_reason = "xml_or_feed"
+        elif accepted_count > 0 and not storage_error:
+            _terminal = None
+            _rej_reason = None
+        elif storage_error:
+            _terminal = "rejected_storage_rejected"
+            _rej_reason = "storage_rejected"
+        elif quality_gate_rejected:
+            # storage succeeded but quality gate rejected all findings
+            _terminal = "rejected_quality_gate"
+            _rej_reason = "quality_gate_rejected"
+        else:
+            # accepted_count == 0 but no storage error — fallback (shouldn't reach here)
+            _terminal = "rejected_storage_rejected"
+            _rej_reason = "storage_rejected"
         ppr = PipelinePageResult(
             url=hit_url,
             fetched=True,
@@ -1320,7 +1450,8 @@ async def _fetch_and_process_page(
             redirected=fetched_redirected,
             redirect_target=fetched_redirect_target,
             js_renderer_skipped_reason=fetched_js_skip_reason,  # F207F
-            rejection_reason=None,  # F207J-C: accepted (matched patterns + passed storage gate)
+            rejection_reason=_rej_reason,  # F208G-A
+            terminal_reason=_terminal,  # F208G-A: None=accepted, else rejected
         )
         return ppr
 
@@ -2077,6 +2208,26 @@ async def async_run_live_public_pipeline(
             public_acceptance_reject_reasons={},
             public_accepted_url_sample=(),
             public_rejected_url_sample=(),
+            # F208G-A: PUBLIC Yield Taxonomy — zeros (no URLs reached terminal classification)
+            public_terminal_classified_count=0,
+            public_unclassified_count=0,
+            public_terminal_reason_counts={},
+            public_fetch_success=0,
+            public_fetch_failed=0,
+            public_skipped_duplicate=0,
+            public_skipped_unsupported_scheme=0,
+            public_skipped_memory_gate=0,
+            public_skipped_quality_gate=0,
+            public_skipped_browser_unavailable=0,
+            public_skipped_xml_or_feed=0,
+            public_skipped_timeout=0,
+            public_skipped_fetch_error=0,
+            public_rejected_no_pattern_match=0,
+            public_rejected_low_information=0,
+            public_rejected_duplicate=0,
+            public_rejected_storage_rejected=0,
+            public_skipped_url_sample=(),
+            public_rejected_url_samples=(),
         )
 
     effective_concurrency = fetch_concurrency
@@ -2165,6 +2316,26 @@ async def async_run_live_public_pipeline(
             public_acceptance_reject_reasons={},
             public_accepted_url_sample=(),
             public_rejected_url_sample=(),
+            # F208G-A: PUBLIC Yield Taxonomy — zeros (no URLs reached terminal classification)
+            public_terminal_classified_count=0,
+            public_unclassified_count=0,
+            public_terminal_reason_counts={},
+            public_fetch_success=0,
+            public_fetch_failed=0,
+            public_skipped_duplicate=0,
+            public_skipped_unsupported_scheme=0,
+            public_skipped_memory_gate=0,
+            public_skipped_quality_gate=0,
+            public_skipped_browser_unavailable=0,
+            public_skipped_xml_or_feed=0,
+            public_skipped_timeout=0,
+            public_skipped_fetch_error=0,
+            public_rejected_no_pattern_match=0,
+            public_rejected_low_information=0,
+            public_rejected_duplicate=0,
+            public_rejected_storage_rejected=0,
+            public_skipped_url_sample=(),
+            public_rejected_url_samples=(),
         )
 
     # P16: Academic discovery integration — run after DuckDuckGo discovery
@@ -2334,8 +2505,14 @@ async def async_run_live_public_pipeline(
 
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
+    # F208G-A: URL-level dedup — skip duplicate URLs before creating fetch tasks
+    seen_urls: set[str] = set()
     tasks: list[asyncio.Task] = []
     for hit in hits:
+        hit_url = hit.url if hasattr(hit, "url") else str(hit[2])
+        if hit_url in seen_urls:
+            continue
+        seen_urls.add(hit_url)
         # Sprint F150I: extract discovery score/reason if present (additive, fail-soft)
         hit_score: float | None = getattr(hit, "score", None)
         if hit_score is None and hasattr(hit, "__getitem__"):
@@ -2429,7 +2606,9 @@ async def async_run_live_public_pipeline(
         public_fetch_gate = "ok"
 
     # F207I-A: new telemetry aggregation
-    public_fetch_candidate_count = len(hits)
+    # F208G-A: len(seen_urls) = unique URLs after dedup (dedup skipped URLs excluded from all_page_results)
+    public_fetch_candidate_count = len(seen_urls)
+    public_skipped_duplicate = len(hits) - len(seen_urls)  # F208G-A: dedup gap
     fetched_urls_sample_list = [p.url for p in all_page_results if p.fetched][:5]
     public_fetch_attempted_urls_sample = tuple(fetched_urls_sample_list)
 
@@ -2457,6 +2636,55 @@ async def async_run_live_public_pipeline(
                 rejected_urls.append(p.url)
     public_accepted_url_sample = tuple(accepted_urls)
     public_rejected_url_sample = tuple(rejected_urls)
+
+    # F208G-A: PUBLIC Yield Taxonomy — run-level terminal classification
+    # Classify every URL by terminal_reason; accepted/skipped/rejected buckets
+    from collections import Counter
+    _tr_counter: Counter[str] = Counter()
+    _skipped_samples: list[str] = []
+    _rejected_samples: list[str] = []
+    for p in all_page_results:
+        tr = getattr(p, "terminal_reason", None)
+        if tr is None:
+            _tr_counter["accepted"] += 1
+        else:
+            _tr_counter[tr] += 1
+            if tr.startswith("skipped_") and len(_skipped_samples) < 5:
+                _skipped_samples.append(p.url)
+            elif tr.startswith("rejected_") and len(_rejected_samples) < 5:
+                _rejected_samples.append(p.url)
+
+    # Run-level counts
+    _classified = sum(v for k, v in _tr_counter.items() if k != "accepted")
+    _accepted = _tr_counter.get("accepted", 0)
+    public_terminal_classified_count = _classified
+    public_unclassified_count = len(all_page_results) - _classified - _accepted
+    public_terminal_reason_counts = dict(_tr_counter)
+
+    # Fetch outcome
+    public_fetch_success = sum(1 for p in all_page_results if p.fetched)
+    public_fetch_failed = sum(1 for p in all_page_results if not p.fetched)
+
+    # Skipped breakdown
+    # F208G-A: public_skipped_duplicate already computed as len(hits)-len(seen_urls) at line 2575
+    # Do NOT overwrite with _tr_counter lookup (duplicates never reach page processing)
+    public_skipped_unsupported_scheme = _tr_counter.get("skipped_unsupported_scheme", 0)
+    public_skipped_memory_gate = _tr_counter.get("skipped_memory_gate", 0)
+    public_skipped_quality_gate = _tr_counter.get("skipped_quality_gate", 0)
+    public_skipped_browser_unavailable = _tr_counter.get("skipped_browser_unavailable", 0)
+    public_skipped_xml_or_feed = _tr_counter.get("skipped_xml_or_feed", 0)
+    public_skipped_timeout = _tr_counter.get("skipped_timeout", 0)
+    public_skipped_fetch_error = _tr_counter.get("skipped_fetch_error", 0)
+
+    # Rejected breakdown
+    public_rejected_no_pattern_match = _tr_counter.get("rejected_no_pattern_match", 0)
+    public_rejected_low_information = _tr_counter.get("rejected_low_information", 0)
+    public_rejected_duplicate = _tr_counter.get("rejected_duplicate", 0)
+    public_rejected_storage_rejected = _tr_counter.get("rejected_storage_rejected", 0)
+
+    # Bounded URL samples
+    public_skipped_url_sample = tuple(_skipped_samples)
+    public_rejected_url_samples = tuple(_rejected_samples)
 
     # Sprint F150J Fix B: branch economics counters
     # Fix weak_pages_skipped: SKIP_WEAK post-fetch pages have error=None (not error!=None)
@@ -3234,6 +3462,26 @@ async def async_run_live_public_pipeline(
         public_acceptance_reject_reasons=public_acceptance_reject_reasons,
         public_accepted_url_sample=public_accepted_url_sample,
         public_rejected_url_sample=public_rejected_url_sample,
+        # F208G-A: PUBLIC Yield Taxonomy — run-level terminal classification
+        public_terminal_classified_count=public_terminal_classified_count,
+        public_unclassified_count=public_unclassified_count,
+        public_terminal_reason_counts=public_terminal_reason_counts,
+        public_fetch_success=public_fetch_success,
+        public_fetch_failed=public_fetch_failed,
+        public_skipped_duplicate=public_skipped_duplicate,
+        public_skipped_unsupported_scheme=public_skipped_unsupported_scheme,
+        public_skipped_memory_gate=public_skipped_memory_gate,
+        public_skipped_quality_gate=public_skipped_quality_gate,
+        public_skipped_browser_unavailable=public_skipped_browser_unavailable,
+        public_skipped_xml_or_feed=public_skipped_xml_or_feed,
+        public_skipped_timeout=public_skipped_timeout,
+        public_skipped_fetch_error=public_skipped_fetch_error,
+        public_rejected_no_pattern_match=public_rejected_no_pattern_match,
+        public_rejected_low_information=public_rejected_low_information,
+        public_rejected_duplicate=public_rejected_duplicate,
+        public_rejected_storage_rejected=public_rejected_storage_rejected,
+        public_skipped_url_sample=public_skipped_url_sample,
+        public_rejected_url_samples=public_rejected_url_samples,
     )
 
 

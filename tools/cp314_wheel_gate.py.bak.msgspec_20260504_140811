@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""
+cp314_wheel_gate.py — CPython 3.14 wheel validation gate
+========================================================
+
+Sprint F207N-B: Build Truth
+
+Purpose:
+  Construct and optionally execute pip download commands for cp314 macosx_arm64
+  wheels. Reports package groupings by extra without installing anything.
+
+No network by default. --execute explicitly required to run pip download.
+
+Usage:
+  # Dry-run (default, no network):
+  python tools/cp314_wheel_gate.py
+
+  # Dry-run for specific extra:
+  python tools/cp314_wheel_gate.py --extra apple-accel
+
+  # JSON output dry-run:
+  python tools/cp314_wheel_gate.py --extra osint-html --output-json wheels.json
+
+  # Execute pip download (EXPLICIT --execute required):
+  python tools/cp314_wheel_gate.py --extra all --execute
+
+  # Multi-extra:
+  python tools/cp314_wheel_gate.py --extra light --extra apple-accel
+
+Exit codes:
+  0  — dry-run completed (no network activity)
+  0  — execute completed successfully
+  1  — execute not permitted (missing --execute flag)
+  2  — invalid extra name
+  3  — pip download failed (with --execute)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from dataclasses import dataclass
+from typing import Dict, List
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+SUPPORTED_EXTRAS = {
+    "default",
+    "light",
+    "apple-accel",
+    "osint-html",
+    "graph-storage",
+    "torch",
+    "dev",
+    "all",
+}
+
+# (package_name, pip specifier, extra_group)
+# Platform markers on mlx/uvloop ensure they resolve to empty on non-Darwin.
+WHEEL_REPORT_PACKAGES: List[Dict[str, str]] = [
+    # default
+    {"name": "aiosqlite", "spec": "aiosqlite>=0.19.0", "extra": "default"},
+    {"name": "aiohttp", "spec": "aiohttp>=3.9.0", "extra": "default"},
+    {"name": "aiohttp-socks", "spec": "aiohttp-socks>=0.8.0", "extra": "default"},
+    {"name": "httpx", "spec": "httpx>=0.27.0", "extra": "default"},
+    {"name": "lancedb", "spec": "lancedb>=0.2.5", "extra": "default"},
+    {"name": "duckdb", "spec": "duckdb>=1.2.0", "extra": "default"},
+    {"name": "orjson", "spec": "orjson>=3.9.0", "extra": "default"},
+    {"name": "camoufox", "spec": "camoufox[geoip]>=1.0.0", "extra": "default"},
+    {"name": "duckduckgo-search", "spec": "duckduckgo-search>=8.0.0", "extra": "default"},
+    {"name": "beautifulsoup4", "spec": "beautifulsoup4>=4.12.0", "extra": "default"},
+    {"name": "pytesseract", "spec": "pytesseract>=0.3.10", "extra": "default"},
+    {"name": "dnspython", "spec": "dnspython>=2.4.0", "extra": "default"},
+    {"name": "stem", "spec": "stem>=1.8.0", "extra": "default"},
+    {"name": "aiobtcdht", "spec": "aiobtcdht>=0.1.0", "extra": "default"},
+    {"name": "pydantic", "spec": "pydantic>=2.0.0", "extra": "default"},
+    {"name": "pyprobables", "spec": "pyprobables>=0.7.0,<0.8.0", "extra": "default"},
+    {"name": "PyYAML", "spec": "PyYAML>=6.0,<7.0", "extra": "default"},
+    {"name": "pyzipper", "spec": "pyzipper>=0.3.6,<0.4.0", "extra": "default"},
+    {"name": "psutil", "spec": "psutil>=5.9.0", "extra": "default"},
+    # light
+    {"name": "fast-langdetect", "spec": "fast-langdetect>=1.0.0", "extra": "light"},
+    {"name": "datasketch", "spec": "datasketch>=1.6.0", "extra": "light"},
+    # apple-accel
+    {"name": "mlx", "spec": "mlx>=0.16.0", "extra": "apple-accel"},
+    {"name": "uvloop", "spec": "uvloop>=0.21.0", "extra": "apple-accel"},
+    # osint-html
+    {"name": "selectolax", "spec": "selectolax>=0.3.21", "extra": "osint-html"},
+    {"name": "xxhash", "spec": "xxhash>=3.4.0", "extra": "osint-html"},
+    {"name": "curl_cffi", "spec": "curl_cffi>=0.7.0", "extra": "osint-html"},
+    {"name": "h2", "spec": "h2>=4.1.0", "extra": "osint-html"},
+    # graph-storage
+    {"name": "pyarrow", "spec": "pyarrow>=16.0.0", "extra": "graph-storage"},
+    {"name": "polars", "spec": "polars>=1.0.0", "extra": "graph-storage"},
+    # torch
+    {"name": "torch", "spec": "torch>=2.1.0", "extra": "torch"},
+    {"name": "torchvision", "spec": "torchvision>=0.16.0", "extra": "torch"},
+    # dev
+    {"name": "pytest", "spec": "pytest>=8.0.0", "extra": "dev"},
+    {"name": "pytest-xdist", "spec": "pytest-xdist>=3.5.0", "extra": "dev"},
+    {"name": "pytest-cov", "spec": "pytest-cov>=4.1.0", "extra": "dev"},
+    {"name": "ruff", "spec": "ruff>=0.1.0", "extra": "dev"},
+    {"name": "mypy", "spec": "mypy>=1.9.0", "extra": "dev"},
+]
+
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class WheelGateResult:
+    """Result of a wheel gate run."""
+    extras_requested: List[str]
+    platform_tag: str
+    pip_command: str
+    dry_run: bool
+    packages_by_extra: Dict[str, List[str]]
+    executed: bool = False
+    exit_code: int = 0
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Core logic
+# ---------------------------------------------------------------------------
+
+def get_platform_tag() -> str:
+    """Return the pip platform tag for cp314 macosx_arm64."""
+    return "cp314-macosx_14_0_arm64"
+
+
+def build_extra_packages(requested_extras: List[str]) -> Dict[str, List[str]]:
+    """Group package names by extra for requested extras + default."""
+    if "all" in requested_extras:
+        requested_extras = [e for e in SUPPORTED_EXTRAS if e != "all"]
+    if "default" not in requested_extras:
+        requested_extras = ["default"] + requested_extras
+
+    result: Dict[str, List[str]] = {}
+    for pkg in WHEEL_REPORT_PACKAGES:
+        if pkg["extra"] in requested_extras:
+            result.setdefault(pkg["extra"], []).append(pkg["name"])
+
+    return result
+
+
+def build_pip_download_command(
+    requested_extras: List[str],
+    platform_tag: str,
+    python_version: str = "314",
+) -> str:
+    """Build the pip download command for the given extras and platform."""
+    if "all" in requested_extras:
+        extras_list = [e for e in SUPPORTED_EXTRAS if e != "all"]
+    else:
+        extras_list = requested_extras if requested_extras else ["default"]
+
+    extra_str = ",".join(sorted(set(extras_list)))
+    # Build pip install command (no deps= only download)
+    cmd = (
+        f"pip download "
+        f"--python-version {python_version} "
+        f"--platform {platform_tag} "
+        f"--only-binary :all: "
+        f"--no-deps "
+        f"-e .[{extra_str}] "
+        f"--dest /tmp/hledac_wheels"
+    )
+    return cmd
+
+
+def run_wheel_gate(
+    requested_extras: List[str],
+    dry_run: bool = True,
+    execute: bool = False,
+) -> WheelGateResult:
+    """
+    Main entry point for wheel gate.
+
+    Returns WheelGateResult with pip command, package grouping, and execution status.
+    """
+    platform_tag = get_platform_tag()
+    packages_by_extra = build_extra_packages(requested_extras)
+    pip_cmd = build_pip_download_command(requested_extras, platform_tag)
+
+    result = WheelGateResult(
+        extras_requested=requested_extras,
+        platform_tag=platform_tag,
+        pip_command=pip_cmd,
+        dry_run=dry_run,
+        packages_by_extra=packages_by_extra,
+    )
+
+    if dry_run:
+        # No network — just report
+        result.executed = False
+        result.exit_code = 0
+        return result
+
+    if not execute:
+        print("ERROR: pip download not executed (--execute not provided)", file=sys.stderr)
+        print("  Add --execute to run pip download.", file=sys.stderr)
+        print(f"  Command that would run: {pip_cmd}", file=sys.stderr)
+        result.exit_code = 1
+        result.error = "execute flag not set"
+        return result
+
+    # Execute pip download
+    print(f"[cp314_wheel_gate] Executing pip download for extras: {requested_extras}", file=sys.stderr)
+    print(f"[cp314_wheel_gate] Platform: {platform_tag}", file=sys.stderr)
+    print(f"[cp314_wheel_gate] Command: {pip_cmd}", file=sys.stderr)
+
+    try:
+        proc = subprocess.run(
+            pip_cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        result.executed = True
+        result.exit_code = proc.returncode
+        if proc.returncode != 0:
+            result.error = proc.stderr[:500]
+            print(f"ERROR: pip download failed: {proc.stderr[:300]}", file=sys.stderr)
+        else:
+            print(f"[cp314_wheel_gate] pip download succeeded", file=sys.stderr)
+    except Exception as e:
+        result.executed = True
+        result.exit_code = 3
+        result.error = str(e)[:300]
+        print(f"ERROR: pip download exception: {e}", file=sys.stderr)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="cp314_wheel_gate.py",
+        description="CPython 3.14 macOS ARM64 wheel validation gate",
+        epilog="Exit codes: 0=success, 1=execute-blocked, 2=invalid extra, 3=pip-failed",
+    )
+    parser.add_argument(
+        "--extra", "-e",
+        action="append",
+        default=[],
+        dest="extras",
+        metavar="EXTRA",
+        choices=sorted(SUPPORTED_EXTRAS),
+        help="Extra to include (default: all). Repeat for multiple.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Default: do not run pip (dry-run mode)",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        default=False,
+        help="REQUIRED to actually run pip download. Without this flag, dry-run only.",
+    )
+    parser.add_argument(
+        "--output-json",
+        metavar="PATH",
+        help="Write wheel gate result as JSON to PATH",
+    )
+    parser.add_argument(
+        "--python-version",
+        default="314",
+        metavar="VER",
+        help="CPython version for platform tag (default: 314)",
+    )
+    return parser
+
+
+def print_report(result: WheelGateResult, out=sys.stdout) -> None:
+    """Print human-readable wheel gate report."""
+    print(f"=== cp314 Wheel Gate Report ===", file=out)
+    print(f"Requested extras : {result.extras_requested or ['default']}", file=out)
+    print(f"Platform tag     : {result.platform_tag}", file=out)
+    print(f"Dry-run          : {result.dry_run}", file=out)
+    print(f"Executed         : {result.executed}", file=out)
+    print(f"Exit code        : {result.exit_code}", file=out)
+    if result.error:
+        print(f"Error            : {result.error}", file=out)
+    print(file=out)
+
+    print("Packages by extra:", file=out)
+    for extra, packages in sorted(result.packages_by_extra.items()):
+        print(f"  [{extra}]", ", ".join(sorted(packages)), file=out)
+
+    print(file=out)
+    print(f"Pip command:", file=out)
+    print(f"  {result.pip_command}", file=out)
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    # Validate extras
+    invalid = set(args.extras) - SUPPORTED_EXTRAS
+    if invalid:
+        print(f"ERROR: unknown extra(s): {', '.join(sorted(invalid))}", file=sys.stderr)
+        print(f"Supported: {', '.join(sorted(SUPPORTED_EXTRAS))}", file=sys.stderr)
+        return 2
+
+    requested = args.extras if args.extras else ["default"]
+    result = run_wheel_gate(
+        requested_extras=requested,
+        dry_run=not args.execute,
+        execute=args.execute,
+    )
+
+    # Output JSON if requested
+    if args.output_json:
+        payload = {
+            "extras_requested": result.extras_requested,
+            "platform_tag": result.platform_tag,
+            "pip_command": result.pip_command,
+            "dry_run": result.dry_run,
+            "executed": result.executed,
+            "exit_code": result.exit_code,
+            "error": result.error,
+            "packages_by_extra": result.packages_by_extra,
+        }
+        with open(args.output_json, "w") as f:
+            json.dump(payload, f, indent=2)
+        print(f"[cp314_wheel_gate] JSON written to {args.output_json}", file=sys.stderr)
+
+    # Always print human-readable report to stdout (only on success)
+    if result.exit_code == 0 or result.dry_run:
+        print_report(result)
+
+    return result.exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

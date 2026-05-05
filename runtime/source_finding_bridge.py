@@ -42,6 +42,7 @@ __all__ = [
     "ct_results_to_findings",
     "wayback_results_to_findings",
     "passive_dns_results_to_findings",
+    "summarize_bridge_conversion",
     "Rejection",
     "RejectionReason",
     "MAX_BRIDGE_OUTPUT",
@@ -75,6 +76,7 @@ MAX_SAMPLE_REJECTIONS: int = 5
 
 _URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 _URL_TRAILING_SLASH_RE = re.compile(r"/+$")
+_WILDCARD_RE = re.compile(r"^\*\.")
 
 
 def _strip_url_scheme(url: str) -> str:
@@ -173,6 +175,11 @@ def _extract_domain_from_ct_hit(url: str, title: str) -> Optional[str]:
     return None
 
 
+def _is_wildcard_domain(domain: str) -> bool:
+    """Check if domain is a wildcard pattern like *.example.com."""
+    return bool(_WILDCARD_RE.match(domain))
+
+
 # ---------------------------------------------------------------------------
 # CT → CanonicalFinding
 # ---------------------------------------------------------------------------
@@ -242,6 +249,10 @@ def ct_results_to_findings(
             rejections.append(REJECTION_LOW_INFORMATION)
             continue
 
+        if _is_wildcard_domain(domain):
+            rejections.append(REJECTION_LOW_INFORMATION)
+            continue
+
         if domain in seen_domains:
             rejections.append(REJECTION_DUPLICATE_CANDIDATE)
             continue
@@ -252,7 +263,8 @@ def ct_results_to_findings(
         finding_id = f"ct-{blake2_id}-{sprint_id[:8]}"
 
         provenance: Tuple[str, ...] = (
-            f"ct:{domain}",
+            f"source_family:ct",
+            f"domain:{domain}",
             f"query:{query[:200]}",
             f"sprint:{sprint_id[:16]}",
             f"title:{title[:200]}",
@@ -336,7 +348,8 @@ def wayback_results_to_findings(
         finding_id = f"wdiff-{blake2_id}-{timestamp[:8]}"[:64]
 
         provenance: Tuple[str, ...] = (
-            f"wayback:{url[:300]}",
+            f"source_family:wayback_diff",
+            f"url:{url[:300]}",
             f"digest:{digest[:64]}",
             f"change:{change_type}",
             f"ts:{timestamp}",
@@ -468,6 +481,7 @@ def passive_dns_results_to_findings(
         finding_id = f"pdns-{blake2_id}-{sprint_id[:8]}"
 
         provenance: Tuple[str, ...] = (
+            f"source_family:passive_dns",
             f"domain:{query_stripped}",
             f"ip:{ip_stripped}",
             f"sprint:{sprint_id[:16]}",
@@ -489,3 +503,53 @@ def passive_dns_results_to_findings(
             findings.append(finding)
 
     return findings, rejections
+
+
+# ---------------------------------------------------------------------------
+# Bridge conversion summary helper
+# ---------------------------------------------------------------------------
+
+
+def summarize_bridge_conversion(
+    family: str,
+    findings: List[Any],
+    rejections: List[RejectionReason],
+) -> dict[str, Any]:
+    """
+    Summarize bridge conversion results.
+
+    Pure function — no storage, no network, no MLX.
+
+    Args:
+        family: Source family name (e.g., "ct", "wayback_diff", "passive_dns")
+        findings: List of CanonicalFinding candidates produced
+        rejections: List of rejection reason strings
+
+    Returns:
+        Bounded summary dict with:
+        - family: source family
+        - candidatesProduced: count of findings
+        - rejectionsCount: count of rejections
+        - rejectionReasons: unique reasons with counts (capped at 10)
+        - totalProcessed: sum of candidates + rejections (capped at MAX_BRIDGE_OUTPUT)
+    """
+    rejection_counts: dict[str, int] = {}
+    for reason in rejections:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    # Cap rejection reason entries
+    sorted_reasons = sorted(
+        rejection_counts.items(),
+        key=lambda x: (-x[1], x[0]),
+    )
+    top_rejections = dict(sorted_reasons[:10])
+
+    total = min(len(findings) + len(rejections), MAX_BRIDGE_OUTPUT)
+
+    return {
+        "family": family,
+        "candidatesProduced": len(findings),
+        "rejectionsCount": len(rejections),
+        "rejectionReasons": top_rejections,
+        "totalProcessed": total,
+    }

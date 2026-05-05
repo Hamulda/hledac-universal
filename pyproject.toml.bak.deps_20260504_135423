@@ -1,0 +1,176 @@
+# pyproject.toml — Hledac Universal v18+ packaging authority
+#
+# Sprint F207N-B: Build Truth
+# Single source of truth for dependencies, extras, and Python version policy.
+# No pip install, no network. Reproducible wheel validation for cp314.
+#
+# Usage:
+#   pip install .                    # default deps only
+#   pip install .[light]             # + language detection + LSH dedup
+#   pip install .[apple-accel]       # + MLX on Apple Silicon
+#   pip install .[osint-html]        # + selectolax, curl_cffi, h2
+#   pip install .[graph-storage]     # + duckdb, lancedb, pyarrow, polars
+#   pip install .[torch]             # + PyTorch (CPU or MPS)
+#   pip install .[dev]              # + pytest, ruff, mypy
+#   pip install .[all]              # everything
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hledac-universal"
+version = "18.0.0"
+description = "Autonomous OSINT orchestrator for M1 MacBook — Ghost Prime"
+readme = "README.md"
+requires-python = ">=3.13,<3.15"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Vojtech Hamada", email = "vojtahamada@seznam.cz" }
+]
+keywords = ["osint", "autonomous", "orchestrator", "m1", "apple-silicon"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: Apple :: macOS",
+    "Operating System :: Apple :: macOS :: macOS 14 Sonoma",
+    "Operating System :: Apple :: macOS :: macOS 15 Sequoia",
+]
+
+# ------------------------------------------------------------------ default
+# Lean default: no torch, no chromium, no browser binary.
+# Aligned with requirements.txt core deps.
+dependencies = [
+    # Core async
+    "aiosqlite>=0.19.0",
+    "aiohttp>=3.9.0",
+    "aiohttp-socks>=0.8.0",
+
+    # HTTP/stealth (optional in FetchCoordinator, fallback exists)
+    "httpx>=0.27.0",
+
+    # Storage
+    "lancedb>=0.2.5",        # ANN fast path (optional, fail-soft)
+    "duckdb>=1.2.0",         # Sprint F198A cross-sprint graph accumulation
+
+    # Serialization
+    "orjson>=3.9.0",
+
+    # Browser automation
+    # camoufox is the primary browser (JA3 fingerprint, JS rendering).
+    # Browser binary is bundled with camoufox — NOT a separate chromium dep.
+    # Fails soft if missing (nodriver fallback in public_fetcher).
+    "camoufox[geoip]>=1.0.0",
+
+    # Web search
+    "duckduckgo-search>=8.0.0",
+
+    # Parsing
+    "beautifulsoup4>=4.12.0",
+    "pytesseract>=0.3.10",
+
+    # Networking
+    "dnspython>=2.4.0",
+    "stem>=1.8.0",
+    "aiobtcdht>=0.1.0",
+
+    # Core models
+    "pydantic>=2.0.0",
+
+    # Required utilities (proven imports)
+    "pyprobables>=4.0.0",    # url_dedup RotatingBloomFilter
+    "pyzipper>=1.4.0",       # vault_manager AES/ZIP encryption
+    "psutil>=5.9.0",         # memory monitoring
+]
+
+# ------------------------------------------------------------------ optionals
+[project.optional-dependencies]
+# --- light: language detection + LSH dedup (under 50MB total) ---
+light = [
+    "fast-langdetect>=1.0.0",   # FTZ-format lang detection; import: fast_langdetect
+    "datasketch>=1.6.0",         # MinHash LSH; import: datasketch
+]
+
+# --- apple-accel: Apple Silicon MLX/uvloop ---
+# Platform-guarded: mlx requires Darwin+arm64.
+# uvloop accelerates asyncio on Darwin.
+apple-accel = [
+    "mlx>=0.16.0; platform_system=='Darwin' and platform_machine=='arm64'",
+    "uvloop>=0.21.0; platform_system=='Darwin'",        # asyncio event loop acceleration
+]
+
+# --- osint-html: fast HTML parsing + OSINT-specific HTTP ---
+osint-html = [
+    "selectolax>=0.3.21",   # Rust parser; 10-50x faster than BS4
+    "xxhash>=3.4.0",        # fast non-crypto hash for IOC deduplication
+    "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
+    "h2>=4.1.0",            # HTTP/2 for optional httpx_h2 transport lane
+]
+
+# --- graph-storage: columnar + DuckDB + LanceDB ---
+graph-storage = [
+    "duckdb>=1.2.0",
+    "lancedb>=0.2.5",
+    "pyarrow>=16.0.0",
+    "polars>=1.0.0",
+]
+
+# --- torch: PyTorch (CPU or MPS on Apple Silicon) ---
+# torch is NEVER in default deps. Install separately:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# or for MPS:
+#   pip install torch torchvision
+torch = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+]
+
+# --- dev: testing + linting ---
+dev = [
+    "pytest>=8.0.0",
+    "pytest-xdist>=3.5.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.9.0",
+]
+
+# --- all: everything except torch (torch is too heavy for routine dev) ---
+all = [
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev]",
+]
+
+# ------------------------------------------------------------------ entry points
+[project.scripts]
+hledac = "hledac.universal.__main__:main"
+
+# ------------------------------------------------------------------ static analysis
+[tool.setuptools]
+packages = ["hledac.universal"]
+
+[tool.setuptools.package-data]
+"hledac.universal" = ["py.typed"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC"]
+ignore = ["E501"]   # line-length handled by formatter
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --tb=short"
+
+[tool.uv]
+python-preference = "only-managed"

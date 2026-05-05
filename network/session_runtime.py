@@ -94,6 +94,7 @@ _session_lock: threading.Lock = threading.Lock()
 _session_closed: bool = False
 _uvloop_enabled: bool = False
 _last_error: Optional[str] = None
+_last_close_error: Optional[str] = None
 
 
 async def async_get_aiohttp_session() -> aiohttp.ClientSession:
@@ -169,7 +170,7 @@ async def close_aiohttp_session_async() -> None:
         [I4] idempotent — multiple calls are safe
         [I5] after close, next await creates new instance
     """
-    global _session_instance, _session_closed, _last_error
+    global _session_instance, _session_closed, _last_error, _last_close_error
 
     with _session_lock:
         if _session_instance is not None and not _session_instance.closed:
@@ -186,6 +187,7 @@ async def close_aiohttp_session_async() -> None:
         logger.debug("[SESSION] aiohttp.ClientSession closed async")
     except Exception as e:
         logger.warning(f"[SESSION] async close error: {e}")
+        _last_close_error = str(e)
         _last_error = str(e)
 
 
@@ -217,6 +219,7 @@ def get_session_runtime_status() -> dict:
         "session_closed": session_actually_closed,
         "uvloop_enabled": _uvloop_enabled,
         "last_error": _last_error,
+        "last_close_error": _last_close_error,
     }
 
 
@@ -302,3 +305,51 @@ def try_install_uvloop() -> bool:
         _last_error = str(e)
         logger.warning(f"[RUNTIME] uvloop install failed: {e}")
         return False
+
+
+# =============================================================================
+# Test-Only Cleanup Helper — F208G
+# =============================================================================
+
+def _reset_session_runtime_for_tests() -> None:
+    """
+    Reset all session_runtime module globals to pristine state.
+
+    THIS METHOD IS FOR TEST USE ONLY.
+    It exists solely to enable hermetic test isolation.
+    It MUST NOT be called from any production code path.
+
+    Usage:
+        # In test fixture:
+        sr._reset_session_runtime_for_tests()
+
+    This resets: _session_instance, _session_closed, _session_lock
+    (NOT _uvloop_enabled — that is a runtime env flag that persists across tests).
+
+    Idempotent: safe to call multiple times within a test.
+    After reset, the next await of async_get_aiohttp_session() creates a fresh
+    session with pristine connector state.
+    """
+    global _session_instance, _session_closed, _last_error, _last_close_error
+
+    # First ensure any existing session is properly closed
+    if _session_instance is not None:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # No event loop in this thread — best-effort: clear the reference
+            # The session is orphaned and will be GC'd; no way to close it.
+            _session_instance = None
+        else:
+            try:
+                if not loop.is_running():
+                    loop.run_until_complete(_session_instance.close())
+            except Exception:
+                # Best-effort cleanup — ignore close errors (session may already be closed)
+                pass
+            finally:
+                _session_instance = None
+
+    _session_closed = False
+    _last_error = None
+    _last_close_error = None

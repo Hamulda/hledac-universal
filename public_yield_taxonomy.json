@@ -1,0 +1,56 @@
+{
+  "sprint": "F208G-A",
+  "description": "PUBLIC Yield Taxonomy and Zero-Yield Explanation",
+  "date": "2026-05-05",
+  "terminal_reason_field": "terminal_reason",
+  "terminal_reason_type": "str | None",
+  "pipeline_page_result_fields": {
+    "terminal_reason": "str | None — None means accepted, else a terminal category string"
+  },
+  "terminal_categories": [
+    {"value": null, "label": "accepted", "description": "Page accepted, findings stored"},
+    {"value": "skipped_duplicate", "label": "skipped_duplicate", "description": "URL dedup bloom filter hit"},
+    {"value": "skipped_unsupported_scheme", "label": "skipped_unsupported_scheme", "description": "Non-http(s) URL"},
+    {"value": "skipped_memory_gate", "label": "skipped_memory_gate", "description": "UMA emergency/critical blocked"},
+    {"value": "skipped_quality_gate", "label": "skipped_quality_gate", "description": "Discovery score too low"},
+    {"value": "skipped_browser_unavailable", "label": "skipped_browser_unavailable", "description": "JS renderer unavailable"},
+    {"value": "skipped_xml_or_feed", "label": "skipped_xml_or_feed", "description": "XML/feed URL detected"},
+    {"value": "skipped_timeout", "label": "skipped_timeout", "description": "Fetch timed out"},
+    {"value": "skipped_fetch_error", "label": "skipped_fetch_error", "description": "Fetch exception/error"},
+    {"value": "rejected_no_pattern_match", "label": "rejected_no_pattern_match", "description": "Fetched but no patterns matched"},
+    {"value": "rejected_low_information", "label": "rejected_low_information", "description": "SKIP_WEAK quality gate"},
+    {"value": "rejected_duplicate", "label": "rejected_duplicate", "description": "Per-page dedup exhausted"},
+    {"value": "rejected_storage_rejected", "label": "rejected_storage_rejected", "description": "DuckDB/LMDB write failure"}
+  ],
+  "run_level_counters": {
+    "public_terminal_classified_count": "URLs with terminal_reason != None",
+    "public_unclassified_count": "URLs with terminal_reason == None",
+    "public_terminal_reason_counts": "dict of terminal_reason: count",
+    "public_fetch_success": "fetched=True with text available",
+    "public_fetch_failed": "fetched=False (all skip/error reasons)",
+    "public_skipped_duplicate": "dedup bloom filter hit",
+    "public_skipped_unsupported_scheme": "non-http(s) URL",
+    "public_skipped_memory_gate": "UMA emergency/critical blocked",
+    "public_skipped_quality_gate": "discovery score too low",
+    "public_skipped_browser_unavailable": "JS renderer unavailable",
+    "public_skipped_xml_or_feed": "XML/feed URL detected",
+    "public_skipped_timeout": "fetch timed out",
+    "public_skipped_fetch_error": "fetch exception/error",
+    "public_rejected_no_pattern_match": "fetched text had no pattern matches",
+    "public_rejected_low_information": "page quality too low (SKIP_WEAK)",
+    "public_rejected_duplicate": "per-page dedup exhausted",
+    "public_rejected_storage_rejected": "DuckDB storage rejected findings"
+  },
+  "bounded_url_samples": {
+    "public_skipped_url_sample": "max 5 skipped URL samples",
+    "public_rejected_url_samples": "max 5 rejected URL samples"
+  },
+  "implementation_files": [
+    "pipeline/live_public_pipeline.py"
+  ],
+  "test_files": [
+    "tests/probe_f208g_public_yield_taxonomy/test_f208g_public_yield_taxonomy.py"
+  ],
+  "test_count": 15,
+  "test_status": "all passing"
+}
