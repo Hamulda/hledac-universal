@@ -134,7 +134,7 @@ class MemoryProfiler:
 
         # Start memory monitoring task - guard against missing event loop
         try:
-            asyncio.create_task(self._monitor_memory())
+            asyncio.create_task(self._monitor_memory(), name="benchmark:memory_monitor")
         except RuntimeError as e:
             # No running event loop - profiling not available
             self._active = False
@@ -307,7 +307,8 @@ class AgentBenchmarker:
             tasks = []
             for agent_name, agent in agents.items():
                 task = asyncio.create_task(
-                    self.benchmark_agent(agent_name, agent)
+                    self.benchmark_agent(agent_name, agent),
+                    name=f"benchmark:agent:{agent_name}"
                 )
                 tasks.append((agent_name, task))
 

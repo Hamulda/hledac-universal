@@ -182,7 +182,7 @@ class WasmSandbox:
 
         try:
             # Run in executor to not block event loop
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,

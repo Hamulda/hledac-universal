@@ -3063,6 +3063,21 @@ def main() -> None:
     import os
     logger.info(f"[BOOT] PID={os.getpid()} — python -m asyncio ps {os.getpid()} | python -m asyncio pstree {os.getpid()}")
 
+    # F214Q: Remote debug OPSEC guard — warn if PYTHON_DISABLE_REMOTE_DEBUG not set;
+    # strict exit only when HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 is also set.
+    # Python 3.14 activates safe-external-debugger by default.
+    if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
+        if os.environ.get("HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED") == "1":
+            sys.exit(
+                "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 but PYTHON_DISABLE_REMOTE_DEBUG not set — "
+                "OSINT runtime requires external debugger disabled"
+            )
+        logger.warning(
+            "[OPSEC] PYTHON_DISABLE_REMOTE_DEBUG not set — "
+            "Python 3.14 safe-external-debugger interface is ACTIVE. "
+            "Set PYTHON_DISABLE_REMOTE_DEBUG=1 for production OSINT runs."
+        )
+
     # Sprint 8PC: CLI parsing for --sprint flag
     sprint_target: Optional[str] = None
     sprint_duration: float = 1800.0

@@ -1050,6 +1050,7 @@ def _derive_live_kpi(
         acquisition_terminality_checked=acquisition_terminality_checked,
         acquisition_terminality_satisfied=acquisition_terminality_satisfied,
         acquisition_terminality_missing_lanes=list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
+        windup_guard_observation=wg,
     )
 
     # F208I: terminality_quality_verdict + failure reasons for domain queries
@@ -1200,6 +1201,7 @@ def _derive_next_action(
     acquisition_terminality_checked: bool | None = None,
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: list[str] | None = None,
+    windup_guard_observation: dict | None = None,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
@@ -1208,9 +1210,22 @@ def _derive_next_action(
     so operators see WHY public_findings=0 before generic nonfeed recommendations.
     F207M: starvation rule fires before most other rules to surface scheduler-order fixes.
     F207Q: prewindup barrier rules fire before starvation to surface barrier-not-called issues.
+    F208M: terminality missing lanes => fix_terminality_missing_lane:<lane>
+    F208M: windup callback supplied>0 executed=0 => fix_callback_execution
+    F208M: return guard checked+satisfied => never suggest fix_return_guard_report_mapping
+    F208M: scheduler_exit run_complete => never suggest add_scheduler_exit_tracer
     """
     prewindup_required_lanes = prewindup_required_lanes or []
     prewindup_attempted_lanes = prewindup_attempted_lanes or []
+
+    # F208M: Windup guard callback rule — fire before return guard rules
+    # When callback_supplied > 0 but callback_executed == 0, the callback was wired
+    # but never executed. This is a distinct issue from callback_supplied == 0 (wiring).
+    wg = windup_guard_observation or {}
+    wg_supplied = wg.get("callback_supplied_count", 0)
+    wg_exec = wg.get("callback_executed_count", 0)
+    if wg_supplied > 0 and wg_exec == 0:
+        return ("fix_callback_execution", None)
 
     # F207T: Return guard rules — fire BEFORE prewindup barrier rules
     # because return_guard_checked=false with windup_guard_call_count=0 means
@@ -1222,9 +1237,6 @@ def _derive_next_action(
     has_rg_telemetry = bool(rg)
     rg_checked: bool = bool(rg.get("checked")) if has_rg_telemetry else False
     rg_satisfied: bool = rg.get("satisfied", False) if has_rg_telemetry else False
-    rg_required_lanes: list[str] = rg.get("required_lanes", []) if has_rg_telemetry else []
-    rg_attempted_lanes: list[str] = rg.get("attempted_lanes", []) if has_rg_telemetry else []
-    rg_nonfeed_attempted: bool = any(lane in rg_attempted_lanes for lane in ("public", "ct"))
 
     # Rule -1 (F207T): Return guard never checked — scheduler return guard not called
     # ONLY when we have return_guard telemetry AND checked=False.
@@ -1244,16 +1256,9 @@ def _derive_next_action(
     if has_rg_telemetry and rg_checked and not rg_satisfied:
         return ("fix_return_guard_terminal_state", None)
 
-    # Rule -1c (F207T): Return guard checked and satisfied but nonfeed lanes never attempted
-    # "satisfied" but no nonfeed dispatched despite feed-only run → report mapping gap
-    if (has_rg_telemetry
-            and rg_checked
-            and rg_satisfied
-            and rg_required_lanes
-            and not rg_nonfeed_attempted
-            and ct_findings == 0
-            and public_findings == 0):
-        return ("fix_return_guard_report_mapping", None)
+    # F208M: Return guard checked AND satisfied — never emit fix_return_guard_report_mapping.
+    # If both checked and satisfied are True, the guard is working correctly and
+    # any nonfeed starvation is a pre-dispatch issue, not a report mapping gap.
 
     # F207V-B: Scheduler exit path rules — fire before return guard rules
     # so operators see which exit path was taken when guard was bypassed.
@@ -1262,21 +1267,24 @@ def _derive_next_action(
     # Only fire when scheduler_exit was explicitly provided (not None).
     # If scheduler_exit is None (no telemetry available), fall through.
     se = scheduler_exit
-    if se is not None and not se.get("exit_path"):
+    # F208M: run_complete is a legitimate exit path — do not suggest add_scheduler_exit_tracer
+    se_path = se.get("exit_path") if se is not None else None
+    if se is not None and not se_path:
         return ("add_scheduler_exit_tracer", None)
 
     # Rule -1e (F207V-B): feed-only + nonfeed eligible + return_guard not checked
     # The scheduler exit path bypassed the return guard. Include the specific path.
+    # F208M: skip run_complete — it's a legitimate exit path, not a bypass.
     if (se is not None
-            and se.get("exit_path")
+            and se_path
+            and se_path != "run_complete"
             and not rg_checked
             and runtime_truth.get("cycles_started", 0) > 0
             and runtime_truth.get("primary_signal_source")
             and feed_findings > 0
             and ct_findings == 0
             and public_findings == 0):
-        exit_path = se.get("exit_path", "unknown")
-        return (f"patch_scheduler_exit_path:{exit_path}", None)
+        return (f"patch_scheduler_exit_path:{se_path}", None)
 
     # Rule 0: Pre-windup barrier not called (F207Q)
     # Only fire when acquisition_strategy telemetry is PRESENT (not None/empty).
@@ -1321,12 +1329,13 @@ def _derive_next_action(
             and (ct_findings > 0 or public_findings > 0)):
         return ("fix_terminality_wiring", None)
 
-    # Rule 0f: Terminality checked but NOT satisfied — mandatory lanes missing terminal state
+    # Rule 0f (F208M): Terminality checked but NOT satisfied — mandatory lanes missing terminal state
     # This is the active300 signal that required lanes (PUBLIC/CT) didn't reach terminal state.
+    # F208M: emit fix_terminality_missing_lane:<lane> with specific lane, not generic fix_terminality_wiring.
     if acquisition_terminality_checked is True and acquisition_terminality_satisfied is False:
         missing = acquisition_terminality_missing_lanes or []
         if missing:
-            return ("fix_terminality_wiring", f"missing:{','.join(missing)}")
+            return (f"fix_terminality_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")
         return ("fix_terminality_wiring", None)
 
     # Rule 1: nonfeed starvation (F207M) — must fire early so operators see it
@@ -2126,12 +2135,11 @@ def _render_md(result: LiveMeasurementResult) -> str:
             if rg_errors:
                 lines.append(f"| Errors | {json.dumps(rg_errors)} |")
             # Diagnostic next-action based on return guard chain
+            # F208M: when rg_checked=True and rg_satisfied=True, never suggest fix_return_guard_report_mapping
             if not rg_checked:
                 lines.append(f"| **Next action** | **fix_scheduler_return_guard_not_called** |")
             elif rg_checked and not rg_satisfied:
                 lines.append(f"| **Next action** | **fix_return_guard_terminal_state** |")
-            elif rg_checked and rg_satisfied and not any(lane in rg_attempted for lane in ("public", "ct")):
-                lines.append(f"| **Next action** | **fix_return_guard_report_mapping** |")
 
     # Scheduler Exit Path section (F207V-B)
     kpi = result.live_kpi
@@ -2163,7 +2171,8 @@ def _render_md(result: LiveMeasurementResult) -> str:
         ])
         if not se_path:
             lines.append(f"| **Next action** | **add_scheduler_exit_tracer** |")
-        elif not se_guard_checked:
+        elif se_path and se_path != "run_complete" and not se_guard_checked:
+            # F208M: run_complete is a legitimate exit path — no patch suggestion needed
             lines.append(f"| **Next action** | **patch_scheduler_exit_path:{se_path}** |")
 
     # PUBLIC Acceptance section (F207K) — detailed breakdown

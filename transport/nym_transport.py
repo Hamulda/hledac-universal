@@ -2,7 +2,7 @@ import asyncio
 import logging
 import json
 import time
-import uuid
+from utils.uuid7 import new_runtime_id
 from typing import Dict, Callable, Optional, Any
 from pathlib import Path
 
@@ -63,8 +63,8 @@ class NymTransport(Transport):
             raise RuntimeError(f"nym-client not found at {self.nym_client_path}")
         logger.info("Nym client process started")
 
-        self._stdout_task = asyncio.create_task(self._drain_stream(self.client_process.stdout, 'stdout'))
-        self._stderr_task = asyncio.create_task(self._drain_stream(self.client_process.stderr, 'stderr'))
+        self._stdout_task = asyncio.create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name="nym:stdout_drain")
+        self._stderr_task = asyncio.create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name="nym:stderr_drain")
 
         for _ in range(10):
             try:
@@ -91,9 +91,9 @@ class NymTransport(Transport):
             raise RuntimeError("Nym client did not send selfAddress")
 
         self._ready.set()
-        self._sender_task = asyncio.create_task(self._sender_loop())
-        self._receiver_task = asyncio.create_task(self._receiver_loop())
-        self._health_check_task = asyncio.create_task(self._health_check_loop())
+        self._sender_task = asyncio.create_task(self._sender_loop(), name="nym:sender")
+        self._receiver_task = asyncio.create_task(self._receiver_loop(), name="nym:receiver")
+        self._health_check_task = asyncio.create_task(self._health_check_loop(), name="nym:health_check")
 
     async def _drain_stream(self, stream, name: str):
         while True:
@@ -147,7 +147,7 @@ class NymTransport(Transport):
         if self.circuit_breaker_open:
             raise RuntimeError("Circuit breaker open, cannot send via Nym")
         if msg_id is None:
-            msg_id = str(uuid.uuid4())
+            msg_id = new_runtime_id()
         message = {
             'type': 'send',
             'recipient': target,

@@ -487,6 +487,7 @@ class SprintSchedulerResult:
     windup_guard_last_reason: str = ""
     windup_guard_last_phase: str = ""
     windup_guard_last_allowed: bool | None = None
+    windup_guard_last_callback_not_executed_reason: str = ""
     # Sprint F207T-A: Return guard for mandatory nonfeed terminal state
     # Scheduler cannot return a valid result for domain query until PUBLIC and CT
     # have terminal state (attempted | skipped | error | timeout)
@@ -515,6 +516,15 @@ class SprintSchedulerResult:
     acquisition_terminality_satisfied: bool = False
     acquisition_terminality_missing_lanes: tuple[str, ...] = ()
     acquisition_terminality_report: dict = field(default_factory=dict)
+    # Sprint F208M-A: Nonfeed predispatch before final terminality
+    # Before finalizing terminality, run bounded PUBLIC/CT predispatch so that
+    # terminality is computed AFTER lanes have terminal state, not before.
+    # This fixes the race where terminality computed before CT/PUBLIC predispatch
+    # results arrived, marking CT as missing even though predispatch was attempted.
+    nonfeed_predispatch_checked: bool = False
+    nonfeed_predispatch_ran: bool = False
+    nonfeed_predispatch_reason: str | None = None
+    nonfeed_predispatch_outcomes_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -1271,6 +1281,9 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "stop_requested"
                     ):
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "stop_requested_break"
+                        )
                         self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -1285,6 +1298,9 @@ class SprintScheduler:
                     # Abort is terminal; attempt guard but do not block abort
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "lifecycle_abort"
+                    )
+                    await self._ensure_nonfeed_predispatch_before_finalization(
+                        query, "lifecycle_abort_break"
                     )
                     self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
                     break
@@ -1329,7 +1345,6 @@ class SprintScheduler:
                     continue
 
                 # Barrier satisfied or already delayed once — delegate to runner
-                self._result.windup_guard_callback_supplied_count += 1
                 _guard_result = self._runner.windup_guard(
                     now_monotonic,
                     pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(
@@ -1338,10 +1353,14 @@ class SprintScheduler:
                 )
                 _obs = self._runner.last_guard_observation
                 if _obs:
+                    # F208M-B: Only increment supplied when callback was actually reached
+                    if _obs.get("callback_supplied"):
+                        self._result.windup_guard_callback_supplied_count += 1
                     self._result.windup_guard_callback_executed_count += 1 if _obs.get("callback_executed") else 0
                     self._result.windup_guard_last_reason = _obs.get("reason", "")
                     self._result.windup_guard_last_phase = _obs.get("phase", "")
                     self._result.windup_guard_last_allowed = _obs.get("allowed")
+                    self._result.windup_guard_last_callback_not_executed_reason = _obs.get("callback_not_executed_reason", "")
                 if _guard_result:
                     # If nonfeed pre-dispatch hasn't run yet, yield to it first
                     if not self._nonfeed_predispatch_done:
@@ -1363,11 +1382,17 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "windup_barrier"
                     ):
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "windup_barrier_passed"
+                        )
                         self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
                         break  # exit work loop → teardown
                     # Guard blocked — force one bounded terminalization pass then break
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "windup_barrier_forced"
+                    )
+                    await self._ensure_nonfeed_predispatch_before_finalization(
+                        query, "windup_barrier_break"
                     )
                     self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
                     break  # exit work loop → teardown
@@ -1387,6 +1412,9 @@ class SprintScheduler:
                     # barrier dispatch to satisfy mandatory lanes, then break
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "max_cycles"
+                    )
+                    await self._ensure_nonfeed_predispatch_before_finalization(
+                        query, "max_cycles_break"
                     )
                     self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
                     break
@@ -1416,6 +1444,9 @@ class SprintScheduler:
                     # force one final barrier dispatch, then proceed to windup
                     await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "duration_budget"
+                    )
+                    await self._ensure_nonfeed_predispatch_before_finalization(
+                        query, "duration_budget_break"
                     )
                     self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
                     break
@@ -1451,6 +1482,9 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "cycle_ok_false"
                     ):
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "cycle_ok_false_break"
+                        )
                         self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -1466,6 +1500,9 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "stop_on_first_accepted"
                     ):
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "stop_on_first_accepted_break"
+                        )
                         self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -1487,6 +1524,9 @@ class SprintScheduler:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         query, duckdb_store, "post_sleep_windup"
                     ):
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "post_sleep_windup_break"
+                        )
                         self._finalize_result_truth("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP", query)
                         break
                     # Guard blocked — continue loop once to satisfy nonfeed lanes
@@ -1611,6 +1651,11 @@ class SprintScheduler:
         # Sprint F208I-B: Finalize result ONCE before returning.
         # _finalize_result_truth computes terminality + calls _record_scheduler_exit.
         # Call it here so it runs for the normal completion path.
+        # Sprint F208M-A: Run nonfeed predispatch before final terminality computation
+        # so terminality sees lanes with terminal state, not empty acquisition_lane_outcomes.
+        await self._ensure_nonfeed_predispatch_before_finalization(
+            query, "run_complete"
+        )
         self._finalize_result_truth(
             exit_path="run_complete",
             exit_reason="run() finished normally",
@@ -1693,19 +1738,9 @@ class SprintScheduler:
             #  - any acquisition_lane_outcomes has lane="CT" with attempted=True
             #    (CT was attempted but produced zero accepted findings — terminal=success_empty)
             # CT is MISSING only when no CT outcome with attempted=True exists at all.
-            _ct_has_attempted_outcome = any(
-                (_o.lane == "CT" and getattr(_o, "attempted", False))
-                or (_o.get("lane") == "CT" and _o.get("attempted", False))
-                for _o in (self._result.acquisition_lane_outcomes or ())
-            )
-            if (self._result.ct_log_discovered or 0) > 0 or (self._result.lane_ct_accepted_findings or 0) > 0 or _ct_has_attempted_outcome:
-                _observed_outcomes.append({
-                    "attempted": True,
-                    "skipped": False,
-                    "error": None,
-                    "timeout": False,
-                    "lane": "CT",
-                })
+            _ct_outcome = self._collect_ct_terminal_outcome()
+            if _ct_outcome is not None:
+                _observed_outcomes.append(_ct_outcome)
                 _seen_outcome_lanes.add("CT")
             # Also include lane outcomes from acquisition_lane_outcomes, skipping
             # lanes already represented via _public_outcome or CT check above
@@ -1741,6 +1776,199 @@ class SprintScheduler:
 
         # Record scheduler exit path
         self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
+
+    # ── Sprint F208M-A: Nonfeed predispatch before final terminality ──────────
+
+    async def _ensure_nonfeed_predispatch_before_finalization(
+        self,
+        query: str,
+        reason: str,
+    ) -> None:
+        """
+        Sprint F208M-A: Ensure nonfeed predispatch has run before final terminality.
+
+        This helper is called before every _finalize_result_truth() to guarantee
+        that bounded CT/PUBLIC predispatch has had a chance to populate
+        acquisition_lane_outcomes / _lane_outcomes BEFORE terminality is computed.
+
+        Without this, terminality computed in _finalize_result_truth sees
+        acquisition_lane_outcomes empty (no CT attempted yet), marking CT as
+        missing even though _maybe_dispatch_nonfeed_probe_lanes() was called.
+
+        Runs only once per sprint — subsequent calls are no-ops.
+        Records explicit telemetry so failure is never silent.
+
+        Args:
+            query: Sprint query for lane shaping.
+            reason: Human-readable reason for this finalization call.
+
+        Raises:
+            CancelledError: propagated if predispatch is cancelled.
+        """
+        if self._result.nonfeed_predispatch_checked:
+            return
+
+        self._result.nonfeed_predispatch_checked = True
+        self._result.nonfeed_predispatch_reason = reason
+
+        try:
+            # Run bounded nonfeed predispatch using the existing probe lane helper.
+            # This uses the same seams as _maybe_dispatch_nonfeed_probe_lanes:
+            #   - CT via _run_ct_predispatch (max 5 results, 15s timeout)
+            #   - PUBLIC via _attempt_public_prewindup_barrier (max 3 results, 10s timeout)
+            #   - No stealth, no browser, no MLX load
+            await self._maybe_dispatch_nonfeed_probe_lanes(query, self._duckdb_store)
+            self._result.nonfeed_predispatch_ran = True
+            # Count outcomes accumulated in acquisition_lane_outcomes
+            _count = len(self._result.acquisition_lane_outcomes or ())
+            self._result.nonfeed_predispatch_outcomes_count = _count
+        except asyncio.CancelledError:
+            # Propagate cancellation — do not catch
+            raise
+        except Exception as exc:
+            # Record terminal error outcome — terminality will be computed with
+            # whatever state is available; fail-safe prevents crash
+            log.debug("[F208M-A] Nonfeed predispatch failed before finalization: %s", exc)
+            self._result.nonfeed_predispatch_ran = False
+            self._result.nonfeed_predispatch_outcomes_count = 0
+
+    # ── Sprint F208L-A: CT outcome SSOT ────────────────────────────────────────
+
+    def _collect_ct_terminal_outcome(self) -> dict | None:
+        """
+        Sprint F208L-A: Collect canonical CT terminal outcome from all CT surfaces.
+
+        This is the ONE source of truth for CT terminality in _finalize_result_truth.
+        It inspects all canonical CT surfaces and returns a complete outcome dict
+        with lane, family, attempted, terminal_state, raw_count, accepted_count,
+        error, timeout, skipped fields.
+
+        Returns None when CT was never attempted (not even attempted=True with zero
+        raw results) — allowing terminality_report to mark CT as missing.
+
+        Terminal state rules:
+          - error not None  → terminal_state="error"
+          - timeout=True    → terminal_state="timeout"
+          - skipped=True    → terminal_state="skipped"
+          - raw_count > 0 and accepted_count == 0 → terminal_state="success_empty"
+          - raw_count == 0 and attempted=True and no error → terminal_state="empty"
+          - attempted=True (default terminal) → terminal_state="success"
+        """
+        _ct_outcome: dict | None = None
+
+        # Surface 1: acquisition_lane_outcomes (canonical lane runner result)
+        for _o in (self._result.acquisition_lane_outcomes or ()):
+            _lane_name = getattr(_o, "lane", None)
+            if _lane_name is None and isinstance(_o, dict):
+                _lane_name = _o.get("lane")
+            if _lane_name == "CT":
+                _d = _o.to_dict() if hasattr(_o, "to_dict") else dict(_o)
+                _attempted = _d.get("attempted", False)
+                if not _attempted:
+                    continue  # skip non-attempted CT entries
+                _raw = _d.get("raw_count", 0) or _d.get("ct_results_raw", 0) or 0
+                _accepted = _d.get("accepted_count", 0) or _d.get("accepted_findings", 0) or 0
+                _error = _d.get("error")
+                _timeout = _d.get("timeout", False)
+                _skipped = _d.get("skipped", False)
+
+                # Derive terminal_state
+                if _error is not None:
+                    _ts = "error"
+                elif _timeout:
+                    _ts = "timeout"
+                elif _skipped:
+                    _ts = "skipped"
+                elif _raw > 0 and _accepted == 0:
+                    _ts = "success_empty"
+                elif _raw == 0 and _attempted and _error is None:
+                    _ts = "empty"
+                else:
+                    _ts = "success"
+
+                _ct_outcome = {
+                    "lane": "CT",
+                    "family": "CT",
+                    "attempted": True,
+                    "terminal_state": _ts,
+                    "raw_count": _raw,
+                    "accepted_count": _accepted,
+                    "error": _error,
+                    "timeout": _timeout,
+                    "skipped": _skipped,
+                }
+                break
+
+        # Surface 2: _lane_outcomes (in-memory lane outcomes, may overlap with surface 1)
+        if _ct_outcome is None:
+            for _o in getattr(self, "_lane_outcomes", None) or ():
+                _lane_name = getattr(_o, "lane", None)
+                if _lane_name is None and isinstance(_o, dict):
+                    _lane_name = _o.get("lane")
+                if _lane_name == "CT":
+                    _d = _o.to_dict() if hasattr(_o, "to_dict") else dict(_o)
+                    _attempted = _d.get("attempted", False)
+                    if not _attempted:
+                        continue
+                    _raw = _d.get("raw_count", 0) or _d.get("ct_results_raw", 0) or 0
+                    _accepted = _d.get("accepted_count", 0) or _d.get("accepted_findings", 0) or 0
+                    _error = _d.get("error")
+                    _timeout = _d.get("timeout", False)
+                    _skipped = _d.get("skipped", False)
+
+                    if _error is not None:
+                        _ts = "error"
+                    elif _timeout:
+                        _ts = "timeout"
+                    elif _skipped:
+                        _ts = "skipped"
+                    elif _raw > 0 and _accepted == 0:
+                        _ts = "success_empty"
+                    elif _raw == 0 and _attempted and _error is None:
+                        _ts = "empty"
+                    else:
+                        _ts = "success"
+
+                    _ct_outcome = {
+                        "lane": "CT",
+                        "family": "CT",
+                        "attempted": True,
+                        "terminal_state": _ts,
+                        "raw_count": _raw,
+                        "accepted_count": _accepted,
+                        "error": _error,
+                        "timeout": _timeout,
+                        "skipped": _skipped,
+                    }
+                    break
+
+        # Surface 3: ct_log_discovered / lane_ct_accepted_findings counters
+        # (set by source_finding_bridge even when lane outcome was not recorded)
+        if _ct_outcome is None:
+            _disc = getattr(self._result, "ct_log_discovered", 0) or 0
+            _acc = getattr(self._result, "lane_ct_accepted_findings", 0) or 0
+            _ct_adapter_called = getattr(self._ct_log_client, "_called", False)
+            if _disc > 0 or _acc > 0 or _ct_adapter_called:
+                _raw = _disc
+                if _raw > 0 and _acc == 0:
+                    _ts = "success_empty"
+                elif _raw == 0 and _ct_adapter_called and _acc == 0:
+                    _ts = "empty"
+                else:
+                    _ts = "success"
+                _ct_outcome = {
+                    "lane": "CT",
+                    "family": "CT",
+                    "attempted": True,
+                    "terminal_state": _ts,
+                    "raw_count": _raw,
+                    "accepted_count": _acc,
+                    "error": None,
+                    "timeout": False,
+                    "skipped": False,
+                }
+
+        return _ct_outcome
 
     # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
 
@@ -5493,7 +5721,7 @@ class SprintScheduler:
         try:
             # Large serialization via run_in_executor if findings exceed 1000
             if len(cti_inputs.findings) > 1000:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 path = await loop.run_in_executor(
                     None,
                     lambda: render_cti_stix_to_path(
@@ -5632,6 +5860,7 @@ class SprintScheduler:
             getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()
         )
         # Sprint F207S-A: Windup guard callsite observation telemetry (top-level key)
+        # F208M-B: callback_not_executed_reason added
         report["windup_guard_observation"] = {
             "call_count": getattr(self._result, "windup_guard_call_count", 0),
             "callback_supplied_count": getattr(self._result, "windup_guard_callback_supplied_count", 0),
@@ -5639,6 +5868,7 @@ class SprintScheduler:
             "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
             "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
             "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
+            "callback_not_executed_reason": getattr(self._result, "windup_guard_last_callback_not_executed_reason", ""),
         }
         # Sprint F207T-A: Return guard telemetry for mandatory nonfeed terminal state
         report["return_guard"] = {
@@ -5755,6 +5985,7 @@ class SprintScheduler:
                 build_acquisition_report,
             )
             # Build windup guard observation dict
+            # F208M-B: callback_not_executed_reason added
             _wg_obs = {
                 "call_count": getattr(self._result, "windup_guard_call_count", 0),
                 "callback_supplied_count": getattr(self._result, "windup_guard_callback_supplied_count", 0),
@@ -5762,6 +5993,7 @@ class SprintScheduler:
                 "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
                 "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
                 "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
+                "callback_not_executed_reason": getattr(self._result, "windup_guard_last_callback_not_executed_reason", ""),
             }
             # Build return guard dict
             _rg_dict = {
@@ -6133,9 +6365,9 @@ class SprintScheduler:
         Called at end of each ACTIVE cycle.
         """
         processed = 0
-        deadline = asyncio.get_event_loop().time() + 8.0
+        deadline = _time.monotonic() + 8.0
         while processed < max_tasks:
-            if asyncio.get_event_loop().time() > deadline:
+            if _time.monotonic() > deadline:
                 break
             try:
                 task = self._pivot_queue.get_nowait()

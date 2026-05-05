@@ -147,7 +147,7 @@ async def _get_or_create_session(profile: str) -> Optional[Any]:
                     except Exception as e:
                         logger.debug(f"Failed to close evicted session: {e}")
 
-            asyncio.create_task(_close_evicted())
+            asyncio.create_task(_close_evicted(), name="curl_cffi:close_evicted")
 
 
 async def close_curl_cffi_sessions_async() -> None:

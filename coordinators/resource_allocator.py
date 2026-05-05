@@ -630,7 +630,7 @@ class ResourceAwareScheduler:
         # Request resources
         if await self.allocator.request_resources(resource_request):
             # Execute task
-            asyncio.create_task(self._execute_task(task_id, task_func))
+            asyncio.create_task(self._execute_task(task_id, task_func), name=f"resource_allocator:execute_task:{task_id}")
             return True
         else:
             logger.error(f"Failed to schedule task {task_id}: insufficient resources")
@@ -742,7 +742,7 @@ async def main():
     optimizer = ParallelExecutionOptimizer(allocator)
 
     # Start monitoring
-    monitoring_task = asyncio.create_task(allocator.monitor_and_optimize())
+    monitoring_task = asyncio.create_task(allocator.monitor_and_optimize(), name="resource_allocator:monitor")
 
     # Example task
     async def example_task(task_args):

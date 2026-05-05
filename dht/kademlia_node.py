@@ -299,7 +299,7 @@ class KademliaNode:
         transport.register_handler("dht_find_value_resp", self._handle_find_value_resp)
 
     async def start(self):
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
+        self._refresh_task = asyncio.create_task(self._refresh_loop(), name="kademlia:refresh_loop")
         for peer in self.bootstrap_nodes:
             if peer == self.node_id:
                 continue
@@ -424,7 +424,7 @@ class KademliaNode:
                 fut = asyncio.get_running_loop().create_future()
                 self._pending_rpcs[rpc_id] = fut
                 self._pending_rpcs_created[rpc_id] = time.time()
-                send_tasks.append(asyncio.create_task(self._send_find_value(pid, key, rpc_id)))
+                send_tasks.append(asyncio.create_task(self._send_find_value(pid, key, rpc_id), name=f"kademlia:send_find_value:{pid[:8]}"))
 
             if not rpc_ids:
                 break

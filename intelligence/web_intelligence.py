@@ -12,7 +12,7 @@ orchestration lives in the autonomous_orchestrator.
 import asyncio
 import heapq
 import time
-import uuid
+from utils.uuid7 import new_runtime_id
 from typing import Dict, List, Optional, Any, Union, Callable, Tuple, Set
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -353,7 +353,7 @@ class UnifiedWebIntelligence:
         Returns:
             Operation ID for tracking results
         """
-        operation_id = str(uuid.uuid4())
+        operation_id = new_runtime_id()
         operation_types = operation_types or target.operation_types
 
         if not operation_types:

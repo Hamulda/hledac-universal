@@ -82,7 +82,6 @@ dependencies = [
     "lmdb>=2.2.0,<3.0.0",
     # Fallback browser (nodriver — camoufox is primary, see browser extra)
     "nodriver>=0.1.0",
-    "cryptography>=48.0.0",
 ]
 
 # ------------------------------------------------------------------ optionals
@@ -91,6 +90,11 @@ dependencies = [
 light = [
     "fast-langdetect>=1.0.0",   # FTZ-format lang detection; import: fast_langdetect
     "datasketch>=1.6.0",         # MinHash LSH; import: datasketch
+]
+
+# --- nlp: language detection (fast alternative) ---
+nlp = [
+    "fast-langdetect>=1.0.0",   # FTZ-format lang detection; import: fast_langdetect
 ]
 
 # --- apple-accel: Apple Silicon MLX/uvloop ---
@@ -132,18 +136,45 @@ dev = [
     "pytest>=8.0.0",
     "pytest-xdist>=3.5.0",
     "pytest-cov>=4.1.0",
+    "pluggy>=1.0.0",           # pytest plugin system
+    "iniconfig>=2.0.0",        # pytest config parsing
+    "pygments>=2.15.0",         # syntax highlighting in test output
     "ruff>=0.1.0",
     "mypy>=1.9.0",
 ]
 
-# --- all: everything except torch (torch is too heavy for routine dev) ---
-all = [
-    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev]",
+# --- acceleration: fast string matching ---
+acceleration = [
+    "rapidfuzz>=3.0.0",        # fast fuzzy matching; import: rapidfuzz
 ]
 
-# ------------------------------------------------------------------ entry points
+# --- rerank: neural reranking ---
+rerank = [
+    "flashrank>=0.2.0",        # neural rerank; import: flashrank
+]
+
+# --- browser: full JS rendering with browser binary ---
 browser = [
-    "camoufox[geoip]",
+    "camoufox[geoip]>=0.4.0",  # JA3 fingerprint + bundled browser binary
+]
+
+# --- security: strong encryption for vault/evidence ---
+# cryptography is heavy (~15MB). Only needed for vault_manager,
+# key_manager, encryption.py, quantum_safe.py, secure_aggregator.
+# All imports are lazy (try/except ImportError) — safe to defer.
+security = [
+    "cryptography>=48.0.0",
+]
+
+# --- transport: HTTP/2 and alternative transport layers ---
+transport = [
+    "h2>=4.1.0",               # HTTP/2 for optional httpx_h2 transport lane
+    "aiohttp-socks>=0.8.0",     # SOCKS5 proxy support for aiohttp
+]
+
+# --- all: everything except torch (torch is too heavy for routine dev) ---
+all = [
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,security,transport]",
 ]
 
 [project.scripts]

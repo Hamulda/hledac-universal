@@ -40,6 +40,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -279,6 +281,9 @@ def _scheduler_result_acquisition_payload(
         "windup_guard_not_applicable": getattr(result, "windup_guard_not_applicable", False),
         "windup_guard_last_reason": _wg_last_reason,
         "windup_guard_last_allowed": _wg_last_allowed,
+        "windup_guard_callback_not_executed_reason": getattr(
+            result, "windup_guard_last_callback_not_executed_reason", ""
+        ),
     }
 
     # ── 5. Pre-windup barrier ───────────────────────────────────────────────
@@ -594,6 +599,15 @@ async def run_sprint(
     # Pre-sprint checks
     run_pre_sprint_checks()
 
+    # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
+    # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.
+    if os.environ.get("HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED") == "1":
+        if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
+            sys.exit(
+                "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 but PYTHON_DISABLE_REMOTE_DEBUG not set — "
+                "OSINT runtime requires external debugger disabled"
+            )
+
     # Sprint F174A: Canonical bootstrap guarantee — ensure non-empty matcher registry
     # before any pipeline run. Matches root __main__._run_sprint_mode() guarantee.
     from hledac.universal.patterns.pattern_matcher import configure_default_bootstrap_patterns_if_empty
@@ -639,7 +653,6 @@ async def run_sprint(
     # Sprint F193A: Instantiate CT log client for canonical pipeline
     _ct_log_client = None
     try:
-        import os
         from pathlib import Path
         _ct_cache = Path(os.path.expanduser("~/.hledac/ct_cache"))
         _ct_cache.mkdir(parents=True, exist_ok=True)

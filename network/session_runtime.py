@@ -334,21 +334,14 @@ def _reset_session_runtime_for_tests() -> None:
 
     # First ensure any existing session is properly closed
     if _session_instance is not None:
+        loop = asyncio.new_event_loop()
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # No event loop in this thread — best-effort: clear the reference
-            # The session is orphaned and will be GC'd; no way to close it.
+            loop.run_until_complete(_session_instance.close())
+        except Exception:
+            pass
+        finally:
+            loop.close()
             _session_instance = None
-        else:
-            try:
-                if not loop.is_running():
-                    loop.run_until_complete(_session_instance.close())
-            except Exception:
-                # Best-effort cleanup — ignore close errors (session may already be closed)
-                pass
-            finally:
-                _session_instance = None
 
     _session_closed = False
     _last_error = None

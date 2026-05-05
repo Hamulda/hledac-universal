@@ -18,7 +18,7 @@ import asyncio
 import inspect
 import queue
 import threading
-import uuid
+from utils.uuid7 import new_runtime_id
 from typing import Optional, Callable, Any, Dict
 from collections import OrderedDict
 
@@ -393,7 +393,7 @@ class GlobalPriorityScheduler:
                         logger.debug(f"Idempotency hit for key '{idempotency_key}' — returning existing job_id={existing_job_id}")
                         return existing_job_id
 
-        job_id = str(uuid.uuid4())
+        job_id = new_runtime_id()
         now = time.time()
         # O(log n) insert into PriorityQueue — no full-list sort
         # Item tuple: (priority, timestamp, seq, task_name, args, kwargs, affinity_key, job_id, max_retries)

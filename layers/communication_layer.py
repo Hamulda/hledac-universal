@@ -512,7 +512,7 @@ class CommunicationLayer:
 
         # Start batch processor if not running
         if not self._batch_task or self._batch_task.done():
-            self._batch_task = asyncio.create_task(self._batch_processor())
+            self._batch_task = asyncio.create_task(self._batch_processor(), name="communication_layer:batch_processor")
 
         try:
             return await asyncio.wait_for(future, timeout=10.0)

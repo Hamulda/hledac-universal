@@ -67,6 +67,7 @@ class DoctorReport:
     platform: str
     statuses: List[DepStatus]
     missing_by_extra: Dict[str, List[str]]
+    opsec_warnings: Optional[List[str]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ DEPENDENCY_REGISTRY: List[Dict] = [
     {"name": "selectolax",    "import": "selectolax",        "spec": "selectolax>=0.3.21",     "extra": "osint-html",  "baseline": False},
     {"name": "xxhash",        "import": "xxhash",             "spec": "xxhash>=3.4.0",          "extra": "osint-html",  "baseline": False},
     {"name": "curl_cffi",     "import": "curl_cffi",          "spec": "curl_cffi>=0.7.0",       "extra": "osint-html",  "baseline": False},
-    {"name": "h2",            "import": "h2",                 "spec": "h2>=4.1.0",             "extra": "osint-html",  "baseline": False},
+    # h2 is in 'transport' extra (see below), not osint-html
     # --- graph-storage ---
     {"name": "pyarrow",      "import": "pyarrow",            "spec": "pyarrow>=16.0.0",        "extra": "graph-storage","baseline": False},
     {"name": "polars",        "import": "polars",             "spec": "polars>=1.0.0",          "extra": "graph-storage","baseline": False},
@@ -120,8 +121,25 @@ DEPENDENCY_REGISTRY: List[Dict] = [
     {"name": "torchvision",   "import": "torchvision",        "spec": "torchvision>=0.16.0",   "extra": "torch",       "baseline": False},
     # --- dev ---
     {"name": "pytest",        "import": "pytest",             "spec": "pytest>=8.0.0",         "extra": "dev",         "baseline": False},
+    {"name": "pytest-xdist",  "import": "pytest_xdist",        "spec": "pytest-xdist>=3.5.0",   "extra": "dev",         "baseline": False},
+    {"name": "pytest-cov",   "import": "pytest_cov",           "spec": "pytest-cov>=4.1.0",    "extra": "dev",         "baseline": False},
+    {"name": "pluggy",        "import": "pluggy",              "spec": "pluggy>=1.0.0",         "extra": "dev",         "baseline": False},
+    {"name": "iniconfig",     "import": "iniconfig",           "spec": "iniconfig>=2.0.0",      "extra": "dev",         "baseline": False},
+    {"name": "pygments",      "import": "pygments",            "spec": "pygments>=2.15.0",      "extra": "dev",         "baseline": False},
     {"name": "ruff",          "import": "ruff",               "spec": "ruff>=0.1.0",           "extra": "dev",         "baseline": False},
     {"name": "mypy",          "import": "mypy",               "spec": "mypy>=1.9.0",           "extra": "dev",         "baseline": False},
+    # --- acceleration ---
+    {"name": "rapidfuzz",     "import": "rapidfuzz",           "spec": "rapidfuzz>=3.0.0",      "extra": "acceleration","baseline": False},
+    # --- nlp ---
+    {"name": "fast-langdetect-nlp", "import": "fast_langdetect","spec": "fast-langdetect>=1.0.0", "extra": "nlp",        "baseline": False},
+    # --- rerank ---
+    {"name": "flashrank",     "import": "flashrank",           "spec": "flashrank>=0.2.0",      "extra": "rerank",      "baseline": False},
+    # --- browser ---
+    {"name": "camoufox",      "import": "camoufox",            "spec": "camoufox[geoip]>=0.4.0","extra": "browser",     "baseline": False},
+    # --- security ---
+    {"name": "cryptography",  "import": "cryptography",        "spec": "cryptography>=48.0.0",  "extra": "security",    "baseline": False},
+    # --- transport ---
+    {"name": "h2",            "import": "h2",                  "spec": "h2>=4.1.0",             "extra": "transport",   "baseline": False},
 ]
 
 EXTRA_GROUPS = {
@@ -131,6 +149,12 @@ EXTRA_GROUPS = {
     "graph-storage": "graph-storage",
     "torch": "torch",
     "dev": "dev",
+    "acceleration": "acceleration",
+    "nlp": "nlp",
+    "rerank": "rerank",
+    "browser": "browser",
+    "security": "security",
+    "transport": "transport",
 }
 
 
@@ -175,6 +199,27 @@ def probe_import(dep: Dict) -> DepStatus:
     )
 
 
+def _probe_remote_debug_guard() -> List[str]:
+    """
+    F214Q: Check PYTHON_DISABLE_REMOTE_DEBUG posture.
+
+    Returns a list of warning strings (empty if safe).
+    Always returns [] on Python < 3.14 (flag introduced in 3.14).
+    """
+    import os
+    warnings: List[str] = []
+    major, minor = sys.version_info.major, sys.version_info.minor
+    if major < 3 or (major == 3 and minor < 14):
+        return warnings
+    if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
+        warnings.append(
+            "PYTHON_DISABLE_REMOTE_DEBUG is not set — "
+            "Python 3.14 safe-external-debugger interface is ACTIVE. "
+            "Set PYTHON_DISABLE_REMOTE_DEBUG=1 for OSINT runs."
+        )
+    return warnings
+
+
 def run_diagnostics(requested_extra: Optional[str] = None) -> DoctorReport:
     """
     Run diagnostics on all (or filtered) dependencies.
@@ -204,11 +249,14 @@ def run_diagnostics(requested_extra: Optional[str] = None) -> DoctorReport:
             if status and not status.available:
                 missing_by_extra.setdefault(dep["extra"], []).append(dep["name"])
 
+    opsec_warnings = _probe_remote_debug_guard()
+
     return DoctorReport(
         python_version=python_v,
         platform=platform,
         statuses=statuses,
         missing_by_extra=missing_by_extra,
+        opsec_warnings=opsec_warnings,
     )
 
 
@@ -236,6 +284,12 @@ def format_markdown(report: DoctorReport, verbose: bool = False) -> str:
             lines.append("")
     else:
         lines.append("**All dependencies available.**")
+
+    if report.opsec_warnings:
+        lines.append("## OPSEC Warnings")
+        for w in report.opsec_warnings:
+            lines.append(f"- ⚠️ {w}")
+        lines.append("")
 
     lines.append("## Full Status Table")
     lines.append("")
@@ -268,6 +322,8 @@ def format_json(report: DoctorReport, verbose: bool = False) -> str:
             for s in report.statuses
         ],
     }
+    if report.opsec_warnings:
+        payload["opsec_warnings"] = report.opsec_warnings
     return json.dumps(payload, indent=2)
 
 

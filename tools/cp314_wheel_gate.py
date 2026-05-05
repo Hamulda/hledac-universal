@@ -56,6 +56,12 @@ SUPPORTED_EXTRAS = {
     "graph-storage",
     "torch",
     "dev",
+    "acceleration",
+    "nlp",
+    "rerank",
+    "browser",
+    "security",
+    "transport",
     "all",
 }
 
@@ -97,7 +103,7 @@ WHEEL_REPORT_PACKAGES: List[Dict[str, str]] = [
     {"name": "selectolax", "spec": "selectolax>=0.3.21", "extra": "osint-html"},
     {"name": "xxhash", "spec": "xxhash>=3.4.0", "extra": "osint-html"},
     {"name": "curl_cffi", "spec": "curl_cffi>=0.7.0", "extra": "osint-html"},
-    {"name": "h2", "spec": "h2>=4.1.0", "extra": "osint-html"},
+    # Note: h2 is in 'transport' extra, not osint-html, to avoid duplication
     # graph-storage
     {"name": "pyarrow", "spec": "pyarrow>=16.0.0", "extra": "graph-storage"},
     {"name": "polars", "spec": "polars>=1.0.0", "extra": "graph-storage"},
@@ -108,8 +114,23 @@ WHEEL_REPORT_PACKAGES: List[Dict[str, str]] = [
     {"name": "pytest", "spec": "pytest>=8.0.0", "extra": "dev"},
     {"name": "pytest-xdist", "spec": "pytest-xdist>=3.5.0", "extra": "dev"},
     {"name": "pytest-cov", "spec": "pytest-cov>=4.1.0", "extra": "dev"},
+    {"name": "pluggy", "spec": "pluggy>=1.0.0", "extra": "dev"},
+    {"name": "iniconfig", "spec": "iniconfig>=2.0.0", "extra": "dev"},
+    {"name": "pygments", "spec": "pygments>=2.15.0", "extra": "dev"},
     {"name": "ruff", "spec": "ruff>=0.1.0", "extra": "dev"},
     {"name": "mypy", "spec": "mypy>=1.9.0", "extra": "dev"},
+    # acceleration
+    {"name": "rapidfuzz", "spec": "rapidfuzz>=3.0.0", "extra": "acceleration"},
+    # nlp
+    {"name": "fast-langdetect", "spec": "fast-langdetect>=1.0.0", "extra": "nlp"},
+    # rerank
+    {"name": "flashrank", "spec": "flashrank>=0.2.0", "extra": "rerank"},
+    # browser
+    {"name": "camoufox", "spec": "camoufox[geoip]>=0.4.0", "extra": "browser"},
+    # security
+    {"name": "cryptography", "spec": "cryptography>=48.0.0", "extra": "security"},
+    # transport
+    {"name": "h2", "spec": "h2>=4.1.0", "extra": "transport"},
 ]
 
 # ---------------------------------------------------------------------------

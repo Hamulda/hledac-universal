@@ -133,7 +133,7 @@ async def bounded_map(
     if sys.version_info >= (3, 11) and cancel_on_error:
         async with asyncio.TaskGroup() as tg:
             futures = [
-                tg.create_task(_run(i, fn, a, k))
+                tg.create_task(_run(i, fn, a, k), name=f"async_utils:run-{i}")
                 for i, (fn, a, k) in enumerate(tasks)
             ]
         for i, f in enumerate(futures):
@@ -185,7 +185,7 @@ async def map_as_completed(
 
     # Start all tasks
     for i, (fn, args, kw) in enumerate(tasks):
-        asyncio.create_task(_worker(i, fn, args, kw))
+        asyncio.create_task(_worker(i, fn, args, kw), name=f"async_utils:map-{i}")
 
     remaining = len(tasks)
     while remaining > 0:

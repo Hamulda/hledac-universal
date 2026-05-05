@@ -428,7 +428,7 @@ class ParallelExecutionOptimizer:
                 else:
                     result = await self._run_in_executor_safe(self.thread_pool, task)
                 results.append(result)
-                return results
+            return results
 
         # Run all chunks concurrently
         chunk_tasks = [execute_chunk(chunk) for chunk in task_chunks]
@@ -460,7 +460,7 @@ class ParallelExecutionOptimizer:
                 except Exception as e:
                     logger.error(f"Task failed on worker {worker_id}: {e}")
                     results.append(None)
-                return results
+            return results
 
         # Execute all worker tasks concurrently
         worker_tasks = [
@@ -558,7 +558,7 @@ class ParallelExecutionOptimizer:
 
             task_index += batch_size
 
-            return results
+        return results
 
     async def _calculate_resource_allocation(self, tasks: List[Any], max_workers: int) -> Dict[str, float]:
         """Calculate optimal resource allocation for task group"""
@@ -589,7 +589,7 @@ class ParallelExecutionOptimizer:
             worker_id = sorted_workers[i % len(sorted_workers)][0]
             distribution[worker_id].append(task)
 
-            return distribution
+        return distribution
 
     async def _classify_tasks_by_resources(self, tasks: List[Any]) -> List[Dict[str, Any]]:
         """Classify tasks by their resource requirements"""

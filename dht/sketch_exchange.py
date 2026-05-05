@@ -52,7 +52,7 @@ class SketchExchange:
 
     def _track_task(self, coro) -> asyncio.Task:
         """F196B: Track background tasks for proper cleanup."""
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(coro, name="sketch:background")
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task

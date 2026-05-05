@@ -76,6 +76,9 @@ __all__ = [
     "get_lane_plan",
     "lane_skip_reason",
     "normalize_source_family_outcome",
+    "normalize_terminal_state",
+    "TERMINAL_STATES",
+    "NON_TERMINAL_STATES",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -384,6 +387,100 @@ def lane_is_terminal(outcome_or_dict) -> bool:
     if d.get("timeout"):
         return True
     return False
+
+
+# ── F208L: Canonical terminal state normalization ────────────────────────────
+
+
+TERMINAL_STATES = frozenset([
+    "success",
+    "success_empty",
+    "empty",
+    "attempted",
+    "skipped",
+    "error",
+    "timeout",
+])
+
+NON_TERMINAL_STATES = frozenset([
+    "pending",
+    "running",
+    "not_attempted",
+    "missing",
+    "",
+    None,
+])
+
+
+def normalize_terminal_state(outcome_or_dict) -> str | None:
+    """[F208L] Map an outcome dict to a canonical terminal state string.
+
+    Supported terminal states:
+      - success       : attempted=True, accepted_count > 0
+      - success_empty : attempted=True, raw_count > 0, accepted_count = 0
+      - empty         : attempted=True, raw_count = 0, accepted_count = 0
+      - attempted     : attempted=True, no other qualifier
+      - skipped       : skipped=True
+      - error         : error is not None and not empty string
+      - timeout       : timeout=True
+
+    Non-terminal states (return as-is for identity check):
+      - pending
+      - running
+      - not_attempted
+      - missing
+      - ""  (empty string)
+      - None
+
+    accepted_count=0 alone does NOT make a lane non-terminal.
+    raw_count > 0 with accepted_count = 0 normalizes to success_empty.
+    raw_count = 0 with attempted = True normalizes to empty.
+    """
+    if outcome_or_dict is None:
+        return None
+
+    d: dict
+    if hasattr(outcome_or_dict, "to_dict"):
+        d = outcome_or_dict.to_dict()
+    elif isinstance(outcome_or_dict, dict):
+        d = outcome_or_dict
+    else:
+        return None
+
+    # Non-terminal identity states — return as-is for direct comparison
+    # Only check if terminal_state key is actually present in the dict
+    raw_state = d.get("terminal_state")
+    if raw_state is not None and raw_state in NON_TERMINAL_STATES:
+        return raw_state
+
+    # Explicit terminal markers
+    if d.get("skipped"):
+        return "skipped"
+    if d.get("timeout"):
+        return "timeout"
+    if d.get("error") is not None and d.get("error") != "":
+        return "error"
+
+    # attempted=True with no error/skip/timeout
+    if d.get("attempted"):
+        # Detect whether raw_count was explicitly provided vs defaulted
+        has_raw_count = "raw_count" in d
+        raw_count = d.get("raw_count", 0)
+        accepted_count = d.get("accepted_count", 0)
+
+        if accepted_count > 0:
+            return "success"
+        if has_raw_count and raw_count > 0 and accepted_count == 0:
+            # raw_count explicitly provided with 0 accepted
+            return "success_empty"
+        if has_raw_count and raw_count == 0 and accepted_count == 0:
+            # raw_count explicitly provided as 0
+            return "empty"
+        # No explicit raw_count — attempted but no harvest data
+        return "attempted"
+
+    # Not terminal: pending/running states, attempted=False with no terminal marker
+    return None
 
 
 def terminality_report(

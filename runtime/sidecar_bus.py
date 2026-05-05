@@ -261,7 +261,7 @@ class FindingSidecarBus:
             stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
             for name in stage_names:
                 if name in self._runners:
-                    stage_tasks.append(asyncio.create_task(_run_one(name, self._runners[name])))
+                    stage_tasks.append(asyncio.create_task(_run_one(name, self._runners[name]), name=f"sidecar_bus:stage_runner:{name}"))
                     runners_executed.add(name)
 
             if not stage_tasks:
@@ -289,7 +289,7 @@ class FindingSidecarBus:
         remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
         for name, runner in self._runners.items():
             if name not in runners_executed:
-                remaining_tasks.append(asyncio.create_task(_run_one(name, runner)))
+                remaining_tasks.append(asyncio.create_task(_run_one(name, runner), name=f"sidecar_bus:remaining_runner:{name}"))
                 runners_executed.add(name)
 
         if remaining_tasks:

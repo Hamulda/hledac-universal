@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
+from utils.uuid7 import new_runtime_id
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from queue import PriorityQueue
@@ -256,7 +256,7 @@ class EventDrivenProcessor:
 
     def _track_task(self, coro) -> asyncio.Task:
         """F196B: Track background tasks for proper cleanup."""
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(coro, name="coordination_layer:task")
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
@@ -1134,7 +1134,7 @@ class CoordinationLayer:
             Decision response with results
         """
         self._decision_count += 1
-        decision_id = str(uuid.uuid4())
+        decision_id = new_runtime_id()
         
         logger.info(
             f"📋 Delegating operation [{decision_id}]: "
@@ -1945,7 +1945,7 @@ class GhostWatchdog:
 
     def _track_task(self, coro) -> asyncio.Task:
         """F196B: Track background tasks for proper cleanup."""
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(coro, name="coordination_layer:task")
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task

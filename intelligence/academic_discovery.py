@@ -266,23 +266,29 @@ async def search_academic_all(
 
 def search_arxiv_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     """Synchronous wrapper for search_arxiv."""
-    return asyncio.get_event_loop().run_until_complete(
-        search_arxiv(query, max_results)
-    )
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(search_arxiv(query, max_results))
+    finally:
+        loop.close()
 
 
 def search_crossref_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     """Synchronous wrapper for search_crossref."""
-    return asyncio.get_event_loop().run_until_complete(
-        search_crossref(query, max_results)
-    )
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(search_crossref(query, max_results))
+    finally:
+        loop.close()
 
 
 def search_semantic_scholar_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
     """Synchronous wrapper for search_semantic_scholar."""
-    return asyncio.get_event_loop().run_until_complete(
-        search_semantic_scholar(query, max_results)
-    )
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(search_semantic_scholar(query, max_results))
+    finally:
+        loop.close()
 
 
 # =============================================================================

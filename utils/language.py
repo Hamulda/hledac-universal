@@ -9,7 +9,9 @@ try:
     FAST_LANGDETECT_AVAILABLE = True
 except ImportError:
     FAST_LANGDETECT_AVAILABLE = False
-    logger.warning("fast-langdetect not available, using fallback detection")
+    from ._warnings import warn_once_log
+
+    warn_once_log("fast-langdetect-missing", "fast-langdetect not available, using fallback detection")
 
 
 class LanguageDetector:

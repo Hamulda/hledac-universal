@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
+from utils.uuid7 import new_runtime_id
 from dataclasses import dataclass
 from typing import Any
 
@@ -206,7 +206,7 @@ class AutonomousPivotExecutor:
 
     async def _execute_pivot(self, pivot: Any) -> PivotExecutionResult:
         """Execute a single pivot with timeout."""
-        pivot_id = getattr(pivot, "pivot_id", None) or str(uuid.uuid4())
+        pivot_id = getattr(pivot, "pivot_id", None) or new_runtime_id()
         start = time.monotonic()
 
         try:

@@ -103,7 +103,7 @@ class ParallelResearchScheduler:
 
     async def _start_io_task(self, task: PrioritizedTask):
         """Spustí I/O úlohu."""
-        t = asyncio.create_task(self._run_io_task(task))
+        t = asyncio.create_task(self._run_io_task(task), name=f"parallel_scheduler:io_task:{task.task_id}")
         self.running_io[task.task_id] = t
 
     def _start_cpu_task(self, task: PrioritizedTask):
@@ -116,7 +116,7 @@ class ParallelResearchScheduler:
             loop = asyncio.get_running_loop()
             future.add_done_callback(
                 lambda f: loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(self._on_cpu_done(task.task_id, f))
+                    lambda: asyncio.create_task(self._on_cpu_done(task.task_id, f), name=f"parallel_scheduler:cpu_done:{task.task_id}")
                 )
             )
         except RuntimeError:

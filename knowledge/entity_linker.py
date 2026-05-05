@@ -59,7 +59,9 @@ try:
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
-    logger.warning("rapidfuzz not available. Install with: pip install rapidfuzz")
+    from hledac.universal.utils._warnings import warn_once_log
+
+    warn_once_log("rapidfuzz-missing", "rapidfuzz not available. Install with: pip install rapidfuzz")
 
 # GLiNER optional import - lazy to avoid circular imports
 GLINER_AVAILABLE = False

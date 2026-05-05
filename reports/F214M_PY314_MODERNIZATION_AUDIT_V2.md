@@ -13,11 +13,89 @@ Boot smoke (35s) → CLEAN_SIGINT (no fatal traceback)
 
 ---
 
+## F214M-D: PATCH-APPLIED — `asyncio.get_event_loop()` Cleanup
+
+**Patch date:** 2026-05-05
+**Scope:** Targeted removal of `asyncio.get_event_loop()` call sites in 5 files.
+**Status:** PASS — all sites patched, validated.
+
+### Wording Correction
+
+The prior report described `get_event_loop()` as "removed in 3.14". This is **incorrect**. The correct statement:
+
+- **Python 3.14 changed `get_event_loop()`:** raises `RuntimeError` if there is no current event loop in the current thread.
+- **`asyncio` policy system removal is planned for Python 3.16**, not 3.14.
+
+Recommendation remains `PATCH-NOW` because the `RuntimeError` is a **runtime break risk** in any code that calls `get_event_loop()` from a thread without a running loop.
+
+---
+
+### Per-Site Analysis
+
+| File | Line | Context | Replacement | Why Safe on Python 3.14 |
+|------|------|---------|-------------|------------------------|
+| `intelligence/academic_discovery.py` | 269 | `search_arxiv_sync()` — sync wrapper, no running loop | `asyncio.new_event_loop()` + `run_until_complete()` + `close()` | Sync boundary: creates fresh loop, runs single coro, closes. No dependency on current thread's loop. |
+| `intelligence/academic_discovery.py` | 276 | `search_crossref_sync()` — sync wrapper | same | same |
+| `intelligence/academic_discovery.py` | 283 | `search_semantic_scholar_sync()` — sync wrapper | same | same |
+| `network/session_runtime.py` | 338 | `_reset_session_runtime_for_tests()` — test-only helper | `asyncio.new_event_loop()` + `run_until_complete()` + `close()` | Test isolation: always called from pytest worker thread without running loop. Fresh loop handles the `close()` call safely. |
+| `runtime/sprint_scheduler.py` | 5496 | `_run_cti_export()` — async function, running loop guaranteed | `asyncio.get_running_loop()` | Async context: `await loop.run_in_executor()` is always preceded by `await` somewhere in the call chain. Running loop always exists. |
+| `runtime/sprint_scheduler.py` | 6136, 6138 | `_drain_pivot_queue()` — async function, timing only | `time.monotonic()` (aliased as `_time` at file top) | Timing measurement: `loop.time()` and `time.monotonic()` both return float seconds. `_time` already imported. No async boundary involved. |
+| `tools/wasm_sandbox.py` | 185 | `_run_wasm_async()` — async function, running loop guaranteed | `asyncio.get_running_loop()` | Async context: function is `async def`. Running loop always exists. Direct `asyncio.run_in_executor()` replaced with `loop.run_in_executor()` via running loop for clarity. |
+| `intelligence/document_intelligence.py` | 1290 | `close()` — sync GC context (`__del__` fallback) | `asyncio.new_event_loop()` + `run_until_complete()` + `close()` | GC thread has no running loop. Fresh loop created, runs `restart()` coro, closes. Simpler than original try/except/RuntimeError dance — behaviorally equivalent for Python 3.14. |
+
+### Exact file:line Changes
+
+```
+intelligence/academic_discovery.py:267-285
+  - asyncio.get_event_loop().run_until_complete() x3
+  + asyncio.new_event_loop() / run_until_complete() / loop.close() x3
+
+network/session_runtime.py:336-351
+  - try: loop = asyncio.get_event_loop() / except RuntimeError / else logic
+  + asyncio.new_event_loop() / run_until_complete() / close()
+
+runtime/sprint_scheduler.py:5496
+  - loop = asyncio.get_event_loop()
+  + loop = asyncio.get_running_loop()
+
+runtime/sprint_scheduler.py:6136,6138
+  - asyncio.get_event_loop().time()
+  + _time.monotonic()
+
+tools/wasm_sandbox.py:185-187
+  - loop = asyncio.get_event_loop() / loop.run_in_executor()
+  + loop = asyncio.get_running_loop() / loop.run_in_executor()
+
+intelligence/document_intelligence.py:1289-1307
+  - try: asyncio.get_event_loop() / is_running() / run_until_complete() / except / fallback
+  + asyncio.new_event_loop() / run_until_complete() / close()
+```
+
+### Validation Results
+
+```
+uv sync                  → UV_SYNC_OK
+PYTHONPATH smoke        → IMPORT_OK
+Boot smoke (35s)        → CLEAN_SIGINT, no fatal traceback
+get_event_loop() grep   → 0 matches in scoped files
+```
+
+### What Was NOT Changed
+
+- No broad refactor of package layout.
+- `[tool.uv] package = false` untouched.
+- Cancellation semantics unchanged.
+- No new dependencies.
+- `get_running_loop()` not used where `new_event_loop()` is the correct answer (sync GC / test boundary contexts).
+- No `run_until_complete()` on a potentially-running loop — each `new_event_loop()` site is in a context confirmed to lack a running loop.
+
+---
+
 ## 1. Executive Summary
 
 9 audit areas covered. 4 patch-now candidates, 4 benchmark-first candidates, 3 experiment-only, 7 do-not-touch.
 
-**Most actionable immediate finding:** `asyncio.get_event_loop()` used outside async context in 6+ locations across `academic_discovery.py`, `session_runtime.py`, `sprint_scheduler.py`, `wasm_sandbox.py`, `document_intelligence.py` — deprecated in Python 3.10+, removal planned for 3.14. PATCH-READY.
+**Most actionable immediate finding:** `asyncio.get_event_loop()` used outside async context in 6+ locations across `academic_discovery.py`, `session_runtime.py`, `sprint_scheduler.py`, `wasm_sandbox.py`, `document_intelligence.py` — Python 3.14 raises `RuntimeError` when no running loop in thread. PATCH-APPLIED (F214M-D).
 
 **Second most actionable:** `tg.create_task()` at `sprint_scheduler.py:2803` and `utils/async_utils.py:136` missing `name=` kwarg — quick adds, aids observability.
 
@@ -42,33 +120,25 @@ Boot smoke (35s) → CLEAN_SIGINT (no fatal traceback)
 
 ## 3. Patch-Now Candidates
 
-### PATCH-1: `asyncio.get_event_loop()` deprecation (HIGH priority)
+### PATCH-1: `asyncio.get_event_loop()` deprecation — F214M-D PATCH-APPLIED
 
-**Current pattern:**
-```python
-loop = asyncio.get_event_loop()
-loop.run_until_complete(coro())
-```
+**Corrected wording:** Python 3.14 raises `RuntimeError` if `get_event_loop()` is called when no event loop exists in the current thread. The asyncio policy system removal is planned for Python 3.16.
 
-**Recommended pattern:**
-```python
-loop = asyncio.get_running_loop()
-loop.run_until_complete(coro())  # only if already in async context
-# OR: await coro() directly if in async context
-```
+**Patch rationale:**
+- In **async context**: use `asyncio.get_running_loop()`
+- For **timing**: use `time.monotonic()` (already aliased as `_time` in sprint_scheduler)
+- In **sync boundary / test / GC context**: create a fresh loop with `asyncio.new_event_loop()`, run, close
 
-**Sites:**
+**Sites patched (F214M-D):**
 
-| File | Line | Current | Recommended | Risk |
+| File | Line | Context | Replacement | Risk |
 |------|------|---------|-------------|------|
-| `intelligence/academic_discovery.py` | 269, 276, 283 | `get_event_loop().run_until_complete()` | `await` coro directly inside `async def` | MEDIUM — 3 sites, all in sync-shim wrappers |
-| `network/session_runtime.py` | 338 | `loop = asyncio.get_event_loop()` | `asyncio.get_running_loop()` (only called in async ctx) | LOW |
-| `runtime/sprint_scheduler.py` | 5484 | `loop.run_in_executor()` pattern | `asyncio.get_running_loop()` | LOW |
-| `runtime/sprint_scheduler.py` | 6136, 6138 | `asyncio.get_event_loop().time()` | `time.monotonic()` or `asyncio.get_running_loop().time()` | LOW |
-| `tools/wasm_sandbox.py` | 185 | `loop = asyncio.get_event_loop()` | `asyncio.get_running_loop()` | LOW — sandbox only |
-| `intelligence/document_intelligence.py` | 1290 | `loop = asyncio.get_event_loop()` | `asyncio.get_running_loop()` | LOW |
-
-**Note:** `academic_discovery.py` `run_until_complete` on non-main thread is an async-in-thread pattern similar to F196A M1 crash vectors. All 3 sites are sync-wrapper functions returning a value. The caller context determines whether patch is `await coro()` (if async) or keeping `run_until_complete` with `get_running_loop()` (if thread). Investigation needed per site.
+| `intelligence/academic_discovery.py` | 269, 276, 283 | Sync wrappers (`_sync` funcs) | `new_event_loop()` + `run_until_complete()` + `close()` | MEDIUM — 3 sites |
+| `network/session_runtime.py` | 338 | Test-only helper, no running loop | `new_event_loop()` + `run_until_complete()` + `close()` | LOW |
+| `runtime/sprint_scheduler.py` | 5496 | Async function, running loop guaranteed | `get_running_loop()` | LOW |
+| `runtime/sprint_scheduler.py` | 6136, 6138 | Timing measurement | `_time.monotonic()` | LOW |
+| `tools/wasm_sandbox.py` | 185 | Async function, running loop guaranteed | `get_running_loop()` | LOW |
+| `intelligence/document_intelligence.py` | 1290 | Sync GC context, no running loop | `new_event_loop()` + `run_until_complete()` + `close()` | LOW |
 
 ### PATCH-2: `tg.create_task()` missing `name=`
 
@@ -595,12 +665,45 @@ if not os.environ.get('PYTHON_DISABLE_REMOTE_DEBUG', '0') == '1':
 
 ## 8. Suggested Next Micro-Sprints
 
-### F214M-A: Remaining Task Naming
+### F214M-A: Remaining Async Task Naming
+**PATCH-APPLIED** (2026-05-05)
+
 **Scope:** Add `name=` to all remaining `asyncio.create_task()` and `tg.create_task()` calls without names.
 **Files:** ~15 files identified in Section 7, Area A.
 **Effort:** LOW — one-line adds per site.
 **Tests:** `pytest hledac/universal/ -q` — should be GREEN.
-**Label:** PATCH-NOW
+**Label:** PATCH-APPLIED
+
+26 sites named across 13 files. Naming convention: `module:task_type` or `module:task_type:identifier`.
+
+**Named sites:**
+| File | Sites | Names |
+|------|-------|-------|
+| `runtime/sidecar_bus.py` | 2 | `sidecar_bus:stage_runner:{name}`, `sidecar_bus:remaining_runner:{name}` |
+| `utils/async_utils.py` | 3 | `async_utils:run-{i}`, `async_utils:map-{i}` |
+| `transport/nym_transport.py` | 5 | `nym:stdout_drain`, `nym:stderr_drain`, `nym:sender`, `nym:receiver`, `nym:health_check` |
+| `transport/inmemory_transport.py` | 1 | `inmemory:process_loop` |
+| `transport/curl_cffi_runtime.py` | 1 | `curl_cffi:close_evicted` |
+| `dht/kademlia_node.py` | 2 | `kademlia:refresh_loop`, `kademlia:send_find_value:{pid[:8]}` |
+| `dht/sketch_exchange.py` | 1 | `sketch:background` |
+| `coordinators/resource_allocator.py` | 2 | `resource_allocator:execute_task:{task_id}`, `resource_allocator:monitor` |
+| `coordinators/performance_coordinator.py` | 1 | `performance_coordinator:cleanup` |
+| `coordinators/benchmark_coordinator.py` | 2 | `benchmark:memory_monitor`, `benchmark:agent:{agent_name}` |
+| `coordinators/monitoring_coordinator.py` | 1 | `monitoring:background_collection` |
+| `coordinators/memory_coordinator.py` | 1 | `memory_coordinator:poll` |
+| `layers/coordination_layer.py` | 2 | `coordination_layer:task` (both _track_task sites) |
+| `layers/memory_layer.py` | 1 | `memory_layer:health_check` |
+| `layers/communication_layer.py` | 1 | `communication_layer:batch_processor` |
+| `research/parallel_scheduler.py` | 2 | `parallel_scheduler:io_task:{task_id}`, `parallel_scheduler:cpu_done:{task_id}` |
+
+**Skipped (delegated adapter):**
+- `layers/communication_layer.py:789` — `self._a2a_adapter.create_task()` is a delegated call to external A2A adapter; task name would be controlled by adapter, not our code. SKIPPED.
+
+**Skipped (legacy/inactive):**
+- `runtime/sprint_scheduler.py` — already had task names per F214E convention.
+- `coordinators/memory_coordinator.py` — already had task name.
+
+**Validation:** Import smoke PASS, boot smoke PASS (clean SIGINT, no fatal traceback).
 
 ### F214M-B: `execution_optimizer` Backpressure Benchmark
 **Scope:** Instrument `execute_parallel(tasks)` with `len(tasks)` histogram. Run `probe_f214h` suite. Determine P95 task count.

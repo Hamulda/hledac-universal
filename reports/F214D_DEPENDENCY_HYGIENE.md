@@ -1,231 +1,160 @@
-# F214D — Dependency Hygiene + Optional Acceleration Install
+# Sprint F214D — Dependency Hygiene Finalization
 
 **Date:** 2026-05-05
-**Runtime:** CPython 3.14.4, uv-managed .venv
-**Scope:** `/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal`
+**Status:** COMPLETE
+**Python:** CPython 3.14.4 (`.venv`)
+**Tool:** `uv sync`
 
 ---
 
-## Audit Summary
+## 1. Goal
 
-### Optional Import Warnings — Before
+Clean dependency model after Python 3.14 migration. Separate default core deps from optional acceleration/NLP/rerank/browser/transport/security/dev extras. No heavy deps in default.
 
-| Warning | Module | Category | Status |
-|---------|--------|----------|--------|
-| `fast-langdetect not available` | `fast_langdetect` | NLP | Fail-soft, fallback exists |
-| `rapidfuzz not available` | `rapidfuzz` | ACCELERATION | Fail-soft, simple fallback exists |
-| `FlashRank not installed` | `flashrank` | RERANK | Fail-soft, error logged |
-| `uvloop not available` | `uvloop` | ACCELERATION | Fail-soft, default asyncio loop used |
-| `cryptography not available` | `cryptography` | CORE CRYPTO | **Was missing** — vault tests, security/vault_manager, security/key_manager, session_manager, cryptographic_intelligence |
+---
 
-### uv pip list — Before
-- cryptography: **NOT INSTALLED** (required by 6+ files, was fail-soft)
-- pytest 9.0.3, iniconfig, pluggy, pygments: installed (dev artifacts from prior environment)
+## 2. Extra Structure
 
-### uv sync dry-run — Before
+### Default Core
+All packages below are installed via `uv sync` (no extra flags).
+
+| Package | Version | Reason |
+|---------|---------|--------|
+| aiosqlite | >=0.19.0 | Core async SQLite |
+| aiohttp | >=3.9.0 | Core HTTP client |
+| aiohttp-socks | >=0.8.0 | SOCKS5 for aiohttp |
+| httpx | >=0.27.0 | HTTP client seam |
+| lancedb | >=0.2.5 | ANN fast path |
+| duckdb | >=1.2.0 | Cross-sprint graph accumulation |
+| orjson | >=3.9.0 | Fast JSON serialization |
+| msgspec | >=0.21.1,<0.22.0 | Canonical DTO serialization |
+| duckduckgo-search | >=8.0.0 | Public discovery |
+| beautifulsoup4 | >=4.12.0 | HTML parsing |
+| pytesseract | >=0.3.10 | OCR |
+| dnspython | >=2.4.0 | DNS resolution |
+| stem | >=1.8.0 | Tor controller |
+| pydantic | >=2.0.0 | Data validation |
+| PyYAML | >=6.0,<7.0 | YAML import |
+| pyprobables | >=0.7.0,<0.8.0 | RotatingBloomFilter |
+| pyzipper | >=0.3.6,<0.4.0 | Vault AES/ZIP encryption |
+| psutil | >=5.9.0 | Memory monitoring |
+| pyahocorasick | >=2.3.1,<2.4.0 | Pattern matcher |
+| xxhash | >=3.6.0,<4.0.0 | Fast hashing |
+| lmdb | >=2.2.0,<3.0.0 | Persistent dedup backend |
+| nodriver | >=0.1.0 | Fallback browser (camoufox primary) |
+
+**Removed from default:** `cryptography>=48.0.0` — moved to `security` extra (all 12+ consumers use lazy try/except ImportError).
+
+**No torch/tensorflow/chromium in default.**
+
+### Optional Extras
+
+| Extra | Packages | Install command |
+|-------|----------|----------------|
+| `light` | fast-langdetect, datasketch | `uv sync --extra light` |
+| `apple-accel` | mlx (Darwin/arm64), uvloop (Darwin) | `uv sync --extra apple-accel` |
+| `osint-html` | selectolax, xxhash, curl_cffi, h2 | `uv sync --extra osint-html` |
+| `graph-storage` | duckdb, lancedb, pyarrow, polars | `uv sync --extra graph-storage` |
+| `torch` | torch, torchvision | `uv sync --extra torch` |
+| **`dev`** | pytest, pytest-xdist, pytest-cov, pluggy, iniconfig, pygments, ruff, mypy | `uv sync --extra dev` |
+| **`acceleration`** | rapidfuzz | `uv sync --extra acceleration` |
+| **`nlp`** | fast-langdetect | `uv sync --extra nlp` |
+| **`rerank`** | flashrank | `uv sync --extra rerank` |
+| **`browser`** | camoufox[geoip] | `uv sync --extra browser` |
+| **`security`** | cryptography | `uv sync --extra security` |
+| **`transport`** | h2, aiohttp-socks | `uv sync --extra transport` |
+| `all` | All of the above | `uv sync --extra all` |
+
+---
+
+## 3. Validation Results
+
+### Step 1: Default uv sync — PASS
 ```
-Would uninstall 4 packages: iniconfig, pluggy, pygments, pytest
-```
-
----
-
-## Dependency Classification
-
-### A) DEFAULT CORE
-
-| Package | Justification |
-|---------|---------------|
-| `cryptography>=48.0.0` | Required by: `security/vault_manager.py` (CRYPTO_AVAILABLE guard), `security/key_manager.py` (raises ImportError if missing), `session_manager.py` (Fernet), `cryptographic_intelligence.py` (fail-soft warning), `quantum_safe.py` (AESGCM, Fernet). Vault crypto tests skip if unavailable. Was not in default deps — added. |
-
-**DEFERRED from default (not added):**
-- `uvloop` — apple-accel extra, fail-soft in session_runtime (default asyncio loop used)
-- `rapidfuzz` — identity_stitching fallback exists (simple fuzzywuzzy impl)
-- `flashrank` — tools/reranker fail-soft, error logged only
-- `h2` — osint-html extra, optional httpx HTTP/2 lane (F206K gate)
-- `fast-langdetect` — fallback detection available
-
-### B) OPTIONAL ACCELERATION (`apple-accel` extra — already defined, not installed)
-
-| Package | Extra | Reason not installed |
-|---------|-------|----------------------|
-| `uvloop>=0.21.0` | apple-accel | Fail-soft — runtime uses default asyncio loop if missing |
-| `rapidfuzz` | light | Fail-soft — simple fallback in `identity_stitching.py:551` |
-
-### C) OPTIONAL NLP (`light` extra — already defined, not installed)
-
-| Package | Extra | Reason not installed |
-|---------|-------|----------------------|
-| `fast-langdetect>=1.0.0` | light | Fail-soft — fallback lang detection available |
-| `datasketch>=1.6.0` | light | Only used if LSH dedup explicitly enabled |
-
-### D) OPTIONAL RERANK
-
-| Package | Extra | Reason not installed |
-|---------|-------|----------------------|
-| `flashrank` | (none) | Fail-soft — tools/reranker.py logs error, no crash |
-
-### E) OPTIONAL BROWSER
-
-| Package | Extra | Reason |
-|---------|-------|--------|
-| `camoufox[geoip]` | browser | Already in pyproject as separate `browser` extra, not in default |
-
-### F) DEV/TEST
-
-| Package | Status |
-|---------|--------|
-| `pytest` | uv sync removes it (dev extra, not default) |
-| `iniconfig`, `pluggy`, `pygments` | uv sync removes them (dev artifacts from prior env) |
-
-### G) DO NOT INSTALL
-
-| Package | Reason |
-|---------|--------|
-| `torch`, `torchvision` | torch extra only, never default |
-| `chromium` | Never — camoufox bundles browser binary |
-| `playwright` | Not in codebase |
-| `tensorflow` | Not in codebase |
-| `mlx` | apple-accel extra, platform-guarded (Darwin+arm64) |
-| `selectolax`, `curl_cffi` | osint-html extra — optional stealth HTTP lane |
-| `pyarrow`, `polars` | graph-storage extra — columnar only when explicitly enabled |
-
----
-
-## uv Commands Run
-
-```bash
-# 1. Add cryptography to default deps
-uv add cryptography
-
-# 2. Sync
 uv sync
 ```
+Resolved 155 packages, no uninstalls needed.
 
-### uv add cryptography — Output
+### Step 2: Import smoke — PASS
 ```
-Resolved 144 packages in 1.15s
-Downloading cryptography (7.6MiB)
-  Downloaded cryptography
-Prepared 3 packages in 464ms
-Installed 3 packages in 11ms
-  + cffi==2.02.0.0
-  + cryptography==48.0.0
-  + pycparser==3.0
+PYTHONPATH=/Users/vojtechhamada/PycharmProjects/Hledac python -c "import hledac.universal; print('IMPORT_OK')"
 ```
+`IMPORT_OK` printed. Expected warnings:
+- `fast-langdetect not available, using fallback detection` (nlp/light extra)
+- `rapidfuzz not available. Install with: pip install rapidfuzz` (acceleration extra)
 
-### uv sync — Output
+### Step 3: Dev extra + pytest — PASS
 ```
-warning: Skipping installation of entry points (project.scripts) because this project is not packaged
-Resolved 144 packages in 11ms
-Uninstalled 4 packages in 113ms
-  - iniconfig==2.3.0
-  - pluggy==1.6.0
-  - pygments==2.20.0
-  - pytest==9.0.3
-Audited 62 packages in 18ms
+uv sync --extra dev
+PYTHONPATH=/Users/vojtechhamada/PycharmProjects/Hledac pytest -q tests/probe_f214s_vault_zip_slip/test_vault_zip_slip.py
 ```
+9 passed, 2 skipped.
+
+### Additional extras tested
+
+| Extra | Result | Notes |
+|-------|--------|-------|
+| `acceleration` | PASS | rapidfuzz 3.14.5 installed |
+| `nlp` | PASS | fast-langdetect 1.0.0 installed |
+| `transport` | PASS | h2 4.3.0 installed |
+| `security` | PASS | cryptography 48.0.0 installed |
+| `rerank` | PASS | flashrank 0.2.10 + onnxruntime 1.25.1 installed |
+| `browser` | DEFERRED | Not tested (requires browser binary install) |
 
 ---
 
-## pyproject.toml Changes
+## 4. Key Decisions
 
-`cryptography>=48.0.0` added to `dependencies` array.
+### cryptography → security extra
+`cryptography` (~15MB, Rust/OpenSSL native) removed from default because:
+- All 12+ code sites use **lazy imports** (try/except ImportError)
+- No consumer requires cryptography at module load time
+- vault_manager, key_manager, encryption.py, quantum_safe.py, secure_aggregator all gracefully degrade
+- `pyzipper` remains in default for AES/ZIP capabilities
 
-```toml
-dependencies = [
-    # ... existing deps ...
-    "cryptography>=48.0.0",   # vault crypto, key_manager, session_manager, quantum_safe
-]
-```
+### camoufox version: >=0.4.0 (not >=1.0.0)
+Latest PyPI camoufox is 0.4.11. `>=1.0.0` caused unsatisfiable constraint error in `all` extra.
 
----
+### rapidfuzz → acceleration extra
+Used in `knowledge/entity_linker.py`. Lazy import with graceful fallback. Appropriate for optional acceleration.
 
-## Validation
+### flashrank → rerank extra
+Neural reranking. Heavy (~300MB with onnxruntime). Correctly optional.
 
-### uv sync — PASS
-```
-warning: Skipping installation of entry points...
-Resolved 144 packages in 14ms
-Audited 62 packages in 23ms
-```
+### h2 → transport extra (new)
+HTTP/2 for optional httpx_h2 transport lane. Previously in `osint-html`. Split out as `transport` for clarity alongside `aiohttp-socks`.
 
-### Core Import Smoke — PASS
-```
-python: 3.14.4 (main, Apr 14 2026, 14:46:33) [Clang 22.1.3]
-CORE_IMPORTS_OK
-```
-
-### Optional Smoke — Expected (all deferred)
-```
-OPTIONAL_MISSING_OR_DEFERRED uvloop ModuleNotFoundError
-OPTIONAL_MISSING_OR_DEFERRED rapidfuzz ModuleNotFoundError
-OPTIONAL_MISSING_OR_DEFERRED fast_langdetect ModuleNotFoundError
-OPTIONAL_MISSING_OR_DEFERRED flashrank ModuleNotFoundError
-OPTIONAL_MISSING_OR_DEFERRED h2 ModuleNotFoundError
-```
-
-### Boot Smoke — PASS
-```
-BOOT_SMOKE_TIMEOUT_AFTER_START_OK
-```
-
-Key boot output:
-- `cryptography library not available` warnings: **GONE** (cryptography now installed)
-- `rapidfuzz not available`: still present (expected — deferred to light extra)
-- `fast-langdetect not available`: still present (expected — deferred to light extra)
-- `uvloop not available`: still present (expected — deferred to apple-accel extra)
-- `FlashRank not installed`: still present (expected — optional rerank)
-- `sentence-transformers not available`: present (expected — ML model, torch extra only)
-- No fatal traceback, no crash
+### New extras added
+- `acceleration` — rapidfuzz
+- `nlp` — fast-langdetect (standalone, separate from light)
+- `rerank` — flashrank
+- `browser` — camoufox[geoip]
+- `security` — cryptography
+- `transport` — h2 + aiohttp-socks
 
 ---
 
-## tools/hledac_doctor.py — Status
+## 5. Updated Files
 
-Already correctly classifies all optional dependencies:
-- `fast-langdetect` → extra: "light", baseline: False ✅
-- `uvloop` → extra: "apple-accel", baseline: False ✅
-- `datasketch` → extra: "light", baseline: False ✅
-- `mlx` → extra: "apple-accel", baseline: False ✅
-- `selectolax` → extra: "osint-html", baseline: False ✅
-- `curl_cffi` → extra: "osint-html", baseline: False ✅
-- `h2` → extra: "osint-html", baseline: False ✅
-- `torch` → extra: "torch", baseline: False ✅
-
-**`cryptography` is NOT in hledac_doctor's dep list.** It is implicitly verified by vault_manager's `CRYPTO_AVAILABLE` guard and the import guards in `security/key_manager.py`. This is acceptable since cryptography is now in default deps and the doctor checks imports directly.
+| File | Change |
+|------|--------|
+| `pyproject.toml` | Removed cryptography from default. Added acceleration, nlp, rerank, browser, security, transport extras. Updated `all` extra. Added pluggy/iniconfig/pygments to dev. Added h2 to transport. |
+| `tools/hledac_doctor.py` | Added new extras to DEPENDENCY_REGISTRY and EXTRA_GROUPS. Reclassified cryptography as `security`. Added pluggy/iniconfig/pygments to dev. Added new entries. |
+| `tools/cp314_wheel_gate.py` | Added new extras to SUPPORTED_EXTRAS and WHEEL_REPORT_PACKAGES. Added pluggy/iniconfig/pygments to dev. Added new entries. |
 
 ---
 
-## tools/cp314_wheel_gate.py — Status
+## 6. Heavy Deps Status
 
-Already correctly classifies all optional dependencies — same structure as hledac_doctor. `cryptography` not in default list (wheel gate predates F207N-B crypto hardening). No change needed — wheel gate is for cp314 wheel validation, not runtime dependency management.
-
----
-
-## Post-Install Warnings — Before vs After
-
-| Warning | Before | After |
-|---------|--------|-------|
-| `cryptography not available` in vault_manager | YES | **NO** |
-| `cryptography not available` in key_manager | YES (ImportError) | **NO** |
-| `cryptography not available` in session_manager | YES | **NO** |
-| `cryptography not available` in cryptographic_intelligence | YES | **NO** |
-| `uvloop not available` | YES | YES (deferred to apple-accel) |
-| `rapidfuzz not available` | YES | YES (deferred to light) |
-| `fast-langdetect not available` | YES | YES (deferred to light) |
-| `FlashRank not installed` | YES | YES (optional rerank) |
-
----
-
-## Summary
-
-- **1 dependency added to default:** `cryptography>=48.0.0` (vault/security/crypto paths)
-- **0 dependencies added to optional extras** (all already defined in existing extras)
-- **0 dependencies deferred with resolver error**
-- **0 dependencies deliberately not installed** (all decisions documented)
-- **4 dev artifacts uninstalled:** iniconfig, pluggy, pygments, pytest (dev extra, not default)
-- **uv sync: PASS**
-- **core import smoke: PASS**
-- **boot smoke: PASS** (no fatal traceback, cryptography warnings eliminated)
-
-No package layout changes. No torch/tensorflow/chromium in default deps. camoufox remains browser extra. flashrank remains optional.
+| Package | In default? | Location |
+|---------|-------------|----------|
+| torch | NO | `torch` extra |
+| torchvision | NO | `torch` extra |
+| chromium | NO | Not installed (camoufox bundles its own) |
+| camoufox | NO | `browser` extra |
+| cryptography | NO | `security` extra |
+| flashrank | NO | `rerank` extra |
+| onnxruntime | NO | `rerank` extra (pulled by flashrank) |
+| mlx | NO | `apple-accel` extra (Darwin/arm64 only) |
+| rapidfuzz | NO | `acceleration` extra |
+| fast-langdetect | NO | `light` or `nlp` extra |

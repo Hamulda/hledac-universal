@@ -131,7 +131,7 @@ class AgentPool:
 
     async def initialize(self) -> None:
         """Initialize the agent pool system."""
-        self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
+        self._cleanup_task = asyncio.create_task(self._periodic_cleanup(), name="performance_coordinator:cleanup")
         logger.info("Agent pool initialized with strategy: %s", self.config.load_balance_strategy)
 
     async def shutdown(self) -> None:

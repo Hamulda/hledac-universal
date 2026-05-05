@@ -21,7 +21,7 @@ class InMemoryTransport(Transport):
         self._ready = asyncio.Event()
 
     async def start(self):
-        self._task = asyncio.create_task(self._process_loop())
+        self._task = asyncio.create_task(self._process_loop(), name="inmemory:process_loop")
         self._ready.set()
 
     async def stop(self):

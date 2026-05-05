@@ -1286,25 +1286,13 @@ class StegdetectServer:
         if hasattr(self, '_stegdetect_server') and self._stegdetect_server:
             # Kill stegdetect processes synchronously — no restart on shutdown
             server = self._stegdetect_server
+            # close() is always called from sync GC context (__del__).
+            # Run in a fresh loop since there is no running loop in the GC thread.
+            loop = asyncio.new_event_loop()
             try:
-                loop = asyncio.get_event_loop()
-                # Run in existing loop if running, otherwise skip async cleanup
-                if loop.is_running():
-                    loop.run_until_complete(server.restart())
-                else:
-                    # Processes already dead or no loop — kill directly
-                    for proc in getattr(server, '_procs', []):
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-            except Exception:
-                # Fallback: kill procs directly if loop unavailable
-                for proc in getattr(server, '_procs', []):
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
+                loop.run_until_complete(server.restart())
+            finally:
+                loop.close()
         if hasattr(self, '_orch'):
             self._orch = None
 

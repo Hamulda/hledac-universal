@@ -236,7 +236,8 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         if self._collection_task is None or self._collection_task.done():
             self._stop_collection.clear()
             self._collection_task = asyncio.create_task(
-                self._background_collection_loop()
+                self._background_collection_loop(),
+                name="monitoring:background_collection"
             )
             logger.info("MonitoringCoordinator: Background collection started")
 

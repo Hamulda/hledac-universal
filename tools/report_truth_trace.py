@@ -7,6 +7,7 @@ Traces where F208 acquisition fields disappear across benchmark → internal rep
 Verdicts:
   TRACE_PASS_ALL_PRESENT              — all fields present, terminality satisfied
   TRACE_TERMINALITY_UNSATISFIED      — acquisition_report exists in both, terminality.satisfied=false
+  TRACE_TERMINALITY_STALE_BEFORE_NONFEED — terminality snapshot computed before CT predispatch completed
   TRACE_BENCHMARK_SHAPE_GAP          — internal has return_guard/windup/source that benchmark is missing
   TRACE_DROP_BEFORE_EXPORT           — acquisition_report missing in internal
   TRACE_DROP_AT_EXPORT               — acquisition_report present in internal, missing in exported report
@@ -74,6 +75,7 @@ class TraceResult:
     missing_lanes: Optional[list] = None
     benchmark_shape_gaps: Optional[list] = None
     internal_runtime_failures: Optional[list] = None
+    terminality_source_outcome_mismatch: Optional[list] = None  # lanes that appear attempted but stale in missing_lanes
 
 
 def extract_fields(obj: dict, fields: list, source: str) -> BoundarySnapshot:
@@ -118,6 +120,7 @@ def trace_verdict(
         "missing_lanes": None,
         "benchmark_shape_gaps": None,
         "internal_runtime_failures": None,
+        "terminality_source_outcome_mismatch": None,
     }
 
     if bench is None:
@@ -170,10 +173,18 @@ def trace_verdict(
         extended["benchmark_shape_gaps"] = gaps if gaps else []
         extended["internal_runtime_failures"] = runtime_failures if runtime_failures else []
 
+        # Detect terminality stale lanes: source_family_outcomes shows attempted=True
+        # but lane still appears in missing_lanes (terminality snapshot was taken too early)
+        stale_lanes = _find_terminality_stale_lanes(int_raw)
+        extended["terminality_source_outcome_mismatch"] = stale_lanes if stale_lanes else None
+
         if terminality_ok and not gaps:
             return "TRACE_PASS_ALL_PRESENT", None, extended
 
         if not terminality_ok:
+            # Check if this is a stale terminality case before marking as unsatisfied
+            if stale_lanes:
+                return "TRACE_TERMINALITY_STALE_BEFORE_NONFEED", "internal_report_json (terminality snapshot stale before nonfeed predispatch)", extended
             # acquisition_report exists in both, but terminality not satisfied → runtime failure
             return "TRACE_TERMINALITY_UNSATISFIED", "internal_report_json (terminality not satisfied)", extended
 
@@ -200,6 +211,61 @@ def trace_verdict(
             return "TRACE_VALIDATOR_ALIAS_ONLY", "validation_json (only validator field paths, no real acquisition data)", extended
 
     return "TRACE_DROP_AT_EXPORT", "export boundary (scorecard fields not persisted)", extended
+
+
+def _find_terminality_stale_lanes(
+    raw_internal: Optional[dict],
+) -> list:
+    """Detect lanes where source_family_outcomes shows attempted but terminality.missing_lanes still lists them.
+
+    This catches the timing mismatch where terminality snapshot was taken before CT predispatch
+    completed: CT appears in source_family_outcomes as attempted=True, but
+    acquisition_terminality_missing_lanes still contains CT.
+
+    Returns list of stale lane names (e.g. ["CT", "PUBLIC"]).
+    """
+    if not raw_internal:
+        return []
+
+    # Walk acquisition_report from two possible locations:
+    # 1. raw_internal["acquisition_report"]  (standard path)
+    # 2. raw_internal["canonical_run_summary"]["acquisition_report"]  (nested path)
+    acq = raw_internal.get("acquisition_report")
+    if not isinstance(acq, dict):
+        acq = raw_internal.get("canonical_run_summary", {}).get("acquisition_report")
+    if not isinstance(acq, dict):
+        # Fallback: treat raw_internal itself as the acquisition dict (top-level terminality fields)
+        acq = raw_internal
+
+    sf_outcomes = acq.get("source_family_outcomes") if isinstance(acq, dict) else None
+    if not isinstance(sf_outcomes, list):
+        return []
+
+    # Collect attempted non-feed lanes from source_family_outcomes
+    attempted_lanes = set()
+    for outcome in sf_outcomes:
+        if isinstance(outcome, dict):
+            family = outcome.get("family")
+            attempted = outcome.get("attempted")
+            if family and attempted is True:
+                attempted_lanes.add(family)
+
+    # Check terminality.missing_lanes for overlap with attempted lanes
+    terminality = acq.get("terminality") if isinstance(acq, dict) else None
+    if not isinstance(terminality, dict):
+        # Fallback: top-level terminality fields
+        missing_raw = raw_internal.get("acquisition_terminality_missing_lanes")
+        if not isinstance(missing_raw, list):
+            return []
+        missing_lanes_set = set(missing_raw)
+    else:
+        missing_lanes_list = terminality.get("missing_lanes")
+        if not isinstance(missing_lanes_list, list):
+            return []
+        missing_lanes_set = set(missing_lanes_list)
+
+    stale = list(attempted_lanes & missing_lanes_set)
+    return stale
 
 
 def load_json(path: str) -> Optional[dict]:
@@ -317,6 +383,7 @@ def trace_boundaries(
         "missing_lanes": result.missing_lanes,
         "benchmark_shape_gaps": result.benchmark_shape_gaps,
         "internal_runtime_failures": result.internal_runtime_failures,
+        "terminality_source_outcome_mismatch": result.terminality_source_outcome_mismatch,
     }
 
     with open(output_json_path, "w") as fh:
@@ -384,6 +451,7 @@ def trace_boundaries(
 | missing_lanes | `{result.missing_lanes}` |
 | benchmark_shape_gaps | `{result.benchmark_shape_gaps}` |
 | internal_runtime_failures | `{result.internal_runtime_failures}` |
+| terminality_source_outcome_mismatch | `{result.terminality_source_outcome_mismatch}` |
 
 ## Terminality State
 
@@ -392,6 +460,20 @@ def trace_boundaries(
 """
     for tf, val in result.terminality_state.items():
         md += f"| {tf} | `{val}` |\n"
+
+    # Add timing mismatch diagnosis when applicable
+    mismatch = result.terminality_source_outcome_mismatch
+    if mismatch:
+        md += f"""
+## Timing Diagnosis
+
+**Likely Cause:** terminality_computed_before_nonfeed_predispatch
+
+| Stale Lane | Explanation |
+|------------|-------------|
+"""
+        for lane in mismatch:
+            md += f"| {lane} | appears attempted in `source_family_outcomes` but still listed in `missing_lanes` — terminality snapshot was taken before CT/PUBLIC predispatch completed | `source_family_outcomes` vs `acquisition_terminality_missing_lanes` timing gap |\n"
 
     with open(output_md_path, "w") as fh:
         fh.write(md)

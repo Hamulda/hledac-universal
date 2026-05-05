@@ -2788,7 +2788,7 @@ class MemoryPressurePoller:
 
     async def start(self):
         """Start polling."""
-        self._task = asyncio.create_task(self._poll_loop())
+        self._task = asyncio.create_task(self._poll_loop(), name="memory_coordinator:poll")
 
     async def aclose(self):
         """Gracefully stop the poller."""

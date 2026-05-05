@@ -43,8 +43,16 @@ __all__ = [
     "wayback_results_to_findings",
     "passive_dns_results_to_findings",
     "summarize_bridge_conversion",
+    "summarize_ct_conversion",
     "Rejection",
     "RejectionReason",
+    "REJECTION_MISSING_DOMAIN",
+    "REJECTION_MISSING_VALUE",
+    "REJECTION_LOW_INFORMATION",
+    "REJECTION_DUPLICATE_CANDIDATE",
+    "REJECTION_UNSUPPORTED_SHAPE",
+    "REJECTION_WILDCARD_DOMAIN",
+    "REJECTION_PRIVATE_OR_RESERVED_DOMAIN",
     "MAX_BRIDGE_OUTPUT",
 ]
 
@@ -60,6 +68,10 @@ REJECTION_MISSING_VALUE: RejectionReason = "missing_value"
 REJECTION_LOW_INFORMATION: RejectionReason = "low_information"
 REJECTION_DUPLICATE_CANDIDATE: RejectionReason = "duplicate_candidate"
 REJECTION_UNSUPPORTED_SHAPE: RejectionReason = "unsupported_shape"
+
+# Extended CT-specific rejection reasons
+REJECTION_WILDCARD_DOMAIN: RejectionReason = "wildcard_domain"
+REJECTION_PRIVATE_OR_RESERVED_DOMAIN: RejectionReason = "private_or_reserved_domain"
 
 # ---------------------------------------------------------------------------
 # Output bounds
@@ -206,10 +218,11 @@ def ct_results_to_findings(
     Findings are capped at MAX_BRIDGE_OUTPUT.
 
     Rejection reasons:
-        missing_domain    — URL/title contains no parseable domain
-        missing_value     — hit has no usable url or title
-        low_information   — domain too short or looks like a private host
-        duplicate_candidate — same domain already seen in this batch
+        missing_domain          — URL/title contains no parseable domain
+        missing_value          — hit has no usable url or title
+        wildcard_domain         — domain is a wildcard pattern (e.g. *.example.com)
+        private_or_reserved_domain — domain is private, internal, or reserved
+        duplicate_candidate     — same domain already seen in this batch
     """
     findings: List[Any] = []
     rejections: List[RejectionReason] = []
@@ -242,15 +255,16 @@ def ct_results_to_findings(
             continue
 
         if domain in _PRIVATE_HOSTNAMES:
-            rejections.append(REJECTION_LOW_INFORMATION)
+            rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
             continue
 
         if "." not in domain:
+            # Single-label domain (no TLD) — structural low-signal
             rejections.append(REJECTION_LOW_INFORMATION)
             continue
 
         if _is_wildcard_domain(domain):
-            rejections.append(REJECTION_LOW_INFORMATION)
+            rejections.append(REJECTION_WILDCARD_DOMAIN)
             continue
 
         if domain in seen_domains:
@@ -552,4 +566,81 @@ def summarize_bridge_conversion(
         "rejectionsCount": len(rejections),
         "rejectionReasons": top_rejections,
         "totalProcessed": total,
+    }
+
+
+def summarize_ct_conversion(
+    raw_hits_count: int,
+    findings: List[Any],
+    rejections: List[RejectionReason],
+) -> dict[str, Any]:
+    """
+    Summarize CT bridge conversion with full rejection taxonomy.
+
+    Produces a detailed breakdown of why CT candidates were rejected,
+    enabling yield explanation when raw_count > 0 but accepted_count == 0.
+
+    Pure function — no storage, no network, no MLX.
+
+    Args:
+        raw_hits_count: Number of raw DiscoveryHit records from crt.sh
+        findings: List of CanonicalFinding candidates produced
+        rejections: List of CT-specific rejection reason strings
+
+    Returns:
+        Bounded summary dict with:
+        - rawHits: raw hit count from crt.sh
+        - builtCandidates: count of candidates built (= len(findings))
+        - acceptedCandidates: count of accepted candidates (= len(findings) here;
+            terminality gating happens upstream)
+        - rejectedMissingDomain: count rejected for missing_domain
+        - rejectedMissingValue: count rejected for missing_value
+        - rejectedLowInformation: count rejected for low_information
+        - rejectedDuplicateCandidate: count rejected for duplicate_candidate
+        - rejectedUnsupportedShape: count rejected for unsupported_shape
+        - rejectedWildcardDomain: count rejected for wildcard_domain
+        - rejectedPrivateOrReservedDomain: count rejected for private_or_reserved_domain
+        - totalRejected: total rejection count
+        - totalProcessed: rawHits minus any early-exit rejections (capped at MAX_BRIDGE_OUTPUT)
+        - allRejectionReasons: all unique reasons with counts (capped at 20)
+    """
+    rejection_counts: dict[str, int] = {}
+    for reason in rejections:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    # Build taxonomy breakdown
+    taxonomy = {
+        "rejectedMissingDomain": rejection_counts.get(REJECTION_MISSING_DOMAIN, 0),
+        "rejectedMissingValue": rejection_counts.get(REJECTION_MISSING_VALUE, 0),
+        "rejectedLowInformation": rejection_counts.get(REJECTION_LOW_INFORMATION, 0),
+        "rejectedDuplicateCandidate": rejection_counts.get(REJECTION_DUPLICATE_CANDIDATE, 0),
+        "rejectedUnsupportedShape": rejection_counts.get(REJECTION_UNSUPPORTED_SHAPE, 0),
+        "rejectedWildcardDomain": rejection_counts.get(REJECTION_WILDCARD_DOMAIN, 0),
+        "rejectedPrivateOrReservedDomain": rejection_counts.get(
+            REJECTION_PRIVATE_OR_RESERVED_DOMAIN, 0
+        ),
+    }
+
+    total_rejected = sum(taxonomy.values())
+    built_candidates = len(findings)
+
+    # totalProcessed: how many were processable from raw hits
+    # Cap at MAX_BRIDGE_OUTPUT since that's the processing limit
+    total_processed = min(raw_hits_count, MAX_BRIDGE_OUTPUT)
+
+    # All unique reasons capped at 20
+    sorted_reasons = sorted(
+        rejection_counts.items(),
+        key=lambda x: (-x[1], x[0]),
+    )
+    all_rejection_reasons = dict(sorted_reasons[:20])
+
+    return {
+        "rawHits": raw_hits_count,
+        "builtCandidates": built_candidates,
+        "acceptedCandidates": built_candidates,  # terminality gating is upstream
+        **taxonomy,
+        "totalRejected": total_rejected,
+        "totalProcessed": total_processed,
+        "allRejectionReasons": all_rejection_reasons,
     }

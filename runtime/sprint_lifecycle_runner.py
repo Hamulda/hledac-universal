@@ -129,10 +129,12 @@ class SprintLifecycleRunner:
             "barrier_ok": None,
             "reason": "not_windup_time",
             "allowed": False,
+            "callback_not_executed_reason": "callback_not_executed_guard_not_reached",
         }
 
         if not self._adapter.should_enter_windup(now_monotonic):
             self._guard_observation["reason"] = "not_windup_time"
+            self._guard_observation["callback_not_executed_reason"] = "callback_not_executed_guard_not_reached"
             return False
 
         self._guard_observation["should_enter_windup"] = True
@@ -145,6 +147,7 @@ class SprintLifecycleRunner:
             try:
                 barrier_ok = _callback()
                 self._guard_observation["callback_executed"] = True
+                self._guard_observation["callback_not_executed_reason"] = ""
                 self._guard_observation["barrier_ok"] = barrier_ok
                 if not barrier_ok:
                     self._guard_observation["reason"] = "barrier_blocked"
@@ -157,11 +160,20 @@ class SprintLifecycleRunner:
                     self._guard_observation["reason"] = "barrier_passed"
             except Exception as exc:
                 self._guard_observation["callback_executed"] = True
+                self._guard_observation["callback_not_executed_reason"] = "callback_not_executed_exception"
                 self._guard_observation["barrier_ok"] = None
                 self._guard_observation["reason"] = f"callback_exception:{type(exc).__name__}"
                 # fail-soft: allow windup on callback error
                 self._guard_observation["allowed"] = True
                 return True
+        else:
+            # No callback available — skip execution, record explicit reason
+            self._guard_observation["callback_supplied"] = False
+            self._guard_observation["callback_executed"] = False
+            self._guard_observation["callback_not_executed_reason"] = "callback_not_executed_no_callback"
+            self._guard_observation["reason"] = "barrier_passed"
+            self._guard_observation["allowed"] = True
+            return True
 
         self._guard_observation["allowed"] = True
         return True
