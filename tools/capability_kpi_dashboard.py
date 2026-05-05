@@ -718,7 +718,10 @@ def render_md(dashboard: DashboardOutput) -> str:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL")
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL", suggest_on_error=True, color=True)
+    else:
+        parser = argparse.ArgumentParser(description="Capability KPI Dashboard — Sprint F206BL")
     parser.add_argument("--output-json", action="store_true", help="Emit JSON to stdout")
     parser.add_argument("--output-md", action="store_true", help="Emit Markdown to stdout")
     args = parser.parse_args()

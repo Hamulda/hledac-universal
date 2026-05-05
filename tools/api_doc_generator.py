@@ -785,8 +785,11 @@ print(f"Expertise level: {expertise}")
 def main():
     """Main entry point."""
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Generate API documentation for Hledac")
+
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(description="Generate API documentation for Hledac", suggest_on_error=True, color=True)
+    else:
+        parser = argparse.ArgumentParser(description="Generate API documentation for Hledac")
     parser.add_argument(
         "--package-path", 
         default="hledac",

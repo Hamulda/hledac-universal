@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from utils.uuid7 import new_runtime_id
+from hledac.universal.utils.uuid7 import new_runtime_id
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from queue import PriorityQueue

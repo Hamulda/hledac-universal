@@ -18,7 +18,7 @@ import asyncio
 import inspect
 import queue
 import threading
-from utils.uuid7 import new_runtime_id
+from hledac.universal.utils.uuid7 import new_runtime_id
 from typing import Optional, Callable, Any, Dict
 from collections import OrderedDict
 

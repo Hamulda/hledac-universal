@@ -332,10 +332,18 @@ def format_json(report: DoctorReport, verbose: bool = False) -> str:
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="hledac_doctor.py",
-        description="Check Hledac dependency availability. No network, no model load.",
-    )
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(
+            prog="hledac_doctor.py",
+            description="Check Hledac dependency availability. No network, no model load.",
+            suggest_on_error=True,
+            color=True,
+        )
+    else:
+        parser = argparse.ArgumentParser(
+            prog="hledac_doctor.py",
+            description="Check Hledac dependency availability. No network, no model load.",
+        )
     parser.add_argument("--json", action="store_true", help="Output JSON instead of Markdown")
     parser.add_argument("--extra", metavar="EXTRA", choices=sorted(EXTRA_GROUPS.keys()),
                         help="Only check deps for this extra group")

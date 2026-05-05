@@ -123,6 +123,36 @@ from .rate_limiter import (
 )  # NEW from stealth_toolkit integration
 from .async_utils import bounded_map, map_as_completed, bounded_gather, TaskResult  # Sprint 81 Fáze 2
 
+
+def _uuid7_stdlib() -> bool:
+    """Check if stdlib uuid.uuid7 is available (Python 3.14+)."""
+    import uuid as _uuid
+    return hasattr(_uuid, "uuid7")
+
+
+def uuid7() -> str:
+    """
+    Return a UUIDv7 string.
+
+    Prefers stdlib uuid.uuid7() when available (Python 3.14+).
+    Falls back to uuid.uuid4() for older runtimes.
+    Returns str, not UUID object.
+    """
+    import uuid as _uuid
+
+    if hasattr(_uuid, "uuid7"):
+        return str(_uuid.uuid7())
+    return str(_uuid.uuid4())
+
+
+def get_uuid7_compat_status() -> dict:
+    """Return compat shim status."""
+    return {
+        "stdlib_uuid7": _uuid7_stdlib(),
+        "fallback": "uuid4" if not _uuid7_stdlib() else "uuid7",
+    }
+
+
 __all__ = [
     # NEW from sprint 68
     "ActionResult",
@@ -236,4 +266,7 @@ __all__ = [
     "map_as_completed",
     "bounded_gather",
     "TaskResult",
+    # UUID7 compat shim (F208N-D)
+    "uuid7",
+    "get_uuid7_compat_status",
 ]

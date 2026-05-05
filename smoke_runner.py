@@ -291,7 +291,10 @@ def run_sprint_import_test() -> bool:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Hledac Smoke Runner")
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(description="Hledac Smoke Runner", suggest_on_error=True, color=True)
+    else:
+        parser = argparse.ArgumentParser(description="Hledac Smoke Runner")
     parser.add_argument("--smoke", action="store_true",
                         help="Run lightweight smoke test without network")
     parser.add_argument("--mode", default="public",

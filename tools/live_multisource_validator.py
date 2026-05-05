@@ -348,7 +348,8 @@ def _extract_terminality_fields(data: dict) -> tuple:
             checked = True if isinstance(terminality.get("checked"), list) else None
         if satisfied is None:
             ml = terminality.get("missing_lanes")
-            satisfied = True if isinstance(ml, list) and len(ml) == 0 else None
+            if isinstance(ml, list):
+                satisfied = (len(ml) == 0)
         if missing_lanes is None:
             missing_lanes = terminality.get("missing_lanes")
 
@@ -681,10 +682,18 @@ def emit_markdown(result: ValidationResult, output_path: str | Path) -> None:
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Live Multisource Validator — F208K",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(
+            description="Live Multisource Validator — F208K",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            suggest_on_error=True,
+            color=True,
+        )
+    else:
+        parser = argparse.ArgumentParser(
+            description="Live Multisource Validator — F208K",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
     parser.add_argument("--input-json", required=True, help="Path to live_sprint_measurement JSON artifact")
     parser.add_argument("--output-json", help="Path to write verdict JSON")
     parser.add_argument("--output-md", help="Path to write verdict Markdown report")

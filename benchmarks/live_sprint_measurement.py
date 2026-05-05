@@ -219,6 +219,10 @@ class LiveMeasurementResult:
     # Stored at top-level for validator self-containment
     acquisition_report: dict | None = None
 
+    # F208N: Resolved output paths (absolute, resolved before write)
+    resolved_output_json: str | None = None
+    resolved_output_md: str | None = None
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["mode"] = self.mode.value
@@ -1256,6 +1260,13 @@ def _derive_next_action(
     if has_rg_telemetry and rg_checked and not rg_satisfied:
         return ("fix_return_guard_terminal_state", None)
 
+    # F208N: Windup callback NOT supplied but windup guard was called
+    # windup_guard_call_count > 0 means the guard was active but no callback was wired.
+    # Distinct from fix_callback_execution where callback was wired but never executed.
+    wg_call_count = wg.get("windup_guard_call_count", 0)
+    if wg_supplied == 0 and wg_call_count > 0:
+        return ("fix_callback_wiring", None)
+
     # F208M: Return guard checked AND satisfied — never emit fix_return_guard_report_mapping.
     # If both checked and satisfied are True, the guard is working correctly and
     # any nonfeed starvation is a pre-dispatch issue, not a report mapping gap.
@@ -2247,14 +2258,16 @@ async def main() -> int:
         result = await _run_preflight()
 
         if args.output_json:
-            out_path = Path(args.output_json)
+            out_path = Path(args.output_json).resolve()
+            result.resolved_output_json = str(out_path)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with open(out_path, "w") as f:
                 f.write(result.to_json())
             logging.info("JSON result written to %s", out_path)
 
         if args.output_md:
-            md_path = Path(args.output_md)
+            md_path = Path(args.output_md).resolve()
+            result.resolved_output_md = str(md_path)
             md_path.parent.mkdir(parents=True, exist_ok=True)
             with open(md_path, "w") as f:
                 f.write(_render_md(result))
@@ -2318,14 +2331,16 @@ async def main() -> int:
 
     # Write outputs
     if args.output_json:
-        out_path = Path(args.output_json)
+        out_path = Path(args.output_json).resolve()
+        result.resolved_output_json = str(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:
             f.write(result.to_json())
         logging.info("JSON result written to %s", out_path)
 
     if args.output_md:
-        md_path = Path(args.output_md)
+        md_path = Path(args.output_md).resolve()
+        result.resolved_output_md = str(md_path)
         md_path.parent.mkdir(parents=True, exist_ok=True)
         with open(md_path, "w") as f:
             f.write(_render_md(result))

@@ -482,7 +482,10 @@ def trace_boundaries(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="F208 Truth Boundary Diagnostic")
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(description="F208 Truth Boundary Diagnostic", suggest_on_error=True, color=True)
+    else:
+        parser = argparse.ArgumentParser(description="F208 Truth Boundary Diagnostic")
     parser.add_argument("--benchmark-json", required=True, help="Path to benchmark JSON")
     parser.add_argument("--validation-json", help="Path to optional validation JSON")
     parser.add_argument("--output-json", required=True, help="Output JSON path")

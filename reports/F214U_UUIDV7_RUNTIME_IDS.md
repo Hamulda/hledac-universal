@@ -192,6 +192,49 @@ Run: `python -c "from utils.uuid7 import new_runtime_id; print(new_runtime_id())
 
 ---
 
+## F214U-1F — PATCH_APPLIED
+
+**Date:** 2026-05-05
+**Status:** PATCH_APPLIED
+**Regression:** F214X-2 boot smoke reported `ModuleNotFoundError: No module named 'utils.uuid7'`
+
+### Root Cause
+`utils/` is inside `hledac/universal/`, not a top-level package. `from utils.uuid7 import new_runtime_id` fails when run as `python -m hledac.universal`.
+
+### Fix Applied
+Updated all 5 F214U-1 patched files to use absolute import:
+
+```
+from hledac.universal.utils.uuid7 import new_runtime_id
+```
+
+| File | Change |
+|------|--------|
+| `layers/coordination_layer.py` | `utils.uuid7` → `hledac.universal.utils.uuid7` |
+| `intelligence/web_intelligence.py` | `utils.uuid7` → `hledac.universal.utils.uuid7` |
+| `runtime/pivot_executor.py` | `utils.uuid7` → `hledac.universal.utils.uuid7` |
+| `transport/nym_transport.py` | `utils.uuid7` → `hledac.universal.utils.uuid7` |
+| `orchestrator/global_scheduler.py` | `utils.uuid7` → `hledac.universal.utils.uuid7` |
+
+### Validation Results
+
+```
+UUID7_HELPER_OK fb7b9b80-7372-49f0-a030-e1a29d2e2651
+IMPORT_OK
+coordination_layer import: OK
+new_runtime_id(): 0e54af03-fd63-47c6-bb68-65a84d6b7da2
+```
+
+F214U tests: **9 passed, 2 skipped**
+Boot smoke: **clean exit, no fatal traceback** (ran 35s via timeout)
+
+### Scope Constraints Honored
+- No new UUID migration sites added
+- No helper API changes
+- No CanonicalFinding.id, LMDB keys, hashes, or dedup fingerprints touched
+
+---
+
 ## Canonical IDs Confirmed Untouched
 
 - `CanonicalFinding.id` — NOT referenced in uuid.uuid4() searches

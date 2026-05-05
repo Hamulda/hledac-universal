@@ -620,7 +620,7 @@ class ParallelExecutionOptimizer:
 
             classifications.append(task_info)
 
-            return classifications
+        return classifications
 
     async def _execute_with_resource_constraints(
         self, tasks: List[Any], classifications: List[Dict[str, Any]], max_workers: int) -> List[Any]:
@@ -720,7 +720,7 @@ class ParallelExecutionOptimizer:
             except Exception:
                 predictions.append(1.0)  # Default prediction
 
-            return predictions
+        return predictions
 
     def _optimize_execution_order(self, tasks: List[Any], predictions: List[float]) -> List[Any]:
         """Optimize task execution order based on predictions"""
@@ -769,7 +769,7 @@ class ParallelExecutionOptimizer:
             results.extend(batch_results)
             task_index += batch_size
 
-            return results
+        return results
 
     def _adjust_workers_for_resources(self, max_workers: int, resources: Dict[str, float]) -> int:
         """Adjust worker count based on available resources"""

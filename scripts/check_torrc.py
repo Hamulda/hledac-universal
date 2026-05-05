@@ -77,7 +77,10 @@ def check_isolate_socks_auth(torrc_path: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check torrc for IsolateSOCKSAuth")
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(description="Check torrc for IsolateSOCKSAuth", suggest_on_error=True, color=True)
+    else:
+        parser = argparse.ArgumentParser(description="Check torrc for IsolateSOCKSAuth")
     parser.add_argument(
         "--torrc",
         dest="torrc_path",

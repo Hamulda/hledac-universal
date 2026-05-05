@@ -132,16 +132,43 @@ class SprintLifecycleRunner:
             "callback_not_executed_reason": "callback_not_executed_guard_not_reached",
         }
 
+        # Sprint F208N-A: Always evaluate the prewindup barrier callback when provided,
+        # even when should_enter_windup() is False. The callback checks lane terminality
+        # and may dispatch bounded nonfeed lanes. Setting callback_supplied=True
+        # regardless of should_enter_windup() ensures the scheduler telemetry accurately
+        # reflects callback reachability.
+        _callback = pre_windup_barrier if pre_windup_barrier is not None else self._pre_windup_barrier
+
         if not self._adapter.should_enter_windup(now_monotonic):
+            # Sprint F208N-A: Even when windup is not yet triggered, call the callback
+            # if provided so it can check/dispatch required lanes. Mark supplied=True.
+            if _callback is not None:
+                self._guard_observation["callback_supplied"] = True
+                try:
+                    barrier_ok = _callback()
+                    self._guard_observation["callback_executed"] = True
+                    self._guard_observation["callback_not_executed_reason"] = ""
+                    self._guard_observation["barrier_ok"] = barrier_ok
+                except Exception as exc:
+                    self._guard_observation["callback_executed"] = True
+                    self._guard_observation["callback_not_executed_reason"] = "callback_not_executed_exception"
+                    self._guard_observation["barrier_ok"] = None
+                    self._guard_observation["reason"] = f"callback_exception:{type(exc).__name__}"
+                    log.debug(
+                        "[SprintLifecycleRunner] prewindup barrier callback error (allowing windup): %s",
+                        exc,
+                    )
+                    return False
+            else:
+                self._guard_observation["callback_supplied"] = False
+                self._guard_observation["callback_not_executed_reason"] = "callback_not_executed_no_callback"
             self._guard_observation["reason"] = "not_windup_time"
-            self._guard_observation["callback_not_executed_reason"] = "callback_not_executed_guard_not_reached"
             return False
 
         self._guard_observation["should_enter_windup"] = True
         self._guard_observation["reason"] = "allowed_by_adapter"
 
         # Check pre-windup barrier if provided
-        _callback = pre_windup_barrier if pre_windup_barrier is not None else self._pre_windup_barrier
         if _callback is not None:
             self._guard_observation["callback_supplied"] = True
             try:

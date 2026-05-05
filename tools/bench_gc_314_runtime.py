@@ -458,7 +458,10 @@ def _sigint_handler(signum, frame):
 # =============================================================================
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark")
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark", suggest_on_error=True, color=True)
+    else:
+        parser = argparse.ArgumentParser(description="F214G GC Reality Benchmark")
     parser.add_argument(
         "--label",
         default="auto",

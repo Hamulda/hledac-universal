@@ -12,7 +12,7 @@ orchestration lives in the autonomous_orchestrator.
 import asyncio
 import heapq
 import time
-from utils.uuid7 import new_runtime_id
+from hledac.universal.utils.uuid7 import new_runtime_id
 from typing import Dict, List, Optional, Any, Union, Callable, Tuple, Set
 from collections import OrderedDict
 from dataclasses import dataclass, field

@@ -263,10 +263,18 @@ def format_markdown(result: PreflightResult) -> str:
 # =============================================================================
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(
-        prog="tools.live_memory_preflight",
-        description="In-boundary memory preflight check. No network, no process kill, no sudo.",
-    )
+    if sys.version_info >= (3, 14):
+        parser = argparse.ArgumentParser(
+            prog="tools.live_memory_preflight",
+            description="In-boundary memory preflight check. No network, no process kill, no sudo.",
+            suggest_on_error=True,
+            color=True,
+        )
+    else:
+        parser = argparse.ArgumentParser(
+            prog="tools.live_memory_preflight",
+            description="In-boundary memory preflight check. No network, no process kill, no sudo.",
+        )
     parser.add_argument(
         "--json",
         action="store_true",
