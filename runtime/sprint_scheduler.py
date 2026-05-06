@@ -312,6 +312,8 @@ class CTLossStage(Enum):
     # Kept for completeness and future multi-store architectures.
     STORED_NOT_REPORTED = "stored_not_reported"  # stored in DB but not visible in benchmark
     NO_LOSS = "no_loss"  # full path succeeded: raw → candidates → stored → reported
+    # F215C: Unknown loss — raw > 0 but telemetry insufficient to determine loss stage
+    UNKNOWN_LOSS = "unknown_loss"  # raw > 0 but cannot determine which loss stage
 
 
 # ---------------------------------------------------------------------------
@@ -2519,6 +2521,7 @@ class SprintScheduler:
                         and REJECTION_UNSUPPORTED_SHAPE in _rejection_reasons
                     ):
                         _ct_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
+                    # F215C: ALL_REJECTED_BY_BRIDGE only when bridge produced candidates=0 AND we have bridge telemetry (raw sampled)
                     elif _bridge_candidates == 0 and _bridge_raw > 0:
                         _ct_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
                     elif _bridge_candidates > 0 and not _storage_attempted:
@@ -2526,7 +2529,11 @@ class SprintScheduler:
                     elif _bridge_candidates > 0 and accepted == 0:
                         _ct_loss_stage = CTLossStage.ACCUMULATED_NOT_STORED.value
                     elif _bridge_candidates > 0 and accepted > 0:
+                        # F215C: no_loss requires ALL: raw>0, candidates>0, stored>0, accepted>0
                         _ct_loss_stage = CTLossStage.NO_LOSS.value
+                    elif _ct_results_raw > 0 and _bridge_candidates == 0 and _bridge_raw == 0:
+                        # F215C: raw exists but bridge never invoked — unknown loss stage
+                        _ct_loss_stage = CTLossStage.UNKNOWN_LOSS.value
                     else:
                         _ct_loss_stage = CTLossStage.BRIDGE_NOT_INVOKED.value
 
@@ -2732,8 +2739,20 @@ class SprintScheduler:
         import time as _time
 
         required = self._required_pre_windup_lanes(query, acquisition_plan, memory_state)
+        # F214WINDUP: ALWAYS record barrier checked=True, even when no lanes required.
+        # The _get_prewindup_barrier_report() reads prewindup_barrier_checked to decide
+        # whether to return the barrier dict. Without this, active300 runs show
+        # fix_prewindup_barrier_not_called because required=() early-return skips the
+        # self._result.prewindup_barrier_checked=True assignment at line 2791.
+        self._result.prewindup_barrier_checked = True
+        self._result.prewindup_barrier_required_lanes = required
         if not required:
-            return PreWindupBarrierResult(satisfied=True)
+            self._result.prewindup_barrier_satisfied = True
+            self._result.prewindup_barrier_attempted_lanes = ()
+            self._result.prewindup_barrier_skipped_lanes = {}
+            self._result.prewindup_barrier_errors = {}
+            self._result.prewindup_barrier_duration_s = 0.0
+            return PreWindupBarrierResult(satisfied=True, required_lanes=())
 
         t0 = _time.monotonic()
         attempted: list[str] = []
@@ -3150,6 +3169,8 @@ class SprintScheduler:
                     and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude
                 ):
                     _prelude_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
+                # F215E: Fallback for raw>0 but bridge produced no candidates without explicit rejection.
+                # Mirrors the main path fix for the same gap condition.
                 elif _prelude_candidates == 0 and _ct_results_raw > 0:
                     _prelude_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
                 else:
@@ -6938,6 +6959,26 @@ class SprintScheduler:
             _raw: dict | None = None
             if _lane == "FEED":
                 _raw = getattr(self, "_feed_verdicts", []) or None
+                # F215E: FEED accepted_count must come from result-level counts, not _feed_verdicts
+                # (verdict tuples carry signal/quality, not accepted_count).
+                # Net FEED = total - public - CT_log
+                if _raw is not None:
+                    _feed_accepted = (
+                        (self._result.accepted_findings or 0)
+                        - (self._result.public_accepted_findings or 0)
+                        - (self._result.ct_log_accepted_findings or 0)
+                    )
+                    _feed_accepted = max(0, _feed_accepted)
+                    if isinstance(_raw, list) and len(_raw) > 0:
+                        # Attach accepted_count to first verdict for normalize_source_family_outcome
+                        # Pass as a dict so normalize can read accepted_count
+                        _first = _raw[0]
+                        if isinstance(_first, tuple):
+                            _raw = {
+                                "verdict": _first,
+                                "accepted_count": _feed_accepted,
+                                "attempted": True,
+                            }
             elif _lane == AcquisitionLane.PUBLIC:
                 # Sprint F207H: Consume public pipeline outcome directly
                 _raw = getattr(self, "_public_outcome", None)

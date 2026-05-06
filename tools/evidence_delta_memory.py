@@ -40,6 +40,9 @@ class EvidenceDelta:
     ct_attempted: bool = False
     ct_accepted_prev: int = 0
     ct_accepted_curr: int = 0
+    # F215C: raw counts for accurate loss detection
+    ct_raw_prev: int = 0
+    ct_raw_curr: int = 0
     new_ct_domains: list[str] = field(default_factory=list)
     repeated_ct_domains: list[str] = field(default_factory=list)
     # F215B: CT loss stage diagnostic
@@ -91,18 +94,26 @@ def _load_kpi(filepath: Path) -> dict:
 
         # Style 1: probe_f208g live_active300 JSON
         if isinstance(data, dict) and "live_kpi" in data:
-            return data["live_kpi"]
+            result = dict(data["live_kpi"])
+            # F215C: Include lane_execution_counts for ct_raw detection
+            if "lane_execution_counts" in data:
+                result["lane_execution_counts"] = data["lane_execution_counts"]
+            return result
 
         # Style 2: research_quality_score JSON — use live_artifact_result
         if isinstance(data, dict) and "live_artifact_result" in data:
             lar = data["live_artifact_result"]
-            return {
+            result = {
                 "total_findings": lar.get("total_findings", 0),
                 "feed_findings": lar.get("feed_findings", 0),
                 "ct_findings": lar.get("ct_findings", 0),
                 "public_findings": lar.get("public_findings", 0),
                 "passive_findings": lar.get("passive_findings", 0),
             }
+            # F215C: Include lane_execution_counts for ct_raw detection
+            if "lane_execution_counts" in data:
+                result["lane_execution_counts"] = data["lane_execution_counts"]
+            return result
 
         return {}
     except (OSError, json.JSONDecodeError, KeyError):
@@ -260,6 +271,21 @@ def compute_delta(previous_json: Optional[Path], current_json: Path) -> Evidence
     feed_accepted_curr = curr_counts.get("FEED", 0)
     feed_accepted_prev = prev_counts.get("FEED", 0)
 
+    # F215C: Extract ct_raw_count for accurate loss detection
+    def _get_ct_raw(kpi: dict) -> int:
+        if isinstance(kpi.get("lane_execution_counts"), dict):
+            ct_data = kpi["lane_execution_counts"].get("ct", {})
+            if isinstance(ct_data, dict):
+                return ct_data.get("raw_count", 0)
+        if isinstance(kpi.get("source_family_outcomes"), list):
+            for entry in kpi["source_family_outcomes"]:
+                if isinstance(entry, dict) and entry.get("family", "").lower() == "ct":
+                    return entry.get("raw_count", 0)
+        return 0
+
+    ct_raw_curr = _get_ct_raw(curr_kpi)
+    ct_raw_prev = _get_ct_raw(prev_kpi)
+
     # ── CT domains (source_family_outcomes accepted > 0 as proxy) ────────────
     # We don't have explicit domain lists in live_active300 JSON — treat CT
     # accepted count > 0 as new evidence. Repeated = previously had CT evidence.
@@ -392,6 +418,8 @@ def compute_delta(previous_json: Optional[Path], current_json: Path) -> Evidence
         ct_attempted=ct_attempted,
         ct_accepted_prev=ct_accepted_prev,
         ct_accepted_curr=ct_accepted_curr,
+        ct_raw_prev=ct_raw_prev,
+        ct_raw_curr=ct_raw_curr,
         new_ct_domains=new_ct_domains,
         # F215B: CT loss stage
         ct_loss_stage_prev=ct_loss_stage_prev,
@@ -461,7 +489,7 @@ def verdict_to_markdown(delta: EvidenceDelta, prev_path: Optional[Path], curr_pa
         f"- **Repeated CT domains:** {delta.repeated_ct_domains or '_(none)_'}",
         f"- **CT loss stage (prev):** `{delta.ct_loss_stage_prev}`",
         f"- **CT loss stage (curr):** `{delta.ct_loss_stage_curr}`",
-        f"- **⚠️ CT loss detected:** {'YES — evidence lost in pipeline' if delta.ct_loss_stage_curr != 'no_loss' and delta.ct_accepted_curr == 0 else 'NO'},",
+        f"- **⚠️ CT loss detected:** {'YES — evidence lost in pipeline' if delta.ct_raw_curr > 0 and delta.ct_accepted_curr == 0 else 'NO'},",
 
         "",
         "---",

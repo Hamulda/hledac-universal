@@ -70,6 +70,9 @@ class ResearchQualityScore:
     swap_warning: bool
     # F215B: CT loss stage diagnostic
     ct_loss_stage: str = "no_loss"
+    # F215E: Quality gate verdict and comparability flag
+    quality_gate: QualityGate = QualityGate.QUALITY_PASS
+    research_quality_comparable: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +81,13 @@ class ResearchQualityScore:
 
 def _extract_uma_swap_gib(data: dict) -> float | None:
     """Extract swap in GiB from various UMA fields across formats."""
-    # Live format: uma_post_swap_gib
+    # Live format: uma_post_swap_gib at top level
     if data.get("uma_post_swap_gib") is not None:
         return float(data["uma_post_swap_gib"])
+    # F215A: also check inside live_kpi where live_sprint_measurement stamps it
+    live_kpi = data.get("live_kpi")
+    if isinstance(live_kpi, dict) and live_kpi.get("uma_post_swap_gib") is not None:
+        return float(live_kpi["uma_post_swap_gib"])
     # Benchmark memory dict: rss_peak_mb / 1024 — not swap, skip
     mem = data.get("memory")
     if isinstance(mem, dict):
@@ -95,6 +102,10 @@ def _extract_swap_warning(data: dict) -> bool:
     """Extract swap_warning flag."""
     if isinstance(data.get("swap_warning"), bool):
         return data["swap_warning"]
+    # F215A: also check inside live_kpi where live_sprint_measurement stamps it
+    live_kpi = data.get("live_kpi")
+    if isinstance(live_kpi, dict) and isinstance(live_kpi.get("swap_warning"), bool):
+        return live_kpi["swap_warning"]
     if isinstance(data.get("memory"), dict):
         return bool(data["memory"].get("swap_warning"))
     return False
@@ -324,6 +335,12 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     swap_warn = norm["swap_warning"]
     ct_loss_stage = norm.get("ct_loss_stage", "no_loss")
 
+    # F215E: Extract hardware_constrained from live_kpi if present
+    hw_constrained = False
+    live_kpi = norm.get("live_kpi")
+    if isinstance(live_kpi, dict):
+        hw_constrained = bool(live_kpi.get("hardware_constrained"))
+
     nonfeed_ratio = nonfeed / accepted if accepted > 0 else 0.0
 
     fvs = _findings_volume_score(total, nonfeed)
@@ -348,6 +365,20 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         grade = Grade.MULTISOURCE_USEFUL
     else:
         grade = Grade.DEEP_RESEARCH_READY
+
+    # F215E: Determine comparable and quality_gate
+    comparable = True
+    if hw_constrained:
+        comparable = False
+    elif swap_gib is not None and swap_gib >= 3.0:
+        comparable = False
+
+    gate = quality_gate_verdict(
+        grade=grade,
+        nonfeed_findings=nonfeed,
+        swap_gib=swap_gib,
+        hardware_constrained=hw_constrained,
+    )
 
     return ResearchQualityScore(
         total_quality_score=round(total_quality_score, 2),
@@ -378,6 +409,9 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         swap_gib=swap_gib,
         swap_warning=swap_warn,
         ct_loss_stage=ct_loss_stage,
+        # F215E: Quality gate and comparability
+        quality_gate=gate,
+        research_quality_comparable=comparable,
     )
 
 
@@ -448,7 +482,9 @@ def _render_md(score: ResearchQualityScore) -> str:
         "# Research Quality Score",
         "",
         f"**Total Score:** {score.total_quality_score:.1f}/100",
-        f"**Grade:** `{score.grade.value}`{ct_loss_alert}",
+        f"**Grade:** `{score.grade.value}`",
+        f"**Quality Gate:** `{score.quality_gate.value}`",
+        f"**Comparable:** `{score.research_quality_comparable}`{ct_loss_alert}",
         "",
         "## Score Components",
         "",
@@ -520,6 +556,8 @@ def main() -> int:
     if not args.output_json and not args.output_md:
         print(f"Score: {score.total_quality_score:.1f} / 100")
         print(f"Grade: {score.grade.value}")
+        print(f"Quality Gate: {score.quality_gate.value}")
+        print(f"Comparable: {score.research_quality_comparable}")
         print(f"  findings_volume_score:      {score.components.findings_volume_score:.1f}")
         print(f"  source_diversity_score:   {score.components.source_diversity_score:.1f}")
         print(f"  nonfeed_evidence_score:   {score.components.nonfeed_evidence_score:.1f}")
@@ -544,44 +582,33 @@ def score_research_quality(data: dict) -> dict:
     This is the canonical import-safe entry point for live_sprint_measurement.py.
     No network, no MLX — pure scoring from the data dict already captured.
 
-    Returns a dict with:
+    Returns a dict with all required quality surface fields:
       - total_quality_score: float (0-100)
       - grade: str ("FEED_ONLY", "MULTISOURCE_SHALLOW", "MULTISOURCE_USEFUL", "DEEP_RESEARCH_READY")
       - quality_gate: str — QUALITY_PASS | QUALITY_FAIL_FEED_ONLY | QUALITY_FAIL_HARDWARE_TAINTED | QUALITY_FAIL_NONFEED_ZERO | QUALITY_WARN_MULTISOURCE_SHALLOW
       - research_quality_comparable: bool — False when hardware_constrained or swap_gib >= 3.0
       - components: dict of component scores
       - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained)
+      - feed_dominance_score: float (0-1, penalty applied)
+      - swap_gib: float | None — post-sprint swap in GiB
+      - swap_warning: bool — memory pressure signal
+      - hardware_constrained: bool — from live_kpi hardware_constrained field
     """
     norm = normalize_benchmark_json(data)
     rqs = compute_research_quality_score(norm)
     comp = rqs.components
 
-    # hardware_constrained from live_kpi if present
+    # hardware_constrained from live_kpi if present (for diagnostic_flags)
     hw_constrained = False
     live_kpi = norm.get("live_kpi")
     if isinstance(live_kpi, dict):
         hw_constrained = bool(live_kpi.get("hardware_constrained"))
 
-    # comparable: hardware_constrained=true means NOT comparable
-    comparable = True
-    if hw_constrained:
-        comparable = False
-    elif rqs.swap_gib is not None and rqs.swap_gib >= 3.0:
-        comparable = False
-
-    # Determine quality gate verdict
-    gate = quality_gate_verdict(
-        grade=rqs.grade,
-        nonfeed_findings=rqs.nonfeed_findings,
-        swap_gib=rqs.swap_gib,
-        hardware_constrained=hw_constrained,
-    )
-
     return {
         "total_quality_score": rqs.total_quality_score,
         "grade": rqs.grade.value,
-        "quality_gate": gate.value,
-        "research_quality_comparable": comparable,
+        "quality_gate": rqs.quality_gate.value,
+        "research_quality_comparable": rqs.research_quality_comparable,
         "components": {
             "findings_volume_score": comp.findings_volume_score,
             "source_diversity_score": comp.source_diversity_score,
@@ -599,6 +626,11 @@ def score_research_quality(data: dict) -> dict:
             "swap_warning": rqs.swap_warning,
             "hardware_constrained": hw_constrained,
         },
+        # F215A: Surface contract — always present fields
+        "feed_dominance_score": rqs.feed_dominance_score,
+        "swap_gib": rqs.swap_gib,
+        "swap_warning": rqs.swap_warning,
+        "hardware_constrained": hw_constrained,
         # Raw finding counts for convenience
         "total_findings": rqs.total_findings,
         "accepted_findings": rqs.accepted_findings,

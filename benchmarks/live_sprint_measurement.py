@@ -94,8 +94,11 @@ _MEMORY_GATE_OPERATOR_ACTION = (
     "restart or close heavy apps; rerun active300 with --require-memory-ok"
 )
 
-# F212D: Swap gate threshold and operator action
-_SWAP_GATE_THRESHOLD_GIB = 3.0
+# F215D: Swap gate threshold — active300/600 must be swap-clean for comparable results
+# Changed from 3.0 to 1.0 GiB: user observed 4.8 GiB swap during F214/F214R2 still produced
+# "completed" results that were hardware-constrained but not marked non-comparable.
+# 1.0 GiB provides clean headroom while still allowing tiny background swap.
+_SWAP_GATE_THRESHOLD_GIB = 1.0
 _SWAP_GATE_OPERATOR_ACTION = (
     "restart to clear swap; or use --allow-high-swap to run anyway (results will be non-comparable)"
 )
@@ -208,6 +211,14 @@ class LiveMeasurementResult:
 
     # F212D: Swap gate — high swap detected during preflight/live gate
     swap_gate_triggered: bool | None = None
+
+    # F215D: Comparable result — whether run is comparable to clean-swap baseline
+    # False when hardware_constrained=True or swap_gate_triggered=True
+    comparable_result: bool | None = None
+
+    # F215D: Taint reason — why comparable_result=False (if applicable)
+    # Set to "high_swap" when running with --allow-high-swap
+    taint_reason: str | None = None
 
     # Live KPI (F207J)
     live_kpi: dict | None = None
@@ -1311,10 +1322,19 @@ def _derive_live_kpi(
     # nonfeed_attempted_families: F215A CANONICAL BOUNDARY
     # Only populate from lane_execution_counts when built from source_family_outcomes (canonical).
     # When source_family_outcomes is absent (legacy), emit CANONICAL_FIELD_MISSING.
-    if isinstance(_sfo_list, list) and len(_sfo_list) > 0:
+    _sfo_has_canonical = isinstance(_sfo_list, list) and len(_sfo_list) > 0
+    if _sfo_has_canonical:
+        _lec_lower_keys = {k.lower(): k for k in lane_execution_counts.keys()}
+        _seen_lower = set()
         nonfeed_attempted_families = [
-            _fam for _fam, _data in lane_execution_counts.items()
-            if _fam != "feed" and _data.get("attempted")
+            _lec_lower_keys[_fam.lower()]
+            for _fam, _data in lane_execution_counts.items()
+            if (
+                _fam.lower() != "feed"
+                and _data.get("attempted")
+                and _fam.lower() not in _seen_lower
+                and not (_seen_lower.add(_fam.lower()) or False)
+            )
         ]
     else:
         nonfeed_attempted_families = "CANONICAL_FIELD_MISSING"
@@ -1323,22 +1343,61 @@ def _derive_live_kpi(
     nonfeed_accepted_findings = accepted_findings - feed_findings if accepted_findings else 0
     nonfeed_accepted_findings = max(0, nonfeed_accepted_findings)
 
+    # F215B: PUBLIC Stage Source of Truth
+    # If any public stage field indicates activity or timeout, ensure PUBLIC lane_execution_counts entry exists.
+    # live_kpi_public_fetch_attempted reads from lane_execution_counts["PUBLIC"]["attempted"].
+    # When PUBLIC is absent from source_family_outcomes (the sfo_list), lane_execution_counts["PUBLIC"]
+    # never gets created, so public_fetch_attempted is False even though the public stage ran.
+    # Fix: synthesize a diagnostic PUBLIC entry in lane_execution_counts when public stage signals exist.
+    _has_public_signal = (
+        (runtime_truth and runtime_truth.get("public_branch_timed_out"))
+        or (runtime_truth and runtime_truth.get("branch_mix", {}).get("public_findings", 0) > 0)
+    )
+    # F215E: Synthesis must happen whenever _has_public_signal is True, regardless
+    # of _sfo_has_canonical. When _sfo_has_canonical is False (legacy report), we still
+    # need to document PUBLIC activity via synthesis so sanity checks don't falsely fail.
+    if _has_public_signal:
+        # Check if PUBLIC already present in lane_execution_counts
+        _pub_already_in_lec = "PUBLIC" in lane_execution_counts
+        if not _pub_already_in_lec:
+            # F215B: Synthesize diagnostic PUBLIC outcome for lane_execution_counts SSOT.
+            # This is benchmark-only diagnostic — does NOT invent findings, only documents activity.
+            _rt_timed_out = runtime_truth.get("public_branch_timed_out") if runtime_truth else False
+            _sig_reason = "terminal:timeout" if _rt_timed_out else "terminal:no_outcome_recorded"
+            lane_execution_counts["PUBLIC"] = {
+                "attempted": True,
+                "terminal_state": "ERROR" if _sig_reason == "terminal:timeout" else "ATTEMPTED_NO_RESULTS",
+                "raw_count": 0,
+                "accepted_count": 0,
+                "error": _sig_reason,
+                "skipped": False,
+            }
+            # F215B: Also inject into source_family_outcomes_display so sfo_display matches lec
+            source_family_outcomes_display.append({
+                "family": "PUBLIC",
+                "attempted": True,
+                "terminal_state": lane_execution_counts["PUBLIC"]["terminal_state"],
+                "raw_count": 0,
+                "accepted_findings": 0,
+                "error": _sig_reason,
+                "skipped": False,
+            })
+            # F215E: After synthesis, nonfeed_attempted_families must include PUBLIC.
+            # Deduplicate against existing entries case-insensitively.
+            if isinstance(nonfeed_attempted_families, list):
+                _has_pub_lower = any(_e.lower() == "public" for _e in nonfeed_attempted_families)
+                if not _has_pub_lower:
+                    nonfeed_attempted_families.append("PUBLIC")
+
     # public_fetch_attempted: F215A CANONICAL MEASUREMENT BOUNDARY
-    # CRITICAL: Must read from lane_execution_counts (from source_family_outcomes), NOT from runtime_truth branch_mix.
-    # runtime_truth branch_mix is a REconstruction proxy, not canonical lane execution truth.
-    # When source_family_outcomes is absent, use False (conservative default — don't recommend
-    # inspecting public when we can't confirm it was attempted). Track via missing_canonical_fields.
-    _sfo_has_canonical = isinstance(_sfo_list, list) and len(_sfo_list) > 0
-    if _sfo_has_canonical:
-        # Canonical: read attempted from source_family_outcomes
-        _pub_entry = next((e for e in _sfo_list if isinstance(e, dict) and e.get("family") == "PUBLIC"), None)
-        if _pub_entry is not None:
-            public_fetch_attempted = bool(_pub_entry.get("attempted", False))
-        else:
-            # PUBLIC not present in source_family_outcomes at all — conservative False
-            public_fetch_attempted = False
+    # F215B SSOT fix: Must read from lane_execution_counts["PUBLIC"]["attempted"] directly.
+    # F215E: Now always reads from lane_execution_counts after synthesis (synthesis happens
+    # whenever _has_public_signal is True, regardless of _sfo_has_canonical).
+    _pub_lec = lane_execution_counts.get("PUBLIC")
+    if _pub_lec is not None:
+        public_fetch_attempted = bool(_pub_lec.get("attempted", False))
     else:
-        # Legacy report without source_family_outcomes — conservative False, do NOT infer from branch_mix
+        # No PUBLIC in lane_execution_counts — conservatively False
         public_fetch_attempted = False
 
     # Public pipeline telemetry from sprint report (F207K)
@@ -2002,15 +2061,25 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
 
     # F214C: Stamp research quality score into live_kpi
     # score_research_quality expects a dict with runtime_truth / live_kpi fields
+    # F215E: Ensure hardware_constrained is set in kpi before scoring.
+    # If scoring happens before live_kpi.hardware_constrained is populated,
+    # pass a minimal live_kpi with hardware_constrained=True (worst-case assumption).
+    _scoring_kpi = dict(kpi)
+    if not _scoring_kpi.get("hardware_constrained"):
+        _scoring_kpi["hardware_constrained"] = True
     _rq_data = {
         "mode": "live",
         "findings_count": result.findings_count,
         "runtime_truth": result.runtime_truth or {},
-        "live_kpi": kpi,
+        "live_kpi": _scoring_kpi,
         "uma_post_swap_gib": result.uma_post_swap_gib,
     }
     _rq = score_research_quality(_rq_data)
     result.live_kpi["research_quality"] = _rq
+
+    # F215A: Surface contract — quality_gate and research_quality_comparable at live_kpi top level
+    result.live_kpi["quality_gate"] = _rq["quality_gate"]
+    result.live_kpi["research_quality_comparable"] = _rq["research_quality_comparable"]
 
 
 # ---------------------------------------------------------------------------
@@ -2079,14 +2148,18 @@ async def _run_preflight() -> LiveMeasurementResult:
         # smoke180 has no active runtime so swap doesn't distort wallclock comparability
         swap_gib = uma_pre.get("swap_gib", 0) or 0
         result.swap_gate_triggered = False
+        # F215D: any profile with swap >= 1.0 GiB → hardware_constrained, comparable_result=False
+        # smoke180 allows higher swap (>3.0) but still marks comparable=false below
         if swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
             result.swap_gate_triggered = True
             result.hardware_constrained = True
+            result.comparable_result = False
+            result.taint_reason = "high_swap"
             result.recommended_next_profile = "smoke180 or active300_after_restart"
             result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
             result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
             logging.warning(
-                "[PREFLIGHT] [SWAP GATE] swap=%.1f GiB >= %.1f GiB threshold — hardware_constrained=True",
+                "[PREFLIGHT] [SWAP GATE] swap=%.1f GiB >= %.1f GiB threshold — hardware_constrained=True, comparable_result=False",
                 swap_gib, _SWAP_GATE_THRESHOLD_GIB
             )
         else:
@@ -2198,13 +2271,15 @@ async def _run_dry_run(
                 result.uma_pre_state
             )
 
-    # F212D: Swap gate — active profiles with high swap are hardware-constrained
+    # F215D: Swap gate — active profiles with high swap are hardware-constrained
     swap_gib = result.uma_pre_swap_gib or 0
     is_active_profile = profile in ("active300", "active600")
     if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
         result.swap_gate_triggered = True
         if not allow_high_swap:
             result.status = MeasurementStatus.ABORTED
+            result.comparable_result = False
+            result.taint_reason = "high_swap"
             result.error = (
                 f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {_SWAP_GATE_THRESHOLD_GIB:.1f} GiB threshold "
                 f"for active profile '{profile}' — aborting dry-run. "
@@ -2219,11 +2294,13 @@ async def _run_dry_run(
             return result
         else:
             result.hardware_constrained = True
+            result.comparable_result = False
+            result.taint_reason = "high_swap"
             result.recommended_next_profile = "smoke180 or active300_after_restart"
             result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
             result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
             logging.warning(
-                "[DRY-RUN] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True)",
+                "[DRY-RUN] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True, comparable_result=False)",
                 swap_gib, _SWAP_GATE_THRESHOLD_GIB
             )
 
@@ -2362,7 +2439,7 @@ async def _run_live_sprint(
             }
             return result
 
-    # F212D: Swap gate — active profiles with high swap are hardware-constrained
+    # F215D: Swap gate — active profiles with high swap are hardware-constrained
     # smoke180 has no active runtime so swap doesn't distort comparability
     swap_gib = result.uma_pre_swap_gib or 0
     is_active_profile = profile in ("active300", "active600")
@@ -2371,6 +2448,8 @@ async def _run_live_sprint(
         if not allow_high_swap:
             result.status = MeasurementStatus.ABORTED
             result.end_time_iso = _now_iso()
+            result.comparable_result = False
+            result.taint_reason = "high_swap"
             result.error = (
                 f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {_SWAP_GATE_THRESHOLD_GIB:.1f} GiB threshold "
                 f"for active profile '{profile}' — aborting. "
@@ -2402,11 +2481,13 @@ async def _run_live_sprint(
             # and would clobber the True we just set. Fields are set directly; _stamp_profile_meta
             # is called again after the sprint completes (line ~2270) for profile-specific metadata.
             result.hardware_constrained = True
+            result.comparable_result = False
+            result.taint_reason = "high_swap"
             result.recommended_next_profile = "smoke180 or active300_after_restart"
             result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
             result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
             logging.warning(
-                "[LIVE] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True)",
+                "[LIVE] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True, comparable_result=False)",
                 swap_gib, _SWAP_GATE_THRESHOLD_GIB
             )
 

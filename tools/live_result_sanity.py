@@ -42,6 +42,11 @@ class BenchmarkSurface:
     planned_duration_s: float | None = None
     public_terminal_state: str | None = None
     ct_terminal_state: str | None = None
+    # F215D: swap/comparable from benchmark top-level
+    comparable_result: bool | None = None
+    swap_gate_triggered: bool | None = None
+    # F215A: embedded research_quality from live_kpi (used when no separate quality_json)
+    research_quality: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -213,6 +218,15 @@ def parse_benchmark(raw: dict[str, Any]) -> BenchmarkSurface:
     surf.public_terminal_state = raw.get("public_terminal_state")
     surf.ct_terminal_state = raw.get("ct_terminal_state")
 
+    # F215D: swap gate and comparable_result from benchmark top-level
+    surf.comparable_result = raw.get("comparable_result")
+    surf.swap_gate_triggered = raw.get("swap_gate_triggered")
+
+    # F215A: embedded research_quality from live_kpi (used when no separate quality_json)
+    _lk = surf.live_kpi
+    if isinstance(_lk, dict) and isinstance(_lk.get("research_quality"), dict):
+        surf.research_quality = _lk["research_quality"]
+
     return surf
 
 
@@ -259,6 +273,32 @@ def parse_quality(raw: dict[str, Any]) -> QualitySurface:
     surf.total_quality_score = raw.get("total_quality_score")
     surf.research_quality_comparable = raw.get("research_quality_comparable")
     return surf
+
+
+def parse_quality_with_fallback(raw: dict[str, Any], fallback: dict[str, Any]) -> QualitySurface:
+    """
+    F215A: Parse quality surface, falling back to embedded research_quality from
+    benchmark live_kpi when no explicit quality_json is provided.
+
+    Priority:
+    1. raw has quality_gate → use it
+    2. raw is empty + fallback has quality_gate → use fallback (embedded in benchmark)
+    3. raw is empty + fallback empty → N/A (quality_gate=None, no gate applied)
+    4. raw non-empty but quality_gate missing → malformed (quality_gate=None → fail)
+    """
+    # 1. raw has quality_gate → use it directly
+    if raw.get("quality_gate") is not None:
+        return parse_quality(raw)
+
+    # 2. raw is empty — try fallback (embedded research_quality from live_kpi)
+    if not raw:
+        if isinstance(fallback, dict) and fallback.get("quality_gate") is not None:
+            return parse_quality(fallback)
+        # 3. Nothing available → N/A
+        return QualitySurface(raw=raw)
+
+    # 4. Raw non-empty but quality_gate missing → malformed
+    return parse_quality(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +518,21 @@ def _check_hardware_constrained_comparable(
     return True, None
 
 
+def _check_swap_gate_comparable(b: BenchmarkSurface) -> tuple[bool, str | None]:
+    """
+    F215D: active300/active600 with swap_gate_triggered=True must have comparable_result=False.
+
+    Fails if:
+    - swap_gate_triggered=True but comparable_result is True or None.
+    """
+    if b.swap_gate_triggered and b.comparable_result is not False:
+        return False, (
+            f"swap_gate_triggered={b.swap_gate_triggered} but comparable_result={b.comparable_result} — "
+            "active300/600 with high swap must not be marked comparable"
+        )
+    return True, None
+
+
 # ---------------------------------------------------------------------------
 # Main checker
 # ---------------------------------------------------------------------------
@@ -522,7 +577,8 @@ def sanity_check(
     b = parse_benchmark(raw_b)
     v = parse_validator(raw_v)
     t = parse_trace(raw_t)
-    q = parse_quality(raw_q)
+    # F215A: fall back to embedded research_quality from live_kpi when no quality_json
+    q = parse_quality_with_fallback(raw_q, b.research_quality or {})
 
     result.benchmark = b
     result.validator = v
@@ -585,6 +641,13 @@ def sanity_check(
     # F214R2: hardware_constrained and research_quality_comparable must be consistent
     ok, msg = _check_hardware_constrained_comparable(b, q)
     checks["hardware_constrained_comparable"] = ok
+    if not ok:
+        assert msg is not None
+        result.disagreements.append(msg)
+
+    # F215D: swap gate — active300/active600 must not be marked comparable when swap is high
+    ok, msg = _check_swap_gate_comparable(b)
+    checks["swap_gate_comparable"] = ok
     if not ok:
         assert msg is not None
         result.disagreements.append(msg)
