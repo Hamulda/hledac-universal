@@ -1,7 +1,9 @@
-"""F210E — Live Result Bundle Sanity Checker.
+"""F211C — Strict Live Result Bundle Sanity Checker.
 
 Meta-checker that compares benchmark JSON + validation JSON + trace JSON
 and reports disagreements between the three surfaces.
+
+Strict mode: stale trace verdicts and wallclock budget overruns are always reported.
 
 ABSOLUTE REPO ROOT: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 Work only inside repo root.
@@ -148,6 +150,8 @@ _TERMINALITY_UNSATISFIED_VERDICTS = frozenset({
 
 _TRACE_STALE_VERDICTS = frozenset({
     "TRACE_TERMINALITY_STALE_BEFORE_NONFEED",
+    "TRACE_TERMINALITY_STALE_SNAPSHOT",
+    "TRACE_DIRECT_PRE_RETURN_BARRIER_MISSING",
     "TRACE_TERMINALITY_UNSATISFIED",
     "TRACE_DROP_BEFORE_EXPORT",
     "TRACE_DROP_AT_BENCHMARK_PARSE",
@@ -238,16 +242,6 @@ def _check_benchmark_fail_validator_pass(b: BenchmarkSurface, v: ValidatorSurfac
     return True, None
 
 
-def _check_trace_stale_validator_pass(t: TraceSurface, v: ValidatorSurface) -> tuple[bool, str | None]:
-    trace_stale = t.verdict in _TRACE_STALE_VERDICTS
-    val_pass = v.acquisition_terminality_satisfied is True
-    if trace_stale and val_pass:
-        return False, (
-            f"Trace verdict '{t.verdict}' but validator terminality_satisfied={v.acquisition_terminality_satisfied}"
-        )
-    return True, None
-
-
 def _check_benchmark_missing_source_family_outcomes(
     b: BenchmarkSurface, t: TraceSurface
 ) -> tuple[bool, str | None]:
@@ -261,11 +255,22 @@ def _check_benchmark_missing_source_family_outcomes(
     return True, None
 
 
+def _check_stale_terminality(
+    t: TraceSurface, allow_stale_trace: bool
+) -> tuple[bool, str | None]:
+    if allow_stale_trace:
+        return True, None
+    if t.verdict in _TRACE_STALE_VERDICTS:
+        return False, f"Stale trace verdict '{t.verdict}' present without --allow-stale-trace"
+    return True, None
+
+
 def _check_wallclock_budget(b: BenchmarkSurface) -> tuple[bool, str | None]:
     if b.actual_duration_s and b.planned_duration_s:
-        if b.actual_duration_s > b.planned_duration_s * 1.5:
+        allowed = max(b.planned_duration_s * 1.10, b.planned_duration_s + 30)
+        if b.actual_duration_s > allowed:
             return False, (
-                f"Wallclock budget exceeded: actual={b.actual_duration_s:.1f}s vs planned={b.planned_duration_s:.1f}s"
+                f"Wallclock budget exceeded: actual={b.actual_duration_s:.1f}s vs allowed={allowed:.1f}s (planned={b.planned_duration_s:.1f}s)"
             )
     return True, None
 
@@ -301,6 +306,7 @@ def sanity_check(
     benchmark_raw: dict[str, Any] | None = None,
     validator_raw: dict[str, Any] | None = None,
     trace_raw: dict[str, Any] | None = None,
+    allow_stale_trace: bool = False,
 ) -> SanityResult:
     """Load and sanity-check a result bundle.
 
@@ -339,8 +345,8 @@ def sanity_check(
         assert msg is not None
         result.disagreements.append(msg)
 
-    ok, msg = _check_trace_stale_validator_pass(t, v)
-    checks["trace_stale_validator_pass"] = ok
+    ok, msg = _check_stale_terminality(t, allow_stale_trace)
+    checks["stale_terminality"] = ok
     if not ok:
         assert msg is not None
         result.disagreements.append(msg)
@@ -365,22 +371,16 @@ def sanity_check(
 
     result.checks = checks
 
-    # Determine verdict
+    # Determine verdict — priority: WALLCLOCK > STALE_TERMINALITY > SHAPE_GAP > SURFACE_DISAGREEMENT
     if result.disagreements:
-        # Trace disagreements take priority (they indicate stale data)
-        # Only match if the disagreement is specifically about trace staleness,
-        # not casual mentions of the word "trace"
-        has_trace = any(
-            d.startswith("Trace verdict")
-            for d in result.disagreements
-        )
         has_wallclock = any("actual=" in d for d in result.disagreements)
+        has_stale = any("Stale trace verdict" in d for d in result.disagreements)
         has_shape = any("internal trace" in d for d in result.disagreements)
 
-        if has_trace:
-            result.verdict = SanityVerdict.SANITY_FAIL_STALE_TERMINALITY
-        elif has_wallclock:
+        if has_wallclock:
             result.verdict = SanityVerdict.SANITY_FAIL_WALLCLOCK_BUDGET
+        elif has_stale:
+            result.verdict = SanityVerdict.SANITY_FAIL_STALE_TERMINALITY
         elif has_shape:
             result.verdict = SanityVerdict.SANITY_FAIL_BENCHMARK_SHAPE_GAP
         else:
@@ -402,12 +402,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trace-json", type=Path)
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
+    parser.add_argument(
+        "--allow-stale-trace",
+        action="store_true",
+        default=False,
+        help="Do not fail when stale trace verdicts are present",
+    )
     args = parser.parse_args(argv)
 
     result = sanity_check(
         benchmark_path=args.benchmark_json,
         validation_path=args.validation_json,
         trace_path=args.trace_json,
+        allow_stale_trace=args.allow_stale_trace,
     )
 
     if args.output_json:

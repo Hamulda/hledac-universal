@@ -327,6 +327,8 @@ async def export_sprint(
             for _field, _value in acq_truth.items():
                 if _field not in sanitized_obj or not sanitized_obj[_field]:
                     sanitized_obj[_field] = _value
+            # Sprint F211A: reconcile terminality from final source_family_outcomes
+            sanitized_obj = _reconcile_acquisition_terminality_from_source_outcomes(sanitized_obj)
         elif isinstance(sanitized_obj, list):
             sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs}
 
@@ -1623,6 +1625,129 @@ def _get_acquisition_truth(eh: "ExportHandoff") -> dict[str, Any]:
                 result[_field] = _val
 
     return result
+
+
+def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -> dict:
+    """
+    Sprint F211A: Final terminality reconciliation from source_family_outcomes.
+
+    The acquisition_report.terminality may be snapshotted before all
+    source_family_outcomes are finalized. This function reconciles the
+    terminality missing_lanes by checking the authoritative source_family_outcomes.
+
+    Rules for terminal from source_family_outcomes:
+      - attempted=True  => terminal
+      - skipped=True    => terminal
+      - timeout=True    => terminal
+      - error non-empty  => terminal
+
+    accepted_count=0 does NOT make a lane missing.
+
+    NO scheduler execution. NO store read. NO network. NO MLX load.
+    """
+    # Gather source_family_outcomes from all known locations
+    sfo_list: list[dict] = []
+
+    # 1. Top-level
+    sfo = report_dict.get("source_family_outcomes")
+    if sfo and isinstance(sfo, list):
+        sfo_list = sfo
+
+    # 2. acquisition_report.source_family_outcomes
+    ar = report_dict.get("acquisition_report")
+    if isinstance(ar, dict):
+        sfo = ar.get("source_family_outcomes")
+        if sfo and isinstance(sfo, list) and not sfo_list:
+            sfo_list = sfo
+
+    # 3. canonical_run_summary.source_family_outcomes
+    crs = report_dict.get("canonical_run_summary")
+    if isinstance(crs, dict):
+        sfo = crs.get("source_family_outcomes")
+        if sfo and isinstance(sfo, list) and not sfo_list:
+            sfo_list = sfo
+
+    # Index source_family_outcomes by family name for fast lookup
+    outcomes_by_family: dict[str, dict] = {}
+    for outcome in sfo_list:
+        fam = outcome.get("family") if isinstance(outcome, dict) else None
+        if fam:
+            outcomes_by_family[fam] = outcome
+
+    # Get existing terminality from acquisition_report
+    term = None
+    if isinstance(ar, dict):
+        term = ar.get("terminality")
+
+    if not term or not isinstance(term, dict):
+        # Nothing to reconcile — no terminality present
+        return report_dict
+
+    original_missing: list[str] = term.get("missing_lanes") or []
+    # required_lanes preserved for future diagnostics if needed
+    # term.get("required_lanes") or []
+
+    if not original_missing:
+        # Nothing to reconcile — no missing lanes
+        return report_dict
+
+    # Determine which required lanes are terminal from source_family_outcomes
+    mismatch_before: list[str] = []
+
+    for lane in list(original_missing):
+        outcome = outcomes_by_family.get(lane)
+        if outcome is None:
+            # No outcome recorded for this lane — keep as missing
+            continue
+
+        # Check if this outcome is terminal
+        attempted = outcome.get("attempted") if isinstance(outcome, dict) else False
+        skipped = outcome.get("skipped") if isinstance(outcome, dict) else False
+        timeout = outcome.get("timeout") if isinstance(outcome, dict) else False
+        error = outcome.get("error") if isinstance(outcome, dict) else None
+
+        is_terminal = attempted or skipped or timeout or (error is not None)
+
+        if is_terminal:
+            mismatch_before.append(lane)
+
+    if not mismatch_before:
+        # No reconciliation needed
+        return report_dict
+
+    # Build reconciled terminality
+    new_missing = [lane for lane in original_missing if lane not in mismatch_before]
+
+    # Preserve original terminality
+    term_reconciled = dict(term)
+    term_reconciled["missing_lanes"] = new_missing
+    term_reconciled["satisfied"] = list(
+        set((term.get("satisfied") or []) + mismatch_before)
+    )
+    term_reconciled["terminal_lanes"] = list(
+        set((term.get("terminal_lanes") or []) + mismatch_before)
+    )
+
+    # Write back to acquisition_report
+    ar_final = dict(ar) if ar else {}
+    ar_final["terminality"] = term_reconciled
+    report_dict["acquisition_report"] = ar_final
+
+    # Add reconciliation markers
+    report_dict["terminality_reconciled"] = True
+    report_dict["terminality_reconciliation_reason"] = "source_family_outcomes_final_authority"
+    report_dict["terminality_before_reconciliation"] = dict(term)
+    report_dict["terminality_source_outcome_mismatch_before"] = mismatch_before
+
+    # Update top-level acquisition_terminality_missing_lanes if present
+    if "acquisition_terminality_missing_lanes" in report_dict:
+        report_dict["acquisition_terminality_missing_lanes"] = new_missing
+
+    # Update acquisition_terminality_satisfied
+    if "acquisition_terminality_satisfied" in report_dict:
+        report_dict["acquisition_terminality_satisfied"] = len(new_missing) == 0
+
+    return report_dict
 
 
 def _get_feed_verdict(eh: "ExportHandoff") -> dict[str, Any] | None:  # type: ignore[name-defined]

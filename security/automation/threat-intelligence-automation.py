@@ -21,26 +21,27 @@ from urllib.parse import urljoin, urlparse
 import socket
 import ssl
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class ThreatIntelligence:
     """Threat intelligence data"""
     threat_id: str
-    threat_type: str  # malware, phishing, vulnerability, exploit
-    severity: str  # critical, high, medium, low
+    threat_type: str
+    severity: str
     source: str
-    indicators: List[str]  # IPs, domains, hashes, URLs
+    indicators: List[str]
     description: str
     first_seen: datetime
     last_seen: datetime
-    confidence: float  # 0.0 to 1.0
+    confidence: float
     tags: List[str]
+
 
 @dataclass
 class SecurityAlert:
@@ -51,18 +52,20 @@ class SecurityAlert:
     recommended_actions: List[str]
     automated_response: Optional[str]
     timestamp: datetime
-    status: str  # new, investigating, mitigated, resolved
+    status: str
+
 
 @dataclass
 class DefenseAction:
     """Automated defense action"""
     action_id: str
-    action_type: str  # block_ip, block_domain, isolate_system, update_rules
+    action_type: str
     target: str
     confidence: float
-    impact: str  # low, medium, high
+    impact: str
     rollback_possible: bool
     duration: timedelta
+
 
 class ThreatIntelligenceAutomation:
     """Advanced threat intelligence and automated security system"""
@@ -75,31 +78,26 @@ class ThreatIntelligenceAutomation:
         self.blocked_entities = defaultdict(set)
         self.vulnerability_cache = {}
 
-        # Load configuration
         self.config = self._load_config()
-
-        # Initialize threat intelligence sources
         self.threat_sources = self._initialize_threat_sources()
-
-        # AI-powered analysis models
         self._initialize_ml_models()
 
     def _load_config(self) -> Dict[str, Any]:
         """Load security configuration"""
         try:
             with open(self.config_path, 'r') as f:
-                    return yaml.safe_load(f)
+                return yaml.safe_load(f)
         except FileNotFoundError:
             logger.warning(f"Config file {self.config_path} not found")
-                return self._default_config()
+            return self._default_config()
 
     def _default_config(self) -> Dict[str, Any]:
         """Default security configuration"""
-            return {
+        return {
             "threat_intelligence": {
                 "enabled": True,
                 "sources": ["abuse.ch", "virustotal", "alienvault"],
-                "update_interval": 3600,  # 1 hour
+                "update_interval": 3600,
                 "retention_days": 90,
                 "confidence_threshnew": 0.7
             },
@@ -121,7 +119,7 @@ class ThreatIntelligenceAutomation:
 
     def _initialize_threat_sources(self) -> Dict[str, Dict[str, Any]]:
         """Initialize threat intelligence sources"""
-            return {
+        return {
             "abuse.ch": {
                 "url": "https://feodotracker.abuse.ch/downloads/feodotracker.json",
                 "type": "malware_domains",
@@ -150,8 +148,6 @@ class ThreatIntelligenceAutomation:
 
     def _initialize_ml_models(self):
         """Initialize machine learning models for threat analysis"""
-        # Placehnewer for ML model initialization
-        # In a real implementation, you would load trained models
         self.ml_models = {
             "malware_classifier": None,
             "phishing_detector": None,
@@ -166,21 +162,13 @@ class ThreatIntelligenceAutomation:
 
         while True:
             try:
-                # Gather threat intelligence from all sources
                 await self._gather_threat_intelligence()
-
-                # Analyze and generate alerts
                 await self._analyze_threats_and_alert()
-
-                # Apply automated defenses
                 await self._apply_automated_defenses()
-
-                # Wait for next update cycle
                 await asyncio.sleep(update_interval)
-
             except Exception as e:
                 logger.error(f"Error in threat intelligence cycle: {e}")
-                await asyncio.sleep(300)  # Wait 5 minutes on error
+                await asyncio.sleep(300)
 
     async def _gather_threat_intelligence(self):
         """Gather threat intelligence from all configured sources"""
@@ -188,18 +176,17 @@ class ThreatIntelligenceAutomation:
 
         for source_name, source_config in self.threat_sources.items():
             if not source_config["enabled"]:
-                    continue
+                continue
 
             try:
                 if source_config["type"] == "malware_domains":
-                        await self._gather_malware_domains(source_name, source_config)
+                    await self._gather_malware_domains(source_name, source_config)
                 elif source_config["type"] == "file_reputation":
-                        await self._gather_file_reputation(source_name, source_config)
+                    await self._gather_file_reputation(source_name, source_config)
                 elif source_config["type"] == "ioc_indicators":
-                        await self._gather_ioc_indicators(source_name, source_config)
+                    await self._gather_ioc_indicators(source_name, source_config)
                 elif source_config["type"] == "vulnerabilities":
-                        await self._gather_vulnerabilities(source_name, source_config)
-
+                    await self._gather_vulnerabilities(source_name, source_config)
             except Exception as e:
                 logger.error(f"Error gathering from {source_name}: {e}")
 
@@ -209,7 +196,7 @@ class ThreatIntelligenceAutomation:
             async with aiohttp.ClientSession() as session:
                 async with session.get(config["url"], timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
-                            data = await response.json()
+                        data = await response.json()
 
                         for entry in data:
                             threat = ThreatIntelligence(
@@ -221,23 +208,18 @@ class ThreatIntelligenceAutomation:
                                 description=entry.get('description', f"Malware domain: {entry.get('domain', '')}"),
                                 first_seen=datetime.fromisoformat(entry.get('first_seen', datetime.now().isoformat())),
                                 last_seen=datetime.fromisoformat(entry.get('last_seen', datetime.now().isoformat())),
-                                confidence=0.9,  # High confidence for verified sources
+                                confidence=0.9,
                                 tags=["malware", "domain", "c2"]
                             )
 
                             self.threat_intel_db[threat.threat_id] = threat
 
                         logger.info(f"Updated {len(data)} malware domains from {source_name}")
-
         except Exception as e:
             logger.error(f"Error gathering malware domains from {source_name}: {e}")
 
     async def _gather_file_reputation(self, source_name: str, config: Dict[str, Any]):
         """Gather file reputation intelligence"""
-        # This would typically require API keys
-        # For now, we'll implement a placehnewer
-
-        # Placehnewer implementation
         logger.debug(f"File reputation gathering not fully implemented for {source_name}")
 
     async def _gather_ioc_indicators(self, source_name: str, config: Dict[str, Any]):
@@ -245,14 +227,13 @@ class ThreatIntelligenceAutomation:
         try:
             headers = {}
             if config.get("api_key"):
-                    headers["X-OTX-API-KEY"] = config["api_key"]
+                headers["X-OTX-API-KEY"] = config["api_key"]
 
             async with aiohttp.ClientSession(headers=headers) as session:
-                # Get latest pulses
                 url = f"{config['url']}/pulses/subscribed"
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
-                            data = await response.json()
+                        data = await response.json()
 
                         for pulse in data.get("results", []):
                             for indicator in pulse.get("indicators", []):
@@ -272,7 +253,6 @@ class ThreatIntelligenceAutomation:
                                 self.threat_intel_db[threat.threat_id] = threat
 
                         logger.info(f"Updated {len(data.get('results', []))} IOC pulses from {source_name}")
-
         except Exception as e:
             logger.error(f"Error gathering IOC indicators from {source_name}: {e}")
 
@@ -283,22 +263,19 @@ class ThreatIntelligenceAutomation:
                 url = f"{config['url']}?resultsPerPage=50"
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
-                            data = await response.json()
+                        data = await response.json()
 
                         for cve in data.get("vulnerabilities", []):
                             cve_id = cve.get("cve", {}).get("id", "")
-
-                            # Extract indicators
                             indicators = [cve_id]
 
-                            # Add affected product versions as indicators
                             for affected in cve.get("configurations", []):
                                 for product in affected.get("nodes", []):
                                     if "cpeMatch" in product:
-                                            for match in product["cpeMatch"]:
+                                        for match in product["cpeMatch"]:
                                             cpe = match.get("criteria", "")
                                             if cpe:
-                                                    indicators.append(cpe)
+                                                indicators.append(cpe)
 
                             threat = ThreatIntelligence(
                                 threat_id=f"{source_name}_{cve_id}",
@@ -309,14 +286,13 @@ class ThreatIntelligenceAutomation:
                                 description=cve.get("descriptions", [{}])[0].get("value", ""),
                                 first_seen=datetime.fromisoformat(cve.get("published", datetime.now().isoformat())),
                                 last_seen=datetime.fromisoformat(cve.get("lastModified", datetime.now().isoformat())),
-                                confidence=1.0,  # NVD data is highly reliable
+                                confidence=1.0,
                                 tags=["vulnerability", "cve"]
                             )
 
                             self.threat_intel_db[threat.threat_id] = threat
 
                         logger.info(f"Updated {len(data.get('vulnerabilities', []))} CVEs from {source_name}")
-
         except Exception as e:
             logger.error(f"Error gathering vulnerabilities from {source_name}: {e}")
 
@@ -328,52 +304,41 @@ class ThreatIntelligenceAutomation:
             "green": "medium",
             "white": "low"
         }
-            return tlp_mapping.get(tlp.lower(), "medium")
+        return tlp_mapping.get(tlp.lower(), "medium")
 
     def _map_cvss_severity(self, cvss_metrics: List[Dict[str, Any]]) -> str:
         """Map CVSS score to severity"""
         if not cvss_metrics:
-                    return "medium"
+            return "medium"
 
         cvss_score = cvss_metrics[0].get("cvssData", {}).get("baseScore", 0.0)
 
         if cvss_score >= 9.0:
-                    return "critical"
+            return "critical"
         elif cvss_score >= 7.0:
-                    return "high"
+            return "high"
         elif cvss_score >= 4.0:
-                    return "medium"
+            return "medium"
         else:
-                return "low"
+            return "low"
 
     async def _analyze_threats_and_alert(self):
         """Analyze gathered threats and generate alerts"""
         logger.info("Analyzing threats and generating alerts...")
 
-        # Analyze against application assets
         await self._analyze_application_threats()
-
-        # Analyze network traffic patterns
         await self._analyze_network_threats()
-
-        # Analyze system behavior
         await self._analyze_behavior_anomalies()
 
     async def _analyze_application_threats(self):
         """Analyze threats against application assets"""
-        # Check against application endpoints, APIs, etc.
-        app_endpoints = [
-            "localhost:8000",
-            "127.0.0.1:8000",
-            "0.0.0.0:8000"
-        ]
+        app_endpoints = ["localhost:8000", "127.0.0.1:8000", "0.0.0.0:8000"]
 
         for threat_id, threat in self.threat_intel_db.items():
             if threat.threat_type in ["malware_domain", "ioc"]:
-                    for indicator in threat.indicators:
-                    # Check if indicator matches application assets
+                for indicator in threat.indicators:
                     if self._matches_app_endpoint(indicator, app_endpoints):
-                            alert = SecurityAlert(
+                        alert = SecurityAlert(
                             alert_id=f"app_{threat_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                             threat_intelligence=threat,
                             affected_assets=app_endpoints,
@@ -388,60 +353,51 @@ class ThreatIntelligenceAutomation:
                         )
 
                         self.active_alerts[alert.alert_id] = alert
-                        logger.warning(f"🚨 Application threat detected: {indicator}")
+                        logger.warning(f"Application threat detected: {indicator}")
 
     def _matches_app_endpoint(self, indicator: str, endpoints: List[str]) -> bool:
         """Check if indicator matches application endpoints"""
         try:
-            # Domain matching
             if any(endpoint in indicator for endpoint in endpoints):
-                        return True
+                return True
 
-            # IP matching
             try:
                 indicator_ip = ipaddress.ip_address(indicator)
                 for endpoint in endpoints:
                     if ':' in endpoint:
-                            endpoint_ip = ipaddress.ip_address(endpoint.split(':')[0])
+                        endpoint_ip = ipaddress.ip_address(endpoint.split(':')[0])
                         if indicator_ip == endpoint_ip:
-                                    return True
+                            return True
             except ValueError:
                 pass
 
-            # Pattern matching for partial matches
             for endpoint in endpoints:
                 if endpoint in indicator or indicator in endpoint:
-                            return True
-
+                    return True
         except Exception:
             pass
 
-            return False
+        return False
 
     def _get_automated_response(self, threat: ThreatIntelligence) -> Optional[str]:
         """Get automated response based on threat type and severity"""
         if threat.severity in ["critical", "high"] and threat.threat_type in ["malware_domain", "ioc"]:
-                    return "block_ip_domain"
+            return "block_ip_domain"
 
         if threat.threat_type == "vulnerability" and threat.severity in ["critical", "high"]:
-                    return "update_rules"
+            return "update_rules"
 
         if threat.confidence > 0.8:
-                    return "enhance_monitoring"
+            return "enhance_monitoring"
 
-            return None
+        return None
 
     async def _analyze_network_threats(self):
         """Analyze network threats"""
-        # This would typically integrate with network monitoring
-        # For now, we'll implement basic log analysis
-
         try:
-            # Check access logs for suspicious patterns
             access_log = Path("logs/access.log")
             if access_log.exists():
-                    await self._analyze_access_log_for_threats(access_log)
-
+                await self._analyze_access_log_for_threats(access_log)
         except Exception as e:
             logger.error(f"Error analyzing network threats: {e}")
 
@@ -449,18 +405,18 @@ class ThreatIntelligenceAutomation:
         """Analyze access log for threat indicators"""
         try:
             suspicious_patterns = [
-                r"POST.*login.*403",  # Failed login attempts
-                r"admin.*401",       # Unauthorized admin access
-                r"\.php.*200",        # Suspicious PHP access
-                r"union.*select",     # SQL injection attempts
-                r"<script.*>",       # XSS attempts
+                r"POST.*login.*403",
+                r"admin.*401",
+                r"\.php.*200",
+                r"union.*select",
+                r"<script.*>",
             ]
 
             with open(log_file, 'r') as f:
                 for line_num, line in enumerate(f, 1):
                     for pattern in suspicious_patterns:
                         if re.search(pattern, line, re.IGNORECASE):
-                                alert = SecurityAlert(
+                            alert = SecurityAlert(
                                 alert_id=f"log_threat_{datetime.now().strftime('%Y%m%d%H%M%S')}_{line_num}",
                                 threat_intelligence=ThreatIntelligence(
                                     threat_id=f"log_pattern_{hashlib.md5(pattern.encode()).hexdigest()[:8]}",
@@ -486,18 +442,13 @@ class ThreatIntelligenceAutomation:
                             )
 
                             self.active_alerts[alert.alert_id] = alert
-                            logger.warning(f"🚨 Suspicious log pattern detected: {pattern}")
-
+                            logger.warning(f"Suspicious log pattern detected: {pattern}")
         except Exception as e:
             logger.error(f"Error analyzing access log: {e}")
 
     async def _analyze_behavior_anomalies(self):
         """Analyze behavior anomalies"""
-        # This would integrate with behavior monitoring systems
-        # For now, we'll implement basic anomaly detection
-
         try:
-            # Check for unusual traffic patterns
             current_metrics = await self._collect_behavior_metrics()
             anomalies = self._detect_anomalies(current_metrics)
 
@@ -528,69 +479,53 @@ class ThreatIntelligenceAutomation:
                 )
 
                 self.active_alerts[alert.alert_id] = alert
-                logger.warning(f"🚨 Behavioral anomaly detected: {anomaly}")
-
+                logger.warning(f"Behavioral anomaly detected: {anomaly}")
         except Exception as e:
             logger.error(f"Error analyzing behavior anomalies: {e}")
 
     async def _collect_behavior_metrics(self) -> Dict[str, Any]:
         """Collect behavior metrics for anomaly detection"""
         metrics = {}
-
         try:
-            # Placehnewer for behavior metrics collection
-            # In a real implementation, you would collect metrics like:
-            # - Request rates
-            # - Response times
-            # - Error rates
-            # - User session patterns
-            # - Resource usage patterns
-
-            metrics["request_rate"] = 100  # placehnewer
-            metrics["error_rate"] = 0.01  # placehnewer
-            metrics["avg_response_time"] = 200  # placehnewer
-            metrics["unique_ips"] = 50  # placehnewer
-
+            metrics["request_rate"] = 100
+            metrics["error_rate"] = 0.01
+            metrics["avg_response_time"] = 200
+            metrics["unique_ips"] = 50
         except Exception as e:
             logger.error(f"Error collecting behavior metrics: {e}")
-
-            return metrics
+        return metrics
 
     def _detect_anomalies(self, metrics: Dict[str, Any]) -> List[str]:
         """Detect anomalies in metrics"""
         anomalies = []
 
-        # Simple threshnew-based anomaly detection
-        if metrics.get("error_rate", 0) > 0.05:  # 5% error rate
+        if metrics.get("error_rate", 0) > 0.05:
             anomalies.append("High error rate")
 
-        if metrics.get("avg_response_time", 0) > 2000:  # 2 second response time
+        if metrics.get("avg_response_time", 0) > 2000:
             anomalies.append("Slow response times")
 
-        if metrics.get("request_rate", 0) > 1000:  # High request rate
+        if metrics.get("request_rate", 0) > 1000:
             anomalies.append("Unusual traffic spike")
 
-            return anomalies
+        return anomalies
 
     async def _apply_automated_defenses(self):
         """Apply automated defense actions"""
         logger.info("Applying automated defenses...")
 
         if not self.config["automated_defense"]["enabled"]:
-                    return
+            return
 
-        # Process active alerts
         for alert_id, alert in list(self.active_alerts.items()):
             if alert.status == "new" and alert.automated_response:
-                    try:
+                try:
                     await self._execute_defense_action(alert)
                     alert.status = "mitigating"
-
                 except Exception as e:
                     logger.error(f"Error executing defense for alert {alert_id}: {e}")
                     alert.status = "failed"
 
-        # Cleanup new resolved alerts
         await self._cleanup_new_alerts()
 
     async def _execute_defense_action(self, alert: SecurityAlert):
@@ -598,15 +533,14 @@ class ThreatIntelligenceAutomation:
         action_type = alert.automated_response
 
         if action_type == "block_ip_domain":
-                await self._block_malicious_entities(alert)
+            await self._block_malicious_entities(alert)
         elif action_type == "rate_limit":
-                await self._apply_rate_limiting(alert)
+            await self._apply_rate_limiting(alert)
         elif action_type == "update_rules":
-                await self._update_security_rules(alert)
+            await self._update_security_rules(alert)
         elif action_type == "enhance_monitoring":
-                await self._enhance_monitoring(alert)
+            await self._enhance_monitoring(alert)
 
-        # Record defense action
         defense_action = DefenseAction(
             action_id=f"defense_{alert.alert_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
             action_type=action_type,
@@ -618,26 +552,23 @@ class ThreatIntelligenceAutomation:
         )
 
         self.defense_actions.append(defense_action)
-        logger.info(f"🛡️ Defense action executed: {action_type}")
+        logger.info(f"Defense action executed: {action_type}")
 
     async def _block_malicious_entities(self, alert: SecurityAlert):
         """Block malicious IPs and domains"""
         if not self.config["automated_defense"]["block_suspicious_ips"]:
-                    return
+            return
 
         for indicator in alert.threat_intelligence.indicators:
             try:
-                # Determine if it's an IP or domain
                 if self._is_ip_address(indicator):
-                        self.blocked_entities["ips"].add(indicator)
-                    logger.info(f"🚫 Blocked IP: {indicator}")
+                    self.blocked_entities["ips"].add(indicator)
+                    logger.info(f"Blocked IP: {indicator}")
                 else:
                     self.blocked_entities["domains"].add(indicator)
-                    logger.info(f"🚫 Blocked domain: {indicator}")
+                    logger.info(f"Blocked domain: {indicator}")
 
-                # Update firewall rules (placehnewer)
                 await self._update_firewall_rules(indicator, "block")
-
             except Exception as e:
                 logger.error(f"Error blocking {indicator}: {e}")
 
@@ -645,42 +576,36 @@ class ThreatIntelligenceAutomation:
         """Check if indicator is an IP address"""
         try:
             ipaddress.ip_address(indicator)
-                return True
+            return True
         except ValueError:
-                return False
+            return False
 
     async def _update_firewall_rules(self, entity: str, action: str):
-        """Update firewall rules (placehnewer implementation)"""
-        # In a real implementation, you would update actual firewall rules
-        # This is a placehnewer that logs the action
-
+        """Update firewall rules (placeholder implementation)"""
         logger.info(f"Firewall rule updated: {action} {entity}")
 
     async def _apply_rate_limiting(self, alert: SecurityAlert):
         """Apply rate limiting based on alert"""
         if not self.config["automated_defense"]["rate_limit_offenders"]:
-                    return
+            return
 
-        # Extract source IPs from logs (placehnewer)
-        suspicious_ips = ["192.168.1.100"]  # Placehnewer
+        suspicious_ips = ["192.168.1.100"]
 
         for ip in suspicious_ips:
             self.blocked_entities["rate_limited"].add(ip)
-            logger.info(f"🚦 Rate limiting applied to: {ip}")
+            logger.info(f"Rate limiting applied to: {ip}")
 
     async def _update_security_rules(self, alert: SecurityAlert):
         """Update security rules based on alert"""
         try:
-            # Update security configuration
             security_config_path = Path("config/security_enhancements.yaml")
 
             if security_config_path.exists():
-                    with open(security_config_path, 'r') as f:
+                with open(security_config_path, 'r') as f:
                     config = yaml.safe_load(f)
 
-                # Add new threat intelligence
                 if "threat_intelligence" not in config:
-                        config["threat_intelligence"] = {}
+                    config["threat_intelligence"] = {}
 
                 config["threat_intelligence"][alert.threat_intelligence.threat_id] = {
                     "type": alert.threat_intelligence.threat_type,
@@ -692,16 +617,13 @@ class ThreatIntelligenceAutomation:
                 with open(security_config_path, 'w') as f:
                     yaml.dump(config, f, default_flow_style=False)
 
-                logger.info(f"📝 Security rules updated for threat: {alert.threat_intelligence.threat_id}")
-
+                logger.info(f"Security rules updated for threat: {alert.threat_intelligence.threat_id}")
         except Exception as e:
             logger.error(f"Error updating security rules: {e}")
 
     async def _enhance_monitoring(self, alert: SecurityAlert):
         """Enhance monitoring for suspicious activity"""
-        # This would integrate with your monitoring system
-        # For now, we'll just log the enhancement
-        logger.info(f"📊 Monitoring enhanced for alert: {alert.alert_id}")
+        logger.info(f"Monitoring enhanced for alert: {alert.alert_id}")
 
     async def _cleanup_new_alerts(self):
         """Clean up new resolved alerts"""
@@ -717,7 +639,7 @@ class ThreatIntelligenceAutomation:
             del self.active_alerts[alert_id]
 
         if new_alerts:
-                logger.info(f"🧹 Cleaned up {len(new_alerts)} new alerts")
+            logger.info(f"Cleaned up {len(new_alerts)} new alerts")
 
     def generate_threat_intelligence_report(self, output_file: str = "security_reports/threat_intelligence.json"):
         """Generate comprehensive threat intelligence report"""
@@ -766,7 +688,7 @@ class ThreatIntelligenceAutomation:
                     "impact": action.impact,
                     "rollback_possible": action.rollback_possible,
                     "duration_hours": action.duration.total_seconds() / 3600
-                } for action in self.defense_actions[-50:]  # Last 50 actions
+                } for action in self.defense_actions[-50:]
             ],
             "blocked_entities": {
                 "ips": list(self.blocked_entities["ips"]),
@@ -785,26 +707,22 @@ class ThreatIntelligenceAutomation:
         """Generate security recommendations based on current state"""
         recommendations = []
 
-        # Analyze active alerts
         critical_alerts = [a for a in self.active_alerts.values()
-                        if a.threat_intelligence.severity == "critical"]
+                          if a.threat_intelligence.severity == "critical"]
         if critical_alerts:
-                recommendations.append("Immediate action required: Review and address critical security alerts")
+            recommendations.append("Immediate action required: Review and address critical security alerts")
 
-        # Analyze blocked entities
         if len(self.blocked_entities["ips"]) > 100:
-                recommendations.append("Consider implementing automated IP reputation scoring")
+            recommendations.append("Consider implementing automated IP reputation scoring")
 
         if len(self.blocked_entities["domains"]) > 50:
-                recommendations.append("Review and optimize domain blocking policies")
+            recommendations.append("Review and optimize domain blocking policies")
 
-        # Analyze defense actions
         recent_actions = [a for a in self.defense_actions
                         if a.action_id.startswith(f"defense_{datetime.now().strftime('%Y%m%d')}")]
         if len(recent_actions) > 20:
-                recommendations.append("High defensive activity detected - investigate potential attack patterns")
+            recommendations.append("High defensive activity detected - investigate potential attack patterns")
 
-        # General recommendations
         recommendations.extend([
             "Regularly update threat intelligence feeds",
             "Implement multi-layered security monitoring",
@@ -812,9 +730,9 @@ class ThreatIntelligenceAutomation:
             "Maintain incident response procedures"
         ])
 
-            return recommendations
+        return recommendations
 
-# CLI Interface
+
 async def main():
     """Main CLI interface"""
     import sys
@@ -822,36 +740,31 @@ async def main():
     threat_intel = ThreatIntelligenceAutomation()
 
     if len(sys.argv) > 1:
-            command = sys.argv[1]
+        command = sys.argv[1]
 
         if command == "start":
-                await threat_intel.start_threat_intelligence_service()
-
+            await threat_intel.start_threat_intelligence_service()
         elif command == "gather":
-                await threat_intel._gather_threat_intelligence()
-
+            await threat_intel._gather_threat_intelligence()
         elif command == "analyze":
-                await threat_intel._analyze_threats_and_alert()
-
+            await threat_intel._analyze_threats_and_alert()
         elif command == "defend":
-                await threat_intel._apply_automated_defenses()
-
+            await threat_intel._apply_automated_defenses()
         elif command == "report":
-                threat_intel.generate_threat_intelligence_report()
-            print(f"\n📋 Threat intelligence report generated!")
-
+            threat_intel.generate_threat_intelligence_report()
+            print("\nThreat intelligence report generated!")
         elif command == "status":
-                print(f"\n🛡️ Threat Intelligence Status:")
+            print("\nThreat Intelligence Status:")
             print("=" * 30)
             print(f"Total threats: {len(threat_intel.threat_intel_db)}")
             print(f"Active alerts: {len([a for a in threat_intel.active_alerts.values() if a.status == 'new'])}")
             print(f"Defense actions: {len(threat_intel.defense_actions)}")
             print(f"Blocked IPs: {len(threat_intel.blocked_entities['ips'])}")
             print(f"Blocked domains: {len(threat_intel.blocked_entities['domains'])}")
-
     else:
         print("Usage: python threat-intelligence-automation.py <command>")
         print("Commands: start, gather, analyze, defend, report, status")
 
+
 if __name__ == "__main__":
-        asyncio.run(main())
+    asyncio.run(main())

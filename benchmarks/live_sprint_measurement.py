@@ -464,6 +464,16 @@ def _derive_run_quality_verdict(
                 recommended_next_profile = "active300"
 
     # PLANNED/RUNNING with no runtime_truth → verdict stays None (no execution occurred)
+    # F211D: Wallclock budget enforcement — BEFORE terminality downgrade
+    # Priority: memory abort / entry failure > hardware constrained > wallclock budget > terminality failures
+    # Wallclock check is unconditional on PASS_VALID_CAPABILITY_RUN so it can override
+    # terminality downgrade (FAIL_TERMINALITY_UNSATISFIED cannot mask wallclock overrun).
+    if verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN:
+        if planned_duration_s is not None and actual_duration_s is not None:
+            tolerance_s = max(planned_duration_s * 1.10, planned_duration_s + 30.0)
+            if actual_duration_s > tolerance_s:
+                verdict = RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED
+
     # F208I Rule 4: Terminality downgrade for active300/active600 domain queries
     # Downgrades PASS_VALID_CAPABILITY_RUN to specific FAIL when terminality contract is missing/unsatisfied.
     # smoke180 (ENTRY_SMOKE_ONLY) is already handled in Rule 1 and takes priority.
@@ -489,15 +499,6 @@ def _derive_run_quality_verdict(
             # 4e: scheduler_exit_path must be non-empty
             elif not _has_scheduler_exit_path(scheduler_exit):
                 verdict = RunQualityVerdict.FAIL_SCHEDULER_EXIT_MISSING
-
-    # F210D: Wallclock budget enforcement — active300/active600 cannot silently overrun
-    # Only fires when verdict is PASS_VALID_CAPABILITY_RUN (preserve hardware_constrained priority).
-    # Tolerance: planned_duration_s * 1.10 OR planned + 30s, whichever is larger.
-    if verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN:
-        if planned_duration_s is not None and actual_duration_s is not None:
-            tolerance_s = max(planned_duration_s * 1.10, planned_duration_s + 30.0)
-            if actual_duration_s > tolerance_s:
-                verdict = RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED
 
     return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
@@ -940,8 +941,11 @@ def _derive_live_kpi(
       - cycles_completed
       - findings_per_min
       - primary_signal_source
-      - source_family_counts
-      - nonfeed_attempted_families
+      - branch_accepted_counts           (F211B)  # from branch_mix: {family: accepted_count}
+      - lane_execution_counts            (F211B)  # from source_family_outcomes: {family: {attempted, terminal_state, raw_count, accepted_count, error, skipped}}
+      - source_family_counts             # from lane_execution_counts: {family: accepted_count} (accepted>0 only; FEED from branch_mix)
+      - source_family_outcomes_display   (F211B)  # lane execution list including 0-accepted families
+      - nonfeed_attempted_families       # families with attempted=True from lane_execution_counts (FEED excluded)
       - nonfeed_accepted_findings
       - public_fetch_attempted
       - public_acceptance_attempted       (F207K)
@@ -991,10 +995,12 @@ def _derive_live_kpi(
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
     - Otherwise fall back to branch_mix ratio for feed_dominance_score.
 
-    F210B: source_family_counts and nonfeed_attempted_families are derived from
-    explicit_source_family_outcomes (the full acquisition_report version) when provided,
-    not from branch_mix. This ensures lane-attempted truth is preserved even when
-    accepted findings are zero.
+    F211B: Lane execution truth is split into three distinct views:
+    - branch_accepted_counts: per-branch accepted findings from branch_mix (unchanged truth)
+    - lane_execution_counts: per-family lane execution with terminal_state from source_family_outcomes
+    - source_family_counts: derived from lane_execution_counts (accepted>0 only, FEED from branch_mix)
+    - nonfeed_attempted_families: derived from lane_execution_counts (FEED always excluded)
+    This ensures accepted findings (branch truth) never conflates with lane execution state.
     """
     rt = runtime_truth or {}
     branch_mix = rt.get("branch_mix", {})
@@ -1033,45 +1039,105 @@ def _derive_live_kpi(
     if actual_duration_s and actual_duration_s > 0:
         findings_per_min = round((total_findings / actual_duration_s) * 60, 2)
 
-    # source_family_counts
-    # F210B: Derive from explicit_source_family_outcomes (acquisition_report) when available.
-    # When explicitSourceFamilyOutcomes is not available, fall back to branch_mix counts.
-    # explicit_source_family_outcomes is the canonical lane-truth record; branch_mix only
-    # reflects accepted findings and can be zero even when a lane was attempted.
-    _sfo_list = explicit_source_family_outcomes if explicit_source_family_outcomes is not None else (acquisition_strategy or {}).get("source_family_outcomes", [])
-    source_family_counts: dict[str, int] = {}
+    # F211B: Split lane truth into three distinct views:
+    # 1. branch_accepted_counts — per-branch accepted findings from branch_mix
+    # 2. lane_execution_counts — per-family lane execution from source_family_outcomes
+    #    (attempted, terminal_state, raw_count, accepted_count, error, skipped)
+    # 3. source_family_outcomes_display — source_family_outcomes with 0-accepted families
+    #    included so PUBLIC/CT appear even when accepted=0 (per F211B task 3)
+    #
+    # Nonfeed attempted families are derived from lane_execution_counts.
+
+    # branch_accepted_counts: always from branch_mix (accepted findings per branch)
+    branch_accepted_counts: dict[str, int] = {}
     if feed_findings > 0:
-        source_family_counts["feed"] = feed_findings
+        branch_accepted_counts["feed"] = feed_findings
+    if public_findings > 0:
+        branch_accepted_counts["public"] = public_findings
+    if ct_findings > 0:
+        branch_accepted_counts["ct"] = ct_findings
+
+    # lane_execution_counts: per-family lane execution truth from source_family_outcomes
+    # F211B: Each entry has family, attempted, terminal_state, raw_count, accepted_count,
+    # error, skipped. Families with accepted=0 but attempted=True are INCLUDED.
+    _sfo_list = explicit_source_family_outcomes if explicit_source_family_outcomes is not None else (acquisition_strategy or {}).get("source_family_outcomes", [])
+    lane_execution_counts: dict[str, dict] = {}
+    source_family_outcomes_display: list[dict] = []
     if isinstance(_sfo_list, list):
         for _entry in _sfo_list:
             if isinstance(_entry, dict):
-                _fam = _entry.get("family")
+                _fam = _entry.get("family", "")
+                _attempted = bool(_entry.get("attempted"))
+                _skipped = bool(_entry.get("skipped"))
+                _error = _entry.get("error")
+                _raw = _entry.get("raw_count") or _entry.get("built_count") or 0
                 _accepted = _entry.get("accepted_findings", 0) or _entry.get("accepted", 0)
-                if _fam and _accepted > 0:
-                    source_family_counts[_fam] = _accepted
+                # terminal_state: COMPLETED, SKIPPED, NEVER_ATTEMPTED, ERROR
+                if not _attempted:
+                    _terminal_state = "NEVER_ATTEMPTED"
+                elif _skipped:
+                    _terminal_state = "SKIPPED"
+                elif _error:
+                    _terminal_state = "ERROR"
+                else:
+                    _terminal_state = "COMPLETED"
+                lane_execution_counts[_fam] = {
+                    "attempted": _attempted,
+                    "terminal_state": _terminal_state,
+                    "raw_count": _raw,
+                    "accepted_count": _accepted,
+                    "error": _error,
+                    "skipped": _skipped,
+                }
+                # F211B task 3: include in display even when accepted=0 (PUBLIC/CT with 0 accepted)
+                if _attempted:
+                    source_family_outcomes_display.append({
+                        "family": _fam,
+                        "attempted": _attempted,
+                        "terminal_state": _terminal_state,
+                        "raw_count": _raw,
+                        "accepted_findings": _accepted,
+                        "error": _error,
+                        "skipped": _skipped,
+                    })
     else:
-        # Fallback: use branch_mix counts
-        if public_findings > 0:
-            source_family_counts["public"] = public_findings
-        if ct_findings > 0:
-            source_family_counts["ct"] = ct_findings
+        # Legacy fallback: use branch_mix as lane execution proxy
+        for _fam, _count in [("public", public_findings), ("ct", ct_findings)]:
+            if _count > 0:
+                lane_execution_counts[_fam] = {
+                    "attempted": True,
+                    "terminal_state": "COMPLETED",
+                    "raw_count": _count,
+                    "accepted_count": _count,
+                    "error": None,
+                    "skipped": False,
+                }
+                source_family_outcomes_display.append({
+                    "family": _fam,
+                    "attempted": True,
+                    "terminal_state": "COMPLETED",
+                    "raw_count": _count,
+                    "accepted_findings": _count,
+                    "error": None,
+                    "skipped": False,
+                })
 
-    # nonfeed_attempted_families: families present in source_family_outcomes with attempted=True
-    # F210B: Use explicit_source_family_outcomes (lane-truth) rather than branch_mix heuristics.
-    # This correctly includes lanes that were attempted but produced 0 accepted findings.
+    # source_family_counts: derived from lane_execution_counts for backward compatibility
+    # F211B: renamed from old source_family_counts — now only includes families with
+    # accepted_count > 0 (FEED from branch_mix is included if feed_findings > 0)
+    source_family_counts: dict[str, int] = {}
+    if feed_findings > 0:
+        source_family_counts["feed"] = feed_findings
+    for _fam, _data in lane_execution_counts.items():
+        if _fam != "feed" and _data.get("accepted_count", 0) > 0:
+            source_family_counts[_fam] = _data["accepted_count"]
+
+    # nonfeed_attempted_families: families with attempted=True in lane_execution_counts
+    # FEED is never included (nonfeed = non-feed families)
     nonfeed_attempted_families: list[str] = []
-    if isinstance(_sfo_list, list):
-        for _entry in _sfo_list:
-            if isinstance(_entry, dict) and _entry.get("attempted"):
-                _fam = _entry.get("family")
-                if _fam and _fam != "feed":
-                    nonfeed_attempted_families.append(_fam)
-    else:
-        # Legacy fallback: use branch_mix heuristics
-        if public_findings == 0 and _was_family_attempted(rt, "public"):
-            nonfeed_attempted_families.append("public")
-        if ct_findings == 0 and _was_family_attempted(rt, "ct"):
-            nonfeed_attempted_families.append("ct")
+    for _fam, _data in lane_execution_counts.items():
+        if _fam != "feed" and _data.get("attempted"):
+            nonfeed_attempted_families.append(_fam)
 
     # nonfeed_accepted_findings
     nonfeed_accepted_findings = accepted_findings - feed_findings if accepted_findings else 0
@@ -1257,7 +1323,10 @@ def _derive_live_kpi(
         "cycles_completed": cycles_completed,
         "findings_per_min": findings_per_min,
         "primary_signal_source": primary_signal_source,
+        "branch_accepted_counts": branch_accepted_counts,
+        "lane_execution_counts": lane_execution_counts,
         "source_family_counts": source_family_counts,
+        "source_family_outcomes_display": source_family_outcomes_display,
         "nonfeed_attempted_families": nonfeed_attempted_families,
         "nonfeed_accepted_findings": nonfeed_accepted_findings,
         "public_fetch_attempted": public_fetch_attempted,
@@ -2287,7 +2356,8 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"| Findings/min | {kpi.get('findings_per_min', 'N/A')} |",
             f"| Primary signal | {kpi.get('primary_signal_source', 'N/A')} |",
             f"| Feed dominance | {kpi.get('feed_dominance_score', 'N/A')} |",
-            f"| Source families | {json.dumps(kpi.get('source_family_counts', {}))} |",
+            f"| Branch accepted counts | {json.dumps(kpi.get('branch_accepted_counts', {}))} |",
+            f"| Lane execution counts | {json.dumps(kpi.get('lane_execution_counts', {}))} |",
             f"| Nonfeed attempted | {kpi.get('nonfeed_attempted_families', [])} |",
             f"| Nonfeed accepted | {kpi.get('nonfeed_accepted_findings', 'N/A')} |",
             f"| Public attempted | {kpi.get('public_fetch_attempted', 'N/A')} |",
@@ -2319,6 +2389,44 @@ def _render_md(result: LiveMeasurementResult) -> str:
             if suspected:
                 starvation_rows.insert(7, f"| Starvation reason | {kpi.get('nonfeed_starvation_reason', 'N/A')} |")
             lines.extend(starvation_rows)
+
+        # F211B: Lane Execution Truth section — per-family lane execution with terminal_state
+        # Render when lane_execution_counts is non-empty
+        _lec = kpi.get('lane_execution_counts', {})
+        if _lec:
+            lane_truth_rows = [
+                "",
+                "## Lane Execution Truth",
+                "",
+                "| family | attempted | terminal_state | raw_count | accepted_count | error | skipped |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+            for _fam, _data in sorted(_lec.items()):
+                lane_truth_rows.append(
+                    f"| {_fam} | {int(_data.get('attempted', False))} "
+                    f"| {_data.get('terminal_state', 'N/A')} "
+                    f"| {_data.get('raw_count', 0)} "
+                    f"| {_data.get('accepted_count', 0)} "
+                    f"| {(_data.get('error') or 'N/A')} "
+                    f"| {int(_data.get('skipped', False))} |"
+                )
+            lines.extend(lane_truth_rows)
+
+            # F211B task 7: next action based on terminality failure
+            _sfo_disp = kpi.get('source_family_outcomes_display', [])
+            _ct_failed = any(
+                _d.get('terminal_state') in ('ERROR', 'SKIPPED') and _f == 'ct'
+                for _f, _d in _lec.items()
+            )
+            _ct_attempted = any(
+                _d.get('attempted') and _f == 'ct'
+                for _f, _d in _lec.items()
+            )
+            _ct_in_sfo = any(_e.get('family') == 'ct' for _e in _sfo_disp)
+            if _ct_failed and _ct_attempted:
+                lines.append(f"| **Next action** | **fix_final_terminality_reconciliation** |")
+            elif _ct_in_sfo and not _ct_attempted:
+                lines.append(f"| **Next action** | **fix_ct_prelude_execution** |")
 
         # Pre-windup Barrier section (F207Q)
         barrier_checked = kpi.get('prewindup_barrier_checked', False)
