@@ -414,7 +414,7 @@ def _render_envelope_findings(envelope_findings: list) -> str:
                     direction = pivot.get("direction", "")
                     query_hint = pivot.get("query_hint", "")
                     priority = pivot.get("priority", "")
-                    lines.append(f"- [{priority}] {direction}: {escape_markdown_text(query_hint)}")
+                    lines.append(f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}")
                 elif isinstance(pivot, str):
                     lines.append(f"- {escape_markdown_text(pivot)}")
             lines.append("")

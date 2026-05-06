@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Live Multisource Validator — F208H + F208K + F209B
+Live Multisource Validator — F208H + F208K + F209B + F210C
 
 Reads a live_sprint_measurement JSON artifact and emits PASS/FAIL verdict.
 Supports both internal sprint report JSON and benchmark live measurement JSON shapes.
@@ -14,6 +14,10 @@ F209B additions: acquisition_prelude awareness — distinguishes
   - prelude ran but missing mandatory lanes
   - prelude terminal but final terminality stale
   - final terminality genuinely unsatisfied
+
+F210C additions: stale terminality snapshot detection — a lane appears
+terminal/attempted in source_family_outcomes but still listed in missing_lanes.
+Always-on, fail-closed; dry-run artifacts (run_status=="planned") bypass all live checks.
 """
 from __future__ import annotations
 
@@ -41,6 +45,8 @@ class Verdict(str, Enum):
     FAIL_ACQUISITION_PRELUDE_NOT_CHECKED    = "FAIL_ACQUISITION_PRELUDE_NOT_CHECKED"
     FAIL_ACQUISITION_PRELUDE_MISSING_LANES  = "FAIL_ACQUISITION_PRELUDE_MISSING_LANES"
     FAIL_TERMINALITY_STALE_AFTER_PRELUDE    = "FAIL_TERMINALITY_STALE_AFTER_PRELUDE"
+    # F210C: stale terminality snapshot — lane terminal/attempted in source_family_outcomes but still in missing_lanes
+    FAIL_TERMINALITY_STALE_SNAPSHOT         = "FAIL_TERMINALITY_STALE_SNAPSHOT"
 
 
 # ── Module-level aliases for all Verdict members (for hasattr() compatibility) ──
@@ -320,13 +326,23 @@ def _extract_acquisition_report(data: dict) -> dict:
     return {}
 
 def _extract_source_family_outcomes(acq_report: dict, data: dict | None = None) -> dict | None:
-    """Extract source_family_outcomes from acquisition_report, with live_kpi fallback for benchmark shape."""
+    """Extract source_family_outcomes from acquisition_report, with top-level and live_kpi fallback.
+
+    Resolves these locations in priority order:
+      1. acq_report["source_family_outcomes"]           (internal shape)
+      2. data["source_family_outcomes"]                 (top-level / benchmark shape)
+      3. live_kpi["source_family_outcomes"]             (live_kpi fallback)
+    """
     sf = acq_report.get("source_family_outcomes") if isinstance(acq_report, dict) else None
     if sf:
         return sf
-    # Benchmark shape: source_family_outcomes may live directly in live_kpi
+    # Top-level / benchmark shape: source_family_outcomes at data root
     if data is not None:
-        live_kpi = _extract_live_kpi(data)
+        sf = data.get("source_family_outcomes") if isinstance(data, dict) else None
+        if sf:
+            return sf
+        # live_kpi fallback
+        live_kpi = (data.get("live_kpi") or {}) if isinstance(data, dict) else {}
         sf = live_kpi.get("source_family_outcomes")
         if sf:
             return sf
@@ -474,6 +490,51 @@ def _resolve_branch_count(branch_mix: dict | None, live_kpi: dict, key: str) -> 
     return 0
 
 
+# ── F210C: Stale terminality snapshot detector ───────────────────────────────
+
+TERMINAL_OUTCOME_STATES: frozenset[str] = frozenset([
+    "ATTEMPTED", "SKIPPED", "ERROR", "TIMEOUT",
+    "TERMINAL", "COMPLETED", "SATISFIED", "EXHAUSTED",
+    "NEVER_ATTEMPTED",  # explicit never-attempted is terminal-like for our purposes
+])
+
+
+def _detect_terminality_source_outcome_mismatch(
+    sf_outcomes: dict | None,
+    missing_lanes: list | None,
+) -> list[str]:
+    """Detect lanes that appear terminal/attempted in source_family_outcomes
+    but are still listed in missing_lanes.
+
+    A mismatch means the acquisition terminality snapshot is stale — the lane
+    was resolved at execution time (source_family_outcomes reflects reality)
+    but the terminality record still lists it as missing.
+
+    Returns a list of mismatched lane names.
+    """
+    if not isinstance(sf_outcomes, dict) or not isinstance(missing_lanes, list):
+        return []
+
+    mismatched: list[str] = []
+    for lane in missing_lanes:
+        if not isinstance(lane, str):
+            continue
+        lane_upper = lane.upper()
+        # Check if any family outcome mentions this lane as terminal/attempted
+        for family, outcome in sf_outcomes.items():
+            if not isinstance(outcome, dict):
+                continue
+            state = outcome.get("state") or outcome.get("status") or outcome.get("terminal_state") or ""
+            family_upper = family.upper()
+            if (
+                (lane_upper == family_upper or lane_upper in family_upper or family_upper in lane_upper)
+                and state.upper() in TERMINAL_OUTCOME_STATES
+            ):
+                mismatched.append(lane)
+                break
+    return mismatched
+
+
 def _extract_guard_fields(data: dict) -> tuple:
     """Extract windup/return guard fields from benchmark or internal shape.
 
@@ -562,6 +623,20 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
                     f"terminality regressed after prelude",
                     "acquisition_prelude.prelude_terminal_lanes",
                 ))
+
+    # ── F210C: stale terminality snapshot ────────────────────────────────────
+    # A lane appears terminal/attempted in source_family_outcomes but remains
+    # in acquisition_report.terminality.missing_lanes — snapshot is stale.
+    mismatched_lanes = _detect_terminality_source_outcome_mismatch(
+        sf_outcomes, missing_lanes,
+    )
+    if mismatched_lanes:
+        failures_append(ValidationFailure(
+            Verdict.FAIL_TERMINALITY_STALE_SNAPSHOT,
+            f"source_family_outcomes shows lanes {mismatched_lanes} terminal/attempted "
+            f"but missing_lanes still contains them: {missing_lanes}",
+            "acquisition_report.terminality.missing_lanes",
+        ))
 
     # ── 1. run_status completed ─────────────────────────────────────────────
     if run_status is not None and run_status not in ("completed", "planned"):

@@ -90,6 +90,7 @@ from hledac.universal.runtime.acquisition_strategy import (
     run_enabled_acquisition_lanes,
     required_terminal_lanes,
     terminality_report,
+    lane_is_terminal,
     _get_ct_adapter,
 )
 from hledac.universal.runtime.source_finding_bridge import (
@@ -733,6 +734,8 @@ class SprintScheduler:
         self._stop_requested = False
         # Sprint 8RA: Store lifecycle reference for UMA callbacks
         self._lifecycle = None
+        # Sprint F210A: Query stored for terminality recompute at export time
+        self._query: str = ""
         # Sprint 8SA: Lifecycle adapter — normalizes runtime/ vs utils/ API
         self._lc_adapter: Optional[_LifecycleAdapter] = None
         # Sprint 8RA: Persistent cross-sprint dedup
@@ -1146,6 +1149,8 @@ class SprintScheduler:
         """
         # Sprint 8SA: Lifecycle adapter — bridges runtime/ vs utils/ API
         adapter = _LifecycleAdapter(lifecycle)
+        # Sprint F210A: Store query for terminality recompute at export time
+        self._query = query
         # Sprint F206C: Lifecycle runner — encapsulates lifecycle orchestration
         self._runner = SprintLifecycleRunner(lifecycle, adapter)
         # Start lifecycle via runner (BOOT→WARMUP)
@@ -1990,6 +1995,75 @@ class SprintScheduler:
                 }
 
         return _ct_outcome
+
+    # ── Sprint F210A: Source family outcomes terminality SSOT ────────────────
+
+    def _final_source_family_outcomes_for_terminality(self) -> tuple[dict, ...]:
+        """
+        Sprint F210A: Canonical source family outcomes for terminality SSOT.
+
+        This mirrors the EXACT same logic used in _build_diagnostic_report to build
+        source_family_outcomes (lines ~6219-6244), ensuring terminality_report is
+        ALWAYS computed from the same canonical outcomes that go into the report.
+
+        This fixes the stale terminality bug where:
+          - _finalize_result_truth() is called before all nonfeed lanes complete
+          - terminality was computed from a snapshot with CT/PUBLIC not yet attempted
+          - source_family_outcomes reflected final state but terminality was stale
+
+        Returns:
+            Tuple of outcome dicts for terminality computation — same format as
+            observed_outcomes passed to terminality_report().
+        """
+        _outcomes: list[dict] = []
+        _seen: set[str] = set()
+
+        # PUBLIC: mirrors _build_diagnostic_report lines 6233-6235
+        # _public_outcome is already a normalized dict (see line 3371)
+        if self._public_outcome is not None:
+            _outcomes.append(self._public_outcome)
+            _seen.add("PUBLIC")
+
+        # CT: use _collect_ct_terminal_outcome for canonical CT terminal outcome
+        # (mirrors _finalize_result_truth lines 1762-1765)
+        _ct_outcome = self._collect_ct_terminal_outcome()
+        if _ct_outcome is not None:
+            _outcomes.append(_ct_outcome)
+            _seen.add("CT")
+
+        # Other lanes: mirror the EXACT same family/lane loop as _build_diagnostic_report
+        # lines 6222-6243 (normalize_source_family_outcome for each family)
+        for _fam, _lane in [
+            ("ct", AcquisitionLane.CT),
+            ("wayback", AcquisitionLane.WAYBACK),
+            ("passive_dns", AcquisitionLane.PASSIVE_DNS),
+            ("blockchain", AcquisitionLane.BLOCKCHAIN),
+            ("feed", "FEED"),
+            ("public", AcquisitionLane.PUBLIC),
+        ]:
+            # Skip families already covered above
+            if _lane == "PUBLIC":
+                continue  # handled above via _public_outcome
+            if _lane == AcquisitionLane.CT:
+                continue  # handled above via _collect_ct_terminal_outcome
+
+            _raw: dict | None = None
+            if _lane == "FEED":
+                _raw = getattr(self, "_feed_verdicts", []) or None
+            elif self._lane_outcomes:
+                for _o in self._lane_outcomes:
+                    if hasattr(_o, "lane") and _o.lane == _lane:
+                        _raw = _o
+                        break
+
+            _normalized = normalize_source_family_outcome(_fam, _raw)
+            _lane_name = _normalized.get("lane") or _fam.upper()
+            _normalized["lane"] = _lane_name
+            if _lane_name not in _seen:
+                _outcomes.append(_normalized)
+                _seen.add(_lane_name)
+
+        return tuple(_outcomes)
 
     # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
 
@@ -6243,6 +6317,56 @@ class SprintScheduler:
         _sfo["academic"] = normalize_source_family_outcome("academic", None)
         report["source_family_outcomes"] = _sfo
 
+        # Sprint F210A: Terminality SSOT — recompute from canonical source family outcomes.
+        # _finalize_result_truth() is called BEFORE all nonfeed lanes complete, so its
+        # terminality snapshot can be stale: CT/PUBLIC appear in source_family_outcomes
+        # as attempted but still appear in missing_lanes from the early snapshot.
+        # This fix recomputes terminality from the EXACT same outcomes used for
+        # source_family_outcomes so the two can never disagree.
+        try:
+            _term_uma = "ok"
+            _term_swap = False
+            if self._governor is not None:
+                try:
+                    _snap = self._governor.evaluate()
+                    _term_uma = getattr(_snap, "uma_state", "ok")
+                    _term_swap = getattr(_snap, "swap_detected", False)
+                except Exception:
+                    pass
+            _mlt = required_terminal_lanes(
+                snapshot=self._acquisition_plan,
+                query=self._query,
+                uma_state=_term_uma,
+                swap_detected=_term_swap,
+            )
+            _canonical_outcomes = self._final_source_family_outcomes_for_terminality()
+            _fresh_term = terminality_report(
+                required_lanes=_mlt,
+                observed_outcomes=_canonical_outcomes,
+            )
+            # Update acquisition_strategy terminality with the fresh computation
+            if "acquisition_strategy" in report:
+                report["acquisition_strategy"]["terminality"] = _fresh_term
+                report["acquisition_strategy"]["acquisition_terminality_checked"] = True
+                report["acquisition_strategy"]["acquisition_terminality_satisfied"] = (
+                    len(_fresh_term.get("missing_lanes", [])) == 0
+                )
+                report["acquisition_strategy"]["acquisition_terminality_missing_lanes"] = list(
+                    _fresh_term.get("missing_lanes", [])
+                )
+            # Also update top-level terminality fields (used by validators)
+            report["acquisition_terminality_checked"] = True
+            report["acquisition_terminality_satisfied"] = (
+                len(_fresh_term.get("missing_lanes", [])) == 0
+            )
+            report["acquisition_terminality_missing_lanes"] = list(
+                _fresh_term.get("missing_lanes", [])
+            )
+        except Exception:
+            # Fail-safe: if terminality recomputation fails, keep the already-set values
+            # (they were set by _finalize_result_truth before this report build)
+            pass
+
         # Sprint F208H: Surface terminality and guard fields at TOP LEVEL for validator consumption
         # PUBLIC terminal state (active300 domain queries)
         report["public_terminal_state"] = (
@@ -7976,6 +8100,8 @@ class SprintScheduler:
         self._public_verdicts.clear()
         # Sprint F207H: Reset public pipeline outcome
         self._public_outcome = None
+        # Sprint F210A: Reset query for new sprint
+        self._query = ""
         # Sprint F207M-A: Reset nonfeed pre-dispatch guard for new sprint
         self._nonfeed_predispatch_done = False
         # Sprint F207S-B: Reset scheduler-owned barrier delayed flag for new sprint

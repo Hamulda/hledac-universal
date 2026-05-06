@@ -122,6 +122,8 @@ class RunQualityVerdict(Enum):
     FAIL_TERMINALITY_UNSATISFIED = "FAIL_TERMINALITY_UNSATISFIED"
     FAIL_MISSING_SOURCE_OUTCOMES = "FAIL_MISSING_SOURCE_OUTCOMES"
     FAIL_SCHEDULER_EXIT_MISSING = "FAIL_SCHEDULER_EXIT_MISSING"
+    # F210D: active300 wallclock budget enforcement
+    FAIL_WALLCLOCK_BUDGET_EXCEEDED = "FAIL_WALLCLOCK_BUDGET_EXCEEDED"
 
 
 @dataclass
@@ -397,6 +399,9 @@ def _derive_run_quality_verdict(
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
     acquisition_strategy: dict | None = None,
     scheduler_exit: dict | None = None,
+    # F210D: wallclock budget enforcement
+    planned_duration_s: float | None = None,
+    actual_duration_s: float | None = None,
 ) -> tuple[RunQualityVerdict | None, bool, str | None, bool, str | None, str | None]:
     """
     Derive run quality verdict from measurement state.
@@ -485,6 +490,15 @@ def _derive_run_quality_verdict(
             elif not _has_scheduler_exit_path(scheduler_exit):
                 verdict = RunQualityVerdict.FAIL_SCHEDULER_EXIT_MISSING
 
+    # F210D: Wallclock budget enforcement — active300/active600 cannot silently overrun
+    # Only fires when verdict is PASS_VALID_CAPABILITY_RUN (preserve hardware_constrained priority).
+    # Tolerance: planned_duration_s * 1.10 OR planned + 30s, whichever is larger.
+    if verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN:
+        if planned_duration_s is not None and actual_duration_s is not None:
+            tolerance_s = max(planned_duration_s * 1.10, planned_duration_s + 30.0)
+            if actual_duration_s > tolerance_s:
+                verdict = RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED
+
     return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
 
@@ -539,6 +553,15 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             result["primary_signal_source"] = (
                 rt.get("primary_signal_source") or summary.get("primary_signal_source")
             )
+            # F210B: Preserve full canonical_run_summary at top-level so benchmark JSON
+            # exposes the ground-truth sprint record intact (including internal fields
+            # like source_family_outcomes and return_guard that may not appear in
+            # the sanitized acquisition_strategy subset).
+            result["canonical_run_summary"] = summary if isinstance(summary, dict) else None
+            # F210B: Preserve full acquisition_report top-level so benchmark and validator
+            # both see identical internal truth (source_family_outcomes, return_guard,
+            # windup_guard_observation, scheduler_exit, acquisition_prelude).
+            result["acquisition_report"] = acq_report if isinstance(acq_report, dict) else None
 
             # public_pipeline
             pp = data.get("public_pipeline") or {}
@@ -855,6 +878,8 @@ def _stamp_run_quality_verdict(
         acquisition_terminality_missing_lanes=result.acquisition_terminality_missing_lanes,
         acquisition_strategy=result.acquisition_strategy,
         scheduler_exit=result.scheduler_exit,
+        planned_duration_s=result.planned_duration_s,
+        actual_duration_s=result.actual_duration_s,
     )
     result.run_quality_verdict = verdict.value if verdict is not None else None
     result.hardware_constrained = hardware_constrained
@@ -885,6 +910,11 @@ def _derive_live_kpi(
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
     acquisition_terminality_report: dict | None = None,
+    # F210B: Explicit source_family_outcomes from acquisition_report for lane-truth derivation
+    # (distinct from acquisition_strategy["source_family_outcomes"] which is a sanitized subset)
+    # When provided, overrides the acquisition_strategy["source_family_outcomes"] for all
+    # live_kpi derivations (source_family_counts, nonfeed_attempted_families).
+    explicit_source_family_outcomes: list[dict] | None = None,
     # F209B: Acquisition prelude telemetry
     acquisition_prelude_checked: bool | None = None,
     acquisition_prelude_ran: bool | None = None,
@@ -895,12 +925,17 @@ def _derive_live_kpi(
     acquisition_prelude_errors: dict | None = None,
     acquisition_prelude_duration_s: float | None = None,
     acquisition_prelude_reason: str | None = None,
+    # F210D: wallclock budget enforcement
+    planned_duration_s: float | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
 
     Returns a dict with:
       - total_findings
+      - wallclock_budget_exceeded            (F210D)
+      - wallclock_budget_excess_s            (F210D)
+      - wallclock_tolerance_s                (F210D)
       - accepted_findings
       - cycles_completed
       - findings_per_min
@@ -950,10 +985,16 @@ def _derive_live_kpi(
       - terminality_quality_verdict           (F208I)
       - terminality_failure_reasons           (F208I)
       - acquisition_report_schema_version      (F208I)
+      - explicit_source_family_outcomes        (F210B)
 
     Feed telemetry preference (F207K-C):
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
     - Otherwise fall back to branch_mix ratio for feed_dominance_score.
+
+    F210B: source_family_counts and nonfeed_attempted_families are derived from
+    explicit_source_family_outcomes (the full acquisition_report version) when provided,
+    not from branch_mix. This ensures lane-attempted truth is preserved even when
+    accepted findings are zero.
     """
     rt = runtime_truth or {}
     branch_mix = rt.get("branch_mix", {})
@@ -993,20 +1034,44 @@ def _derive_live_kpi(
         findings_per_min = round((total_findings / actual_duration_s) * 60, 2)
 
     # source_family_counts
+    # F210B: Derive from explicit_source_family_outcomes (acquisition_report) when available.
+    # When explicitSourceFamilyOutcomes is not available, fall back to branch_mix counts.
+    # explicit_source_family_outcomes is the canonical lane-truth record; branch_mix only
+    # reflects accepted findings and can be zero even when a lane was attempted.
+    _sfo_list = explicit_source_family_outcomes if explicit_source_family_outcomes is not None else (acquisition_strategy or {}).get("source_family_outcomes", [])
     source_family_counts: dict[str, int] = {}
     if feed_findings > 0:
         source_family_counts["feed"] = feed_findings
-    if public_findings > 0:
-        source_family_counts["public"] = public_findings
-    if ct_findings > 0:
-        source_family_counts["ct"] = ct_findings
+    if isinstance(_sfo_list, list):
+        for _entry in _sfo_list:
+            if isinstance(_entry, dict):
+                _fam = _entry.get("family")
+                _accepted = _entry.get("accepted_findings", 0) or _entry.get("accepted", 0)
+                if _fam and _accepted > 0:
+                    source_family_counts[_fam] = _accepted
+    else:
+        # Fallback: use branch_mix counts
+        if public_findings > 0:
+            source_family_counts["public"] = public_findings
+        if ct_findings > 0:
+            source_family_counts["ct"] = ct_findings
 
-    # nonfeed_attempted_families: families with 0 findings (they were attempted)
+    # nonfeed_attempted_families: families present in source_family_outcomes with attempted=True
+    # F210B: Use explicit_source_family_outcomes (lane-truth) rather than branch_mix heuristics.
+    # This correctly includes lanes that were attempted but produced 0 accepted findings.
     nonfeed_attempted_families: list[str] = []
-    if public_findings == 0 and _was_family_attempted(rt, "public"):
-        nonfeed_attempted_families.append("public")
-    if ct_findings == 0 and _was_family_attempted(rt, "ct"):
-        nonfeed_attempted_families.append("ct")
+    if isinstance(_sfo_list, list):
+        for _entry in _sfo_list:
+            if isinstance(_entry, dict) and _entry.get("attempted"):
+                _fam = _entry.get("family")
+                if _fam and _fam != "feed":
+                    nonfeed_attempted_families.append(_fam)
+    else:
+        # Legacy fallback: use branch_mix heuristics
+        if public_findings == 0 and _was_family_attempted(rt, "public"):
+            nonfeed_attempted_families.append("public")
+        if ct_findings == 0 and _was_family_attempted(rt, "ct"):
+            nonfeed_attempted_families.append("ct")
 
     # nonfeed_accepted_findings
     nonfeed_accepted_findings = accepted_findings - feed_findings if accepted_findings else 0
@@ -1092,7 +1157,29 @@ def _derive_live_kpi(
             nonfeed_starvation_suspected = True
             nonfeed_starvation_reason = "early_windup_or_scheduler_order"
 
-    # next_action + next_action_detail (F207K, F207M, F207Q)
+    # F210D: Wallclock budget enforcement
+    # Tolerance: max(planned * 1.10, planned + 30s).
+    # Fires when verdict is PASS_VALID_CAPABILITY_RUN (preserve hardware_constrained priority)
+    # OR when verdict is already FAIL_WALLCLOCK_BUDGET_EXCEEDED (show excess in KPI).
+    wallclock_budget_exceeded = False
+    wallclock_budget_excess_s: float | None = None
+    wallclock_tolerance_s: float | None = None
+    _wallclock_gate = run_quality_verdict in (
+        RunQualityVerdict.PASS_VALID_CAPABILITY_RUN.value,
+        RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED.value,
+    )
+    if (
+        _wallclock_gate
+        and planned_duration_s is not None
+        and actual_duration_s is not None
+    ):
+        tolerance_s = max(planned_duration_s * 1.10, planned_duration_s + 30.0)
+        wallclock_tolerance_s = tolerance_s
+        if actual_duration_s > tolerance_s:
+            wallclock_budget_exceeded = True
+            wallclock_budget_excess_s = round(actual_duration_s - tolerance_s, 3)
+
+    # next_action + next_action_detail (F207K, F207M, F207Q, F210D)
     next_action, next_action_detail = _derive_next_action(
         status=status,
         is_memory_gate_abort=is_memory_gate_abort,
@@ -1116,6 +1203,7 @@ def _derive_live_kpi(
         acquisition_terminality_checked=acquisition_terminality_checked,
         acquisition_terminality_satisfied=acquisition_terminality_satisfied,
         acquisition_terminality_missing_lanes=list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
+        run_quality_verdict=run_quality_verdict,
         # F209B: Acquisition prelude telemetry
         acquisition_prelude_checked=acquisition_prelude_checked,
         acquisition_prelude_ran=acquisition_prelude_ran,
@@ -1186,6 +1274,10 @@ def _derive_live_kpi(
         "dominant_feed_share_pct": dominant_feed_share_pct,
         "run_quality_verdict": run_quality_verdict,
         "hardware_constrained": hardware_constrained,
+        # F210D: Wallclock budget enforcement
+        "wallclock_budget_exceeded": wallclock_budget_exceeded,
+        "wallclock_budget_excess_s": wallclock_budget_excess_s,
+        "wallclock_tolerance_s": wallclock_tolerance_s,
         "next_action": next_action,
         "next_action_detail": next_action_detail,
         # F207M: Nonfeed starvation
@@ -1204,7 +1296,13 @@ def _derive_live_kpi(
         "prewindup_skipped_lanes": prewindup_skipped_lanes,
         "windup_delayed_for_nonfeed": windup_delayed_for_nonfeed,
         "nonfeed_scheduler_gap_resolved": nonfeed_scheduler_gap_resolved,
-        "source_family_outcomes": source_family_outcomes,
+        # F210B: Prefer explicit_source_family_outcomes (ground truth) over the
+        # acquisition_strategy local variable (sanitized subset).
+        "source_family_outcomes": (
+            explicit_source_family_outcomes
+            if explicit_source_family_outcomes is not None
+            else source_family_outcomes
+        ),
         # F207S: Windup guard observation
         "windup_guard_call_count": wg.get("call_count", 0),
         "windup_guard_callback_supplied_count": wg.get("callback_supplied_count", 0),
@@ -1287,6 +1385,8 @@ def _derive_next_action(
     acquisition_terminality_checked: bool | None = None,
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: list[str] | None = None,
+    # F210D: wallclock budget enforcement
+    run_quality_verdict: str | None = None,
     # F209B: Acquisition prelude telemetry
     acquisition_prelude_checked: bool | None = None,
     acquisition_prelude_ran: bool | None = None,
@@ -1311,6 +1411,11 @@ def _derive_next_action(
     F208M: return guard checked+satisfied => never suggest fix_return_guard_report_mapping
     F208M: scheduler_exit run_complete => never suggest add_scheduler_exit_tracer
     """
+    # F210D: Wallclock budget exceeded — fix runtime budget enforcement
+    # Rule 0: fires FIRST, before all other rules — wallclock overrun is a critical signal
+    if run_quality_verdict == RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED.value:
+        return ("fix_runtime_budget_enforcement", None)
+
     prewindup_required_lanes = prewindup_required_lanes or []
     prewindup_attempted_lanes = prewindup_attempted_lanes or []
 
@@ -1552,6 +1657,12 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         acquisition_terminality_satisfied=getattr(result, "acquisition_terminality_satisfied", None),
         acquisition_terminality_missing_lanes=getattr(result, "acquisition_terminality_missing_lanes", None),
         acquisition_terminality_report=getattr(result, "acquisition_terminality_report", None),
+        # F210B: Explicit source_family_outcomes from full acquisition_report for lane-truth
+        explicit_source_family_outcomes=(
+            result.acquisition_report.get("source_family_outcomes")
+            if result.acquisition_report and isinstance(result.acquisition_report, dict)
+            else None
+        ),
         # F209B: Acquisition prelude telemetry
         acquisition_prelude_checked=getattr(result, "acquisition_prelude_checked", None),
         acquisition_prelude_ran=getattr(result, "acquisition_prelude_ran", None),
@@ -1562,6 +1673,8 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         acquisition_prelude_errors=getattr(result, "acquisition_prelude_errors", None),
         acquisition_prelude_duration_s=getattr(result, "acquisition_prelude_duration_s", None),
         acquisition_prelude_reason=getattr(result, "acquisition_prelude_reason", None),
+        # F210D: wallclock budget enforcement
+        planned_duration_s=getattr(result, "planned_duration_s", None),
     )
     result.live_kpi = kpi
 

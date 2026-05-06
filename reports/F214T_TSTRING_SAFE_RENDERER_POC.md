@@ -252,28 +252,29 @@ Functions:
 
 ### Deferred Sites
 
-`sprint_markdown_reporter.py:415` and all other candidate sites remain UNFIXED — production scope, deferred to next sprint.
+`sprint_markdown_reporter.py:415/417` (priority, direction) patched by F214T-4. Remaining unescaped sites deferred to production scope.
 
 ### Test Results
 
 ```
-27 passed in 0.64s
+27 passed in 0.64s (F214T-PATCH baseline)
+40 passed in 0.90s (F214T-PATCH + F214T-4)
 ```
 
-Probe tests at `tests/probe_f214t_safe_rendering/test_safe_render.py`.
+Probe tests at `tests/probe_f214t_safe_rendering/test_safe_render.py` and `test_sprint_markdown_escape.py`.
 
 ### Validation
 
 - `uv sync --extra dev`: PASS (155 packages)
-- `PYTHONPATH=... pytest -q tests/probe_f214t_safe_rendering/`: 27 passed
+- `PYTHONPATH=... pytest -q tests/probe_f214t_safe_rendering/`: 40 passed
 - `PYTHONPATH=... python -c "import hledac.universal; print('IMPORT_OK')"`: IMPORT_OK
 - Boot smoke: clean startup, no fatal traceback
 
 ---
 
-## F214T-4 — sprint_markdown_reporter Pivot/Query Hint Escape (2026-05-06)
+## F214T-4 — sprint_markdown_reporter Priority/Direction Escape (2026-05-06)
 
-### Target Sites (2 HIGH)
+### Target Sites (2 HIGH — follow-up to F214T-PATCH)
 
 | File | Line | Before | After |
 |------|------|--------|-------|
@@ -287,17 +288,18 @@ Probe tests at `tests/probe_f214t_safe_rendering/test_safe_render.py`.
 
 ### Risk Mitigated
 
-- `query_hint` with `javascript:` scheme, table pipes, heading breaks, HTML tags
-- `pivot` with fence blocks, bold/italic, links, list breakout
+- `priority` field with `]` could break out of `[priority]` bracket pair; `*`, `_`, `[` could inject bold/italic/links
+- `direction` field with `*`, `_`, `[`, `]`, `(` could inject bold/italic/links into the pivot line
+
+Note: `query_hint` and `pivot` (str case) were already escaped by F214T-PATCH commit 3c35cfb0.
 
 ### Test Results
 
 ```
-8 passed in 0.45s (test_sprint_markdown_escape.py)
-35 passed in 0.43s (full F214T suite)
+40 passed in 0.90s (full F214T suite: 27 safe_render + 8 sprint_markdown + 5 new priority/direction)
 ```
 
-New probe tests: `tests/probe_f214t_safe_rendering/test_sprint_markdown_escape.py`
+New probe tests: `tests/probe_f214t_safe_rendering/test_sprint_markdown_escape.py` — `TestPriorityDirectionEscape` class (5 new tests)
 
 ### Deferred Sites
 
@@ -307,9 +309,9 @@ New probe tests: `tests/probe_f214t_safe_rendering/test_sprint_markdown_escape.p
 | `sprint_markdown_reporter.py:350` | `f"{i}. {action}"` | DEFERRED |
 | `sprint_markdown_reporter.py:687` | `f"### {label}: ..."` | DEFERRED |
 | `sprint_markdown_reporter.py:827` | `f"- **Conclusion**: {conclusion}"` | DEFERRED |
-| `markdown_reporter.py:97` | `f"[{label}]({s})"` | DEFERRED |
-| `export_manager.py:182` | `f"- **URL**: [{url_label}]({url})"` | DEFERRED |
 | `export_manager.py:161` | `f"## Report\n\n{report}\n"` | DEFERRED |
+
+Note: `markdown_reporter.py:97` and `export_manager.py:182` were already patched by F214T-PATCH (commit 3c35cfb0).
 
 ---
 
@@ -329,3 +331,4 @@ New probe tests: `tests/probe_f214t_safe_rendering/test_sprint_markdown_escape.p
 | 2026-05-05 | Initial report — runner Python 3.13, t-strings not available |
 | 2026-05-06 | F214T-3 update — runner Python 3.14.4, t-string syntax available but non-rendering; previous "t-strings absent" claim corrected |
 | 2026-05-06 | F214T-PATCH applied — 2 critical sites patched, utils/safe_render.py created, 27 probe tests pass |
+| 2026-05-06 | F214T-4 applied — priority + direction fields escaped on line 417, 40 tests pass |
