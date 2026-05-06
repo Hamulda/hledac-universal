@@ -172,6 +172,8 @@ class LiveMeasurementResult:
     runtime_truth: dict | None = None
     timing_truth: dict | None = None
     checkpoint_zero_category: str | None = None
+    # Sprint F215D: Canonical early exit classification
+    early_exit_class: str | None = None
 
     # Signal
     primary_signal_source: str | None = None
@@ -299,6 +301,93 @@ class LiveMeasurementResult:
             d["research_quality_grade"] = _rq.get("grade")
             d["research_quality_score"] = _rq.get("total_quality_score")
             d["research_quality_comparable"] = _rq.get("research_quality_comparable")
+
+        # F215A: CANONICAL MEASUREMENT BOUNDARY — Explicit report sections
+        # canonical_report_snapshot: fields copied verbatim from canonical sprint report.
+        # These are the ONE source of truth for sprint outcome. Benchmark does NOT reconstruct these.
+        # missing_canonical_fields: list of fields that were absent in the canonical report.
+        _mcf = _lk.get("missing_canonical_fields", [])
+        _sfo_canonical = _lk.get("source_family_outcomes")
+        # None = absent; [] (empty list) = present but zero families (valid canonical state)
+        _sfo_present = _sfo_canonical is not None
+        d["canonical_report_snapshot"] = {
+            "source_family_outcomes": _sfo_canonical if _sfo_present else None,
+            "source_family_outcomes_present": _sfo_present,
+            "missing_canonical_fields": _mcf if isinstance(_mcf, list) else [],
+            # Canonical sprint identity
+            "sprint_id": self.sprint_id,
+            "checkpoint_zero_category": self.checkpoint_zero_category,
+            "primary_signal_source": self.primary_signal_source,
+            # Canonical timing
+            "planned_duration_s": self.planned_duration_s,
+            "actual_duration_s": self.actual_duration_s,
+            # Canonical counts
+            "findings_count": self.findings_count,
+            "accepted_findings": self.accepted_findings,
+            "cycles_completed": self.cycles_completed,
+            "cycles_started": self.cycles_started,
+        }
+
+        # measurement_metadata: fields produced BY THE BENCHMARK, not by the canonical sprint.
+        # These are measurement artifacts, not sprint truth. They document the measurement context.
+        d["measurement_metadata"] = {
+            "measurement_id": self.measurement_id,
+            "mode": self.mode.value,
+            "status": self.status.value,
+            "profile": self.profile,
+            "query": self.query,
+            "aggressive_mode": self.aggressive_mode,
+            "deep_probe": self.deep_probe,
+            # Runtime authority
+            "runtime_authority_path": self.runtime_authority_path,
+            "runtime_authority_is_canonical": self.runtime_authority_is_canonical,
+            # Benchmark timing (wallclock)
+            "start_time_iso": self.start_time_iso,
+            "end_time_iso": self.end_time_iso,
+            "planned_duration_s": self.planned_duration_s,
+            "actual_duration_s": self.actual_duration_s,
+            # Memory measurement
+            "uma_pre_used_gib": self.uma_pre_used_gib,
+            "uma_pre_swap_gib": self.uma_pre_swap_gib,
+            "uma_pre_state": self.uma_pre_state,
+            "uma_post_used_gib": self.uma_post_used_gib,
+            "uma_post_swap_gib": self.uma_post_swap_gib,
+            "uma_post_state": self.uma_post_state,
+            # Profile truthfulness
+            "active_runtime_expected": self.active_runtime_expected,
+            "expected_windup_lead_s": self.expected_windup_lead_s,
+            "expected_active_window_s": self.expected_active_window_s,
+            "profile_verdict": self.profile_verdict,
+            # Run quality
+            "run_quality_verdict": self.run_quality_verdict,
+            "hardware_constrained": self.hardware_constrained,
+            "swap_warning": self.swap_warning,
+            "swap_gate_triggered": self.swap_gate_triggered,
+            # Output paths
+            "resolved_output_json": self.resolved_output_json,
+            "resolved_output_md": self.resolved_output_md,
+            "report_json_path": self.report_json_path,
+            # Readiness artifacts
+            "stabilization_seal_present": self.stabilization_seal_present,
+            "hermetic_regression_manifest_present": self.hermetic_regression_manifest_present,
+            "transport_authority_status_present": self.transport_authority_status_present,
+            "mlx_wired_limit_seal_present": self.mlx_wired_limit_seal_present,
+        }
+
+        # derived_checks: benchmark-internal derivations that reconstruct sprint state from available data.
+        # These are INFERRED, not copied from canonical report. Use with caution.
+        # NOTE: lane_execution_counts, nonfeed_attempted_families, source_family_counts,
+        # and public_fetch_attempted appear in live_kpi as derived fields.
+        # They are marked as DERIVED_CHECK to distinguish from canonical_report_snapshot fields.
+        d["derived_checks"] = {
+            "note": "These fields are DERIVED by the benchmark, not copied from canonical report.",
+            "live_kpi_lane_execution_counts": _lk.get("lane_execution_counts"),
+            "live_kpi_source_family_counts": _lk.get("source_family_counts"),
+            "live_kpi_nonfeed_attempted_families": _lk.get("nonfeed_attempted_families"),
+            "live_kpi_public_fetch_attempted": _lk.get("public_fetch_attempted"),
+            "live_kpi_nonfeed_accepted_findings": _lk.get("nonfeed_accepted_findings"),
+            "live_kpi_findings_per_min": _lk.get("findings_per_min"),
+        }
         return d
 
     def to_json(self) -> str:
@@ -604,6 +693,9 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             result["runtime_truth"] = rt if isinstance(rt, dict) else None
             result["timing_truth"] = tt if isinstance(tt, dict) else None
             result["checkpoint_zero_category"] = summary.get("checkpoint_zero_category")
+            # Sprint F215D: Extract canonical early exit class from canonical_run_summary
+            # Use CANONICAL_EARLY_EXIT_CLASS_MISSING sentinel when field is absent
+            result["early_exit_class"] = summary.get("early_exit_class") or "CANONICAL_EARLY_EXIT_CLASS_MISSING"
             result["primary_signal_source"] = (
                 rt.get("primary_signal_source") or summary.get("primary_signal_source")
             )
@@ -1216,19 +1308,38 @@ def _derive_live_kpi(
         if _fam != "feed" and _data.get("accepted_count", 0) > 0:
             source_family_counts[_fam] = _data["accepted_count"]
 
-    # nonfeed_attempted_families: families with attempted=True in lane_execution_counts
-    # FEED is never included (nonfeed = non-feed families)
-    nonfeed_attempted_families: list[str] = []
-    for _fam, _data in lane_execution_counts.items():
-        if _fam != "feed" and _data.get("attempted"):
-            nonfeed_attempted_families.append(_fam)
+    # nonfeed_attempted_families: F215A CANONICAL BOUNDARY
+    # Only populate from lane_execution_counts when built from source_family_outcomes (canonical).
+    # When source_family_outcomes is absent (legacy), emit CANONICAL_FIELD_MISSING.
+    if isinstance(_sfo_list, list) and len(_sfo_list) > 0:
+        nonfeed_attempted_families = [
+            _fam for _fam, _data in lane_execution_counts.items()
+            if _fam != "feed" and _data.get("attempted")
+        ]
+    else:
+        nonfeed_attempted_families = "CANONICAL_FIELD_MISSING"
 
     # nonfeed_accepted_findings
     nonfeed_accepted_findings = accepted_findings - feed_findings if accepted_findings else 0
     nonfeed_accepted_findings = max(0, nonfeed_accepted_findings)
 
-    # public_fetch_attempted
-    public_fetch_attempted = _was_family_attempted(rt, "public")
+    # public_fetch_attempted: F215A CANONICAL MEASUREMENT BOUNDARY
+    # CRITICAL: Must read from lane_execution_counts (from source_family_outcomes), NOT from runtime_truth branch_mix.
+    # runtime_truth branch_mix is a REconstruction proxy, not canonical lane execution truth.
+    # When source_family_outcomes is absent, use False (conservative default — don't recommend
+    # inspecting public when we can't confirm it was attempted). Track via missing_canonical_fields.
+    _sfo_has_canonical = isinstance(_sfo_list, list) and len(_sfo_list) > 0
+    if _sfo_has_canonical:
+        # Canonical: read attempted from source_family_outcomes
+        _pub_entry = next((e for e in _sfo_list if isinstance(e, dict) and e.get("family") == "PUBLIC"), None)
+        if _pub_entry is not None:
+            public_fetch_attempted = bool(_pub_entry.get("attempted", False))
+        else:
+            # PUBLIC not present in source_family_outcomes at all — conservative False
+            public_fetch_attempted = False
+    else:
+        # Legacy report without source_family_outcomes — conservative False, do NOT infer from branch_mix
+        public_fetch_attempted = False
 
     # Public pipeline telemetry from sprint report (F207K)
     pp = public_pipeline or {}
@@ -1263,7 +1374,7 @@ def _derive_live_kpi(
     prewindup_skipped_lanes: dict[str, str] = as_dict.get("prewindup_skipped_lanes", {})
     windup_delayed_for_nonfeed: bool = as_dict.get("windup_delayed_for_nonfeed", False)
     nonfeed_scheduler_gap_resolved: bool | None = as_dict.get("nonfeed_scheduler_gap_resolved", None)
-    source_family_outcomes: list[dict] = as_dict.get("source_family_outcomes", [])
+    source_family_outcomes: list[dict] | None = as_dict.get("source_family_outcomes")
 
     # F207S: Windup guard observation telemetry
     wg = windup_guard_observation or {}
@@ -1544,6 +1655,11 @@ def _derive_live_kpi(
         "ct_candidates_accumulated": lane_verdict.get("ct_candidates_accumulated", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_candidates_stored": lane_verdict.get("ct_candidates_stored", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_storage_rejected": lane_verdict.get("ct_storage_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        # F215A: Missing canonical fields — tracks which canonical fields were absent
+        # External tools should check this list to know when benchmark used fallback heuristics
+        "missing_canonical_fields": (
+            ["source_family_outcomes"] if not _sfo_has_canonical else []
+        ),
     }
 
 
@@ -2619,6 +2735,7 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"- Runtime truth: {json.dumps(result.runtime_truth, default=str) if isinstance(result.runtime_truth, dict) else result.runtime_truth}",
             f"- Timing truth: {json.dumps(result.timing_truth, default=str) if isinstance(result.timing_truth, dict) else result.timing_truth}",
             f"- Checkpoint zero: {result.checkpoint_zero_category}",
+            f"- Early exit class: {result.early_exit_class}",
             f"- Primary signal source: {result.primary_signal_source}",
             f"- Report: {result.report_json_path}",
         ])

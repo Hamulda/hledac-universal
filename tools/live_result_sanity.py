@@ -331,6 +331,87 @@ def _check_feed_only_accepted_nonfeed_attempted(
     return True, None
 
 
+def _check_ct_loss_stage_present(
+    b: BenchmarkSurface,
+) -> tuple[bool, str | None]:
+    """
+    F214R2: Check CT loss telemetry is present when CT lane has raw evidence but zero accepted.
+
+    Fails if:
+    - CT raw_count > 0 and accepted_count == 0 but ct_loss_stage is missing from live_kpi.
+    """
+    live_kpi = b.live_kpi or {}
+    lane_execution = live_kpi.get("lane_execution_counts", {}) or live_kpi.get("source_family_outcomes", [])
+
+    # Normalize: could be dict or list
+    ct_data = None
+    if isinstance(lane_execution, dict):
+        ct_data = lane_execution.get("ct") or lane_execution.get("CT")
+    elif isinstance(lane_execution, list):
+        for entry in lane_execution:
+            if isinstance(entry, dict) and entry.get("family", "").lower() == "ct":
+                ct_data = entry
+                break
+
+    if ct_data is None:
+        return True, None  # No CT lane, nothing to check
+
+    ct_raw = ct_data.get("raw_count", 0) if isinstance(ct_data, dict) else 0
+    ct_accepted = ct_data.get("accepted_count", 0) if isinstance(ct_data, dict) else 0
+
+    # If CT has raw evidence but zero accepted, ct_loss_stage MUST be present
+    if ct_raw > 0 and ct_accepted == 0:
+        ct_loss_stage = live_kpi.get("ct_loss_stage")
+        if ct_loss_stage is None:
+            return False, (
+                f"CT raw_count={ct_raw} accepted_count=0 but ct_loss_stage is missing from live_kpi"
+            )
+
+    return True, None
+
+
+def _check_public_surface_present(
+    b: BenchmarkSurface,
+) -> tuple[bool, str | None]:
+    """
+    F214R2: Check PUBLIC lane surface is present when public was attempted.
+
+    Fails if:
+    - public_fetch_attempted=True or public_branch_timed_out=True
+    - But PUBLIC is absent from lane_execution_counts.
+    """
+    live_kpi = b.live_kpi or {}
+    runtime_truth = b.runtime_truth or {}
+
+    public_attempted = (
+        live_kpi.get("public_fetch_attempted")
+        or runtime_truth.get("public_branch_timed_out")
+        or False
+    )
+
+    if not public_attempted:
+        return True, None
+
+    # Check if PUBLIC exists in lane_execution_counts
+    lane_execution = live_kpi.get("lane_execution_counts", {}) or live_kpi.get("source_family_outcomes", [])
+
+    public_present = False
+    if isinstance(lane_execution, dict):
+        public_present = "public" in lane_execution or "PUBLIC" in lane_execution
+    elif isinstance(lane_execution, list):
+        for entry in lane_execution:
+            if isinstance(entry, dict) and entry.get("family", "").lower() == "public":
+                public_present = True
+                break
+
+    if not public_present:
+        return False, (
+            "public_fetch_attempted=True but PUBLIC absent from lane_execution_counts"
+        )
+
+    return True, None
+
+
 def _check_research_quality(
     q: QualitySurface,
     min_grade: str | None,
@@ -340,14 +421,16 @@ def _check_research_quality(
     Check research quality gate.
 
     Fails if:
+    - quality_gate is missing (None)
     - quality_gate is QUALITY_FAIL_FEED_ONLY and not allow_feed_only
     - quality_gate is any other QUALITY_FAIL_* (always fail)
     - grade is below min_grade threshold (even for warnings)
 
     Passes (with warning) for QUALITY_WARN_MULTISOURCE_SHALLOW only when above min_grade.
     """
+    # F214R2: quality_gate missing is a hard failure
     if q.quality_gate is None:
-        return True, None
+        return False, "quality_gate is missing from research quality surface"
 
     # Check minimum grade threshold first — applies to all gates including warnings
     if min_grade is not None and q.grade is not None:
@@ -369,6 +452,28 @@ def _check_research_quality(
     # Warn for QUALITY_WARN_MULTISOURCE_SHALLOW but do not fail (min grade already checked above)
     if q.quality_gate == "QUALITY_WARN_MULTISOURCE_SHALLOW":
         return True, None
+
+    return True, None
+
+
+def _check_hardware_constrained_comparable(
+    b: BenchmarkSurface,
+    q: QualitySurface,
+) -> tuple[bool, str | None]:
+    """
+    F214R2: Check hardware_constrained and research_quality_comparable are consistent.
+
+    Fails if:
+    - hardware_constrained=True but research_quality_comparable is True or None.
+    """
+    live_kpi = b.live_kpi or {}
+    hardware_constrained = live_kpi.get("hardware_constrained", False)
+
+    if hardware_constrained and q.research_quality_comparable is not False:
+        return False, (
+            f"hardware_constrained={hardware_constrained} but research_quality_comparable={q.research_quality_comparable} — "
+            "hardware-constrained runs must not be marked comparable"
+        )
 
     return True, None
 
@@ -463,17 +568,45 @@ def sanity_check(
         assert msg is not None
         result.disagreements.append(msg)
 
+    # F214R2: CT loss stage must be present when CT has raw evidence but zero accepted
+    ok, msg = _check_ct_loss_stage_present(b)
+    checks["ct_loss_stage_present"] = ok
+    if not ok:
+        assert msg is not None
+        result.disagreements.append(msg)
+
+    # F214R2: PUBLIC must be in lane_execution_counts when public was attempted
+    ok, msg = _check_public_surface_present(b)
+    checks["public_surface_present"] = ok
+    if not ok:
+        assert msg is not None
+        result.disagreements.append(msg)
+
+    # F214R2: hardware_constrained and research_quality_comparable must be consistent
+    ok, msg = _check_hardware_constrained_comparable(b, q)
+    checks["hardware_constrained_comparable"] = ok
+    if not ok:
+        assert msg is not None
+        result.disagreements.append(msg)
+
     result.checks = checks
 
-    # Determine verdict — priority: RESEARCH_QUALITY > WALLCLOCK > STALE > SHAPE > SURFACE
+    # Determine verdict — priority: RESEARCH_QUALITY > EVIDENCE_SURFACE > WALLCLOCK > STALE > SHAPE > SURFACE
     if result.disagreements:
-        has_quality = any("Research quality gate" in d or "Grade" in d for d in result.disagreements)
+        has_quality = any("Research quality gate" in d or "Grade" in d or "quality_gate" in d for d in result.disagreements)
         has_wallclock = any("actual=" in d for d in result.disagreements)
         has_stale = any("Stale trace verdict" in d for d in result.disagreements)
         has_shape = any("internal trace" in d for d in result.disagreements)
+        # F214R2: Evidence surface failures (ct_loss_stage, public_surface, hardware_constrained)
+        has_evidence_surface = any(
+            "ct_loss_stage" in d or "public_surface" in d or "hardware_constrained" in d
+            for d in result.disagreements
+        )
 
         if has_quality:
             result.verdict = SanityVerdict.SANITY_FAIL_RESEARCH_QUALITY
+        elif has_evidence_surface:
+            result.verdict = SanityVerdict.SANITY_FAIL_SURFACE_DISAGREEMENT
         elif has_wallclock:
             result.verdict = SanityVerdict.SANITY_FAIL_WALLCLOCK_BUDGET
         elif has_stale:

@@ -711,6 +711,11 @@ class SourceFamilyOutcome:
     error: str | None
     timeout: bool
     duration_s: float | None
+    # F215C: Canonical terminal state for domain-query active profiles.
+    # Derived: NEVER_SCHEDULED | SKIPPED_BY_POLICY | SKIPPED_BY_MEMORY |
+    #          ATTEMPTED_NO_RESULTS | ATTEMPTED_ALL_REJECTED |
+    #          ATTEMPTED_TIMEOUT | ATTEMPTED_ERROR | ATTEMPTED_ACCEPTED
+    terminal_state: str = "UNKNOWN"
 
     def to_dict(self) -> dict:
         return {
@@ -724,6 +729,7 @@ class SourceFamilyOutcome:
             "error": self.error,
             "timeout": self.timeout,
             "duration_s": round(self.duration_s, 3) if self.duration_s is not None else None,
+            "terminal_state": self.terminal_state,
         }
 
 
@@ -739,7 +745,38 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     Also handles the "missing family" case where no outcome was produced at all,
     returning a skipped/attempted=False outcome for documentation purposes.
     """
+    # F215C: Derive terminal_state from outcome fields.
+    # Priority: never_scheduled/no_outcome_recorded > skipped > attempted outcomes
+    def _derive_terminal(ts_raw: str | None, attempted: bool, skipped: bool,
+                         skip_reason: str | None, error: str | None,
+                         timeout: bool, accepted_count: int) -> str:
+        if ts_raw:
+            return ts_raw
+        # Explicit never-scheduled / never-recorded markers
+        if skip_reason in ("never_scheduled", "no_outcome_recorded"):
+            return "NEVER_SCHEDULED"
+        if not attempted:
+            # Scheduled but skipped
+            if skip_reason and ("memory" in skip_reason.lower() or
+                               "hw_skip" in skip_reason.lower() or
+                               "hardware" in skip_reason.lower()):
+                return "SKIPPED_BY_MEMORY"
+            if skip_reason and ("policy" in skip_reason.lower() or
+                               "disabled" in skip_reason.lower() or
+                               "not_enabled" in skip_reason.lower()):
+                return "SKIPPED_BY_POLICY"
+            return "SKIPPED"
+        # Attempted outcomes
+        if error:
+            return "ATTEMPTED_ERROR"
+        if timeout:
+            return "ATTEMPTED_TIMEOUT"
+        if accepted_count > 0:
+            return "ATTEMPTED_ACCEPTED"
+        return "ATTEMPTED_NO_RESULTS"
+
     if raw is None:
+        _ts = _derive_terminal(None, False, True, "no_outcome_recorded", None, False, 0)
         return SourceFamilyOutcome(
             family=family,
             attempted=False,
@@ -751,6 +788,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
             error=None,
             timeout=False,
             duration_s=None,
+            terminal_state=_ts,
         ).to_dict()
 
     # AcquisitionLaneOutcome (or compatible object with to_dict method)
@@ -763,6 +801,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
         _verdict = raw if isinstance(raw, tuple) else raw[0]
         if len(_verdict) >= 5 and isinstance(_verdict[1], int):
             _tag, _sig, _fb_use, _fb_waste, _qual = _verdict[:5]
+            _ts = _derive_terminal(None, True, False, None, None, False, 0)
             return SourceFamilyOutcome(
                 family=family,
                 attempted=True,
@@ -774,6 +813,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
                 error=None,
                 timeout=False,
                 duration_s=None,
+                terminal_state=_ts,
             ).to_dict()
 
     # Dict form — raw must be a Mapping after tuple/list is excluded above
@@ -781,6 +821,10 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     attempted = _d.get("attempted", False)
     skip_reason = _d.get("skip_reason") if not attempted else None
     skipped = _d.get("skipped", not attempted)
+    _error = _d.get("error")
+    _timeout = _d.get("timeout", False)
+    _accepted = _d.get("accepted_count", _d.get("accepted_findings", 0))
+    _ts_raw = _d.get("terminal_state")
 
     # CT/Wayback/PassiveDNS: built_count from produced_items or ct_results_raw as last resort
     built_count = _d.get("built_count", _d.get("produced_items", _d.get("ct_results_raw", 0)))
@@ -790,6 +834,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     # AcquisitionLaneOutcome uses accepted_findings; SourceFamilyOutcome uses accepted_count
     accepted_count = _d.get("accepted_count", _d.get("accepted_findings", 0))
 
+    _ts = _derive_terminal(_ts_raw, attempted, skipped, skip_reason, _error, _timeout, accepted_count)
     return SourceFamilyOutcome(
         family=family,
         attempted=attempted,
@@ -798,9 +843,10 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
         raw_count=raw_count,
         built_count=built_count,
         accepted_count=accepted_count,
-        error=_d.get("error"),
-        timeout=_d.get("timeout", False),
+        error=_error,
+        timeout=_timeout,
         duration_s=_d.get("duration_s"),
+        terminal_state=_ts,
     ).to_dict()
 
 

@@ -407,6 +407,14 @@ def _scheduler_result_acquisition_payload(
         ),
         "acquisition_prelude_duration_s": getattr(result, "acquisition_prelude_duration_s", 0.0),
         "acquisition_prelude_reason": getattr(result, "acquisition_prelude_reason", ""),
+        # Sprint F215D: Early exit semantics — canonical classification of WHY run ended early
+        "early_exit_class": getattr(result, "early_exit_class", ""),
+        "early_exit_reason": getattr(result, "early_exit_reason", ""),
+        "requested_duration_s": getattr(result, "requested_duration_s", 0.0),
+        "actual_duration_s": getattr(result, "actual_duration_s", 0.0),
+        "elapsed_pct": getattr(result, "elapsed_pct", 0.0),
+        "active_window_budget_s": getattr(result, "active_window_budget_s", 0.0),
+        "active_window_elapsed_s": getattr(result, "active_window_elapsed_s", 0.0),
     }
 
 
@@ -1347,6 +1355,14 @@ async def run_sprint(
                 "ct_log_accepted_findings": result.ct_log_accepted_findings,
                 "cc_archive_injected": result.cc_archive_injected,
                 "academic_findings_count": result.academic_findings_count,
+                # Sprint F215D: Early exit semantics — canonical exit classification
+                "early_exit_class": getattr(result, "early_exit_class", ""),
+                "early_exit_reason": getattr(result, "early_exit_reason", ""),
+                "requested_duration_s": getattr(result, "requested_duration_s", 0.0),
+                "actual_duration_s": getattr(result, "actual_duration_s", 0.0),
+                "elapsed_pct": getattr(result, "elapsed_pct", 0.0),
+                "active_window_budget_s": getattr(result, "active_window_budget_s", 0.0),
+                "active_window_elapsed_s": getattr(result, "active_window_elapsed_s", 0.0),
             },
             "runtime_truth": runtime_truth,
             "timing_truth": timing_truth,

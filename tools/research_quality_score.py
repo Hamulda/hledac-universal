@@ -68,6 +68,8 @@ class ResearchQualityScore:
     wallclock_exceeded: bool
     swap_gib: float | None
     swap_warning: bool
+    # F215B: CT loss stage diagnostic
+    ct_loss_stage: str = "no_loss"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +104,7 @@ def _normalize_benchmark(data: dict) -> dict:
     """Convert benchmark JSON format to normalized internal dict."""
     rt = data.get("runtime_truth", {})
     branch_mix = rt.get("branch_mix", {}) if isinstance(rt, dict) else {}
+    lane_verdict = rt.get("lane_verdict", {}) if isinstance(rt, dict) else {}
 
     # Determine nonfeed from branch_mix
     ct = int(branch_mix.get("ct_findings", 0))
@@ -111,6 +114,9 @@ def _normalize_benchmark(data: dict) -> dict:
 
     # For hermetic/offline benchmarks, live_kpi may not exist
     live_kpi = data.get("live_kpi", {})
+
+    # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
+    ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
     return {
         "total_findings": data.get("findings_count", 0),
@@ -128,6 +134,7 @@ def _normalize_benchmark(data: dict) -> dict:
         "swap_warning": _extract_swap_warning(data),
         "branch_mix": branch_mix,
         "live_kpi": live_kpi,
+        "ct_loss_stage": ct_loss_stage,
     }
 
 
@@ -135,6 +142,7 @@ def _normalize_live(data: dict) -> dict:
     """Convert live_active300 JSON format to normalized internal dict."""
     rt = data.get("runtime_truth", {})
     branch_mix = rt.get("branch_mix", {}) if isinstance(rt, dict) else {}
+    lane_verdict = rt.get("lane_verdict", {}) if isinstance(rt, dict) else {}
     live_kpi = data.get("live_kpi", {})
 
     ct = int(branch_mix.get("ct_findings", 0))
@@ -143,6 +151,9 @@ def _normalize_live(data: dict) -> dict:
     feed = int(branch_mix.get("feed_findings", 0))
 
     nonfeed_total = live_kpi.get("nonfeed_accepted_findings", ct + pub + passive)
+
+    # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
+    ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
     return {
         "total_findings": data.get("findings_count", 0),
@@ -160,6 +171,7 @@ def _normalize_live(data: dict) -> dict:
         "swap_warning": _extract_swap_warning(data),
         "branch_mix": branch_mix,
         "live_kpi": live_kpi,
+        "ct_loss_stage": ct_loss_stage,
     }
 
 
@@ -310,6 +322,7 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     actual = norm["actual_duration_s"]
     swap_gib = norm["swap_gib"]
     swap_warn = norm["swap_warning"]
+    ct_loss_stage = norm.get("ct_loss_stage", "no_loss")
 
     nonfeed_ratio = nonfeed / accepted if accepted > 0 else 0.0
 
@@ -364,6 +377,7 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         wallclock_exceeded=exceeded,
         swap_gib=swap_gib,
         swap_warning=swap_warn,
+        ct_loss_stage=ct_loss_stage,
     )
 
 
@@ -422,11 +436,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _render_md(score: ResearchQualityScore) -> str:
+    # F215B: CT loss stage alert when CT was attempted but lost
+    ct_loss_alert = ""
+    if score.ct_loss_stage != "no_loss":
+        ct_loss_alert = (
+            f"\n**⚠️ CT Loss Stage:** `{score.ct_loss_stage}` "
+            f"(CT raw &gt; 0 but accepted = 0 — evidence lost in pipeline)"
+        )
+
     lines = [
         "# Research Quality Score",
         "",
         f"**Total Score:** {score.total_quality_score:.1f}/100",
-        f"**Grade:** `{score.grade.value}`",
+        f"**Grade:** `{score.grade.value}`{ct_loss_alert}",
         "",
         "## Score Components",
         "",
@@ -459,6 +481,7 @@ def _render_md(score: ResearchQualityScore) -> str:
         f"- Wallclock exceeded: {score.wallclock_exceeded}",
         f"- Swap GiB: {score.swap_gib}",
         f"- Swap warning: {score.swap_warning}",
+        f"- CT loss stage: `{score.ct_loss_stage}`",
     ]
     return "\n".join(lines)
 

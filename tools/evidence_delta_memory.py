@@ -42,6 +42,9 @@ class EvidenceDelta:
     ct_accepted_curr: int = 0
     new_ct_domains: list[str] = field(default_factory=list)
     repeated_ct_domains: list[str] = field(default_factory=list)
+    # F215B: CT loss stage diagnostic
+    ct_loss_stage_prev: str = "no_loss"
+    ct_loss_stage_curr: str = "no_loss"
 
     # PUBLIC evidence
     public_attempted: bool = False
@@ -189,11 +192,49 @@ def _get_ct_public_info(kpi: dict) -> tuple[bool, bool]:
     return ct_att, pub_att
 
 
+def _get_ct_loss_stage(data: dict) -> str:
+    """Extract ct_loss_stage from runtime_truth.lane_verdict.ct_loss_stage.
+
+    F215B: CT loss stage diagnostic for evidence delta reporting.
+    Returns 'no_loss' when CT raw > 0 and accepted > 0,
+    or when no CT data is present.
+    """
+    try:
+        rt = data.get("runtime_truth", {})
+        if not isinstance(rt, dict):
+            return "no_loss"
+        lane_verdict = rt.get("lane_verdict", {})
+        if not isinstance(lane_verdict, dict):
+            return "no_loss"
+        return lane_verdict.get("ct_loss_stage", "no_loss") or "no_loss"
+    except Exception:
+        return "no_loss"
+
+
 def compute_delta(previous_json: Optional[Path], current_json: Path) -> EvidenceDelta:
     """Compute evidence delta between two report JSON files."""
 
+    # F215B: Load full data for ct_loss_stage extraction
+    try:
+        with open(current_json) as f:
+            curr_data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        curr_data = {}
+
+    prev_data = {}
+    if previous_json:
+        try:
+            with open(previous_json) as f:
+                prev_data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
     curr_kpi = _load_kpi(current_json)
     prev_kpi = _load_kpi(previous_json) if previous_json else {}
+
+    # F215B: Extract ct_loss_stage from runtime_truth.lane_verdict
+    ct_loss_stage_curr = _get_ct_loss_stage(curr_data)
+    ct_loss_stage_prev = _get_ct_loss_stage(prev_data)
 
     # ── Source families ────────────────────────────────────────────────────────
     curr_families = _get_source_families(curr_kpi)
@@ -286,11 +327,38 @@ def compute_delta(previous_json: Optional[Path], current_json: Path) -> Evidence
         and nonfeed_delta == 0
         and feed_delta > 0
     ):
-        verdict = Verdict.DELTA_FEED_ONLY_REPEAT
-        reason = (
-            f"Only FEED source repeated. "
-            f"Feed delta: {feed_delta}, Nonfeed delta: {nonfeed_delta}."
-        )
+        # F214R2: Even when families match, check if nonfeed was attempted-with-zero-accepted
+        # This can happen when CT has raw_count > 0 but accepted_count == 0 (CT loss scenario)
+        ct_had_raw = False
+        if isinstance(curr_kpi.get("lane_execution_counts"), dict):
+            ct_data = curr_kpi["lane_execution_counts"].get("ct", {})
+            ct_had_raw = isinstance(ct_data, dict) and ct_data.get("raw_count", 0) > 0
+        elif isinstance(curr_kpi.get("source_family_outcomes"), list):
+            for entry in curr_kpi["source_family_outcomes"]:
+                if isinstance(entry, dict) and entry.get("family", "").lower() == "ct":
+                    ct_had_raw = entry.get("raw_count", 0) > 0
+                    break
+
+        pub_attempted_with_zero = pub_attempted and pub_accepted_curr == 0
+
+        if ct_attempted and ct_had_raw and ct_accepted_curr == 0:
+            verdict = Verdict.DELTA_FEED_ONLY_REPEAT
+            reason = (
+                f"Only FEED source produced accepted evidence, but CT was attempted with raw evidence (loss). "
+                f"Feed delta: {feed_delta}, Nonfeed delta: {nonfeed_delta}."
+            )
+        elif pub_attempted_with_zero:
+            verdict = Verdict.DELTA_FEED_ONLY_REPEAT
+            reason = (
+                f"Only FEED source produced accepted evidence, but PUBLIC was attempted with zero accepted. "
+                f"Feed delta: {feed_delta}, Nonfeed delta: {nonfeed_delta}."
+            )
+        else:
+            verdict = Verdict.DELTA_FEED_ONLY_REPEAT
+            reason = (
+                f"Only FEED source repeated. "
+                f"Feed delta: {feed_delta}, Nonfeed delta: {nonfeed_delta}."
+            )
     elif (
         new_families
         and ct_accepted_curr > 0
@@ -325,6 +393,9 @@ def compute_delta(previous_json: Optional[Path], current_json: Path) -> Evidence
         ct_accepted_prev=ct_accepted_prev,
         ct_accepted_curr=ct_accepted_curr,
         new_ct_domains=new_ct_domains,
+        # F215B: CT loss stage
+        ct_loss_stage_prev=ct_loss_stage_prev,
+        ct_loss_stage_curr=ct_loss_stage_curr,
         repeated_ct_domains=repeated_ct_domains,
         public_attempted=pub_attempted,
         public_accepted_prev=pub_accepted_prev,
@@ -388,6 +459,10 @@ def verdict_to_markdown(delta: EvidenceDelta, prev_path: Optional[Path], curr_pa
         "",
         f"- **New CT domains:** {delta.new_ct_domains or '_(none)_'}",
         f"- **Repeated CT domains:** {delta.repeated_ct_domains or '_(none)_'}",
+        f"- **CT loss stage (prev):** `{delta.ct_loss_stage_prev}`",
+        f"- **CT loss stage (curr):** `{delta.ct_loss_stage_curr}`",
+        f"- **⚠️ CT loss detected:** {'YES — evidence lost in pipeline' if delta.ct_loss_stage_curr != 'no_loss' and delta.ct_accepted_curr == 0 else 'NO'},",
+
         "",
         "---",
         "",
@@ -468,6 +543,8 @@ def delta_to_dict(delta: EvidenceDelta) -> dict:
         "ct_accepted_curr": delta.ct_accepted_curr,
         "new_ct_domains": delta.new_ct_domains,
         "repeated_ct_domains": delta.repeated_ct_domains,
+        "ct_loss_stage_prev": delta.ct_loss_stage_prev,
+        "ct_loss_stage_curr": delta.ct_loss_stage_curr,
         "public_attempted": delta.public_attempted,
         "public_accepted_prev": delta.public_accepted_prev,
         "public_accepted_curr": delta.public_accepted_curr,

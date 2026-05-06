@@ -96,6 +96,7 @@ from hledac.universal.runtime.acquisition_strategy import (
 from hledac.universal.runtime.source_finding_bridge import (
     ct_results_to_findings,
     wayback_results_to_findings,
+    REJECTION_UNSUPPORTED_SHAPE,
 )
 
 if TYPE_CHECKING:
@@ -304,6 +305,11 @@ class CTLossStage(Enum):
     ALL_REJECTED_BY_BRIDGE = "all_rejected_by_bridge"  # hits existed but all candidates rejected
     CANDIDATES_BUILT_NOT_ACCUMULATED = "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them
     ACCUMULATED_NOT_STORED = "accumulated_not_stored"  # candidates accumulated but storage rejected
+    # NOTE: STORED_NOT_REPORTED is unreachable in the current single-store architecture.
+    # It would require a gap between async_ingest_findings_batch (which sets accepted)
+    # and the benchmark report query. In the current design, accepted IS the canonical
+    # count — there is no separate report query that could return a different value.
+    # Kept for completeness and future multi-store architectures.
     STORED_NOT_REPORTED = "stored_not_reported"  # stored in DB but not visible in benchmark
     NO_LOSS = "no_loss"  # full path succeeded: raw → candidates → stored → reported
 
@@ -351,6 +357,33 @@ class SprintSchedulerConfig:
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
+
+class EarlyExitClass:
+    """
+    Sprint F215D: Canonical early exit classification for sprint runs.
+
+    Enforces that active300/600 runs that complete in < 90% of planned
+    duration are NOT reported ambiguously as completed — they must have an
+    explicit early exit class.
+
+    Values:
+        completed_full_duration              -- ran to or past planned duration
+        early_complete_no_work_remaining    -- work loop exited because no feed work remained
+        early_complete_return_guard_satisfied -- return_guard passed, windup entered legitimately early
+        early_complete_feed_only            -- feed-only run with zero nonfeed accepted findings
+        aborted_by_memory                   -- aborted due to memory pressure / governor emergency
+        aborted_by_deadline                 -- hard deadline exceeded before completion
+        aborted_by_error                    -- exception in run() loop caused abort
+    """
+
+    COMPLETED_FULL_DURATION = "completed_full_duration"
+    EARLY_COMPLETE_NO_WORK_REMAINING = "early_complete_no_work_remaining"
+    EARLY_COMPLETE_RETURN_GUARD_SATISFIED = "early_complete_return_guard_satisfied"
+    EARLY_COMPLETE_FEED_ONLY = "early_complete_feed_only"
+    ABORTED_BY_MEMORY = "aborted_by_memory"
+    ABORTED_BY_DEADLINE = "aborted_by_deadline"
+    ABORTED_BY_ERROR = "aborted_by_error"
+
 
 @dataclass
 class SprintSchedulerResult:
@@ -418,6 +451,7 @@ class SprintSchedulerResult:
     ct_bridge_invoked: bool = False
     ct_raw_sample_keys: tuple[str, ...] = ()
     ct_raw_sample_count: int = 0
+    ct_raw_count: int = 0  # F215B: total raw entries from CT adapter
     ct_candidates_built: int = 0
     ct_bridge_rejections_count: int = 0
     ct_bridge_rejection_reasons: tuple[str, ...] = ()
@@ -590,6 +624,15 @@ class SprintSchedulerResult:
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
     arrow_last_flush_error: str = ""
+    # Sprint F215D: Early exit semantics — canonical classification of WHY run ended early
+    # Populated by _compute_early_exit_class() called in _finalize_result_truth()
+    requested_duration_s: float = 0.0      # planned sprint duration at run() entry
+    actual_duration_s: float = 0.0        # wall-clock seconds from run() entry to return
+    elapsed_pct: float = 0.0              # actual_duration_s / requested_duration_s (0.0 if requested=0)
+    active_window_budget_s: float = 0.0    # sprint_duration_s minus windup lead
+    active_window_elapsed_s: float = 0.0  # wall-clock spent in ACTIVE phase
+    early_exit_class: str = ""             # EarlyExitClass value or "" if not yet computed
+    early_exit_reason: str = ""            # Human-readable reason for early_exit_class
 
 
 # ---------------------------------------------------------------------------
@@ -936,6 +979,8 @@ class SprintScheduler:
         # Sprint F205H: Metrics registry for sprint reporting (fail-soft)
         self._metrics_registry: Any = None
         self._metrics_initialized: bool = False
+        # Sprint F215D: Override for _finalize_result_truth exit path — set in except block
+        self._run_exit_path_override: str | None = None
 
     # ── Sprint F160C: Source Economics ─────────────────────────────────
 
@@ -1413,6 +1458,7 @@ class SprintScheduler:
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "stop_requested_break"
                         )
+                        self._capture_timing_fields()
                         self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -1431,6 +1477,7 @@ class SprintScheduler:
                     await self._ensure_nonfeed_predispatch_before_finalization(
                         query, "lifecycle_abort_break"
                     )
+                    self._capture_timing_fields()
                     self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
                     break
 
@@ -1514,6 +1561,7 @@ class SprintScheduler:
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "windup_barrier_passed"
                         )
+                        self._capture_timing_fields()
                         self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
                         break  # exit work loop → teardown
                     # Guard blocked — force one bounded terminalization pass then break
@@ -1523,6 +1571,7 @@ class SprintScheduler:
                     await self._ensure_nonfeed_predispatch_before_finalization(
                         query, "windup_barrier_break"
                     )
+                    self._capture_timing_fields()
                     self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
                     break  # exit work loop → teardown
 
@@ -1545,6 +1594,7 @@ class SprintScheduler:
                     await self._ensure_nonfeed_predispatch_before_finalization(
                         query, "max_cycles_break"
                     )
+                    self._capture_timing_fields()
                     self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
                     break
 
@@ -1577,6 +1627,7 @@ class SprintScheduler:
                     await self._ensure_nonfeed_predispatch_before_finalization(
                         query, "duration_budget_break"
                     )
+                    self._capture_timing_fields()
                     self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
                     break
                 # ── Sprint F212A: Hard deadline check before new cycle ─────────
@@ -1585,6 +1636,7 @@ class SprintScheduler:
                     await self._ensure_nonfeed_predispatch_before_finalization(
                         query, "hard_deadline_exceeded"
                     )
+                    self._capture_timing_fields()
                     self._finalize_result_truth(
                         "hard_deadline_exceeded",
                         f"hard deadline exceeded at cycle {self._result.cycles_started}",
@@ -1627,6 +1679,7 @@ class SprintScheduler:
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "cycle_ok_false_break"
                         )
+                        self._capture_timing_fields()
                         self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -1645,6 +1698,7 @@ class SprintScheduler:
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "stop_on_first_accepted_break"
                         )
+                        self._capture_timing_fields()
                         self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
@@ -1669,6 +1723,7 @@ class SprintScheduler:
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "post_sleep_windup_break"
                         )
+                        self._capture_timing_fields()
                         self._finalize_result_truth("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP", query)
                         break
                     # Guard blocked — continue loop once to satisfy nonfeed lanes
@@ -1693,6 +1748,8 @@ class SprintScheduler:
             self._runner.abort(f"scheduler_exception:{type(exc).__name__}")
             self._result.aborted = True
             self._result.abort_reason = f"{type(exc).__name__}"
+            # Sprint F215D: Mark exception path so _finalize_result_truth knows this is an error abort
+            self._run_exit_path_override = "aborted_by_error"
 
         # ── Teardown / Export ───────────────────────────────────────────────
         # Sprint F206C: Delegated to runner.teardown()
@@ -1792,18 +1849,23 @@ class SprintScheduler:
 
         # Sprint F208I-B: Finalize result ONCE before returning.
         # _finalize_result_truth computes terminality + calls _record_scheduler_exit.
-        # Call it here so it runs for the normal completion path.
-        # Sprint F208M-A: Run nonfeed predispatch before final terminality computation
-        # so terminality sees lanes with terminal state, not empty acquisition_lane_outcomes.
+        # Sprint F215D: Skip if early exit already finalized (break paths already called
+        # _finalize_result_truth with correct exit_path before setting timing fields here).
         await self._ensure_nonfeed_predispatch_before_finalization(
             query, "run_complete"
         )
-        self._finalize_result_truth(
-            exit_path="run_complete",
-            exit_reason="run() finished normally",
-            exit_phase="TEARDOWN",
-            query=query,
-        )
+        # Sprint F215D: Capture timing fields — needed for all paths (early + normal).
+        self._capture_timing_fields()
+        # Sprint F215D: Only finalize if early_exit_class is not yet set.
+        # Early exit paths (break statements) call _finalize_result_truth BEFORE reaching
+        # here with the correct exit_path — we must NOT overwrite with "run_complete".
+        if not self._result.early_exit_class:
+            self._finalize_result_truth(
+                exit_path="run_complete",
+                exit_reason="run() finished normally",
+                exit_phase="TEARDOWN",
+                query=query,
+            )
         return self._result
 
     def _record_scheduler_exit(
@@ -1827,6 +1889,109 @@ class SprintScheduler:
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
         self._result.scheduler_exit_guard_required = self._result.return_guard_required_lanes
         self._result.scheduler_exit_guard_satisfied = self._result.return_guard_satisfied
+
+    def _capture_timing_fields(self) -> None:
+        """
+        Sprint F215D: Capture wall-clock timing fields for early-exit classification.
+
+        Called before _finalize_result_truth in early-exit break paths so that
+        _compute_early_exit_class has correct elapsed_pct (not 0.0).
+        Timing is also captured at the normal-completion path (lines 1843-1859).
+        """
+        self._result.requested_duration_s = self._config.sprint_duration_s
+        self._result.actual_duration_s = _time.monotonic() - self._wall_clock_start
+        self._result.elapsed_pct = (
+            self._result.actual_duration_s / self._result.requested_duration_s
+            if self._result.requested_duration_s > 0
+            else 0.0
+        )
+        self._result.active_window_budget_s = self._config.sprint_duration_s
+        self._result.active_window_elapsed_s = self._result.actual_duration_s
+
+    def _compute_early_exit_class(
+        self,
+        exit_path: str,
+    ) -> tuple[str, str]:
+        """
+        Sprint F215D: Compute canonical early exit classification.
+
+        Called in _finalize_result_truth after timing fields are populated.
+        Returns (early_exit_class, early_exit_reason).
+
+        Invariants (GHOST_INVARIANTS):
+          - No network I/O, no model load, no browser launch
+          - Fail-safe: returns (COMPLETED_FULL_DURATION, "") on any error
+        """
+        try:
+            r = self._result
+            if self._run_exit_path_override:
+                exit_path = self._run_exit_path_override
+
+            if r.hard_deadline_exceeded or exit_path == "hard_deadline_exceeded":
+                return (
+                    EarlyExitClass.ABORTED_BY_DEADLINE,
+                    "hard deadline exceeded before planned duration",
+                )
+
+            if r.aborted or exit_path == "aborted_by_error":
+                return (
+                    EarlyExitClass.ABORTED_BY_ERROR,
+                    r.abort_reason or "scheduler exception",
+                )
+
+            if hasattr(r, "peak_rss_gib") and r.peak_rss_gib > 0:
+                if r.elapsed_pct < 0.5 and r.budget_violations > 0:
+                    return (
+                        EarlyExitClass.ABORTED_BY_MEMORY,
+                        f"memory pressure ({r.budget_violations} budget violations)",
+                    )
+
+            if r.elapsed_pct >= 0.9:
+                return (
+                    EarlyExitClass.COMPLETED_FULL_DURATION,
+                    f"ran to planned duration ({r.actual_duration_s:.1f}s / {r.requested_duration_s:.1f}s)",
+                )
+
+            nonfeed_accepted = (
+                r.lane_ct_accepted_findings
+                + r.lane_wayback_accepted_findings
+                + r.lane_pdns_accepted_findings
+                + r.lane_blockchain_accepted_findings
+            )
+            if r.accepted_findings > 0 and nonfeed_accepted == 0:
+                return (
+                    EarlyExitClass.EARLY_COMPLETE_FEED_ONLY,
+                    f"feed-only early exit ({r.accepted_findings} accepted findings, no nonfeed)",
+                )
+
+            if r.return_guard_satisfied and exit_path in (
+                "windup_barrier_passed",
+                "windup_barrier_break",
+                "post_sleep_windup_break",
+            ):
+                return (
+                    EarlyExitClass.EARLY_COMPLETE_RETURN_GUARD_SATISFIED,
+                    f"return guard satisfied, early windup ({exit_path})",
+                )
+
+            if exit_path in (
+                "stop_requested_break",
+                "stop_on_first_accepted_break",
+                "cycles_limit_reached",
+                "max_cycles_break",
+            ):
+                return (
+                    EarlyExitClass.EARLY_COMPLETE_NO_WORK_REMAINING,
+                    f"no work remaining ({exit_path})",
+                )
+
+            pct = r.elapsed_pct * 100
+            return (
+                EarlyExitClass.COMPLETED_FULL_DURATION,
+                f"early exit ({pct:.0f}% of planned duration, exit_path={exit_path})",
+            )
+        except Exception:
+            return (EarlyExitClass.COMPLETED_FULL_DURATION, "")
 
     # ── Sprint F208I-B: Result finalization ──────────────────────────────────
 
@@ -1915,6 +2080,11 @@ class SprintScheduler:
             self._result.acquisition_terminality_satisfied = False
             self._result.acquisition_terminality_missing_lanes = ()
             self._result.acquisition_terminality_report = {"error": str(exc)}
+
+        # Sprint F215D: Compute and record early exit classification
+        _exit_class, _exit_reason = self._compute_early_exit_class(exit_path)
+        self._result.early_exit_class = _exit_class
+        self._result.early_exit_reason = _exit_reason
 
         # Record scheduler exit path
         self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
@@ -2333,10 +2503,26 @@ class SprintScheduler:
                             if k
                         )))
 
+                    # Derive ct_loss_stage — each branch is mutually exclusive
+                    # Track whether storage was actually attempted (vs candidates built but not accumulated)
+                    _storage_attempted = (
+                        bool(_candidate_findings)
+                        and duckdb_store is not None
+                        and hasattr(duckdb_store, "async_ingest_findings_batch")
+                    )
                     if _ct_results_raw == 0:
                         _ct_loss_stage = CTLossStage.NO_RAW.value
+                    elif (
+                        _bridge_raw == 0
+                        and _ct_results_raw > 0
+                        and _bridge_candidates == 0
+                        and REJECTION_UNSUPPORTED_SHAPE in _rejection_reasons
+                    ):
+                        _ct_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
                     elif _bridge_candidates == 0 and _bridge_raw > 0:
                         _ct_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
+                    elif _bridge_candidates > 0 and not _storage_attempted:
+                        _ct_loss_stage = CTLossStage.CANDIDATES_BUILT_NOT_ACCUMULATED.value
                     elif _bridge_candidates > 0 and accepted == 0:
                         _ct_loss_stage = CTLossStage.ACCUMULATED_NOT_STORED.value
                     elif _bridge_candidates > 0 and accepted > 0:
@@ -2349,14 +2535,10 @@ class SprintScheduler:
                     self._result.ct_bridge_invoked = True
                     self._result.ct_raw_sample_keys = _raw_keys
                     self._result.ct_raw_sample_count = _bridge_raw
+                    self._result.ct_raw_count = _ct_results_raw
                     self._result.ct_candidates_built = _bridge_candidates
                     self._result.ct_bridge_rejections_count = _rejected_count
-                    self._result.ct_bridge_rejection_reasons = (
-                        str(_ct_telemetry.get("ct_rejected_wildcard", 0)) if isinstance(_ct_telemetry, dict) else "0",
-                        str(_ct_telemetry.get("ct_rejected_invalid", 0)) if isinstance(_ct_telemetry, dict) else "0",
-                        str(_ct_telemetry.get("ct_rejected_duplicate", 0)) if isinstance(_ct_telemetry, dict) else "0",
-                        str(_ct_telemetry.get("ct_rejected_missing_domain", 0)) if isinstance(_ct_telemetry, dict) else "0",
-                    )
+                    self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in _sample_rejections)
                     self._result.ct_candidates_accumulated = _bridge_candidates
                     self._result.ct_candidates_stored = accepted
                     self._result.ct_storage_rejected = max(0, _bridge_candidates - accepted)
@@ -2962,6 +3144,12 @@ class SprintScheduler:
                 _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
                 if _ct_results_raw == 0:
                     _prelude_loss_stage = CTLossStage.NO_RAW.value
+                elif (
+                    _prelude_candidates == 0
+                    and _ct_results_raw > 0
+                    and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude
+                ):
+                    _prelude_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
                 elif _prelude_candidates == 0 and _ct_results_raw > 0:
                     _prelude_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
                 else:
@@ -2979,6 +3167,7 @@ class SprintScheduler:
                 self._result.ct_bridge_invoked = True
                 self._result.ct_raw_sample_keys = _prelude_keys
                 self._result.ct_raw_sample_count = _ct_results_raw
+                self._result.ct_raw_count = _ct_results_raw
                 self._result.ct_candidates_built = _prelude_candidates
                 self._result.ct_bridge_rejections_count = len(_rejections_prelude) if _rejections_prelude else 0
                 self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))
@@ -6812,10 +7001,13 @@ class SprintScheduler:
             # (they were set by _finalize_result_truth before this report build)
             pass
 
-        # Sprint F208H: Surface terminality and guard fields at TOP LEVEL for validator consumption
-        # PUBLIC terminal state (active300 domain queries)
+        # Sprint F208H/F215C: Surface terminality and guard fields at TOP LEVEL for validator consumption.
+        # PUBLIC terminal state (active300 domain queries).
+        # F215C: normalize_source_family_outcome now always derives terminal_state (including
+        # NEVER_SCHEDULED when _public_outcome was never set), so the fallback correctly
+        # represents the "never in plan" case.
         report["public_terminal_state"] = (
-            _sfo.get("public", {}).get("terminal_state") or "NEVER_ATTEMPTED"
+            _sfo.get("public", {}).get("terminal_state") or "NEVER_SCHEDULED"
         )
         # CT terminal state (active300 domain queries)
         report["ct_terminal_state"] = (
@@ -8165,6 +8357,7 @@ class SprintScheduler:
                     # Sprint F214D: CT Bridge Loss Audit telemetry
                     "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
+                    "ct_raw_count": getattr(self._result, 'ct_raw_count', 0),
                     "ct_raw_sample_count": getattr(self._result, 'ct_raw_sample_count', 0),
                     "ct_candidates_built": getattr(self._result, 'ct_candidates_built', 0),
                     "ct_bridge_rejections_count": getattr(self._result, 'ct_bridge_rejections_count', 0),
@@ -8339,6 +8532,7 @@ class SprintScheduler:
                     # Sprint F214D: CT Bridge Loss Audit telemetry
                     "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
+                    "ct_raw_count": getattr(self._result, 'ct_raw_count', 0),
                     "ct_raw_sample_count": getattr(self._result, 'ct_raw_sample_count', 0),
                     "ct_candidates_built": getattr(self._result, 'ct_candidates_built', 0),
                     "ct_bridge_rejections_count": getattr(self._result, 'ct_bridge_rejections_count', 0),
