@@ -196,109 +196,302 @@ def _is_wildcard_domain(domain: str) -> bool:
 # CT → CanonicalFinding
 # ---------------------------------------------------------------------------
 
-_CT_CONFIDENCE: float = 0.6
+_CT_CONFIDENCE: float = 0.65
 _CT_SOURCE_TYPE: str = "ct"
 _CT_SALT: str = "ctbridge"
 
 
-def ct_results_to_findings(
-    batch_result: Any,
-    _outcome: Any,
+def _extract_domains_from_ct_name_value(name_value: str) -> list[tuple[str, bool]]:
+    """
+    Extract all concrete (non-wildcard) domains from a multiline CT name_value.
+
+    Returns list of (domain, was_wildcard) tuples for each line.
+    Wildcard-only lines are returned with was_wildcard=True; concrete domains
+    are returned with was_wildcard=False.
+
+    F213A: enables per-line wildcard rejection while preserving concrete siblings.
+    """
+    if not name_value:
+        return []
+    results: list[tuple[str, bool]] = []
+    for line in name_value.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        is_wildcard = _is_wildcard_domain(line)
+        results.append((line.lower(), is_wildcard))
+    return results
+
+
+def _is_private_hostname(domain: str) -> bool:
+    """Check if domain matches a reserved/private hostname."""
+    return domain in _PRIVATE_HOSTNAMES
+
+
+def _build_ct_payload(
+    domain: str,
+    issuer_name: str | None,
+    not_before: str | None,
+    not_after: str | None,
+    serial_number: str | None,
+    entry_timestamp: str | None,
+    name_value: str | None,
+    common_name: str | None,
+) -> str:
+    """Build evidence-rich payload text from CT certificate metadata."""
+    parts: list[str] = []
+    parts.append(f"domain: {domain}")
+    if issuer_name:
+        parts.append(f"issuer: {issuer_name}")
+    if serial_number:
+        parts.append(f"serial: {serial_number}")
+    if not_before:
+        parts.append(f"valid_from: {not_before}")
+    if not_after:
+        parts.append(f"valid_until: {not_after}")
+    if entry_timestamp:
+        parts.append(f"ct_entry: {entry_timestamp}")
+    if name_value:
+        parts.append(f"name_value: {name_value}")
+    if common_name:
+        parts.append(f"common_name: {common_name}")
+    return "\n".join(parts)
+
+
+def _build_ct_provenance(
+    domain: str,
     query: str,
     sprint_id: str,
-) -> Tuple[List[Any], List[RejectionReason]]:
+    issuer_name: str | None,
+    entry_timestamp: str | None,
+) -> Tuple[str, ...]:
+    """Build provenance tuple for CT finding."""
+    prov: list[str] = [
+        f"source_family:ct",
+        f"crtsh",
+        f"query:{query[:200]}",
+        f"domain:{domain}",
+    ]
+    if issuer_name:
+        prov.append(f"issuer:{issuer_name[:200]}")
+    if entry_timestamp:
+        prov.append(f"ct_entry:{entry_timestamp}")
+    prov.append(f"sprint:{sprint_id[:16]}")
+    return tuple(prov)
+
+
+def ct_results_to_findings(
+    batch_result: Any,
+    _outcome: Any,  # intentionally kept for backward API compat; CT telemetry from _outcome is not needed
+    query: str,
+    sprint_id: str,
+) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
+    # Backward compat: _outcome kept in signature; telemetry comes from hits, not outcome
+    del _outcome
     """
     Convert CT (crt.sh) DiscoveryBatchResult + CTOutcome to finding candidates.
 
-    Each DiscoveryHit becomes one CanonicalFinding with:
-        source_type = "ct"
-        confidence  = 0.6
+    Each DiscoveryHit can yield one or more CanonicalFinding candidates when
+    ct_name_value contains multiple domains (including wildcard siblings).
 
-    Returns (findings, rejection_reasons).
+    Each CanonicalFinding has:
+        source_type = "ct"
+        confidence  = 0.65
+        payload_text: evidence-rich CT metadata (issuer, validity, serial)
+        provenance: source_family:ct, crtsh, query, domain, [issuer], [ct_entry]
+
+    Returns (findings, rejection_reasons, telemetry).
     Findings are capped at MAX_BRIDGE_OUTPUT.
 
+    Telemetry fields:
+        ct_raw_entries          — hits processed
+        ct_extracted_domains    — total domains extracted from ct_name_value splits
+        ct_candidate_domains    — domains that passed structural/information checks
+        ct_accepted_candidates  — CanonicalFinding candidates produced
+        ct_rejected_wildcard    — domains rejected as wildcard-only
+        ct_rejected_invalid     — domains rejected as private/reserved/invalid TLD
+        ct_rejected_duplicate   — domains rejected as duplicate within batch
+
     Rejection reasons:
-        missing_domain          — URL/title contains no parseable domain
-        missing_value          — hit has no usable url or title
+        missing_domain          — no parseable domain found
+        missing_value          — hit has no usable url, title, or CT metadata
         wildcard_domain         — domain is a wildcard pattern (e.g. *.example.com)
         private_or_reserved_domain — domain is private, internal, or reserved
         duplicate_candidate     — same domain already seen in this batch
+        low_information        — single-label domain with no TLD
     """
     findings: List[Any] = []
     rejections: List[RejectionReason] = []
     seen_domains: set[str] = set()
 
+    # Telemetry counters
+    ct_raw_entries = 0
+    ct_extracted_domains = 0
+    ct_candidate_domains = 0
+
     if not hasattr(batch_result, "hits"):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-        return [], rejections
+        return [], rejections, {
+            "ct_raw_entries": 0,
+            "ct_extracted_domains": 0,
+            "ct_candidate_domains": 0,
+            "ct_accepted_candidates": 0,
+            "ct_rejected_wildcard": 0,
+            "ct_rejected_invalid": 0,
+            "ct_rejected_duplicate": 0,
+        }
 
     hits = batch_result.hits
     if not hits:
         rejections.append(REJECTION_MISSING_VALUE)
-        return [], rejections
+        return [], rejections, {
+            "ct_raw_entries": 0,
+            "ct_extracted_domains": 0,
+            "ct_candidate_domains": 0,
+            "ct_accepted_candidates": 0,
+            "ct_rejected_wildcard": 0,
+            "ct_rejected_invalid": 0,
+            "ct_rejected_duplicate": 0,
+        }
 
     capped = hits[:MAX_BRIDGE_OUTPUT]
 
     for hit in capped:
+        ct_raw_entries += 1
         url = getattr(hit, "url", "") or ""
         title = getattr(hit, "title", "") or ""
-        snippet = getattr(hit, "snippet", "") or ""
         retrieved_ts = getattr(hit, "retrieved_ts", 0.0) or 0.0
 
-        if not url and not title:
-            rejections.append(REJECTION_MISSING_VALUE)
+        # CT metadata from crtsh_adapter (F213A)
+        ct_name_value = getattr(hit, "ct_name_value", None) or ""
+        ct_common_name = getattr(hit, "ct_common_name", None) or ""
+        ct_issuer_name = getattr(hit, "ct_issuer_name", None) or ""
+        ct_not_before = getattr(hit, "ct_not_before", None) or ""
+        ct_not_after = getattr(hit, "ct_not_after", None) or ""
+        ct_entry_timestamp = getattr(hit, "ct_entry_timestamp", None) or ""
+        ct_serial_number = getattr(hit, "ct_serial_number", None) or ""
+
+        # Collect all candidate domains from this hit
+        candidate_domains: list[str] = []
+
+        # Primary: extract from URL
+        domain_from_url = _extract_domain_from_ct_hit(url, title)
+        if domain_from_url:
+            candidate_domains.append(domain_from_url)
+
+        # Additional: extract from ct_name_value multiline split (F213A)
+        # This captures sibling domains when a cert has multiple SANs
+        name_value_wildcards: list[str] = []
+        for name_val_line, is_wildcard in _extract_domains_from_ct_name_value(ct_name_value):
+            if is_wildcard:
+                # Wildcard sibling found alongside concrete domains — track for rejection
+                name_value_wildcards.append(name_val_line)
+                continue
+            if name_val_line and name_val_line not in candidate_domains:
+                candidate_domains.append(name_val_line)
+
+        # Fallback: use common_name if no domains found yet
+        if not candidate_domains and ct_common_name:
+            cn = ct_common_name.strip()
+            if cn and not _is_wildcard_domain(cn):
+                candidate_domains.append(cn.lower())
+
+        if not candidate_domains:
+            # Wildcard-only name_value: reject all wildcards before the domain-level rejection
+            for wc in name_value_wildcards:
+                rejections.append(REJECTION_WILDCARD_DOMAIN)
+            if not url and not title:
+                rejections.append(REJECTION_MISSING_VALUE)
+            else:
+                rejections.append(REJECTION_MISSING_DOMAIN)
             continue
 
-        domain = _extract_domain_from_ct_hit(url, title)
-        if not domain:
-            rejections.append(REJECTION_MISSING_DOMAIN)
-            continue
-
-        if domain in _PRIVATE_HOSTNAMES:
-            rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
-            continue
-
-        if "." not in domain:
-            # Single-label domain (no TLD) — structural low-signal
-            rejections.append(REJECTION_LOW_INFORMATION)
-            continue
-
-        if _is_wildcard_domain(domain):
+        # Reject wildcard siblings found alongside concrete domains
+        for wc in name_value_wildcards:
             rejections.append(REJECTION_WILDCARD_DOMAIN)
-            continue
 
-        if domain in seen_domains:
-            rejections.append(REJECTION_DUPLICATE_CANDIDATE)
-            continue
-        seen_domains.add(domain)
+        for domain in candidate_domains:
+            ct_extracted_domains += 1
 
-        ts = retrieved_ts if retrieved_ts > 0 else time.time()
-        blake2_id = _make_blake2b_hex(domain, _CT_SALT)
-        finding_id = f"ct-{blake2_id}-{sprint_id[:8]}"
+            # Private/reserved check
+            if _is_private_hostname(domain):
+                rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
+                continue
 
-        provenance: Tuple[str, ...] = (
-            f"source_family:ct",
-            f"domain:{domain}",
-            f"query:{query[:200]}",
-            f"sprint:{sprint_id[:16]}",
-            f"title:{title[:200]}",
-        )
+            # Single-label (no TLD) check
+            if "." not in domain:
+                rejections.append(REJECTION_LOW_INFORMATION)
+                continue
 
-        payload_text = snippet if snippet else None
+            # Wildcard check
+            if _is_wildcard_domain(domain):
+                # Wildcard domain appears as a sibling to concrete domains
+                # (e.g. name_value = "sub.example.com\n*.example.com")
+                # The concrete domain was already processed; wildcard is informational skip
+                rejections.append(REJECTION_WILDCARD_DOMAIN)
+                continue
 
-        finding = _canonical_finding(
-            finding_id=finding_id,
-            source_type=_CT_SOURCE_TYPE,
-            query=query,
-            confidence=_CT_CONFIDENCE,
-            ts=ts,
-            provenance=provenance,
-            payload_text=payload_text,
-        )
-        if finding is not None:
-            findings.append(finding)
+            # Duplicate check
+            if domain in seen_domains:
+                rejections.append(REJECTION_DUPLICATE_CANDIDATE)
+                continue
+            seen_domains.add(domain)
+            ct_candidate_domains += 1
 
-    return findings, rejections
+            ts = retrieved_ts if retrieved_ts > 0 else time.time()
+            blake2_id = _make_blake2b_hex(domain, _CT_SALT)
+            finding_id = f"ct-{blake2_id}-{sprint_id[:8]}"
+
+            provenance = _build_ct_provenance(
+                domain=domain,
+                query=query,
+                sprint_id=sprint_id,
+                issuer_name=ct_issuer_name or None,
+                entry_timestamp=ct_entry_timestamp or None,
+            )
+
+            payload_text = _build_ct_payload(
+                domain=domain,
+                issuer_name=ct_issuer_name or None,
+                not_before=ct_not_before or None,
+                not_after=ct_not_after or None,
+                serial_number=ct_serial_number or None,
+                entry_timestamp=ct_entry_timestamp or None,
+                name_value=ct_name_value or None,
+                common_name=ct_common_name or None,
+            )
+
+            finding = _canonical_finding(
+                finding_id=finding_id,
+                source_type=_CT_SOURCE_TYPE,
+                query=query,
+                confidence=_CT_CONFIDENCE,
+                ts=ts,
+                provenance=provenance,
+                payload_text=payload_text,
+            )
+            if finding is not None:
+                findings.append(finding)
+
+    # Tally per-category rejections from the rejection list
+    ct_rejected_wildcard = sum(1 for r in rejections if r == REJECTION_WILDCARD_DOMAIN)
+    ct_rejected_invalid = sum(
+        1 for r in rejections
+        if r in (REJECTION_PRIVATE_OR_RESERVED_DOMAIN, REJECTION_LOW_INFORMATION)
+    )
+    ct_rejected_duplicate = sum(1 for r in rejections if r == REJECTION_DUPLICATE_CANDIDATE)
+
+    telemetry = {
+        "ct_raw_entries": ct_raw_entries,
+        "ct_extracted_domains": ct_extracted_domains,
+        "ct_candidate_domains": ct_candidate_domains,
+        "ct_accepted_candidates": len(findings),
+        "ct_rejected_wildcard": ct_rejected_wildcard,
+        "ct_rejected_invalid": ct_rejected_invalid,
+        "ct_rejected_duplicate": ct_rejected_duplicate,
+    }
+
+    return findings, rejections, telemetry
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +654,11 @@ def passive_dns_results_to_findings(
     findings: List[Any] = []
     rejections: List[RejectionReason] = []
 
+    # [F213C] Validate input shape before iterating
+    if not isinstance(ips, list):
+        rejections.append(REJECTION_UNSUPPORTED_SHAPE)
+        return [], rejections
+
     query_stripped = query.strip() if query else ""
     if not query_stripped:
         rejections.append(REJECTION_MISSING_DOMAIN)
@@ -573,9 +771,10 @@ def summarize_ct_conversion(
     raw_hits_count: int,
     findings: List[Any],
     rejections: List[RejectionReason],
+    telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Summarize CT bridge conversion with full rejection taxonomy.
+    Summarize CT bridge conversion with full rejection taxonomy + F213A telemetry.
 
     Produces a detailed breakdown of why CT candidates were rejected,
     enabling yield explanation when raw_count > 0 but accepted_count == 0.
@@ -586,13 +785,20 @@ def summarize_ct_conversion(
         raw_hits_count: Number of raw DiscoveryHit records from crt.sh
         findings: List of CanonicalFinding candidates produced
         rejections: List of CT-specific rejection reason strings
+        telemetry: Optional F213A telemetry dict from ct_results_to_findings.
+            When provided, authoritative per-category counts are sourced from here.
+            Keys: ct_raw_entries, ct_extracted_domains, ct_candidate_domains,
+                  ct_accepted_candidates, ct_rejected_wildcard, ct_rejected_invalid,
+                  ct_rejected_duplicate
 
     Returns:
         Bounded summary dict with:
         - rawHits: raw hit count from crt.sh
         - builtCandidates: count of candidates built (= len(findings))
-        - acceptedCandidates: count of accepted candidates (= len(findings) here;
-            terminality gating happens upstream)
+        - acceptedCandidates: count of accepted candidates
+        - ctRawEntries: raw entries processed (from telemetry or computed)
+        - ctExtractedDomains: total domains extracted from ct_name_value splits
+        - ctCandidateDomains: domains that passed structural/information checks
         - rejectedMissingDomain: count rejected for missing_domain
         - rejectedMissingValue: count rejected for missing_value
         - rejectedLowInformation: count rejected for low_information
@@ -600,6 +806,9 @@ def summarize_ct_conversion(
         - rejectedUnsupportedShape: count rejected for unsupported_shape
         - rejectedWildcardDomain: count rejected for wildcard_domain
         - rejectedPrivateOrReservedDomain: count rejected for private_or_reserved_domain
+        - ctRejectedWildcard: from telemetry (F213A)
+        - ctRejectedInvalid: from telemetry (F213A)
+        - ctRejectedDuplicate: from telemetry (F213A)
         - totalRejected: total rejection count
         - totalProcessed: rawHits minus any early-exit rejections (capped at MAX_BRIDGE_OUTPUT)
         - allRejectionReasons: all unique reasons with counts (capped at 20)
@@ -635,11 +844,26 @@ def summarize_ct_conversion(
     )
     all_rejection_reasons = dict(sorted_reasons[:20])
 
+    # F213A telemetry fields — sourced from telemetry dict when available
+    ct_raw_entries = (telemetry or {}).get("ct_raw_entries", raw_hits_count)
+    ct_extracted_domains = (telemetry or {}).get("ct_extracted_domains", 0)
+    ct_candidate_domains = (telemetry or {}).get("ct_candidate_domains", 0)
+    ct_accepted_candidates = (telemetry or {}).get("ct_accepted_candidates", built_candidates)
+    ct_rejected_wildcard = (telemetry or {}).get("ct_rejected_wildcard", 0)
+    ct_rejected_invalid = (telemetry or {}).get("ct_rejected_invalid", 0)
+    ct_rejected_duplicate = (telemetry or {}).get("ct_rejected_duplicate", 0)
+
     return {
         "rawHits": raw_hits_count,
         "builtCandidates": built_candidates,
-        "acceptedCandidates": built_candidates,  # terminality gating is upstream
+        "acceptedCandidates": ct_accepted_candidates,
+        "ctRawEntries": ct_raw_entries,
+        "ctExtractedDomains": ct_extracted_domains,
+        "ctCandidateDomains": ct_candidate_domains,
         **taxonomy,
+        "ctRejectedWildcard": ct_rejected_wildcard,
+        "ctRejectedInvalid": ct_rejected_invalid,
+        "ctRejectedDuplicate": ct_rejected_duplicate,
         "totalRejected": total_rejected,
         "totalProcessed": total_processed,
         "allRejectionReasons": all_rejection_reasons,

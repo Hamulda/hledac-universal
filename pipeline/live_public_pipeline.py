@@ -267,6 +267,18 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_discovery_fallback_state: str | None = None
     # Dominant failure mode across all pages and discovery
     dominant_public_failure_mode: str | None = None
+    # Sprint F213B: PUBLIC stage accounting — actionable failure classification
+    public_stage_failure: str | None = None  # discovery_empty | fetch_zero | None
+    public_stage_failure_reason: str | None = None  # human-readable reason
+    # Sprint F213B: PUBLIC discovery stage counters
+    public_discovery_attempted: bool = False  # discovery was called
+    public_discovery_raw_count: int = 0  # raw URLs from discovery (before dedup)
+    public_discovery_deduped_count: int = 0  # URLs after dedup (candidates for fetch)
+    # Sprint F213B: PUBLIC page/finding acceptance counters
+    public_pages_fetched: int = 0  # pages where fetch was called
+    public_pages_accepted: int = 0  # pages with accepted_findings > 0
+    public_pages_rejected: int = 0  # pages with accepted_findings == 0
+    public_findings_accepted: int = 0  # total findings accepted from public lane
     # Sprint F173C: zero-hit evidence — bounded surfaces for next gate
     # zero_hit_accessible_fetch_count: pages that were fetched (fetched=True) with 0 pattern matches
     # (distinct from discovery_strong_content_weak which includes SKIP-tier pages)
@@ -2194,6 +2206,16 @@ async def async_run_live_public_pipeline(
             public_fetch_accessibility_blocker=False,
             public_discovery_fallback_state=None,
             dominant_public_failure_mode="uma_emergency_abort",
+            # Sprint F213B: stage failure accounting
+            public_stage_failure="uma_emergency",
+            public_stage_failure_reason="UMA emergency state blocks all public lane processing",
+            public_discovery_attempted=False,
+            public_discovery_raw_count=0,
+            public_discovery_deduped_count=0,
+            public_pages_fetched=0,
+            public_pages_accepted=0,
+            public_pages_rejected=0,
+            public_findings_accepted=0,
             # F207I-A: emergency gate + telemetry
             public_fetch_gate="emergency_blocked",
             public_discovered=0,
@@ -2242,6 +2264,11 @@ async def async_run_live_public_pipeline(
     discovery_elapsed_s: float | None = None
     discovery_attempted: bool = False
     hits: tuple = ()
+    # Sprint F213B: stage failure accounting
+    public_stage_failure: str | None = None
+    public_stage_failure_reason: str | None = None
+    public_discovery_raw_count: int = 0
+    public_discovery_deduped_count: int = 0
     _discovery_start: float | None = None
     # F207I-A: discovery telemetry counters (initialized before try block)
     public_discovery_cache_hit: int = 0
@@ -2309,6 +2336,17 @@ async def async_run_live_public_pipeline(
             public_fetch_accessibility_blocker=False,
             public_discovery_fallback_state="primary_failed_fallback_failed" if discovery_error else None,
             dominant_public_failure_mode=discovery_error if discovery_error else "no_discovery",
+            # Sprint F213B: stage failure accounting
+            public_stage_failure="discovery_empty",
+            public_stage_failure_reason=discovery_error if discovery_error else "no URLs returned from discovery",
+            public_discovery_attempted=discovery_attempted,
+            public_discovery_raw_count=0,
+            public_discovery_deduped_count=0,
+            public_pages_fetched=0,
+            public_pages_accepted=0,
+            public_pages_rejected=0,
+            public_findings_accepted=0,
+            public_fetch_attempted=0,
             # F207J-C: PUBLIC Acceptance — zeroed (no hits means no fetch attempted)
             public_acceptance_attempted=0,
             public_acceptance_accepted=0,
@@ -2506,6 +2544,9 @@ async def async_run_live_public_pipeline(
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
     # F208G-A: URL-level dedup — skip duplicate URLs before creating fetch tasks
+    # Sprint F213B: track discovery stage counts before dedup
+    public_discovery_raw_count = len(hits)  # raw URLs from discovery (includes CT/CC injection)
+    public_discovery_attempted = discovery_attempted
     seen_urls: set[str] = set()
     tasks: list[asyncio.Task] = []
     for hit in hits:
@@ -2665,6 +2706,20 @@ async def async_run_live_public_pipeline(
     # Fetch outcome
     public_fetch_success = sum(1 for p in all_page_results if p.fetched)
     public_fetch_failed = sum(1 for p in all_page_results if not p.fetched)
+
+    # Sprint F213B: PUBLIC discovery stage counters
+    public_discovery_deduped_count = len(seen_urls)  # unique URLs after dedup
+
+    # Sprint F213B: PUBLIC page/finding acceptance counters
+    public_pages_fetched = sum(1 for p in all_page_results if p.fetched)
+    public_pages_accepted = sum(1 for p in all_page_results if p.accepted_findings > 0)
+    public_pages_rejected = sum(1 for p in all_page_results if p.fetched and p.accepted_findings == 0)
+    public_findings_accepted = sum(p.accepted_findings for p in all_page_results)
+
+    # Sprint F213B: stage failure — discovery returned URLs but no findings accepted
+    if public_discovery_deduped_count > 0 and public_findings_accepted == 0:
+        public_stage_failure = "fetch_zero"
+        public_stage_failure_reason = f"discovery returned {public_discovery_deduped_count} URLs but no findings were accepted"
 
     # Skipped breakdown
     # F208G-A: public_skipped_duplicate already computed as len(hits)-len(seen_urls) at line 2575
@@ -3429,6 +3484,16 @@ async def async_run_live_public_pipeline(
         public_fetch_accessibility_blocker=public_fetch_accessibility_blocker,
         public_discovery_fallback_state=public_discovery_fallback_state,
         dominant_public_failure_mode=dominant_public_failure_mode,
+        # Sprint F213B: PUBLIC stage accounting
+        public_stage_failure=public_stage_failure,
+        public_stage_failure_reason=public_stage_failure_reason,
+        public_discovery_attempted=public_discovery_attempted,
+        public_discovery_raw_count=public_discovery_raw_count,
+        public_discovery_deduped_count=public_discovery_deduped_count,
+        public_pages_fetched=public_pages_fetched,
+        public_pages_accepted=public_pages_accepted,
+        public_pages_rejected=public_pages_rejected,
+        public_findings_accepted=public_findings_accepted,
         zero_hit_accessible_fetch_count=zero_hit_accessible_fetch_count,
         zero_hit_quality_reason_counts=zero_hit_quality_reason_counts,
         zero_hit_title_samples=zero_hit_title_samples,

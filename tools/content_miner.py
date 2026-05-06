@@ -38,6 +38,15 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Sprint F214OPT-K: Lazy import for canonical HTML fast path
+# Fail-soft: content_miner retains full fallback if canonical is unavailable
+try:
+    from hledac.universal.utils.html_text_fast import html_to_text_fast
+    _CANONICAL_HTML_TEXT_AVAILABLE = True
+except ImportError:
+    _CANONICAL_HTML_TEXT_AVAILABLE = False
+    html_to_text_fast = None  # type: ignore[assignment]
+
 
 # Module-level compiled regex patterns for _clean_html_basic (compiled once at import time)
 _CLEAN_PATTERNS: List[Tuple[re.Pattern, str]] = [
@@ -338,20 +347,27 @@ class RustMiner:
     
     def _clean_html_basic(self, html: str) -> str:
         """
-        Basic HTML cleaning using regex.
+        Basic HTML cleaning — delegates to canonical html_text_fast when available.
 
-        This is memory-efficient as it processes the string
-        without building a DOM tree. Uses module-level compiled patterns.
+        Uses module-level compiled patterns as emergency fallback
+        when canonical helper is unavailable.
         """
+        if not html:
+            return ""
+
+        # Sprint F214OPT-K: Delegate to canonical helper
+        if _CANONICAL_HTML_TEXT_AVAILABLE and html_to_text_fast is not None:
+            try:
+                return html_to_text_fast(html) or ""
+            except Exception:
+                pass  # Fall through to emergency regex fallback
+
+        # Emergency fallback: regex-based cleaning (original behavior)
         try:
             text = html
-
-            # Apply all compiled patterns from module-level constant
             for pattern, replacement in _CLEAN_PATTERNS:
                 text = pattern.sub(replacement, text)
-
             return text.strip()
-
         except Exception as e:
             logger.warning(f"HTML cleaning failed: {e}")
             return ""

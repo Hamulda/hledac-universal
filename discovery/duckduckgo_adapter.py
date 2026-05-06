@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import urllib.parse as urlparse
 from typing import TYPE_CHECKING
@@ -73,6 +74,14 @@ class DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     retrieved_ts: float
     score: float = 0.0   # relevance signal, not guaranteed to be populated
     reason: str | None = None  # short tag: "exact_domain", "quoted_match", etc.
+    # F213A: CT/crt.sh metadata — populated when DiscoveryHit originates from crtsh_adapter
+    ct_issuer_name: str | None = None
+    ct_serial_number: str | None = None
+    ct_not_before: str | None = None
+    ct_not_after: str | None = None
+    ct_entry_timestamp: str | None = None
+    ct_name_value: str | None = None
+    ct_common_name: str | None = None
 
 
 class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
@@ -669,6 +678,60 @@ def _clear_query_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Query variant expansion (Sprint F213B)
+# ---------------------------------------------------------------------------
+
+_MAX_QUERY_VARIANTS: int = 4
+"""Max query variants for domain-like queries."""
+
+_DOMAIN_LIKE_RE: re.Pattern = re.compile(
+    r"^[a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,}$"
+)
+"""Regex to detect domain-like query strings suitable for variant expansion."""
+
+
+def _query_looks_like_domain(query: str) -> bool:
+    """
+    Sprint F213B: Detect if query is a bare domain name suitable for variant expansion.
+
+    Returns True for "example.com", "api.example.com", "*.example.com".
+    Returns False for quoted strings, site: prefixes, or plain text queries.
+    """
+    q = query.strip()
+    if not q or len(q) > 253:
+        return False
+    # Must look like a domain (has at least one dot, no spaces, no site: prefix)
+    if " " in q or q.lower().startswith("site:") or q.startswith('"') or q.startswith("'"):
+        return False
+    return bool(_DOMAIN_LIKE_RE.match(q))
+
+
+def _build_query_variants(query: str) -> list[str]:
+    """
+    Sprint F213B: Generate bounded query variants for domain-like queries.
+
+    When query looks like a domain, returns up to 4 variants:
+      1. site:<domain>
+      2. "<domain>" security
+      3. "<domain>" infrastructure
+      4. "<domain>" subdomain
+
+    Otherwise returns [query] (single variant, no expansion).
+    """
+    if not _query_looks_like_domain(query):
+        return [query]
+
+    domain = query.strip()
+    variants = [
+        f"site:{domain}",
+        f'"{domain}" security',
+        f'"{domain}" infrastructure',
+        f'"{domain}" subdomain',
+    ]
+    return variants[:_MAX_QUERY_VARIANTS]
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -684,26 +747,11 @@ async def async_search_public_web(
 
     F207I-A per-run cache: same normalized query returns cached result without
     calling the backend again within one pipeline run.
+    F213B: domain-like queries trigger bounded variant expansion (max 4).
     """
     global _last_error
 
-    # ---- per-run query cache check (F207I-A) ---------------------------------
-    cached = _get_cached_discovery(query)
-    if cached is not None:
-        cached_cache_hit = DiscoveryBatchResult(
-            hits=cached.hits,
-            error=cached.error,
-            fallback_triggered=cached.fallback_triggered,
-            provider_name=cached.provider_name,
-            provider_chain=cached.provider_chain,
-            source_family=cached.source_family,
-            elapsed_s=cached.elapsed_s,
-            error_type=cached.error_type,
-            cache_hit=True,
-        )
-        return cached_cache_hit
-
-    # ---- input validation ---------------------------------------------------
+    # ---- input validation (must come before cache check for variant detection) ----
     if query is None:
         _last_error = "empty_query"
         return DiscoveryBatchResult(hits=(), error="empty_query")
@@ -717,6 +765,109 @@ async def async_search_public_web(
         max_results = max(1, min(int(max_results), HARD_MAX_RESULTS))
     except (TypeError, ValueError):
         max_results = DEFAULT_MAX_RESULTS
+
+    # ---- Sprint F213B: query variant expansion for domain-like queries ----
+    variants = _build_query_variants(trimmed)
+    if len(variants) > 1:
+        # Multiple variants: run each with proportional budget, merge results
+        per_variant_results = max(1, max_results // len(variants))
+        all_hits: list[DiscoveryHit] = []
+        variant_errors: list[str] = []
+
+        async def search_variant(var_query: str) -> tuple[list[DiscoveryHit], str | None]:
+            """Search a single variant, return (hits, error)."""
+            # Check cache for this variant
+            var_cached = _get_cached_discovery(var_query)
+            if var_cached is not None:
+                return (list(var_cached.hits), None)
+            try:
+                async with asyncio.timeout(timeout_s):
+                    raw = await _ddgs_text_search(var_query, per_variant_results, timeout_s, proxy)
+            except asyncio.CancelledError:
+                return ([], "cancelled")
+            except (asyncio.TimeoutError, TimeoutError):
+                return ([], "timeout")
+            except Exception as e:
+                return ([], f"variant_error:{type(e).__name__}")
+
+            # Process raw hits (same logic as main path)
+            seen_v: dict[str, int] = {}
+            host_v: dict[str, int] = {}
+            hits_v: list[DiscoveryHit] = []
+            max_from_host = max(1, int(per_variant_results * MAX_HOST_SHARE_RATIO))
+            for raw_item in raw:
+                raw_url = raw_item.get("href") or raw_item.get("url") or ""
+                title = (raw_item.get("title") or "").strip()
+                snippet = (raw_item.get("body") or raw_item.get("snippet") or "").strip()
+                if _is_noise_result(title, raw_url, snippet, var_query):
+                    continue
+                norm = _normalize_url_for_dedup(raw_url)
+                if not norm or norm in seen_v:
+                    continue
+                host = _extract_host(norm)
+                if host and host_v.get(host, 0) >= max_from_host:
+                    continue
+                seen_v[norm] = len(hits_v)
+                host_v[host] = host_v.get(host, 0) + 1
+                signals = _build_signals(var_query, title, raw_url, snippet)
+                reason = signals["reasons"][0] if signals["reasons"] else None
+                hits_v.append(DiscoveryHit(
+                    query=var_query,
+                    title=title,
+                    url=raw_url,
+                    snippet=snippet,
+                    source=SOURCE_NAME,
+                    rank=0,
+                    retrieved_ts=time.time(),
+                    score=signals["score"],
+                    reason=reason,
+                ))
+            hits_v.sort(key=lambda h: (-h.score, h.rank))
+            # Cache this variant's result
+            _set_cached_discovery(var_query, DiscoveryBatchResult(hits=tuple(hits_v), error=None))
+            return (hits_v, None)
+
+        # Run all variants concurrently
+        results = await asyncio.gather(*[search_variant(v) for v in variants], return_exceptions=True)
+        seen_urls: dict[str, int] = {}
+        for res in results:
+            if isinstance(res, BaseException):
+                variant_errors.append(f"variant_exception:{type(res).__name__}")
+                continue
+            hits, err = res
+            if err:
+                variant_errors.append(err)
+                continue
+            for h in hits:
+                norm = _normalize_url_for_dedup(h.url)
+                if norm and norm not in seen_urls:
+                    seen_urls[norm] = len(all_hits)
+                    all_hits.append(h)
+
+        all_hits.sort(key=lambda h: (-h.score, h.rank))
+        final_hits = tuple(all_hits[:max_results])
+
+        # Determine error: if all variants failed, return error; otherwise None
+        final_error = "|".join(variant_errors) if len(variant_errors) == len(variants) else None
+        result = DiscoveryBatchResult(hits=final_hits, error=final_error)
+        _set_cached_discovery(trimmed, result)
+        return result
+
+    # ---- per-run query cache check (F207I-A) ---------------------------------
+    cached = _get_cached_discovery(trimmed)
+    if cached is not None:
+        cached_cache_hit = DiscoveryBatchResult(
+            hits=cached.hits,
+            error=cached.error,
+            fallback_triggered=cached.fallback_triggered,
+            provider_name=cached.provider_name,
+            provider_chain=cached.provider_chain,
+            source_family=cached.source_family,
+            elapsed_s=cached.elapsed_s,
+            error_type=cached.error_type,
+            cache_hit=True,
+        )
+        return cached_cache_hit
 
     # ---- timeout wrapper ---------------------------------------------------
     try:

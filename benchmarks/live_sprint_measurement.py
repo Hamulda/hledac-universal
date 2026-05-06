@@ -228,6 +228,17 @@ class LiveMeasurementResult:
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None
     acquisition_terminality_report: dict | None = None
 
+    # F2130: Runtime Authority — which execution path was used to run the sprint
+    # Canonical: calls core.__main__.run_sprint() directly
+    # CLI: invokes `python -m hledac.universal` shell command
+    # Noncanonical: manually constructs scheduler/pipeline pieces
+    # Dry-run: validates command construction without running sprint
+    runtime_authority_path: str | None = None  # "canonical_core_run_sprint" | "canonical_cli_sprint" | "noncanonical_manual_scheduler" | "dry_run_no_runtime"
+    runtime_authority_module: str | None = None  # e.g. "hledac.universal.core.__main__"
+    runtime_authority_function: str | None = None  # e.g. "run_sprint"
+    runtime_authority_is_canonical: bool | None = None
+    runtime_authority_evidence: dict | None = None  # extra context for audit
+
     # F209B: Acquisition prelude telemetry
     acquisition_prelude_checked: bool | None = None
     acquisition_prelude_ran: bool | None = None
@@ -1852,6 +1863,15 @@ async def _run_preflight() -> LiveMeasurementResult:
         mlx_wired_limit_seal_present=readiness.get("mlx_wired_limit_seal", False),
     )
 
+    # F2130: Runtime Authority — preflight does not invoke any sprint runtime
+    result.runtime_authority_path = "dry_run_no_runtime"
+    result.runtime_authority_module = None
+    result.runtime_authority_function = None
+    result.runtime_authority_is_canonical = False
+    result.runtime_authority_evidence = {
+        "mode": "preflight",
+    }
+
     # Memory gate signal for preflight
     is_critical = _uma_state_is_critical_or_emergency(result.uma_pre_state)
     if is_critical:
@@ -1961,6 +1981,16 @@ async def _run_dry_run(
         transport_authority_status_present=readiness.get("transport_authority_status", False),
         mlx_wired_limit_seal_present=readiness.get("mlx_wired_limit_seal", False),
     )
+
+    # F2130: Runtime Authority — dry-run does not invoke any sprint runtime
+    result.runtime_authority_path = "dry_run_no_runtime"
+    result.runtime_authority_module = None
+    result.runtime_authority_function = None
+    result.runtime_authority_is_canonical = False
+    result.runtime_authority_evidence = {
+        "mode": "dry_run",
+        "planned_cmd": [sys.executable, "-m", "hledac.universal.core", "--sprint"],
+    }
 
     # Stamp profile truthfulness metadata
     _stamp_profile_meta(result, profile)
@@ -2076,9 +2106,12 @@ async def _run_live_sprint(
     allow_high_swap: bool = False,
 ) -> LiveMeasurementResult:
     """Run canonical sprint and capture metrics."""
+    import uuid
     measurement_id = _make_measurement_id()
     start_time_iso = _now_iso()
     start_ts = time.monotonic()
+    ts = time.time_ns() // 1_000_000
+    harness_sprint_id = f"8sa_{ts}_{uuid.uuid4().hex[:6]}"
 
     # Capture pre-sprint UMA
     uma_pre = await _capture_uma()
@@ -2133,6 +2166,18 @@ async def _run_live_sprint(
             _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
             result.swap_gate_triggered = True
             logging.error("[LIVE] [MEMORY GATE] Aborted: %s", result.error)
+            # F2130: Runtime Authority — canonical path was checked but sprint never ran
+            result.runtime_authority_path = "canonical_core_run_sprint"
+            result.runtime_authority_module = "hledac.universal.core.__main__"
+            result.runtime_authority_function = "run_sprint"
+            result.runtime_authority_is_canonical = None  # path is canonical, but sprint didn't run
+            result.runtime_authority_evidence = {
+                "sprint_id": harness_sprint_id,
+                "measurement_id": measurement_id,
+                "entry_via": "benchmarks/live_sprint_measurement._run_live_sprint",
+                "aborted": True,
+                "abort_reason": "memory_gate",
+            }
             return result
 
     # F212D: Swap gate — active profiles with high swap are hardware-constrained
@@ -2155,6 +2200,18 @@ async def _run_live_sprint(
             result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
             _stamp_profile_meta(result, profile)
             logging.error("[LIVE] [SWAP GATE] Aborted: %s", result.error)
+            # F2130: Runtime Authority — canonical path was checked but sprint never ran
+            result.runtime_authority_path = "canonical_core_run_sprint"
+            result.runtime_authority_module = "hledac.universal.core.__main__"
+            result.runtime_authority_function = "run_sprint"
+            result.runtime_authority_is_canonical = None  # path is canonical, but sprint didn't run
+            result.runtime_authority_evidence = {
+                "sprint_id": harness_sprint_id,
+                "measurement_id": measurement_id,
+                "entry_via": "benchmarks/live_sprint_measurement._run_live_sprint",
+                "aborted": True,
+                "abort_reason": "swap_gate",
+            }
             return result
         else:
             # allow_high_swap=True: run but mark as hardware-constrained (no abort)
@@ -2176,10 +2233,7 @@ async def _run_live_sprint(
     from hledac.universal.core import __main__ as core_main
     from hledac.universal.paths import get_sprint_json_report_path
 
-    # Generate harness-side sprint_id for tracking
-    import uuid
-    ts = time.time_ns() // 1_000_000
-    harness_sprint_id = f"8sa_{ts}_{uuid.uuid4().hex[:6]}"
+    # harness_sprint_id already generated at function start
     result.sprint_id = harness_sprint_id
 
     # Patch _make_sprint_id so run_sprint uses our harness_sprint_id.
@@ -2220,6 +2274,17 @@ async def _run_live_sprint(
         result.end_time_iso = end_time_iso
         result.actual_duration_s = round(actual_duration_s, 1)
         result.status = MeasurementStatus.COMPLETED
+
+        # F2130: Runtime Authority — canonical sprint execution path
+        result.runtime_authority_path = "canonical_core_run_sprint"
+        result.runtime_authority_module = "hledac.universal.core.__main__"
+        result.runtime_authority_function = "run_sprint"
+        result.runtime_authority_is_canonical = True
+        result.runtime_authority_evidence = {
+            "sprint_id": harness_sprint_id,
+            "measurement_id": measurement_id,
+            "entry_via": "benchmarks/live_sprint_measurement._run_live_sprint",
+        }
 
         # Parse sprint report — path uses harness_sprint_id (patched into run_sprint)
         report_path = get_sprint_json_report_path(harness_sprint_id)
@@ -2288,6 +2353,17 @@ async def _run_live_sprint(
         result.end_time_iso = _now_iso()
         result.error = f"{type(exc).__name__}: {exc}"
         logging.error("[LIVE] Failed measurement_id=%s: %s", measurement_id, exc, exc_info=True)
+        # F2130: Runtime Authority — canonical path was used even though it failed
+        result.runtime_authority_path = "canonical_core_run_sprint"
+        result.runtime_authority_module = "hledac.universal.core.__main__"
+        result.runtime_authority_function = "run_sprint"
+        result.runtime_authority_is_canonical = True
+        result.runtime_authority_evidence = {
+            "sprint_id": harness_sprint_id,
+            "measurement_id": measurement_id,
+            "entry_via": "benchmarks/live_sprint_measurement._run_live_sprint",
+            "failed": True,
+        }
         _stamp_profile_meta(result, profile)
 
     finally:
@@ -2484,6 +2560,41 @@ def _render_md(result: LiveMeasurementResult) -> str:
         lines.extend([
             "",
             "## Sprint Results (not executed in this mode)",
+        ])
+
+    # F2130: Runtime Authority section
+    ra_path = result.runtime_authority_path or "UNKNOWN"
+    ra_module = result.runtime_authority_module or "N/A"
+    ra_func = result.runtime_authority_function or "N/A"
+    ra_canonical = result.runtime_authority_is_canonical
+    # CONFIRMED: canonical path used and sprint executed (is_canonical=True)
+    # CONFIRMED: canonical path checked but sprint didn't run (is_canonical=None, e.g. gate abort)
+    # DRY_RUN: preflight/dry-run, no runtime at all
+    # NONCANONICAL: noncanonical path or explicit is_canonical=False
+    if ra_path == "dry_run_no_runtime":
+        ra_verdict = "DRY_RUN"
+    elif ra_path == "canonical_core_run_sprint" and ra_canonical is not False:
+        ra_verdict = "CONFIRMED"
+    else:
+        ra_verdict = "NONCANONICAL"
+    lines.extend([
+        "",
+        "## Runtime Authority",
+        "",
+        f"| Field | Value |",
+        f"| --- | --- |",
+        f"| Runtime authority path | `{ra_path}` |",
+        f"| Module | `{ra_module}` |",
+        f"| Function | `{ra_func}` |",
+        f"| Is canonical | {ra_canonical} |",
+        f"| Verdict | **{ra_verdict}** |",
+    ])
+    if result.runtime_authority_evidence is not None:
+        lines.extend([
+            "",
+            "```json",
+            json.dumps(result.runtime_authority_evidence, indent=2, default=str),
+            "```",
         ])
 
     lines.extend([

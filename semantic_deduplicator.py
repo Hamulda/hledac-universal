@@ -321,12 +321,15 @@ class SemanticDedupCache:
             # Deduplicate input texts first (avoid comparing identical texts)
             unique_texts: list[str] = []
             index_map: list[int] = []  # original index → unique index
+            unique_to_original: dict[int, list[int]] = {}  # unique index → list of original indices
             seen: dict[str, int] = {}
-            for t in texts:
+            for orig_idx, t in enumerate(texts):
                 if t not in seen:
                     seen[t] = len(unique_texts)
                     unique_texts.append(t)
+                    unique_to_original[seen[t]] = []
                 index_map.append(seen[t])
+                unique_to_original[seen[t]].append(orig_idx)
 
             if len(unique_texts) == 1:
                 # All texts identical — first is canonical, rest are duplicates
@@ -355,15 +358,22 @@ class SemanticDedupCache:
             unique_embs = np.array([emb_dict[t] for t in unique_texts])
             norm_embs = unique_embs / (np.linalg.norm(unique_embs, axis=1, keepdims=True) + 1e-8)
 
+            # F214OPT-J: Canonical index (first occurrence) for each unique text
+            canonical_of: dict[int, int] = {
+                j: unique_to_original[j][0] for j in unique_to_original
+            }
+
             for i, t in enumerate(texts):
                 ui = index_map[i]
                 query = norm_embs[ui].reshape(1, -1)
                 sims = (query @ norm_embs.T)[0]
                 for j, sim in enumerate(sims):
-                    if j != ui and sim >= threshold:
-                        original_j = texts.index(unique_texts[j])
-                        if original_j != i:
-                            results[i].add(original_j)
+                    if sim >= threshold:
+                        # Only add the canonical (first occurrence) of matching unique text
+                        canonical = canonical_of[j]
+                        # Skip if canonical is the current occurrence itself
+                        if canonical != i:
+                            results[i].add(canonical)
 
             return results
 

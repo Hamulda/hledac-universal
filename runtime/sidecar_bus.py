@@ -27,6 +27,7 @@ GHOST_INVARIANTS enforced:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time as _time
 from dataclasses import dataclass, field
@@ -34,6 +35,29 @@ from typing import Any, Callable, Sequence
 
 if False:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
+
+def _safe_payload_json(obj: Any) -> str:
+    """
+    Serialize obj to canonical JSON string, fail-soft.
+
+    Prefers orjson (fast, canonical). Falls back to json.dumps with
+    canonical separators. Last resort: str(obj).
+    No import-time hard dependency, no global side effects.
+    """
+    # Try orjson first
+    try:
+        import orjson
+        return orjson.dumps(obj).decode("utf-8")
+    except Exception:
+        pass
+    # Fallback: json.dumps with canonical separators
+    try:
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        pass
+    # Last resort: str
+    return str(obj)
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_SIDECAR_FINDINGS: int = 500
@@ -228,19 +252,44 @@ class FindingSidecarBus:
 
             try:
                 async with asyncio.timeout(SIDECAR_TIMEOUT_S):
-                    await runner(findings, store, batch.query)
+                    result = await runner(findings, store, batch.query)
                 elapsed_ms = (_time.monotonic() - t0) * 1000
+
+                # F214OPT-I: capture runner return value truthfully
+                produced_count = 0
+                stored_count = 0
+                if isinstance(result, int):
+                    produced_count = result
+                    stored_count = result
+                elif isinstance(result, dict):
+                    produced_count = result.get("produced_count", 0)
+                    stored_count = result.get("stored_count", 0)
+                elif result is None:
+                    produced_count = 0
+                    stored_count = 0
+                # else: unexpected type → default 0/0 (fail-soft)
+
                 return SidecarRunResult(
                     sidecar_name=name,
                     attempted=True,
-                    produced_count=0,
-                    stored_count=0,
+                    produced_count=produced_count,
+                    stored_count=stored_count,
                     skipped_reason="",
                     elapsed_ms=elapsed_ms,
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except BaseException as exc:
+                # Python 3.14: asyncio.gather wraps CancelledError in ExceptionGroup;
+                # detect it via the nested-exception walk rather than exc.type
+                def _is_cancelled_tree(e: BaseException) -> bool:
+                    if isinstance(e, asyncio.CancelledError):
+                        return True
+                    if isinstance(e, ExceptionGroup):
+                        return any(_is_cancelled_tree(s) for s in e.exceptions)
+                    return False
+                if _is_cancelled_tree(exc):
+                    raise asyncio.CancelledError() from exc
                 elapsed_ms = (_time.monotonic() - t0) * 1000
                 return SidecarRunResult(
                     sidecar_name=name,
@@ -274,7 +323,18 @@ class FindingSidecarBus:
                     if isinstance(item, SidecarRunResult):
                         all_results.append(item)
                     elif isinstance(item, BaseException):
-                        # Unexpected exception leaked through — already logged in _check_gathered
+                        # GHOST_INVARIANT: asyncio.CancelledError must never be swallowed.
+                        # Check nested in case Python 3.14 wraps it in ExceptionGroup.
+                        def _is_cancelled_tree(e: BaseException) -> bool:
+                            if isinstance(e, asyncio.CancelledError):
+                                return True
+                            if isinstance(e, ExceptionGroup):
+                                return any(_is_cancelled_tree(s) for s in e.exceptions)
+                            return False
+                        if _is_cancelled_tree(item):
+                            # Re-raise through the stage CancelledError handler below
+                            raise item
+                        # Already logged in _check_gathered; fail-soft pass
                         pass
             except asyncio.CancelledError:
                 # Cancel pending stage tasks and re-raise
@@ -532,7 +592,7 @@ async def _sprint_diff_runner(
                     ioc_value=nf.get("ioc_value") or "unknown",
                     confidence=nf.get("confidence", 0.5),
                     ts=ts_now,
-                    payload_text=str({"diff_action": "new", **nf}),
+                    payload_text=_safe_payload_json({"diff_action": "new", **nf}),
                 ))
             except Exception:
                 continue
@@ -548,7 +608,7 @@ async def _sprint_diff_runner(
                     ioc_value=df.get("ioc_value") or "unknown",
                     confidence=df.get("confidence", 0.5),
                     ts=ts_now,
-                    payload_text=str({"diff_action": "disappeared", **df}),
+                    payload_text=_safe_payload_json({"diff_action": "disappeared", **df}),
                 ))
             except Exception:
                 continue
@@ -622,7 +682,7 @@ async def _kill_chain_tagging_runner(
                     ioc_value=ioc_value,
                     confidence=confidence,
                     ts=ts_now,
-                    payload_text=str({"kill_chain_tags": tags_list}),
+                    payload_text=_safe_payload_json({"kill_chain_tags": tags_list}),
                 ))
             except Exception:
                 continue

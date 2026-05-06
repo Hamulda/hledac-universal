@@ -455,6 +455,13 @@ async def call_crtsh(
                         retrieved_ts=now,
                         score=1.0 - (len(hits) / max_results),
                         reason="ct_subdomain",
+                        ct_name_value=name_value,
+                        ct_common_name=cert.get("common_name"),
+                        ct_issuer_name=cert.get("issuer_name"),
+                        ct_not_before=cert.get("not_before"),
+                        ct_not_after=cert.get("not_after"),
+                        ct_entry_timestamp=cert.get("entry_timestamp"),
+                        ct_serial_number=cert.get("serial_number"),
                     )
                 )
 
@@ -772,6 +779,13 @@ async def async_search_crtsh(
                         retrieved_ts=now,
                         score=1.0 - (len(hits) / max_results),
                         reason="ct_subdomain",
+                        ct_name_value=name_value,
+                        ct_common_name=cert.get("common_name"),
+                        ct_issuer_name=cert.get("issuer_name"),
+                        ct_not_before=cert.get("not_before"),
+                        ct_not_after=cert.get("not_after"),
+                        ct_entry_timestamp=cert.get("entry_timestamp"),
+                        ct_serial_number=cert.get("serial_number"),
                     )
                 )
 

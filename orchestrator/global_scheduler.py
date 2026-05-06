@@ -20,7 +20,7 @@ import queue
 import threading
 from hledac.universal.utils.uuid7 import new_runtime_id
 from typing import Optional, Callable, Any, Dict
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ _TASK_REGISTRY: "OrderedDict[str, Callable]" = OrderedDict()
 # Affinity key -> last worker that handled it (for work stealing)
 # Uses OrderedDict with FIFO eviction when max exceeded
 _LAST_WORKER_FOR_AFFINITY: "OrderedDict[str, int]" = OrderedDict()
-_AFFINITY_EVICTION_LIST: list = []  # FIFO ordered keys for bounded eviction
+_AFFINITY_EVICTION_LIST: deque = deque()  # FIFO ordered keys for bounded eviction
 
 
 def _bounded_put(registry: Dict, key: str, value: Any, max_size: int,
@@ -65,7 +65,7 @@ def _bounded_put(registry: Dict, key: str, value: Any, max_size: int,
         if key not in eviction_list:
             eviction_list.append(key)
     while len(registry) > max_size:
-        oldest = eviction_list.pop(0) if eviction_list else None
+        oldest = eviction_list.popleft() if eviction_list else None
         if oldest and oldest in registry:
             del registry[oldest]
 

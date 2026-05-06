@@ -407,7 +407,12 @@ class SemanticDeduplicator(BaseDeduplicator):
             word_vector = float(int(word_hash[:8], 16)) / (2**32 - 1)
             embedding[i] = word_vector * (1.0 - i / len(words))
         
-        embedding += np.random.normal(0, 0.01, self.config.embedding_dim)
+        # F214OPT-J: Deterministic noise — same content always produces same embedding
+        content_bytes = content.encode("utf-8")
+        hash_digest = hashlib.blake2b(content_bytes, digest_size=16).digest()
+        seed = int.from_bytes(hash_digest[:4], "little")
+        rng = np.random.RandomState(seed)
+        embedding += rng.normal(0, 0.01, self.config.embedding_dim)
         
         norm = np.linalg.norm(embedding)
         if norm > 0:
@@ -596,36 +601,64 @@ class ContentDeduplicator(BaseDeduplicator):
             return hashlib.md5(content.encode()).hexdigest()
         else:
             return hashlib.sha256(content.encode()).hexdigest()
-    
+
+    # F214OPT-J: ngram cap to limit extreme texts
+    _DEFAULT_MAX_NGRAMS = 50000
+
+    def _get_max_ngrams(self) -> int:
+        """Get ngram cap from environment with safe fallback."""
+        try:
+            return int(os.environ.get("HLEDAC_DEDUP_MAX_NGRAMS", str(self._DEFAULT_MAX_NGRAMS)))
+        except (ValueError, TypeError):
+            return self._DEFAULT_MAX_NGRAMS
+
     def _compute_character_hash(self, content: str) -> str:
         """Compute character-level hash."""
         normalized = " ".join(content.lower().split())
         return hashlib.sha256(normalized.encode()).hexdigest()
     
     def _compute_minhash(self, content: str) -> List[int]:
-        """Compute MinHash signature for content similarity."""
+        """
+        Compute MinHash signature for content similarity.
+
+        F214OPT-J: Note on mmh3 seed optimization — mmh3.hash does accept a seed
+        argument (mmh3.hash(key, seed=N, signed=False)). However, using
+        mmh3.hash(ngram, seed=i) instead of f"{ngram}_{i}" would change the
+        computed hash values, which would invalidate existing stored MinHash
+        signatures. To preserve exact signature compatibility, the current
+        f-string approach is retained. The allocation overhead is bounded by
+        HLEDAC_DEDUP_MAX_NGRAMS (default 50000).
+        """
         try:
             import mmh3
         except ImportError:
             self.logger.warning("mmh3 not available, MinHash disabled")
             return []
-        
+
+        max_ngrams = self._get_max_ngrams()
         ngrams = self._generate_ngrams(content, self.config.ngram_size)
-        
+
+        # F214OPT-J: cap ngram count to limit memory/CPU for extreme texts
+        if len(ngrams) > max_ngrams:
+            self.logger.debug(
+                f"[DEDUP] Ngram count {len(ngrams)} exceeds cap {max_ngrams}, truncating"
+            )
+            ngrams = ngrams[:max_ngrams]
+
         if not ngrams:
             return [0] * self.config.minhash_size
-        
+
         minhash_signature = []
-        
+
         for i in range(self.config.minhash_size):
             min_hash = float("inf")
-            
+
             for ngram in ngrams:
                 hash_value = mmh3.hash(f"{ngram}_{i}", signed=False)
                 min_hash = min(min_hash, hash_value)
-            
+
             minhash_signature.append(min_hash)
-        
+
         return minhash_signature
     
     def _generate_ngrams(self, content: str, n: int) -> List[str]:
