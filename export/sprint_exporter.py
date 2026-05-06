@@ -627,11 +627,29 @@ def _generate_next_sprint_seeds(
             seeds.sort(key=lambda s: s.get("priority", 0.5), reverse=True)
             seeds = seeds[:MAX_SEEDS]
 
-        seeds_path.write_text(json.dumps(seeds, indent=2, default=str))
+        _seeds_text = json.dumps(seeds, indent=2, default=str)
+        _seeds_bytes = _seeds_text.encode("utf-8")
+        # F214ZSTD2: write optional zstd sidecar (4.8% ratio, 1.98x faster decomp)
+        # Written as NEW sidecar (.json.zst) — existing .json untouched for backward compat
+        try:
+            import compression.zstd
+            seeds_zst = seeds_path.with_suffix(".json.zst")
+            seeds_zst.write_bytes(compression.zstd.compress(_seeds_bytes, level=3))
+            logger.info(f"[EXPORT] {len(seeds)} enhanced seeds → {seeds_zst} (zstd sidecar)")
+        except ImportError:
+            logger.warning("[EXPORT] zstd unavailable, plain JSON only")
+        seeds_path.write_text(_seeds_text, encoding="utf-8")
         logger.info(f"[EXPORT] {len(seeds)} enhanced seeds ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
-        seeds_path.write_text(json.dumps([], indent=2))
+        _empty_text = json.dumps([], indent=2)
+        try:
+            import compression.zstd
+            seeds_zst = seeds_path.with_suffix(".json.zst")
+            seeds_zst.write_bytes(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
+        except ImportError:
+            logger.warning("[EXPORT] zstd unavailable, plain JSON only")
+        seeds_path.write_text(_empty_text, encoding="utf-8")
 
     return seeds_path
 
