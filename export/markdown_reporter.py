@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Union
 
-from utils.safe_render import safe_markdown_link
+from ..utils.safe_render import safe_markdown_link
 
 __all__ = [
     "render_diagnostic_markdown",

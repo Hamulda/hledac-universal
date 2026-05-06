@@ -26,7 +26,7 @@ from __future__ import annotations
 import time as _time
 from typing import Any
 
-from utils.safe_render import escape_markdown_text
+from ..utils.safe_render import escape_markdown_text
 
 __all__ = [
     "render_sprint_markdown",

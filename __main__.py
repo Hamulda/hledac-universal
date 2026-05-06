@@ -205,6 +205,47 @@ def get_entrypoint_role(name: str) -> str:
 
 
 # =============================================================================
+# Sprint F214HELP: Fast --help / -h path — no MLX, no runtime init
+# Must be defined BEFORE any heavy module imports (mlx_cache, brain, etc.)
+# =============================================================================
+def build_parser() -> "argparse.ArgumentParser":
+    """Build CLI argument parser. Lightweight — imports only argparse/stdlib."""
+    import argparse  # local import keeps help path off module-level MLX chain
+    parser = argparse.ArgumentParser(
+        description="Hledac Universal OSINT Runner",
+        add_help=False,  # manually handle -h/--help below
+    )
+    parser.add_argument("--sprint", metavar="QUERY", help="Run sprint with given query")
+    parser.add_argument(
+        "--duration", type=float, default=1800.0, metavar="SECS",
+        help="Sprint duration in seconds (default: 1800 = 30min)",
+    )
+    parser.add_argument(
+        "--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"),
+        help="Directory for sprint reports (default: ~/.hledac/reports)",
+    )
+    parser.add_argument(
+        "--aggressive", action="store_true",
+        help="Sprint F195B: Enable aggressive mode with 8s branch budgets",
+    )
+    parser.add_argument(
+        "--deep-probe", action="store_true",
+        help="Run deep probe research post-sprint",
+    )
+    parser.add_argument(
+        "--ui", action="store_true",
+        help="Enable terminal dashboard during sprint",
+    )
+    # Python 3.14 argparse settings
+    try:
+        parser.suggest_on_error = True
+        parser.color = True
+    except AttributeError:
+        pass  # older Python — settings are best-effort
+    return parser
+
+
+# =============================================================================
 
 import msgspec
 
@@ -3078,18 +3119,27 @@ def main() -> None:
             "Set PYTHON_DISABLE_REMOTE_DEBUG=1 for production OSINT runs."
         )
 
-    # Sprint 8PC: CLI parsing for --sprint flag
-    sprint_target: Optional[str] = None
-    sprint_duration: float = 1800.0
-    sprint_ui_mode: bool = False
-    if "--sprint" in sys.argv:
-        idx = sys.argv.index("--sprint")
-        if idx + 1 < len(sys.argv):
-            sprint_target = sys.argv[idx + 1]
-        if idx + 2 < len(sys.argv) and sys.argv[idx + 2].replace(".", "", 1).isdigit():
-            sprint_duration = float(sys.argv[idx + 2])
-    if "--ui" in sys.argv:
-        sprint_ui_mode = True
+    # F214HELP: Fast --help path — parse args BEFORE any heavy init
+    parser = build_parser()
+    # Check -h/--help FIRST, before any runtime imports
+    if "--help" in sys.argv or "-h" in sys.argv:
+        parser.print_help()
+        print()
+        print("Sprint usage:")
+        print("  python -m hledac.universal --sprint 'query' [--duration 1800]")
+        print("  python -m hledac.universal --sprint 'LockBit ransomware' --duration 1800")
+        print()
+        print("Other commands:")
+        print("  python -m hledac.universal.core --ct-pivot example.com")
+        print("  python -m hledac.universal.core --pivot 'ransomware CVE' --pivot-k 10")
+        sys.exit(0)
+
+    # Sprint 8PC: CLI parsing — after help check
+    args = parser.parse_args()
+    sprint_target = args.sprint
+    sprint_duration = args.duration
+    sprint_ui_mode = args.ui
+    # --aggressive and --deep-probe handled automatically by parser
 
     # Sprint 8AI: Step 1 — Synchronous pre-boot
     # Run LMDB boot guard (8AG) BEFORE any runtime acquisition
@@ -3111,12 +3161,13 @@ def main() -> None:
     try:
         if sprint_target is not None:
             # Sprint F150R: Delegate to canonical sprint owner in core/__main__.py
-            # No new scheduler, no compat layer — thin delegation only
             from .core.__main__ import run_sprint as _core_run_sprint
             asyncio.run(_core_run_sprint(
                 query=sprint_target,
                 duration_s=sprint_duration,
                 ui_mode=sprint_ui_mode,
+                aggressive_mode=args.aggressive,
+                deep_probe_enabled=args.deep_probe,
             ))
         else:
             # Sprint 8AM C.1: Async runtime with owned resources via _run_public_passive_once

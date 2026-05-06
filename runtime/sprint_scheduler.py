@@ -307,6 +307,9 @@ class SprintSchedulerConfig:
     aggressive_branch_timeout_s: float = 45.0  # per-branch timeout in aggressive mode
     # Sprint F195B: Per-branch timeout budget in seconds (aggressive mode uses 8.0)
     branch_timeout_budget_s: float = 0.0       # 0 = use aggressive_branch_timeout_s
+    # Sprint F212-B: Branch timeout envelope caps
+    _MAX_BRANCH_TIMEOUT_CAP: float = 300.0    # absolute per-branch cap
+    _MIN_BRANCH_REMAINING_S: float = 5.0       # safety floor — skip branch below this
     # Partial export interval — every N findings in aggressive mode (recovery artifact)
     partial_export_findings_interval: int = 10
     # Tier budgets in seconds — only enforced approximately via cycle limits
@@ -511,6 +514,14 @@ class SprintSchedulerResult:
     scheduler_exit_guard_checked: bool = False
     scheduler_exit_guard_required: tuple[str, ...] = ()
     scheduler_exit_guard_satisfied: bool | None = None
+    # Sprint F212A: Hard wallclock deadline authority
+    # Derived from config.sprint_duration_s at run() start; enforced before every
+    # cycle and before every expensive branch dispatch.
+    hard_deadline_monotonic: float | None = None
+    hard_deadline_checked_count: int = 0
+    hard_deadline_exceeded: bool = False
+    hard_deadline_exceeded_at_cycle: int | None = None
+    hard_deadline_remaining_s_at_exit: float | None = None
     # Sprint F208B: Acquisition terminality consumer — scheduler enforces terminality
     # from AcquisitionStrategy rather than owning hardcoded PUBLIC/CT policy
     acquisition_terminality_checked: bool = False
@@ -780,6 +791,9 @@ class SprintScheduler:
         self._duckdb_read_con: Optional[Any] = None
         # Sprint 8BK: Wall-clock start for duration budget guard
         self._wall_clock_start: float = 0.0
+        # Sprint F212A: Hard deadline — derived from config.sprint_duration_s at run() start
+        self._hard_deadline_monotonic: float | None = None
+        self._hard_deadline_checked_count: int = 0
         self._ARROW_FLUSH_N: int = 1000
         # P12: Bounded Hermes lifecycle — loaded at sprint start, released at teardown
         # M1 8GB invariant: only one large model at a time (Hermes ~2GB)
@@ -1106,6 +1120,43 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-safe: feedback recording must never crash sprint
 
+    # ── Sprint F212A: Hard deadline authority ───────────────────────────────
+
+    def _check_hard_deadline(self) -> bool:
+        """
+        Check if the hard monotonic deadline has been exceeded.
+
+        Returns:
+            True if deadline is NOT exceeded (new work may proceed).
+            False if deadline IS exceeded (no new branch dispatch).
+
+        This method is idempotent — it can be called multiple times per cycle
+        without changing state. Deadline-exceeded state is tracked once in
+        the result and never reset.
+        """
+        if self._hard_deadline_monotonic is None:
+            return True  # No deadline set — always allowed
+
+        self._result.hard_deadline_checked_count += 1
+
+        if self._result.hard_deadline_exceeded:
+            return False  # Already exceeded — stay stopped
+
+        elapsed = _time.monotonic() - self._hard_deadline_monotonic
+
+        if elapsed >= 0.0:
+            # Deadline exceeded — record state once
+            self._result.hard_deadline_exceeded = True
+            self._result.hard_deadline_exceeded_at_cycle = self._result.cycles_started
+            self._result.hard_deadline_remaining_s_at_exit = 0.0
+            log.warning(
+                f"[F212A] Hard deadline exceeded at cycle {self._result.cycles_started}. "
+                f"Elapsed={elapsed:.1f}s. Stopping new work."
+            )
+            return False
+
+        return True
+
     def _get_adaptive_priority(
         self, task_type: str, base_priority: float = 0.5
     ) -> float:
@@ -1197,6 +1248,9 @@ class SprintScheduler:
 
         # Sprint 8BK: Record wall-clock start for duration budget guard
         self._wall_clock_start = _time.monotonic()
+        # Sprint F212A: Derive hard deadline from sprint_duration_s
+        self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
+        self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
         # Sprint F195: Store duckdb_store on self for task handler access
         self._duckdb_store = duckdb_store
 
@@ -1475,6 +1529,19 @@ class SprintScheduler:
                         query, "duration_budget_break"
                     )
                     self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
+                    break
+                # ── Sprint F212A: Hard deadline check before new cycle ─────────
+                if not self._check_hard_deadline():
+                    # Deadline exceeded — stop starting new work
+                    await self._ensure_nonfeed_predispatch_before_finalization(
+                        query, "hard_deadline_exceeded"
+                    )
+                    self._finalize_result_truth(
+                        "hard_deadline_exceeded",
+                        f"hard deadline exceeded at cycle {self._result.cycles_started}",
+                        "GATHER",
+                        query,
+                    )
                     break
                 # Sprint 8XE: Store sources for public discovery query hint
                 self._last_sources = list(ordered_sources)
@@ -3113,8 +3180,13 @@ class SprintScheduler:
         """
         Stable mode: feed sources run first, then public discovery runs after.
         CT discovery runs once after the main cycle loop (in __main__.py).
+
+        F212-B: Public discovery runs under remaining-time-aware asyncio.timeout.
+        Branch is skipped if remaining time is at or below the safety floor.
         """
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
+
+        remaining_s = lifecycle.remaining_time()
 
         # Run sources under TaskGroup (bounded concurrency)
         semaphore = asyncio.Semaphore(self._config.max_parallel_sources)
@@ -3157,6 +3229,12 @@ class SprintScheduler:
         tasks = [fetch_one(w) for w in work_items]
         results: list[tuple[str, FeedPipelineRunResult]] = await asyncio.gather(*tasks, return_exceptions=True)
 
+        # ── Sprint F212A: Check deadline after feed gather ───────────────────
+        # F212-A: After gather, check if deadline exceeded before processing results
+        if not self._check_hard_deadline():
+            log.debug("[F212A] Deadline exceeded after feed gather in stable cycle")
+            return True  # cycle_ok=True, loop will exit via deadline check at next iteration
+
         # Process results
         for feed_url, result in results:
             self._process_result(feed_url, result)
@@ -3171,32 +3249,87 @@ class SprintScheduler:
             )
 
         # Sprint 8XE: Run public discovery pipeline in same cycle (canonical parity)
-        await self._run_public_discovery_in_cycle(
-            query=query,
-            duckdb_store=duckdb_store,
-            hermes_engine=self._hermes_engine,
-            memory_manager=self._memory_manager,
-        )
+        # F212-B: Wrap with remaining-time-aware asyncio.timeout
+        public_timeout = self._branch_timeout_s("PUBLIC", remaining_s)
+        if public_timeout <= 0:
+            log.debug(
+                "[F212-B] PUBLIC branch skipped in stable: remaining=%.1fs <= floor=%.1fs",
+                remaining_s, self._config._MIN_BRANCH_REMAINING_S,
+            )
+            self._result.public_error = "terminal:remaining_too_low"
+        else:
+            try:
+                async with asyncio.timeout(public_timeout):
+                    await self._run_public_discovery_in_cycle(
+                        query=query,
+                        duckdb_store=duckdb_store,
+                        hermes_engine=self._hermes_engine,
+                        memory_manager=self._memory_manager,
+                    )
+            except asyncio.TimeoutError:
+                log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
+                self._result.public_branch_timed_out = True
+                self._result.public_error = "terminal:timeout"
+            except asyncio.CancelledError:
+                log.debug("[stable] PUBLIC branch cancelled")
+                raise  # [I6] propagate CancelledError
 
         # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
         # STEALTH excluded — never auto-runs; FEED and PUBLIC already handled above
+        # F212-B: Skip if remaining time is below safety floor
+        lanes_timeout = self._branch_timeout_s("ADVISORY", remaining_s)
         _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
-        try:
-            _outcomes = await run_enabled_acquisition_lanes(
-                snapshot=self._acquisition_plan,
-                query=query,
-                store=duckdb_store,
-                uma_state=_uma,
-            )
-            if _outcomes:
-                self._lane_outcomes = _outcomes
-                self._result.acquisition_lane_outcomes = _outcomes
-                # Sprint F207J-A: Accumulate lane findings into scheduler truth + _all_findings
-                self._accumulate_lane_findings(_outcomes, query)
-        except Exception:
-            pass  # fail-soft: lane runner must never crash sprint
+        if lanes_timeout > 0:
+            try:
+                async with asyncio.timeout(lanes_timeout):
+                    _outcomes = await run_enabled_acquisition_lanes(
+                        snapshot=self._acquisition_plan,
+                        query=query,
+                        store=duckdb_store,
+                        uma_state=_uma,
+                    )
+                    if _outcomes:
+                        self._lane_outcomes = _outcomes
+                        self._result.acquisition_lane_outcomes = _outcomes
+                        self._accumulate_lane_findings(_outcomes, query)
+            except asyncio.TimeoutError:
+                log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
+            except asyncio.CancelledError:
+                raise  # [I6] propagate CancelledError
+            except Exception:
+                pass  # fail-soft: lane runner must never crash sprint
+        else:
+            log.debug("[F212-B] ADVISORY lanes skipped: remaining=%.1fs", remaining_s)
 
         return True
+
+    # ── F212-B: Branch Timeout Envelope ───────────────────────────────────
+
+    def _branch_timeout_s(self, branch_name: str, remaining_s: float) -> float:
+        """
+        F212-B: Compute remaining-time-aware timeout for a named branch.
+
+        Formula: min(config_timeout, remaining_s * 0.5, MAX_BRANCH_TIMEOUT_CAP)
+
+        - Prevents a branch from consuming more than 50% of remaining cycle time
+        - Capped at MAX_BRANCH_TIMEOUT_CAP to bound absolute worst case
+        - Returns 0 when remaining_s <= MIN_BRANCH_REMAINING_S (safety floor)
+        """
+        if remaining_s <= self._config._MIN_BRANCH_REMAINING_S:
+            return 0.0
+        base = (
+            self._config.branch_timeout_budget_s
+            if self._config.branch_timeout_budget_s > 0
+            else self._config.aggressive_branch_timeout_s
+        )
+        bounded = min(base, remaining_s * 0.5, self._config._MAX_BRANCH_TIMEOUT_CAP)
+        log.debug(
+            "[F212-B] %s branch timeout: base=%.1fs remaining=%.1fs capped=%.1fs",
+            branch_name, base, remaining_s, bounded,
+        )
+        return bounded
+
+    # ── Aggressive Cycle ──────────────────────────────────────────────────
 
     async def _run_one_cycle_aggressive(
         self,
@@ -3210,16 +3343,26 @@ class SprintScheduler:
         Each branch has its own timeout budget; slow branches are cancelled without
         affecting other branches.
 
-        Branch timeouts:
-        - Feed: per-source 30s (existing), overall bounded by aggressive_branch_timeout_s
-        - Public: aggressive_branch_timeout_s
-        - CT: aggressive_branch_timeout_s
+        F212-B: All branch timeouts are remaining-time-aware and capped at
+        min(config_timeout, remaining * 0.5, MAX_CAP). Branches are skipped with
+        terminal outcome when remaining time is below the safety floor.
         """
         import asyncio as _asyncio
 
-        # Sprint F195B: Use explicit branch budget if set, otherwise fall back to aggressive_branch_timeout_s
-        branch_budget_s = self._config.branch_timeout_budget_s
-        timeout_s = branch_budget_s if branch_budget_s > 0 else self._config.aggressive_branch_timeout_s
+        remaining_s = lifecycle.remaining_time()
+
+        # F212-B: Safety floor — skip entire aggressive cycle if time too low
+        if remaining_s <= self._config._MIN_BRANCH_REMAINING_S:
+            log.debug(
+                "[F212-B] Aggressive cycle skipped: remaining=%.1fs <= floor=%.1fs",
+                remaining_s, self._config._MIN_BRANCH_REMAINING_S,
+            )
+            self._result.public_branch_timed_out = True
+            self._result.ct_branch_timed_out = True
+            self._result.branch_timeout_count += 2
+            self._result.public_error = "terminal:remaining_too_low"
+            self._result.ct_log_error = "terminal:remaining_too_low"
+            return True
 
         async def _run_feed_branch() -> None:
             """Feed branch: fetches all sources concurrently."""
@@ -3281,36 +3424,50 @@ class SprintScheduler:
                 )
 
         async def _run_public_branch() -> None:
-            """Public discovery branch with timeout."""
+            """Public discovery branch with remaining-time-aware asyncio.timeout."""
+            branch_timeout = self._branch_timeout_s("PUBLIC", remaining_s)
+            if branch_timeout <= 0:
+                log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
+                self._result.public_error = "terminal:remaining_too_low"
+                return
             try:
-                await _asyncio.wait_for(
-                    self._run_public_discovery_in_cycle(
+                async with _asyncio.timeout(branch_timeout):
+                    await self._run_public_discovery_in_cycle(
                         query=query,
                         duckdb_store=duckdb_store,
                         hermes_engine=self._hermes_engine,
                         memory_manager=self._memory_manager,
-                    ),
-                    timeout=timeout_s,
-                )
+                    )
             except _asyncio.TimeoutError:
-                log.debug("[aggressive] Public branch timed out after %ss", timeout_s)
-                self._result.public_error = "aggressive_timeout"
+                log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
+                self._result.public_branch_timed_out = True
+                self._result.public_error = "terminal:timeout"
+            except _asyncio.CancelledError:
+                log.debug("[aggressive] Public branch cancelled")
+                raise  # [I6] propagate CancelledError
             except Exception as exc:
                 log.debug("[aggressive] Public branch error: %s", exc)
                 self._result.public_error = f"{type(exc).__name__}:{exc}"
 
         async def _run_ct_branch() -> None:
-            """CT log discovery branch with timeout."""
+            """CT log discovery branch with remaining-time-aware asyncio.timeout."""
             if self._ct_log_client is None or duckdb_store is None:
                 return
+            branch_timeout = self._branch_timeout_s("CT", remaining_s)
+            if branch_timeout <= 0:
+                log.debug("[F212-B] CT branch skipped: remaining=%.1fs", remaining_s)
+                self._result.ct_log_error = "terminal:remaining_too_low"
+                return
             try:
-                await _asyncio.wait_for(
-                    self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store),
-                    timeout=timeout_s,
-                )
+                async with _asyncio.timeout(branch_timeout):
+                    await self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store)
             except _asyncio.TimeoutError:
-                log.debug("[aggressive] CT branch timed out after %ss", timeout_s)
-                self._result.ct_log_error = "aggressive_timeout"
+                log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
+                self._result.ct_branch_timed_out = True
+                self._result.ct_log_error = "terminal:timeout"
+            except _asyncio.CancelledError:
+                log.debug("[aggressive] CT branch cancelled")
+                raise  # [I6] propagate CancelledError
             except Exception as exc:
                 log.debug("[aggressive] CT branch error: %s", exc)
                 self._result.ct_log_error = f"{type(exc).__name__}:{exc}"
@@ -3320,40 +3477,62 @@ class SprintScheduler:
         public_branch = _asyncio.create_task(_run_public_branch(), name="sprint:public_branch")
         ct_branch = _asyncio.create_task(_run_ct_branch(), name="sprint:ct_branch")
 
-        # Wait for all branches with overall timeout
-        # Use shield so cancellation of one branch doesn't affect others
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(
-                    feed_branch, public_branch, ct_branch,
-                    return_exceptions=True,
-                ),
-                timeout=timeout_s,
+        # F212-B: Wait for all branches with remaining-time-aware envelope timeout.
+        # Uses asyncio.timeout so cancellation of one branch propagates correctly.
+        outer_timeout = self._branch_timeout_s("cycle_envelope", remaining_s)
+        results = []
+        if outer_timeout > 0:
+            try:
+                async with _asyncio.timeout(outer_timeout):
+                    results = await _asyncio.gather(
+                        feed_branch, public_branch, ct_branch,
+                        return_exceptions=True,
+                    )
+            except _asyncio.TimeoutError:
+                log.debug("[aggressive] Branch(es) did not complete within %ss", outer_timeout)
+                self._result.public_branch_timed_out = True
+                self._result.ct_branch_timed_out = True
+                self._result.branch_timeout_count += 2
+                results = []
+            except _asyncio.CancelledError:
+                log.debug("[aggressive] Aggressive cycle cancelled")
+                raise  # [I6] propagate CancelledError
+        else:
+            log.debug(
+                "[F212-B] Aggressive gather skipped: outer_timeout=%.1fs (remaining=%.1fs)",
+                outer_timeout, remaining_s,
             )
-        except asyncio.TimeoutError:
-            log.debug("[aggressive] Branch(es) did not complete within %ss", timeout_s)
+            # Record skipped terminals without double-counting
             self._result.public_branch_timed_out = True
             self._result.ct_branch_timed_out = True
             self._result.branch_timeout_count += 2
-            results = []
 
         # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
         # STEALTH excluded — never auto-runs; FEED, PUBLIC, CT already handled as branches above
+        # F212-B: Skip if remaining time is below safety floor
+        lanes_timeout = self._branch_timeout_s("ADVISORY", remaining_s)
         _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
-        try:
-            _outcomes = await run_enabled_acquisition_lanes(
-                snapshot=self._acquisition_plan,
-                query=query,
-                store=duckdb_store,
-                uma_state=_uma,
-            )
-            if _outcomes:
-                self._lane_outcomes = _outcomes
-                self._result.acquisition_lane_outcomes = _outcomes
-                # Sprint F207J-A: Accumulate lane findings into scheduler truth + _all_findings
-                self._accumulate_lane_findings(_outcomes, query)
-        except Exception:
-            pass  # fail-soft: lane runner must never crash sprint
+        if lanes_timeout > 0:
+            try:
+                async with _asyncio.timeout(lanes_timeout):
+                    _outcomes = await run_enabled_acquisition_lanes(
+                        snapshot=self._acquisition_plan,
+                        query=query,
+                        store=duckdb_store,
+                        uma_state=_uma,
+                    )
+                    if _outcomes:
+                        self._lane_outcomes = _outcomes
+                        self._result.acquisition_lane_outcomes = _outcomes
+                        self._accumulate_lane_findings(_outcomes, query)
+            except _asyncio.TimeoutError:
+                log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
+            except _asyncio.CancelledError:
+                raise  # [I6] propagate CancelledError
+            except Exception:
+                pass  # fail-soft: lane runner must never crash sprint
+        else:
+            log.debug("[F212-B] ADVISORY lanes skipped in aggressive: remaining=%.1fs", remaining_s)
 
         return True
 

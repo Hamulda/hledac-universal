@@ -91,6 +91,12 @@ _MEMORY_GATE_OPERATOR_ACTION = (
     "restart or close heavy apps; rerun active300 with --require-memory-ok"
 )
 
+# F212D: Swap gate threshold and operator action
+_SWAP_GATE_THRESHOLD_GIB = 3.0
+_SWAP_GATE_OPERATOR_ACTION = (
+    "restart to clear swap; or use --allow-high-swap to run anyway (results will be non-comparable)"
+)
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -194,6 +200,9 @@ class LiveMeasurementResult:
     swap_warning: bool | None = None
     recommended_next_profile: str | None = None
     recommended_operator_action: str | None = None
+
+    # F212D: Swap gate — high swap detected during preflight/live gate
+    swap_gate_triggered: bool | None = None
 
     # Live KPI (F207J)
     live_kpi: dict | None = None
@@ -393,6 +402,7 @@ def _derive_run_quality_verdict(
     runtime_truth: dict | None,
     swap_pre_gib: float | None,
     is_memory_gate_abort: bool = False,
+    swap_gate_triggered: bool = False,
     acquisition_report: dict | None = None,
     acquisition_terminality_checked: bool | None = None,
     acquisition_terminality_satisfied: bool | None = None,
@@ -425,6 +435,16 @@ def _derive_run_quality_verdict(
         hardware_constrained = True
         recommended_next_profile = "none_until_memory_ok"
         recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
+        return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
+
+    # Rule 0b: SWAP_GATE — active profile with high swap, proceeding anyway (allow_high_swap)
+    # F212D: when swap_gate_triggered=True, mark hardware_constrained so results are flagged
+    # Check this BEFORE status checks so it fires regardless of PLANNED/COMPLETED/RUNNING status.
+    if swap_gate_triggered:
+        verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED
+        hardware_constrained = True
+        recommended_next_profile = "smoke180 or active300_after_restart"
+        recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
         return verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action
 
     # Rule 1: ENTRY_SMOKE_ONLY for smoke profiles (always determinable)
@@ -873,6 +893,7 @@ def _stamp_run_quality_verdict(
         runtime_truth=result.runtime_truth,
         swap_pre_gib=result.uma_pre_swap_gib,
         is_memory_gate_abort=is_memory_gate_abort,
+        swap_gate_triggered=result.swap_gate_triggered or False,
         acquisition_report=result.acquisition_report,
         acquisition_terminality_checked=result.acquisition_terminality_checked,
         acquisition_terminality_satisfied=result.acquisition_terminality_satisfied,
@@ -986,6 +1007,13 @@ def _derive_live_kpi(
       - scheduler_exit_guard_checked          (F207V-B)
       - scheduler_exit_guard_required         (F207V-B)
       - scheduler_exit_guard_satisfied        (F207V-B)
+      - scheduler_deadline_enforced           (F212C)  # True if scheduler checked and enforced hard deadline
+      - scheduler_deadline_checks             (F212C)  # hard_deadline_checked_count from runtime_truth
+      - scheduler_deadline_exit_path         (F212C)  # exit_path when deadline was enforced
+      - hard_deadline_checked_count          (F212C)
+      - hard_deadline_exceeded               (F212C)
+      - hard_deadline_exceeded_at_cycle      (F212C)
+      - hard_deadline_remaining_s_at_exit    (F212C)
       - terminality_quality_verdict           (F208I)
       - terminality_failure_reasons           (F208I)
       - acquisition_report_schema_version      (F208I)
@@ -1245,7 +1273,17 @@ def _derive_live_kpi(
             wallclock_budget_exceeded = True
             wallclock_budget_excess_s = round(actual_duration_s - tolerance_s, 3)
 
-    # next_action + next_action_detail (F207K, F207M, F207Q, F210D)
+    # F212C: Scheduler hard deadline enforcement telemetry
+    # Parsed from runtime_truth to distinguish scheduler-enforced deadline from benchmark-observed overrun
+    hard_deadline_checked_count: int = rt.get("hard_deadline_checked_count", 0)
+    hard_deadline_exceeded: bool | None = rt.get("hard_deadline_exceeded", None)
+    hard_deadline_exceeded_at_cycle: int | None = rt.get("hard_deadline_exceeded_at_cycle", None)
+    hard_deadline_remaining_s_at_exit: float | None = rt.get("hard_deadline_remaining_s_at_exit", None)
+    scheduler_deadline_checks: int = hard_deadline_checked_count
+    scheduler_deadline_enforced: bool = hard_deadline_checked_count > 0 and hard_deadline_exceeded is not None
+    scheduler_deadline_exit_path: str = (scheduler_exit or {}).get("exit_path", "") if hard_deadline_checked_count > 0 else ""
+
+    # next_action + next_action_detail (F207K, F207M, F207Q, F210D, F212C)
     next_action, next_action_detail = _derive_next_action(
         status=status,
         is_memory_gate_abort=is_memory_gate_abort,
@@ -1281,6 +1319,9 @@ def _derive_live_kpi(
         acquisition_prelude_duration_s=acquisition_prelude_duration_s,
         acquisition_prelude_reason=acquisition_prelude_reason,
         windup_guard_observation=wg,
+        # F212C: Scheduler deadline enforcement telemetry
+        scheduler_deadline_enforced=scheduler_deadline_enforced,
+        scheduler_deadline_checks=scheduler_deadline_checks,
     )
 
     # F208I: terminality_quality_verdict + failure reasons for domain queries
@@ -1397,6 +1438,14 @@ def _derive_live_kpi(
         "scheduler_exit_guard_checked": (scheduler_exit or {}).get("guard_checked", ""),
         "scheduler_exit_guard_required": (scheduler_exit or {}).get("guard_required", ""),
         "scheduler_exit_guard_satisfied": (scheduler_exit or {}).get("guard_satisfied", ""),
+        # F212C: Scheduler hard deadline enforcement
+        "scheduler_deadline_enforced": scheduler_deadline_enforced,
+        "scheduler_deadline_checks": scheduler_deadline_checks,
+        "scheduler_deadline_exit_path": scheduler_deadline_exit_path,
+        "hard_deadline_checked_count": hard_deadline_checked_count,
+        "hard_deadline_exceeded": hard_deadline_exceeded,
+        "hard_deadline_exceeded_at_cycle": hard_deadline_exceeded_at_cycle,
+        "hard_deadline_remaining_s_at_exit": hard_deadline_remaining_s_at_exit,
         # F208F: active300 acquisition terminality wiring
         "acquisition_terminality_checked": bool(acquisition_terminality_checked) if acquisition_terminality_checked is not None else None,
         "acquisition_terminality_satisfied": bool(acquisition_terminality_satisfied) if acquisition_terminality_satisfied is not None else None,
@@ -1467,6 +1516,9 @@ def _derive_next_action(
     acquisition_prelude_duration_s: float | None = None,
     acquisition_prelude_reason: str | None = None,
     windup_guard_observation: dict | None = None,
+    # F212C: Scheduler deadline enforcement telemetry
+    scheduler_deadline_enforced: bool = False,
+    scheduler_deadline_checks: int = 0,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
@@ -1479,11 +1531,17 @@ def _derive_next_action(
     F208M: windup callback supplied>0 executed=0 => fix_callback_execution
     F208M: return guard checked+satisfied => never suggest fix_return_guard_report_mapping
     F208M: scheduler_exit run_complete => never suggest add_scheduler_exit_tracer
+    F212C: scheduler deadline enforcement distinguishes scheduler-enforced deadline from benchmark-observed overrun.
     """
-    # F210D: Wallclock budget exceeded — fix runtime budget enforcement
+    # F212C + F210D: Wallclock budget exceeded — distinguish scheduler enforcement vs benchmark observation
     # Rule 0: fires FIRST, before all other rules — wallclock overrun is a critical signal
+    # F212C: scheduler_deadline_enforced=False means scheduler did NOT check/enforce hard deadline
+    # F212C: scheduler_deadline_enforced=True means scheduler DID enforce deadline, branch tail issue
     if run_quality_verdict == RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED.value:
-        return ("fix_runtime_budget_enforcement", None)
+        if not scheduler_deadline_enforced:
+            return ("fix_scheduler_deadline_enforcement", None)
+        else:
+            return ("fix_branch_tail_timeout", None)
 
     prewindup_required_lanes = prewindup_required_lanes or []
     prewindup_attempted_lanes = prewindup_attempted_lanes or []
@@ -1792,6 +1850,7 @@ async def _run_preflight() -> LiveMeasurementResult:
         result.hardware_constrained = True
         result.memory_state_pre = result.uma_pre_state
         result.swap_warning = result.uma_pre_swap_gib is not None and result.uma_pre_swap_gib > 0
+        result.swap_gate_triggered = True
         result.recommended_next_profile = "none_until_memory_ok"
         result.recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
         result.run_quality_verdict = RunQualityVerdict.ABORTED_MEMORY_GATE.value
@@ -1800,7 +1859,22 @@ async def _run_preflight() -> LiveMeasurementResult:
         result.hardware_constrained = False
         result.memory_state_pre = result.uma_pre_state
         result.swap_warning = uma_pre.get("swap_gib", 0) > 0
-        logging.info("[PREFLIGHT] Memory state=%s — preflight OK", result.uma_pre_state)
+        # F212D: Swap gate — active300/active600 with high swap are hardware-constrained
+        # smoke180 has no active runtime so swap doesn't distort wallclock comparability
+        swap_gib = uma_pre.get("swap_gib", 0) or 0
+        result.swap_gate_triggered = False
+        if swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
+            result.swap_gate_triggered = True
+            result.hardware_constrained = True
+            result.recommended_next_profile = "smoke180 or active300_after_restart"
+            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            logging.warning(
+                "[PREFLIGHT] [SWAP GATE] swap=%.1f GiB >= %.1f GiB threshold — hardware_constrained=True",
+                swap_gib, _SWAP_GATE_THRESHOLD_GIB
+            )
+        else:
+            logging.info("[PREFLIGHT] Memory state=%s — preflight OK", result.uma_pre_state)
 
     return result
 
@@ -1816,6 +1890,7 @@ async def _run_dry_run(
     aggressive_mode: bool,
     deep_probe: bool,
     require_memory_ok: bool = False,
+    allow_high_swap: bool = False,
 ) -> LiveMeasurementResult:
     """Validate command construction without running sprint."""
 
@@ -1836,8 +1911,8 @@ async def _run_dry_run(
     if deep_probe:
         planned_cmd.append("--deep-probe")
 
-    # Capture pre-sprint UMA for memory gate
-    uma_pre = await _capture_uma() if require_memory_ok else {"used_gib": None, "swap_gib": None, "state": None}
+    # Capture pre-sprint UMA for memory gate and swap gate
+    uma_pre = await _capture_uma()
 
     result = LiveMeasurementResult(
         measurement_id=_make_measurement_id(),
@@ -1886,6 +1961,7 @@ async def _run_dry_run(
                 f"requires ok/warn state for live execution. "
                 f"Use without --require-memory-ok or address memory pressure first."
             )
+            result.swap_gate_triggered = True
             # Thread is_memory_gate_abort=True so verdict = ABORTED_MEMORY_GATE
             _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
             logging.error("[DRY-RUN] [MEMORY GATE] Aborted: %s", result.error)
@@ -1894,6 +1970,35 @@ async def _run_dry_run(
             logging.info(
                 "[DRY-RUN] [MEMORY GATE] Pre-state=%s — memory OK for live execution",
                 result.uma_pre_state
+            )
+
+    # F212D: Swap gate — active profiles with high swap are hardware-constrained
+    swap_gib = result.uma_pre_swap_gib or 0
+    is_active_profile = profile in ("active300", "active600")
+    if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
+        result.swap_gate_triggered = True
+        if not allow_high_swap:
+            result.status = MeasurementStatus.ABORTED
+            result.error = (
+                f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {_SWAP_GATE_THRESHOLD_GIB:.1f} GiB threshold "
+                f"for active profile '{profile}' — aborting dry-run. "
+                f"Restart to clear swap, or use --allow-high-swap to run anyway (results non-comparable)."
+            )
+            result.hardware_constrained = True
+            result.recommended_next_profile = "smoke180 or active300_after_restart"
+            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            _stamp_profile_meta(result, profile)
+            logging.error("[DRY-RUN] [SWAP GATE] Aborted: %s", result.error)
+            return result
+        else:
+            result.hardware_constrained = True
+            result.recommended_next_profile = "smoke180 or active300_after_restart"
+            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            logging.warning(
+                "[DRY-RUN] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True)",
+                swap_gib, _SWAP_GATE_THRESHOLD_GIB
             )
 
     # Log planned command
@@ -1954,6 +2059,7 @@ async def _run_live_sprint(
     deep_probe: bool,
     export_dir: str,
     require_memory_ok: bool = False,
+    allow_high_swap: bool = False,
 ) -> LiveMeasurementResult:
     """Run canonical sprint and capture metrics."""
     measurement_id = _make_measurement_id()
@@ -2011,8 +2117,46 @@ async def _run_live_sprint(
             _stamp_profile_meta(result, profile)
             # Thread is_memory_gate_abort=True so verdict = ABORTED_MEMORY_GATE
             _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
+            result.swap_gate_triggered = True
             logging.error("[LIVE] [MEMORY GATE] Aborted: %s", result.error)
             return result
+
+    # F212D: Swap gate — active profiles with high swap are hardware-constrained
+    # smoke180 has no active runtime so swap doesn't distort comparability
+    swap_gib = result.uma_pre_swap_gib or 0
+    is_active_profile = profile in ("active300", "active600")
+    if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
+        result.swap_gate_triggered = True
+        if not allow_high_swap:
+            result.status = MeasurementStatus.ABORTED
+            result.end_time_iso = _now_iso()
+            result.error = (
+                f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {_SWAP_GATE_THRESHOLD_GIB:.1f} GiB threshold "
+                f"for active profile '{profile}' — aborting. "
+                f"Restart to clear swap, or use --allow-high-swap to run anyway (results non-comparable)."
+            )
+            result.hardware_constrained = True
+            result.recommended_next_profile = "smoke180 or active300_after_restart"
+            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            _stamp_profile_meta(result, profile)
+            logging.error("[LIVE] [SWAP GATE] Aborted: %s", result.error)
+            return result
+        else:
+            # allow_high_swap=True: run but mark as hardware-constrained (no abort)
+            # NOTE: Do NOT call _stamp_profile_meta here — it calls _stamp_run_quality_verdict
+            # internally which derives hardware_constrained=False (for status=RUNNING/no-runtime_truth)
+            # and would clobber the True we just set. Fields are set directly; _stamp_profile_meta
+            # is called again after the sprint completes (line ~2270) for profile-specific metadata.
+            result.hardware_constrained = True
+            result.recommended_next_profile = "smoke180 or active300_after_restart"
+            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            logging.warning(
+                "[LIVE] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True)",
+                swap_gib, _SWAP_GATE_THRESHOLD_GIB
+            )
+
 
     # Import canonical sprint entry — outside try so we can restore in finally
     from hledac.universal.core import __main__ as core_main
@@ -2220,6 +2364,13 @@ Examples:
         action="store_true",
         help="Abort if UMA pre-state is critical/emergency before live execution. "
              "Dry-run reports the gate; live execution aborts before sprint starts.",
+    )
+    parser.add_argument(
+        "--allow-high-swap",
+        action="store_true",
+        help="Allow active300/active600 run even when swap >= 3 GiB. "
+             "Results will be marked non-comparable (hardware_constrained=True) but will proceed. "
+             "Use after restart to clear swap.",
     )
     parser.add_argument(
         "--print-preflight-only",
@@ -2726,6 +2877,7 @@ async def main() -> int:
             deep_probe=args.deep_probe,
             export_dir=export_dir,
             require_memory_ok=args.require_memory_ok,
+            allow_high_swap=args.allow_high_swap,
         )
     else:
         result = await _run_dry_run(
@@ -2735,6 +2887,7 @@ async def main() -> int:
             aggressive_mode=args.aggressive,
             deep_probe=args.deep_probe,
             require_memory_ok=args.require_memory_ok,
+            allow_high_swap=args.allow_high_swap,
         )
 
     # Write outputs

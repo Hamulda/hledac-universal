@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from utils.safe_render import safe_markdown_link
+from ..utils.safe_render import safe_markdown_link
 
 __all__ = ["ExportManager", "EXPORT_AVAILABLE"]
 
