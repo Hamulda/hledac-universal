@@ -271,6 +271,48 @@ Probe tests at `tests/probe_f214t_safe_rendering/test_safe_render.py`.
 
 ---
 
+## F214T-4 — sprint_markdown_reporter Pivot/Query Hint Escape (2026-05-06)
+
+### Target Sites (2 HIGH)
+
+| File | Line | Before | After |
+|------|------|--------|-------|
+| `export/sprint_markdown_reporter.py` | 417 | `f"- [{priority}] {direction}: {query_hint}"` | `f"- [{priority}] {direction}: {escape_markdown_text(query_hint)}"` |
+| `export/sprint_markdown_reporter.py` | 419 | `f"- {pivot}"` | `f"- {escape_markdown_text(pivot)}"` |
+
+### Helper Used
+
+`utils/safe_render.escape_markdown_text()` — escapes `` ` `` `\` `*` `_` `[` `]` `(` `)` `<` `>` `|` `
+`
+
+### Risk Mitigated
+
+- `query_hint` with `javascript:` scheme, table pipes, heading breaks, HTML tags
+- `pivot` with fence blocks, bold/italic, links, list breakout
+
+### Test Results
+
+```
+8 passed in 0.45s (test_sprint_markdown_escape.py)
+35 passed in 0.43s (full F214T suite)
+```
+
+New probe tests: `tests/probe_f214t_safe_rendering/test_sprint_markdown_escape.py`
+
+### Deferred Sites
+
+| Site | Pattern | Status |
+|------|---------|--------|
+| `sprint_markdown_reporter.py:328` | `f"_{headline}_"` | DEFERRED |
+| `sprint_markdown_reporter.py:350` | `f"{i}. {action}"` | DEFERRED |
+| `sprint_markdown_reporter.py:687` | `f"### {label}: ..."` | DEFERRED |
+| `sprint_markdown_reporter.py:827` | `f"- **Conclusion**: {conclusion}"` | DEFERRED |
+| `markdown_reporter.py:97` | `f"[{label}]({s})"` | DEFERRED |
+| `export_manager.py:182` | `f"- **URL**: [{url_label}]({url})"` | DEFERRED |
+| `export_manager.py:161` | `f"## Report\n\n{report}\n"` | DEFERRED |
+
+---
+
 ## Files
 
 - POC probe: `tools/probe_f214t_tstring_safe_renderer.py`

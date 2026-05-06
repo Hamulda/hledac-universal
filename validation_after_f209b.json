@@ -1,0 +1,62 @@
+{
+  "validator": "live_multisource_validator",
+  "version": "f209b.validator.v1",
+  "overall_verdict": "FAIL_TERMINALITY_NOT_CHECKED",
+  "pass": false,
+  "failure_count": 9,
+  "failures": [
+    {
+      "verdict": "FAIL_TERMINALITY_NOT_CHECKED",
+      "reason": "acquisition_report.schema_version is missing",
+      "field_path": "acquisition_report.schema_version"
+    },
+    {
+      "verdict": "FAIL_TERMINALITY_NOT_CHECKED",
+      "reason": "acquisition_terminality_checked is None, expected true",
+      "field_path": "acquisition_terminality_checked"
+    },
+    {
+      "verdict": "FAIL_TERMINALITY_NOT_SATISFIED",
+      "reason": "acquisition_terminality_satisfied is None, expected true",
+      "field_path": "acquisition_terminality_satisfied"
+    },
+    {
+      "verdict": "FAIL_TERMINALITY_NOT_CHECKED",
+      "reason": "acquisition_terminality_missing_lanes is null",
+      "field_path": "acquisition_terminality_missing_lanes"
+    },
+    {
+      "verdict": "FAIL_MISSING_SOURCE_OUTCOMES",
+      "reason": "source_family_outcomes is None, expected non-empty dict",
+      "field_path": "acquisition_report.source_family_outcomes"
+    },
+    {
+      "verdict": "FAIL_MISSING_SOURCE_OUTCOMES",
+      "reason": "No feed findings attempted. feed_count=0, feed_in_outcomes=False",
+      "field_path": "branch_mix.feed"
+    },
+    {
+      "verdict": "FAIL_SCHEDULER_EXIT_MISSING",
+      "reason": "scheduler_exit_path is empty",
+      "field_path": "scheduler_exit_path"
+    },
+    {
+      "verdict": "FAIL_RETURN_GUARD_MISSING",
+      "reason": "return_guard_checked is None, expected true",
+      "field_path": "return_guard_checked"
+    },
+    {
+      "verdict": "FAIL_TERMINALITY_NOT_CHECKED",
+      "reason": "windup_guard_call_count=0 with no explicit reason why not applicable",
+      "field_path": "windup_guard_call_count"
+    }
+  ],
+  "metadata": {
+    "input_file": "/Users/vojtechhamada/PycharmProjects/Hledac/probe_f208j_report_truth_trace/trace_after_f209b.json",
+    "profile": "active300",
+    "query_type": "domain",
+    "run_id": "lsm_1778050194846_7ecdee",
+    "run_date": "unknown",
+    "validated_at": "2026-05-06T07:06:43.677471+00:00"
+  }
+}

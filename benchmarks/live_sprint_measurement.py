@@ -46,7 +46,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# -----------------------------------------------------------------------------
 # Profile definitions
 # ---------------------------------------------------------------------------
 
@@ -671,6 +673,22 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
                 result["acquisition_prelude_errors"] = None
                 result["acquisition_prelude_duration_s"] = None
                 result["acquisition_prelude_reason"] = None
+
+            # [F209B-FIX] acquisition_terminality_* are top-level keys in the
+            # canonical sprint report (written by _extract_acquisition_telemetry in
+            # core/__main__.py), not nested inside acq_report.
+            result["acquisition_terminality_checked"] = data.get(
+                "acquisition_terminality_checked"
+            )
+            result["acquisition_terminality_satisfied"] = data.get(
+                "acquisition_terminality_satisfied"
+            )
+            result["acquisition_terminality_missing_lanes"] = data.get(
+                "acquisition_terminality_missing_lanes"
+            )
+            result["acquisition_terminality_report"] = data.get(
+                "acquisition_terminality_report"
+            )
 
             return result
 
@@ -1883,17 +1901,19 @@ async def _run_live_sprint(
                 result.return_guard_observation = parsed.get("return_guard_observation")
                 result.scheduler_exit = parsed.get("scheduler_exit")
                 # F208F: active300 acquisition terminality wiring
-                _acq_strat = parsed.get("acquisition_strategy") or {}
-                result.acquisition_terminality_checked = _acq_strat.get(
+                # [F209B-FIX] acquisition_terminality_* are top-level keys in the
+                # canonical report (written by _extract_acquisition_telemetry in
+                # core/__main__.py), NOT inside acquisition_strategy dict which is None.
+                result.acquisition_terminality_checked = parsed.get(
                     "acquisition_terminality_checked"
                 )
-                result.acquisition_terminality_satisfied = _acq_strat.get(
+                result.acquisition_terminality_satisfied = parsed.get(
                     "acquisition_terminality_satisfied"
                 )
-                result.acquisition_terminality_missing_lanes = _acq_strat.get(
+                result.acquisition_terminality_missing_lanes = parsed.get(
                     "acquisition_terminality_missing_lanes"
                 )
-                result.acquisition_terminality_report = _acq_strat.get(
+                result.acquisition_terminality_report = parsed.get(
                     "acquisition_terminality_report"
                 )
                 # F209B: Acquisition prelude telemetry from parsed report
