@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from utils.safe_render import safe_markdown_link
+
 __all__ = ["ExportManager", "EXPORT_AVAILABLE"]
 
 EXPORT_AVAILABLE = True
@@ -179,7 +181,7 @@ class ExportManager:
                     if url:
                         # Obsidian wikilink format
                         url_label = url.split("/")[-1] or url
-                        finding_lines.append(f"- **URL**: [{url_label}]({url})")
+                        finding_lines.append(f"- **URL**: {safe_markdown_link(url_label, url)}")
                     if confidence:
                         finding_lines.append(f"- **Confidence**: {confidence}")
                     if provenance_str:

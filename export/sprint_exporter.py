@@ -1469,6 +1469,11 @@ def _get_acquisition_truth(eh: "ExportHandoff") -> dict[str, Any]:
         2. eh.canonical_run_summary
         3. eh.runtime_truth
 
+      # Sprint F209B: acquisition_prelude_* fields follow same priority order:
+        1. eh.scorecard (top-level keys)
+        2. eh.canonical_run_summary
+        3. eh.runtime_truth
+
     NO scheduler import. NO store read. NO network. NO MLX load.
     """
     scorecard = eh.scorecard if eh.scorecard else {}
@@ -1557,6 +1562,35 @@ def _get_acquisition_truth(eh: "ExportHandoff") -> dict[str, Any]:
         pwb = rt.get("prewindup_barrier")
     if pwb:
         result["prewindup_barrier"] = _make_serializable(pwb)
+
+    # Sprint F209B: Acquisition prelude pass-through
+    # acquisition_prelude_checked / _ran / _required_lanes / _terminal_lanes /
+    # _missing_lanes / _skipped_lanes / _errors / _duration_s / _reason:
+    #   1. eh.scorecard (top-level keys)
+    #   2. eh.canonical_run_summary
+    #   3. eh.runtime_truth
+    _prelude_fields = [
+        "acquisition_prelude_checked",
+        "acquisition_prelude_ran",
+        "acquisition_prelude_required_lanes",
+        "acquisition_prelude_terminal_lanes",
+        "acquisition_prelude_missing_lanes",
+        "acquisition_prelude_skipped_lanes",
+        "acquisition_prelude_errors",
+        "acquisition_prelude_duration_s",
+        "acquisition_prelude_reason",
+    ]
+    for _field in _prelude_fields:
+        _val = scorecard.get(_field)
+        if _val is None and isinstance(crs, dict):
+            _val = crs.get(_field)
+        if _val is None and isinstance(rt, dict):
+            _val = rt.get(_field)
+        if _val is not None:
+            if isinstance(_val, (dict, list)):
+                result[_field] = _make_serializable(_val)
+            else:
+                result[_field] = _val
 
     return result
 

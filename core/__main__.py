@@ -160,6 +160,16 @@ def _scheduler_result_acquisition_payload(
         return_guard               -- dict with return guard observation
         windup_guard_observation   -- dict with windup guard call counts
         prewindup_barrier          -- dict with prewindup barrier state
+        # Sprint F209B: Acquisition prelude pass-through
+        acquisition_prelude_checked       -- bool
+        acquisition_prelude_ran           -- bool
+        acquisition_prelude_required_lanes -- list
+        acquisition_prelude_terminal_lanes -- list
+        acquisition_prelude_missing_lanes  -- list
+        acquisition_prelude_skipped_lanes  -- dict
+        acquisition_prelude_errors        -- dict
+        acquisition_prelude_duration_s    -- float
+        acquisition_prelude_reason         -- str
     """
     # ── 1. Source family outcomes ────────────────────────────────────────────
     # Synthesize from acquisition_lane_outcomes and result counters
@@ -377,6 +387,26 @@ def _scheduler_result_acquisition_payload(
         "return_guard": _rg_dict,
         "windup_guard_observation": _wg_dict,
         "prewindup_barrier": _pwb,
+        # Sprint F209B: Acquisition prelude pass-through
+        "acquisition_prelude_checked": getattr(result, "acquisition_prelude_checked", False),
+        "acquisition_prelude_ran": getattr(result, "acquisition_prelude_ran", False),
+        "acquisition_prelude_required_lanes": list(
+            getattr(result, "acquisition_prelude_required_lanes", ()) or ()
+        ),
+        "acquisition_prelude_terminal_lanes": list(
+            getattr(result, "acquisition_prelude_terminal_lanes", ()) or ()
+        ),
+        "acquisition_prelude_missing_lanes": list(
+            getattr(result, "acquisition_prelude_missing_lanes", ()) or ()
+        ),
+        "acquisition_prelude_skipped_lanes": dict(
+            getattr(result, "acquisition_prelude_skipped_lanes", {}) or {}
+        ),
+        "acquisition_prelude_errors": dict(
+            getattr(result, "acquisition_prelude_errors", {}) or {}
+        ),
+        "acquisition_prelude_duration_s": getattr(result, "acquisition_prelude_duration_s", 0.0),
+        "acquisition_prelude_reason": getattr(result, "acquisition_prelude_reason", ""),
     }
 
 

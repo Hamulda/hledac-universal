@@ -215,6 +215,17 @@ class LiveMeasurementResult:
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None
     acquisition_terminality_report: dict | None = None
 
+    # F209B: Acquisition prelude telemetry
+    acquisition_prelude_checked: bool | None = None
+    acquisition_prelude_ran: bool | None = None
+    acquisition_prelude_required_lanes: tuple[str, ...] | None = None
+    acquisition_prelude_terminal_lanes: tuple[str, ...] | None = None
+    acquisition_prelude_missing_lanes: tuple[str, ...] | None = None
+    acquisition_prelude_skipped_lanes: dict | None = None
+    acquisition_prelude_errors: dict | None = None
+    acquisition_prelude_duration_s: float | None = None
+    acquisition_prelude_reason: str | None = None
+
     # F208H: Full acquisition report (canonical, not reconstructed)
     # Stored at top-level for validator self-containment
     acquisition_report: dict | None = None
@@ -638,6 +649,29 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             se = acq_report.get("scheduler_exit")
             result["scheduler_exit"] = se if isinstance(se, dict) else None
 
+            # F209B: Acquisition prelude telemetry from canonical report
+            apl = acq_report.get("acquisition_prelude")
+            if isinstance(apl, dict):
+                result["acquisition_prelude_checked"] = bool(apl.get("checked", False))
+                result["acquisition_prelude_ran"] = bool(apl.get("ran", False))
+                result["acquisition_prelude_required_lanes"] = tuple(apl.get("required_lanes") or [])
+                result["acquisition_prelude_terminal_lanes"] = tuple(apl.get("terminal_lanes") or [])
+                result["acquisition_prelude_missing_lanes"] = tuple(apl.get("missing_lanes") or [])
+                result["acquisition_prelude_skipped_lanes"] = apl.get("skipped_lanes") or {}
+                result["acquisition_prelude_errors"] = apl.get("errors") or {}
+                result["acquisition_prelude_duration_s"] = apl.get("duration_s")
+                result["acquisition_prelude_reason"] = apl.get("reason")
+            else:
+                result["acquisition_prelude_checked"] = None
+                result["acquisition_prelude_ran"] = None
+                result["acquisition_prelude_required_lanes"] = None
+                result["acquisition_prelude_terminal_lanes"] = None
+                result["acquisition_prelude_missing_lanes"] = None
+                result["acquisition_prelude_skipped_lanes"] = None
+                result["acquisition_prelude_errors"] = None
+                result["acquisition_prelude_duration_s"] = None
+                result["acquisition_prelude_reason"] = None
+
             return result
 
         # ── Legacy fallback: no acquisition_report ────────────────────────────
@@ -833,6 +867,16 @@ def _derive_live_kpi(
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
     acquisition_terminality_report: dict | None = None,
+    # F209B: Acquisition prelude telemetry
+    acquisition_prelude_checked: bool | None = None,
+    acquisition_prelude_ran: bool | None = None,
+    acquisition_prelude_required_lanes: tuple[str, ...] | None = None,
+    acquisition_prelude_terminal_lanes: tuple[str, ...] | None = None,
+    acquisition_prelude_missing_lanes: tuple[str, ...] | None = None,
+    acquisition_prelude_skipped_lanes: dict | None = None,
+    acquisition_prelude_errors: dict | None = None,
+    acquisition_prelude_duration_s: float | None = None,
+    acquisition_prelude_reason: str | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -1054,6 +1098,16 @@ def _derive_live_kpi(
         acquisition_terminality_checked=acquisition_terminality_checked,
         acquisition_terminality_satisfied=acquisition_terminality_satisfied,
         acquisition_terminality_missing_lanes=list(acquisition_terminality_missing_lanes) if acquisition_terminality_missing_lanes is not None else None,
+        # F209B: Acquisition prelude telemetry
+        acquisition_prelude_checked=acquisition_prelude_checked,
+        acquisition_prelude_ran=acquisition_prelude_ran,
+        acquisition_prelude_required_lanes=list(acquisition_prelude_required_lanes) if acquisition_prelude_required_lanes is not None else None,
+        acquisition_prelude_terminal_lanes=list(acquisition_prelude_terminal_lanes) if acquisition_prelude_terminal_lanes is not None else None,
+        acquisition_prelude_missing_lanes=list(acquisition_prelude_missing_lanes) if acquisition_prelude_missing_lanes is not None else None,
+        acquisition_prelude_skipped_lanes=acquisition_prelude_skipped_lanes,
+        acquisition_prelude_errors=acquisition_prelude_errors,
+        acquisition_prelude_duration_s=acquisition_prelude_duration_s,
+        acquisition_prelude_reason=acquisition_prelude_reason,
         windup_guard_observation=wg,
     )
 
@@ -1167,6 +1221,16 @@ def _derive_live_kpi(
         "terminality_quality_verdict": terminality_quality_verdict,
         "terminality_failure_reasons": terminality_failure_reasons,
         "acquisition_report_schema_version": acquisition_report_schema_version,
+        # F209B: Acquisition prelude telemetry
+        "acquisition_prelude_checked": bool(acquisition_prelude_checked) if acquisition_prelude_checked is not None else None,
+        "acquisition_prelude_ran": bool(acquisition_prelude_ran) if acquisition_prelude_ran is not None else None,
+        "acquisition_prelude_required_lanes": list(acquisition_prelude_required_lanes) if acquisition_prelude_required_lanes is not None else None,
+        "acquisition_prelude_terminal_lanes": list(acquisition_prelude_terminal_lanes) if acquisition_prelude_terminal_lanes is not None else None,
+        "acquisition_prelude_missing_lanes": list(acquisition_prelude_missing_lanes) if acquisition_prelude_missing_lanes is not None else None,
+        "acquisition_prelude_skipped_lanes": acquisition_prelude_skipped_lanes,
+        "acquisition_prelude_errors": acquisition_prelude_errors,
+        "acquisition_prelude_duration_s": acquisition_prelude_duration_s,
+        "acquisition_prelude_reason": acquisition_prelude_reason,
     }
 
 
@@ -1205,6 +1269,16 @@ def _derive_next_action(
     acquisition_terminality_checked: bool | None = None,
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: list[str] | None = None,
+    # F209B: Acquisition prelude telemetry
+    acquisition_prelude_checked: bool | None = None,
+    acquisition_prelude_ran: bool | None = None,
+    acquisition_prelude_required_lanes: list[str] | None = None,
+    acquisition_prelude_terminal_lanes: list[str] | None = None,
+    acquisition_prelude_missing_lanes: list[str] | None = None,
+    acquisition_prelude_skipped_lanes: dict | None = None,
+    acquisition_prelude_errors: dict | None = None,
+    acquisition_prelude_duration_s: float | None = None,
+    acquisition_prelude_reason: str | None = None,
     windup_guard_observation: dict | None = None,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
@@ -1330,6 +1404,44 @@ def _derive_next_action(
         # starvation was false positive — barrier did its job
         pass  # fall through to other rules
 
+    # F209B: Acquisition prelude next-action rules — fire BEFORE terminality rules
+    # BUT memory gate and starvation are critical system states that override prelude rules.
+    _is_domain = runtime_truth.get("cycles_started", 0) > 0 and runtime_truth.get("primary_signal_source")
+    _has_nonfeed = ct_findings > 0 or public_findings > 0
+
+    # Rule 0g: active300 domain but acquisition_prelude never checked
+    # Means the F209A prelude was never wired into the run path.
+    # Memory gate takes priority over this — critical system state.
+    if (_is_domain
+            and _has_nonfeed
+            and acquisition_prelude_checked is not True):
+        if is_memory_gate_abort:
+            return ("clean_memory", None)
+        return ("wire_acquisition_prelude_into_run_path", None)
+
+    # Rule 0h: prelude checked but required lanes are missing from terminal lanes
+    # prelude ran and had required lanes, but some didn't reach terminal state.
+    # Starvation takes priority over this — starvation is a scheduler-order issue.
+    if (acquisition_prelude_checked is True
+            and acquisition_prelude_missing_lanes):
+        missing = list(acquisition_prelude_missing_lanes) if acquisition_prelude_missing_lanes else []
+        if missing:
+            if nonfeed_starvation_suspected:
+                return ("fix_nonfeed_scheduler_order", None)
+            return (f"fix_acquisition_prelude_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")
+
+    # Rule 0i: terminality not checked but prelude terminal lanes are present
+    # Prelude ran and recorded terminal lanes, but terminality wiring was never called.
+    # Derive terminality report from prelude data. Fires BEFORE Rule 0e.
+    _prelude_terminal = list(acquisition_prelude_terminal_lanes) if acquisition_prelude_terminal_lanes else []
+    if (_is_domain
+            and _has_nonfeed
+            and acquisition_terminality_checked is not True
+            and _prelude_terminal):
+        if is_memory_gate_abort:
+            return ("clean_memory", None)
+        return ("fix_terminality_report_from_prelude", None)
+
     # F208F: Acquisition terminality wiring — active300 domain queries must check terminality
     # Rule 0e: active300 domain query has eligible PUBLIC or CT but terminality was never checked
     # Conditions: acquisition_terminality_checked is False AND domain query (ct_findings > 0 or public_findings > 0)
@@ -1422,6 +1534,16 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         acquisition_terminality_satisfied=getattr(result, "acquisition_terminality_satisfied", None),
         acquisition_terminality_missing_lanes=getattr(result, "acquisition_terminality_missing_lanes", None),
         acquisition_terminality_report=getattr(result, "acquisition_terminality_report", None),
+        # F209B: Acquisition prelude telemetry
+        acquisition_prelude_checked=getattr(result, "acquisition_prelude_checked", None),
+        acquisition_prelude_ran=getattr(result, "acquisition_prelude_ran", None),
+        acquisition_prelude_required_lanes=getattr(result, "acquisition_prelude_required_lanes", None),
+        acquisition_prelude_terminal_lanes=getattr(result, "acquisition_prelude_terminal_lanes", None),
+        acquisition_prelude_missing_lanes=getattr(result, "acquisition_prelude_missing_lanes", None),
+        acquisition_prelude_skipped_lanes=getattr(result, "acquisition_prelude_skipped_lanes", None),
+        acquisition_prelude_errors=getattr(result, "acquisition_prelude_errors", None),
+        acquisition_prelude_duration_s=getattr(result, "acquisition_prelude_duration_s", None),
+        acquisition_prelude_reason=getattr(result, "acquisition_prelude_reason", None),
     )
     result.live_kpi = kpi
 
@@ -1774,6 +1896,16 @@ async def _run_live_sprint(
                 result.acquisition_terminality_report = _acq_strat.get(
                     "acquisition_terminality_report"
                 )
+                # F209B: Acquisition prelude telemetry from parsed report
+                result.acquisition_prelude_checked = parsed.get("acquisition_prelude_checked")
+                result.acquisition_prelude_ran = parsed.get("acquisition_prelude_ran")
+                result.acquisition_prelude_required_lanes = parsed.get("acquisition_prelude_required_lanes")
+                result.acquisition_prelude_terminal_lanes = parsed.get("acquisition_prelude_terminal_lanes")
+                result.acquisition_prelude_missing_lanes = parsed.get("acquisition_prelude_missing_lanes")
+                result.acquisition_prelude_skipped_lanes = parsed.get("acquisition_prelude_skipped_lanes")
+                result.acquisition_prelude_errors = parsed.get("acquisition_prelude_errors")
+                result.acquisition_prelude_duration_s = parsed.get("acquisition_prelude_duration_s")
+                result.acquisition_prelude_reason = parsed.get("acquisition_prelude_reason")
                 # F208H: Read full canonical acquisition_report from sprint JSON
                 # for validator self-containment (not just the sanitized subset)
                 try:
@@ -2079,6 +2211,41 @@ def _render_md(result: LiveMeasurementResult) -> str:
             if gap_resolved is not None:
                 barrier_rows.append(f"| Nonfeed scheduler gap resolved | {gap_resolved} |")
             lines.extend(barrier_rows)
+
+    # Acquisition Prelude section (F209B)
+    kpi = result.live_kpi
+    if kpi is not None:
+        apl_checked = kpi.get('acquisition_prelude_checked')
+        apl_ran = kpi.get('acquisition_prelude_ran')
+        apl_reason = kpi.get('acquisition_prelude_reason', '')
+        apl_required = kpi.get('acquisition_prelude_required_lanes', [])
+        apl_terminal = kpi.get('acquisition_prelude_terminal_lanes', [])
+        apl_missing = kpi.get('acquisition_prelude_missing_lanes', [])
+        apl_skipped = kpi.get('acquisition_prelude_skipped_lanes', {})
+        apl_errors = kpi.get('acquisition_prelude_errors', {})
+        apl_duration = kpi.get('acquisition_prelude_duration_s')
+        # Render when prelude data is present (checked=True/False, or ran=True/False)
+        if apl_checked is not None or apl_ran is not None:
+            prelude_rows = [
+                "",
+                "## Acquisition Prelude",
+                "",
+                f"| Metric | Value |",
+                f"| --- | --- |",
+                f"| Prelude checked | {apl_checked if apl_checked is not None else 'N/A'} |",
+                f"| Prelude ran | {apl_ran if apl_ran is not None else 'N/A'} |",
+                f"| Reason | {apl_reason or 'N/A'} |",
+                f"| Required lanes | {apl_required or []} |",
+                f"| Terminal lanes | {apl_terminal or []} |",
+                f"| Missing lanes | {apl_missing or []} |",
+            ]
+            if apl_duration is not None:
+                prelude_rows.append(f"| Duration (s) | {apl_duration} |")
+            if apl_skipped:
+                prelude_rows.append(f"| Skipped lanes | {json.dumps(apl_skipped)} |")
+            if apl_errors:
+                prelude_rows.append(f"| Errors | {json.dumps(apl_errors)} |")
+            lines.extend(prelude_rows)
 
     # Windup Guard Observation section (F207S)
     kpi = result.live_kpi

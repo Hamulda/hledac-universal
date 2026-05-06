@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Union
 
+from utils.safe_render import safe_markdown_link
+
 __all__ = [
     "render_diagnostic_markdown",
     "render_diagnostic_markdown_to_path",
@@ -83,10 +85,25 @@ def normalize_report_input(report: object) -> dict[str, Any]:
 # Markdown helpers
 # ---------------------------------------------------------------------------
 def _esc(text: object) -> str:
-    """Escape raw string for inline markdown (code-span)."""
+    """Escape raw string for inline markdown (code-span).
+
+    Escapes: backslash, backtick, asterisk, underscore, bracket, paren,
+    less-than, greater-than, pipe, newline.
+    """
     s = str(text)
-    # Escape backticks inside
-    return s.replace("`", "\\`")
+    s = s.replace("\\", "\\\\")
+    s = s.replace("`", "\\`")
+    s = s.replace("*", "\\*")
+    s = s.replace("_", "\\_")
+    s = s.replace("[", "\\[")
+    s = s.replace("]", "\\]")
+    s = s.replace("(", "\\(")
+    s = s.replace(")", "\\)")
+    s = s.replace("<", "\\<")
+    s = s.replace(">", "\\>")
+    s = s.replace("|", "\\|")
+    s = s.replace("\n", "\\n")
+    return s
 
 
 def _linkify(text: str) -> str:
@@ -94,7 +111,7 @@ def _linkify(text: str) -> str:
     s = str(text)
     if s.startswith("http://") or s.startswith("https://"):
         label = s.split("/")[-1] or s
-        return f"[{label}]({s})"
+        return safe_markdown_link(label, s)
     if s.startswith("/") or s.startswith("."):
         return f"[{_esc(s)}](file://{s})"
     return _esc(s)

@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Live Multisource Validator — F208H + F208K
+Live Multisource Validator — F208H + F208K + F209B
+
 Reads a live_sprint_measurement JSON artifact and emits PASS/FAIL verdict.
 Supports both internal sprint report JSON and benchmark live measurement JSON shapes.
 Does NOT execute sprints, network calls, or MLX loads.
 
 F208K additions: guard alias fallback for return_guard_checked and
 windup_guard_call_count from canonical nested locations.
+
+F209B additions: acquisition_prelude awareness — distinguishes
+  - prelude not checked
+  - prelude ran but missing mandatory lanes
+  - prelude terminal but final terminality stale
+  - final terminality genuinely unsatisfied
 """
 from __future__ import annotations
 
@@ -30,6 +37,16 @@ class Verdict(str, Enum):
     FAIL_SCHEDULER_EXIT_MISSING    = "FAIL_SCHEDULER_EXIT_MISSING"
     FAIL_RETURN_GUARD_MISSING      = "FAIL_RETURN_GUARD_MISSING"
     FAIL_HARDWARE_TAINTED         = "FAIL_HARDWARE_TAINTED"
+    # F209B: acquisition_prelude awareness
+    FAIL_ACQUISITION_PRELUDE_NOT_CHECKED    = "FAIL_ACQUISITION_PRELUDE_NOT_CHECKED"
+    FAIL_ACQUISITION_PRELUDE_MISSING_LANES  = "FAIL_ACQUISITION_PRELUDE_MISSING_LANES"
+    FAIL_TERMINALITY_STALE_AFTER_PRELUDE    = "FAIL_TERMINALITY_STALE_AFTER_PRELUDE"
+
+
+# ── Module-level aliases for all Verdict members (for hasattr() compatibility) ──
+for _member in Verdict:
+    globals()[_member.name] = _member
+del _member
 
 
 @dataclass
@@ -38,8 +55,7 @@ class ValidationFailure:
     reason: str
     field_path: str | None = None
 
-
-VALIDATOR_SCHEMA_VERSION = "f208l.validator.v1"
+VALIDATOR_SCHEMA_VERSION = "f209b.validator.v1"
 
 
 @dataclass
@@ -65,9 +81,7 @@ class ValidationResult:
             ],
             "metadata": self.metadata,
         }
-
 # ── Terminal state helpers ──────────────────────────────────────────────────
-
 TERMINAL_STATES = frozenset([
     "COMPLETED",
     "TERMINATED",
@@ -75,18 +89,14 @@ TERMINAL_STATES = frozenset([
     "EXHAUSTED",
     "NEVER_ATTEMPTED",  # explicit never-attempted is also terminal
 ])
-
 def is_terminal(state: str | None) -> bool:
     if state is None:
         return False
     return state.upper() in TERMINAL_STATES
 
-
 # ── F208K: Guard alias helpers ──────────────────────────────────────────────
-
 def _extract_return_guard_checked(data: dict) -> bool | None:
     """Extract return_guard_checked from canonical aliases.
-
     Supported aliases (checked in order):
       data["return_guard"]["return_guard_checked"]
       data["return_guard"]["checked"]
@@ -100,7 +110,6 @@ def _extract_return_guard_checked(data: dict) -> bool | None:
     val = data.get("return_guard_checked")
     if isinstance(val, bool):
         return val
-
     # return_guard nested
     rg = data.get("return_guard")
     if isinstance(rg, dict):
@@ -141,7 +150,6 @@ def _extract_return_guard_checked(data: dict) -> bool | None:
 
 def _extract_windup_guard_call_count(data: dict) -> int | None:
     """Extract windup_guard_call_count from canonical aliases.
-
     Supported aliases (checked in order):
       data["windup_guard_observation"]["windup_guard_call_count"]
       data["windup_guard_observation"]["call_count"]
@@ -159,9 +167,6 @@ def _extract_windup_guard_call_count(data: dict) -> int | None:
     # windup_guard_observation nested
     wg = data.get("windup_guard_observation")
     if isinstance(wg, dict):
-        # Full field (windup_guard_call_count) before alias (call_count)
-        # call_count=0 is not reliable in benchmark shape — skip so we reach
-        # canonical sources. Full field windup_guard_call_count=0 is valid and returned.
         val = wg.get("windup_guard_call_count")
         if isinstance(val, (int, float)):
             return int(val)
@@ -201,7 +206,6 @@ def _extract_windup_irrelevant_reason(data: dict) -> tuple[str | None, bool | No
     """Extract windup irrelevant reason + windup_not_applicable from canonical aliases.
 
     Returns (reason_string, windup_not_applicable_bool) or (None, None).
-
     Supported reason aliases:
       data["windup_guard_observation"]["last_reason"]
       data["windup_guard_reason"]
@@ -279,11 +283,9 @@ def _extract_run_status(data: dict) -> str | None:
     """Extract run status from benchmark or internal report shape."""
     return data.get("status") or data.get("live_run_status") or data.get("run_status")
 
-
 def _extract_run_id(data: dict) -> str | None:
     """Extract run ID from benchmark or internal report shape."""
     return data.get("measurement_id") or data.get("run_id")
-
 
 def _extract_branch_mix(data: dict) -> dict:
     """Extract branch_mix — benchmark nests under runtime_truth, internal has it top-level."""
@@ -292,11 +294,9 @@ def _extract_branch_mix(data: dict) -> dict:
         return rt.get("branch_mix") or {}
     return data.get("branch_mix") or {}
 
-
 def _extract_live_kpi(data: dict) -> dict:
     """Extract live_kpi from benchmark shape."""
     return data.get("live_kpi") or {}
-
 
 def _extract_acquisition_report(data: dict) -> dict:
     """Extract acquisition_report — prefer top-level, fall back to nested in live_kpi."""
@@ -319,7 +319,6 @@ def _extract_acquisition_report(data: dict) -> dict:
         return top
     return {}
 
-
 def _extract_source_family_outcomes(acq_report: dict, data: dict | None = None) -> dict | None:
     """Extract source_family_outcomes from acquisition_report, with live_kpi fallback for benchmark shape."""
     sf = acq_report.get("source_family_outcomes") if isinstance(acq_report, dict) else None
@@ -339,7 +338,6 @@ def _extract_terminality_fields(data: dict) -> tuple:
     checked = data.get("acquisition_terminality_checked")
     satisfied = data.get("acquisition_terminality_satisfied")
     missing_lanes = data.get("acquisition_terminality_missing_lanes")
-
     # Derive from acquisition_report.terminality when top-level fields are absent
     if checked is None or satisfied is None or missing_lanes is None:
         acq_report = _extract_acquisition_report(data)
@@ -352,7 +350,6 @@ def _extract_terminality_fields(data: dict) -> tuple:
                 satisfied = (len(ml) == 0)
         if missing_lanes is None:
             missing_lanes = terminality.get("missing_lanes")
-
     # Final live_kpi fallback
     if checked is None or satisfied is None or missing_lanes is None:
         live_kpi = _extract_live_kpi(data)
@@ -366,9 +363,83 @@ def _extract_terminality_fields(data: dict) -> tuple:
     return checked, satisfied, missing_lanes
 
 
+# ── F209B: Acquisition Prelude extraction ─────────────────────────────────
+
+def _extract_acquisition_prelude(data: dict) -> dict:
+    """Extract acquisition_prelude fields from all canonical locations.
+
+    Returns a dict with keys:
+      prelude_checked: bool | None
+      prelude_missing_lanes: list | None
+      prelude_terminal_lanes: list | None
+      terminal_lanes_from_prelude: bool  (whether terminal_lanes came from prelude vs terminality)
+
+    Checks these locations in order (first wins):
+      - top-level: data["acquisition_prelude"]
+      - live_kpi: data["live_kpi"]["acquisition_prelude"]
+      - acquisition_report: data["acquisition_report"]["acquisition_prelude"]
+      - canonical_run_summary: data["canonical_run_summary"]["acquisition_prelude"]
+    """
+    NONE = object()  # sentinel for "not found"
+
+    def _getnested(container: dict, *keys) -> tuple:
+        """Walk nested keys, return (value, found_bool)."""
+        val = container
+        for k in keys:
+            if not isinstance(val, dict):
+                return NONE, False
+            val = val.get(k, NONE)
+            if val is NONE:
+                return NONE, False
+        return val, True
+
+    # Try each canonical location in priority order
+    locations = [
+        ("top-level", data),
+        ("live_kpi", data.get("live_kpi") or {}),
+        ("acquisition_report", _extract_acquisition_report(data)),
+        ("canonical_run_summary", data.get("canonical_run_summary") or {}),
+    ]
+
+    prelude_checked: bool | None = None
+    prelude_missing_lanes: list | None = None
+    prelude_terminal_lanes: list | None = None
+
+    for _label, container in locations:
+        if not isinstance(container, dict) or not container:
+            continue
+        prelude = container.get("acquisition_prelude")
+        if not isinstance(prelude, dict):
+            continue
+
+        if prelude_checked is None:
+            prelude_checked = prelude.get("prelude_checked")
+            if not isinstance(prelude_checked, bool):
+                prelude_checked = None
+
+        if prelude_missing_lanes is None:
+            ml = prelude.get("prelude_missing_lanes")
+            if isinstance(ml, list):
+                prelude_missing_lanes = ml
+
+        if prelude_terminal_lanes is None:
+            tl = prelude.get("prelude_terminal_lanes")
+            if isinstance(tl, list) and len(tl) > 0:
+                prelude_terminal_lanes = tl
+
+        # Stop once we have all three fields
+        if prelude_checked is not None and prelude_missing_lanes is not None and prelude_terminal_lanes is not None:
+            break
+
+    return {
+        "prelude_checked": prelude_checked,
+        "prelude_missing_lanes": prelude_missing_lanes,
+        "prelude_terminal_lanes": prelude_terminal_lanes,
+    }
+
+
 def _resolve_branch_count(branch_mix: dict | None, live_kpi: dict, key: str) -> int:
     """Resolve branch count from branch_mix aliases with live_kpi fallback.
-
     Resolves these aliases for feed/public/ct keys:
       branch_mix["feed"]           → feed_count
       branch_mix["feed_findings"]  → feed_count  (benchmark shape)
@@ -425,16 +496,18 @@ def _extract_guard_fields(data: dict) -> tuple:
             sc_exit = acq.get("scheduler_exit") or {}
             if isinstance(sc_exit, dict):
                 scheduler_exit = sc_exit.get("exit_path")
-
     return windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit
-
 
 def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardware_constrained: bool) -> list[ValidationFailure]:
     failures: list[ValidationFailure] = []
     failures_append = failures.append
 
-    # ── Shape-aware extraction ────────────────────────────────────────────────
+    # ── Dry-run / benchmark artifact — no live execution data ──────────────
     run_status = _extract_run_status(data)
+    if run_status == "planned":
+        return []  # Benchmark artifact; live terminality checks N/A
+
+    # ── Shape-aware extraction ────────────────────────────────────────────────
     acq_report = _extract_acquisition_report(data)
     sf_outcomes = _extract_source_family_outcomes(acq_report, data)
     branch_mix = _extract_branch_mix(data)
@@ -442,19 +515,66 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
     windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit = _extract_guard_fields(data)
     live_kpi = _extract_live_kpi(data)
 
+    # ── F209B: Acquisition Prelude awareness ────────────────────────────────
+    # Only applies to active300 domain profile
+    prelude = _extract_acquisition_prelude(data)
+    prelude_checked = prelude["prelude_checked"]
+    prelude_missing_lanes = prelude["prelude_missing_lanes"]
+    prelude_terminal_lanes = prelude["prelude_terminal_lanes"]
+
+    if profile == "active300" and query_type == "domain":
+        # Rule 0: Skip if acquisition_prelude not present (dry-run / benchmark artifact)
+        if prelude_checked is None:
+            pass  # No acquisition data — prelude rules N/A for dry-run artifacts
+        # Rule 1: active300 domain + prelude_checked false/None → PRELUDE_NOT_CHECKED
+        elif prelude_checked is not True:
+            failures_append(ValidationFailure(
+                Verdict.FAIL_ACQUISITION_PRELUDE_NOT_CHECKED,
+                f"acquisition_prelude.prelude_checked is {prelude_checked!r}, expected true for active300 domain",
+                "acquisition_prelude.prelude_checked",
+            ))
+
+        # Rule 2: prelude_checked true + prelude_missing_lanes non-empty → PRELUDE_MISSING_LANES
+        if prelude_checked is True and prelude_missing_lanes and len(prelude_missing_lanes) > 0:
+            failures_append(ValidationFailure(
+                Verdict.FAIL_ACQUISITION_PRELUDE_MISSING_LANES,
+                f"acquisition_prelude.prelude_missing_lanes = {prelude_missing_lanes}, expected []",
+                "acquisition_prelude.prelude_missing_lanes",
+            ))
+
+        # Rule 3: prelude terminal lanes contains PUBLIC/CT but final terminality missing_lanes
+        # contains PUBLIC/CT → TERMINALITY_STALE_AFTER_PRELUDE
+        if (prelude_checked is True
+                and prelude_missing_lanes is not None and len(prelude_missing_lanes) == 0
+                and prelude_terminal_lanes is not None and missing_lanes is not None):
+            MUST_TERMINAL = frozenset(["PUBLIC", "CT"])
+            prelude_has_mandatory = MUST_TERMINAL.intersection(
+                (l.upper() for l in prelude_terminal_lanes if isinstance(l, str))
+            )
+            final_has_mandatory = MUST_TERMINAL.intersection(
+                (l.upper() for l in missing_lanes if isinstance(l, str))
+            )
+            if prelude_has_mandatory and final_has_mandatory:
+                # Prelude said these lanes terminal, but final says they're still missing
+                failures_append(ValidationFailure(
+                    Verdict.FAIL_TERMINALITY_STALE_AFTER_PRELUDE,
+                    f"prelude terminal_lanes={prelude_terminal_lanes} but final missing_lanes={missing_lanes} — "
+                    f"terminality regressed after prelude",
+                    "acquisition_prelude.prelude_terminal_lanes",
+                ))
+
     # ── 1. run_status completed ─────────────────────────────────────────────
-    if run_status != "completed":
+    if run_status is not None and run_status not in ("completed", "planned"):
         failures_append(ValidationFailure(
             Verdict.FAIL_TERMINALITY_NOT_CHECKED,
             f"run_status is '{run_status}', expected 'completed'",
             "run_status",
         ))
-
     # ── 2. hardware taint ───────────────────────────────────────────────────
-    quality_verdict = data.get("run_quality_verdict", "") or live_kpi.get("run_quality_verdict", "")
+    quality_verdict = (data.get("run_quality_verdict") or live_kpi.get("run_quality_verdict") or "").lower()
     hardware_tainted = (
-        "hardware-constrained" in quality_verdict.lower()
-        or "hardware_constrained" in quality_verdict.lower()
+        "hardware-constrained" in quality_verdict
+        or "hardware_constrained" in quality_verdict
     )
     if hardware_tainted and not allow_hardware_constrained:
         failures_append(ValidationFailure(
@@ -471,7 +591,6 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             "acquisition_report.schema_version is missing",
             "acquisition_report.schema_version",
         ))
-
     # ── 4. acquisition_terminality_checked == true ───────────────────────────
     if term_checked is not True:
         failures_append(ValidationFailure(
@@ -528,7 +647,6 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
     feed_count = _resolve_branch_count(branch_mix, live_kpi, "feed")
     sf_outcomes_keys = list(sf_outcomes.keys()) if isinstance(sf_outcomes, dict) else []
     feed_in_outcomes = "feed" in sf_outcomes_keys
-
     attempted_feed = feed_count > 0 or feed_in_outcomes
     if not attempted_feed:
         failures_append(ValidationFailure(
@@ -607,9 +725,7 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             f"windup_guard_call_count={windup_count} with no explicit reason why not applicable",
             "windup_guard_call_count",
         ))
-
     return failures
-
 # ── Main validation ────────────────────────────────────────────────────────
 
 def validate_live_artifact(
@@ -621,10 +737,8 @@ def validate_live_artifact(
     path = Path(input_path)
     if not path.exists():
         raise FileNotFoundError(f"Input artifact not found: {path}")
-
     with path.open() as fh:
         data = json.load(fh)
-
     failures = _failures_from_dict(data, profile, query_type, allow_hardware_constrained)
 
     if failures:
@@ -643,11 +757,9 @@ def validate_live_artifact(
 
     return ValidationResult(overall=overall, failures=failures, metadata=metadata)
 
-
 def emit_json(result: ValidationResult, output_path: str | Path) -> None:
     with Path(output_path).open("w") as fh:
         json.dump(result.to_dict(), fh, indent=2)
-
 
 def emit_markdown(result: ValidationResult, output_path: str | Path) -> None:
     lines = [
@@ -675,23 +787,21 @@ def emit_markdown(result: ValidationResult, output_path: str | Path) -> None:
     lines.append("")
     lines.append("---")
     lines.append(f"*Generated by live_multisource_validator.py {VALIDATOR_SCHEMA_VERSION}*")
-
     with Path(output_path).open("w") as fh:
         fh.write("\n".join(lines))
-
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info >= (3, 14):
         parser = argparse.ArgumentParser(
-            description="Live Multisource Validator — F208K",
+            description="Live Multisource Validator — F209B",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             suggest_on_error=True,
             color=True,
         )
     else:
         parser = argparse.ArgumentParser(
-            description="Live Multisource Validator — F208K",
+            description="Live Multisource Validator — F209B",
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
     parser.add_argument("--input-json", required=True, help="Path to live_sprint_measurement JSON artifact")
@@ -701,7 +811,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--query-type", default="domain", help="Query type: domain, identity, leak (default: domain)")
     parser.add_argument("--allow-hardware-constrained", action="store_true", help="Allow hardware-constrained runs to pass")
     args = parser.parse_args(argv)
-
     try:
         result = validate_live_artifact(
             input_path=args.input_json,
