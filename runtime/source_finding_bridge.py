@@ -53,7 +53,11 @@ __all__ = [
     "REJECTION_UNSUPPORTED_SHAPE",
     "REJECTION_WILDCARD_DOMAIN",
     "REJECTION_PRIVATE_OR_RESERVED_DOMAIN",
+    "REJECTION_STORAGE_UNAVAILABLE",
+    "REJECTION_QUALITY_GATE",
+    "REJECTION_CANDIDATE_BUILT_NOT_STORED",
     "MAX_BRIDGE_OUTPUT",
+    "record_ct_storage_results",
 ]
 
 # ---------------------------------------------------------------------------
@@ -72,6 +76,10 @@ REJECTION_UNSUPPORTED_SHAPE: RejectionReason = "unsupported_shape"
 # Extended CT-specific rejection reasons
 REJECTION_WILDCARD_DOMAIN: RejectionReason = "wildcard_domain"
 REJECTION_PRIVATE_OR_RESERVED_DOMAIN: RejectionReason = "private_or_reserved_domain"
+# F214A: CT acceptance closure — storage/quality gate rejections
+REJECTION_STORAGE_UNAVAILABLE: RejectionReason = "storage_unavailable"
+REJECTION_QUALITY_GATE: RejectionReason = "quality_gate"
+REJECTION_CANDIDATE_BUILT_NOT_STORED: RejectionReason = "candidate_built_not_stored"
 
 # ---------------------------------------------------------------------------
 # Output bounds
@@ -280,6 +288,42 @@ def _build_ct_provenance(
     return tuple(prov)
 
 
+def _make_ct_conversion_summary(
+    raw_hits_count: int,
+    ct_raw_entries: int,
+    built: int,
+    stored: int,
+    storage_rejected: int,
+    total_rejected: int,
+) -> str:
+    """
+    F214A: Human-readable narrative of CT raw→accepted conversion.
+
+    Explains why raw>0 but accepted might be 0:
+    - built but not stored (quality gate / storage failure)
+    - all rejected (wildcard/private/duplicate/etc.)
+    """
+    if raw_hits_count == 0:
+        return "no_raw_entries"
+    if built == 0:
+        if total_rejected > 0:
+            return f"all_{total_rejected}_entries_rejected_no_candidates_built"
+        return "no_entries_processed"
+    if stored > 0 and storage_rejected > 0:
+        return f"built_{built}_stored_{stored}_quality_gate_rejected_{storage_rejected}"
+    if stored > 0:
+        return f"built_{built}_stored_{stored}_all_candidates_accepted"
+    if built > 0 and storage_rejected == 0 and total_rejected > 0:
+        return f"built_{built}_rejected_{total_rejected}_no_candidates_stored"
+    if built > 0 and storage_rejected > 0:
+        return f"built_{built}_storage_rejected_{storage_rejected}"
+    if built > 0 and total_rejected > 0:
+        return f"built_{built}_rejected_{total_rejected}"
+    if built == raw_hits_count:
+        return "all_raw_entries_became_candidates"
+    return f"converted_{built}_of_{raw_hits_count}_raw_entries"
+
+
 def ct_results_to_findings(
     batch_result: Any,
     _outcome: Any,  # intentionally kept for backward API compat; CT telemetry from _outcome is not needed
@@ -336,9 +380,14 @@ def ct_results_to_findings(
             "ct_extracted_domains": 0,
             "ct_candidate_domains": 0,
             "ct_accepted_candidates": 0,
+            "ct_candidates_built": 0,
+            "ct_candidates_stored": 0,
+            "ct_storage_rejected": 0,
             "ct_rejected_wildcard": 0,
             "ct_rejected_invalid": 0,
             "ct_rejected_duplicate": 0,
+            "ct_rejected_missing_domain": 0,
+            "ct_rejected_missing_value": 0,
         }
 
     hits = batch_result.hits
@@ -349,9 +398,14 @@ def ct_results_to_findings(
             "ct_extracted_domains": 0,
             "ct_candidate_domains": 0,
             "ct_accepted_candidates": 0,
+            "ct_candidates_built": 0,
+            "ct_candidates_stored": 0,
+            "ct_storage_rejected": 0,
             "ct_rejected_wildcard": 0,
             "ct_rejected_invalid": 0,
             "ct_rejected_duplicate": 0,
+            "ct_rejected_missing_domain": 0,
+            "ct_rejected_missing_value": 0,
         }
 
     capped = hits[:MAX_BRIDGE_OUTPUT]
@@ -398,7 +452,7 @@ def ct_results_to_findings(
 
         if not candidate_domains:
             # Wildcard-only name_value: reject all wildcards before the domain-level rejection
-            for wc in name_value_wildcards:
+            for _wc in name_value_wildcards:
                 rejections.append(REJECTION_WILDCARD_DOMAIN)
             if not url and not title:
                 rejections.append(REJECTION_MISSING_VALUE)
@@ -407,7 +461,7 @@ def ct_results_to_findings(
             continue
 
         # Reject wildcard siblings found alongside concrete domains
-        for wc in name_value_wildcards:
+        for _wc in name_value_wildcards:
             rejections.append(REJECTION_WILDCARD_DOMAIN)
 
         for domain in candidate_domains:
@@ -423,11 +477,9 @@ def ct_results_to_findings(
                 rejections.append(REJECTION_LOW_INFORMATION)
                 continue
 
-            # Wildcard check
+            # Wildcard check — handles URL-derived wildcards (e.g. https://*.example.com/)
+            # Wildcards from ct_name_value are already in name_value_wildcards, not here
             if _is_wildcard_domain(domain):
-                # Wildcard domain appears as a sibling to concrete domains
-                # (e.g. name_value = "sub.example.com\n*.example.com")
-                # The concrete domain was already processed; wildcard is informational skip
                 rejections.append(REJECTION_WILDCARD_DOMAIN)
                 continue
 
@@ -486,12 +538,59 @@ def ct_results_to_findings(
         "ct_extracted_domains": ct_extracted_domains,
         "ct_candidate_domains": ct_candidate_domains,
         "ct_accepted_candidates": len(findings),
+        "ct_candidates_built": len(findings),
+        "ct_candidates_stored": 0,  # filled by caller via record_storage_results()
+        "ct_storage_rejected": 0,  # filled by caller via record_storage_results()
         "ct_rejected_wildcard": ct_rejected_wildcard,
         "ct_rejected_invalid": ct_rejected_invalid,
         "ct_rejected_duplicate": ct_rejected_duplicate,
+        "ct_rejected_missing_domain": sum(
+            1 for r in rejections if r == REJECTION_MISSING_DOMAIN
+        ),
+        "ct_rejected_missing_value": sum(
+            1 for r in rejections if r == REJECTION_MISSING_VALUE
+        ),
     }
 
     return findings, rejections, telemetry
+
+
+def record_ct_storage_results(
+    telemetry: dict[str, Any],
+    storage_results: list[Any],
+) -> dict[str, Any]:
+    """
+    F214A: Merge storage results into CT telemetry after duckdb_store ingest.
+
+    Updates ct_candidates_stored and ct_storage_rejected based on
+    storage_results (each item is ActivationResult with .accepted or
+    FindingQualityDecision with .accepted=False).
+
+    Call this from sprint_scheduler after async_ingest_findings_batch returns.
+
+    Returns updated telemetry dict (same object, mutated in place).
+    """
+    stored = 0
+    rejected = 0
+    for r in storage_results:
+        if isinstance(r, dict):
+            if r.get("accepted"):
+                stored += 1
+            else:
+                rejected += 1
+        elif hasattr(r, "accepted"):
+            if r.accepted:
+                stored += 1
+            else:
+                rejected += 1
+        else:
+            rejected += 1
+
+    telemetry["ct_candidates_stored"] = stored
+    telemetry["ct_storage_rejected"] = rejected
+    # accepted_candidates reflects what the bridge built (candidates), not stored
+    # The caller should use ct_candidates_stored for actual stored count
+    return telemetry
 
 
 # ---------------------------------------------------------------------------
@@ -849,9 +948,22 @@ def summarize_ct_conversion(
     ct_extracted_domains = (telemetry or {}).get("ct_extracted_domains", 0)
     ct_candidate_domains = (telemetry or {}).get("ct_candidate_domains", 0)
     ct_accepted_candidates = (telemetry or {}).get("ct_accepted_candidates", built_candidates)
+    # F214A: candidates built/stored split
+    ct_candidates_built = (telemetry or {}).get("ct_candidates_built", built_candidates)
+    ct_candidates_stored = (telemetry or {}).get("ct_candidates_stored", 0)
+    ct_storage_rejected = (telemetry or {}).get("ct_storage_rejected", 0)
     ct_rejected_wildcard = (telemetry or {}).get("ct_rejected_wildcard", 0)
     ct_rejected_invalid = (telemetry or {}).get("ct_rejected_invalid", 0)
     ct_rejected_duplicate = (telemetry or {}).get("ct_rejected_duplicate", 0)
+    ct_rejected_missing_domain = (telemetry or {}).get("ct_rejected_missing_domain", 0)
+    ct_rejected_missing_value = (telemetry or {}).get("ct_rejected_missing_value", 0)
+
+    # F214A: ct_raw_sample — up to 5 sanitized raw entries (first 5 hits)
+    ct_raw_sample = []
+    # Shape keys from all hits (for diagnostics)
+    shape_keys: set[str] = set()
+
+    # F214A: ct_conversion_summary — narrative of what happened to raw entries
 
     return {
         "rawHits": raw_hits_count,
@@ -860,11 +972,25 @@ def summarize_ct_conversion(
         "ctRawEntries": ct_raw_entries,
         "ctExtractedDomains": ct_extracted_domains,
         "ctCandidateDomains": ct_candidate_domains,
+        "ctCandidatesBuilt": ct_candidates_built,
+        "ctCandidatesStored": ct_candidates_stored,
+        "ctStorageRejected": ct_storage_rejected,
         **taxonomy,
         "ctRejectedWildcard": ct_rejected_wildcard,
         "ctRejectedInvalid": ct_rejected_invalid,
         "ctRejectedDuplicate": ct_rejected_duplicate,
+        "ctRejectedMissingDomain": ct_rejected_missing_domain,
+        "ctRejectedMissingValue": ct_rejected_missing_value,
         "totalRejected": total_rejected,
         "totalProcessed": total_processed,
         "allRejectionReasons": all_rejection_reasons,
+        "ctRawSample": ct_raw_sample,
+        "ctConversionSummary": _make_ct_conversion_summary(
+            raw_hits_count=raw_hits_count,
+            ct_raw_entries=ct_raw_entries,
+            built=ct_candidates_built,
+            stored=ct_candidates_stored,
+            storage_rejected=ct_storage_rejected,
+            total_rejected=total_rejected,
+        ),
     }

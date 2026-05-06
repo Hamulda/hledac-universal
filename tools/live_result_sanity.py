@@ -26,6 +26,7 @@ class SanityVerdict(Enum):
     SANITY_FAIL_STALE_TERMINALITY = "SANITY_FAIL_STALE_TERMINALITY"
     SANITY_FAIL_WALLCLOCK_BUDGET = "SANITY_FAIL_WALLCLOCK_BUDGET"
     SANITY_FAIL_BENCHMARK_SHAPE_GAP = "SANITY_FAIL_BENCHMARK_SHAPE_GAP"
+    SANITY_FAIL_RESEARCH_QUALITY = "SANITY_FAIL_RESEARCH_QUALITY"
 
 
 @dataclass
@@ -71,6 +72,17 @@ class TraceSurface:
 
 
 @dataclass
+class QualitySurface:
+    """Parsed research quality surface."""
+
+    quality_gate: str | None = None
+    grade: str | None = None
+    total_quality_score: float | None = None
+    research_quality_comparable: bool | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class SanityResult:
     verdict: SanityVerdict = SanityVerdict.SANITY_PASS
     checks: dict[str, bool] = field(default_factory=dict)
@@ -78,6 +90,7 @@ class SanityResult:
     benchmark: BenchmarkSurface = field(default_factory=BenchmarkSurface)
     validator: ValidatorSurface = field(default_factory=ValidatorSurface)
     trace: TraceSurface = field(default_factory=TraceSurface)
+    quality_surface: QualitySurface = field(default_factory=QualitySurface)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +115,12 @@ class SanityResult:
                 "stage": self.trace.stage,
                 "detail": self.trace.detail,
                 "terminality_satisfied": self.trace.terminality_satisfied,
+            },
+            "quality": {
+                "quality_gate": self.quality_surface.quality_gate,
+                "grade": self.quality_surface.grade,
+                "total_quality_score": self.quality_surface.total_quality_score,
+                "research_quality_comparable": self.quality_surface.research_quality_comparable,
             },
         }
 
@@ -134,6 +153,14 @@ class SanityResult:
             lines.append(f"- detail: {self.trace.detail}")
         if self.trace.terminality_satisfied is not None:
             lines.append(f"- terminality_satisfied: `{self.trace.terminality_satisfied}`")
+        if self.quality_surface.quality_gate is not None:
+            lines += ["", "## Research Quality", "", f"- quality_gate: `{self.quality_surface.quality_gate}`"]
+            if self.quality_surface.grade:
+                lines.append(f"- grade: `{self.quality_surface.grade}`")
+            if self.quality_surface.total_quality_score is not None:
+                lines.append(f"- score: {self.quality_surface.total_quality_score:.1f}")
+            if self.quality_surface.research_quality_comparable is not None:
+                lines.append(f"- comparable: {self.quality_surface.research_quality_comparable}")
         return "\n".join(lines)
 
 
@@ -225,6 +252,15 @@ def parse_trace(raw: dict[str, Any]) -> TraceSurface:
     return surf
 
 
+def parse_quality(raw: dict[str, Any]) -> QualitySurface:
+    surf = QualitySurface(raw=raw)
+    surf.quality_gate = raw.get("quality_gate")
+    surf.grade = raw.get("grade")
+    surf.total_quality_score = raw.get("total_quality_score")
+    surf.research_quality_comparable = raw.get("research_quality_comparable")
+    return surf
+
+
 # ---------------------------------------------------------------------------
 # Sanity checks
 # ---------------------------------------------------------------------------
@@ -295,6 +331,48 @@ def _check_feed_only_accepted_nonfeed_attempted(
     return True, None
 
 
+def _check_research_quality(
+    q: QualitySurface,
+    min_grade: str | None,
+    allow_feed_only: bool,
+) -> tuple[bool, str | None]:
+    """
+    Check research quality gate.
+
+    Fails if:
+    - quality_gate is QUALITY_FAIL_FEED_ONLY and not allow_feed_only
+    - quality_gate is any other QUALITY_FAIL_* (always fail)
+    - grade is below min_grade threshold (even for warnings)
+
+    Passes (with warning) for QUALITY_WARN_MULTISOURCE_SHALLOW only when above min_grade.
+    """
+    if q.quality_gate is None:
+        return True, None
+
+    # Check minimum grade threshold first — applies to all gates including warnings
+    if min_grade is not None and q.grade is not None:
+        grade_order = ["FEED_ONLY", "MULTISOURCE_SHALLOW", "MULTISOURCE_USEFUL", "DEEP_RESEARCH_READY"]
+        try:
+            min_idx = grade_order.index(min_grade)
+            actual_idx = grade_order.index(q.grade)
+            if actual_idx < min_idx:
+                return False, f"Grade {q.grade} is below minimum required grade {min_grade}"
+        except ValueError:
+            pass  # Unknown grade, skip check
+
+    # Always fail for any QUALITY_FAIL_* unless feed_only is allowed and this is FEED_ONLY
+    if q.quality_gate.startswith("QUALITY_FAIL_"):
+        if q.quality_gate == "QUALITY_FAIL_FEED_ONLY" and allow_feed_only:
+            return True, None
+        return False, f"Research quality gate failed: {q.quality_gate}"
+
+    # Warn for QUALITY_WARN_MULTISOURCE_SHALLOW but do not fail (min grade already checked above)
+    if q.quality_gate == "QUALITY_WARN_MULTISOURCE_SHALLOW":
+        return True, None
+
+    return True, None
+
+
 # ---------------------------------------------------------------------------
 # Main checker
 # ---------------------------------------------------------------------------
@@ -307,6 +385,10 @@ def sanity_check(
     validator_raw: dict[str, Any] | None = None,
     trace_raw: dict[str, Any] | None = None,
     allow_stale_trace: bool = False,
+    quality_path: str | Path | None = None,
+    quality_raw: dict[str, Any] | None = None,
+    min_quality_grade: str | None = None,
+    allow_feed_only: bool = False,
 ) -> SanityResult:
     """Load and sanity-check a result bundle.
 
@@ -327,14 +409,20 @@ def sanity_check(
         raw_t = json.loads(Path(trace_path).read_text())
     else:
         raw_t = trace_raw or {}
+    if quality_path and not quality_raw:
+        raw_q = json.loads(Path(quality_path).read_text())
+    else:
+        raw_q = quality_raw or {}
 
     b = parse_benchmark(raw_b)
     v = parse_validator(raw_v)
     t = parse_trace(raw_t)
+    q = parse_quality(raw_q)
 
     result.benchmark = b
     result.validator = v
     result.trace = t
+    result.quality_surface = q
 
     # Run all checks
     checks = {}
@@ -369,15 +457,24 @@ def sanity_check(
         assert msg is not None
         result.disagreements.append(msg)
 
+    ok, msg = _check_research_quality(q, min_quality_grade, allow_feed_only)
+    checks["research_quality"] = ok
+    if not ok:
+        assert msg is not None
+        result.disagreements.append(msg)
+
     result.checks = checks
 
-    # Determine verdict — priority: WALLCLOCK > STALE_TERMINALITY > SHAPE_GAP > SURFACE_DISAGREEMENT
+    # Determine verdict — priority: RESEARCH_QUALITY > WALLCLOCK > STALE > SHAPE > SURFACE
     if result.disagreements:
+        has_quality = any("Research quality gate" in d or "Grade" in d for d in result.disagreements)
         has_wallclock = any("actual=" in d for d in result.disagreements)
         has_stale = any("Stale trace verdict" in d for d in result.disagreements)
         has_shape = any("internal trace" in d for d in result.disagreements)
 
-        if has_wallclock:
+        if has_quality:
+            result.verdict = SanityVerdict.SANITY_FAIL_RESEARCH_QUALITY
+        elif has_wallclock:
             result.verdict = SanityVerdict.SANITY_FAIL_WALLCLOCK_BUDGET
         elif has_stale:
             result.verdict = SanityVerdict.SANITY_FAIL_STALE_TERMINALITY
@@ -396,10 +493,13 @@ def sanity_check(
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="F210E Live Result Bundle Sanity Checker")
+    parser = argparse.ArgumentParser(description="F211C Live Result Bundle Sanity Checker")
     parser.add_argument("--benchmark-json", type=Path)
     parser.add_argument("--validation-json", type=Path)
     parser.add_argument("--trace-json", type=Path)
+    parser.add_argument("--quality-json", type=Path, help="Path to research quality score JSON from research_quality_score.py")
+    parser.add_argument("--min-quality-grade", type=str, default=None,
+                        help="Minimum acceptable grade (FEED_ONLY, MULTISOURCE_SHALLOW, MULTISOURCE_USEFUL, DEEP_RESEARCH_READY)")
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
     parser.add_argument(
@@ -408,6 +508,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="Do not fail when stale trace verdicts are present",
     )
+    parser.add_argument(
+        "--allow-feed-only",
+        action="store_true",
+        default=False,
+        help="Do not fail when research quality gate is FEED_ONLY (smoke mode only)",
+    )
     args = parser.parse_args(argv)
 
     result = sanity_check(
@@ -415,6 +521,9 @@ def main(argv: list[str] | None = None) -> int:
         validation_path=args.validation_json,
         trace_path=args.trace_json,
         allow_stale_trace=args.allow_stale_trace,
+        quality_path=args.quality_json,
+        min_quality_grade=args.min_quality_grade,
+        allow_feed_only=args.allow_feed_only,
     )
 
     if args.output_json:

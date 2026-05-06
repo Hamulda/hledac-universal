@@ -48,6 +48,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# F214C: research_quality integration (no network, no MLX — pure scoring)
+from tools.research_quality_score import score_research_quality
+
 # -----------------------------------------------------------------------------
 # Profile definitions
 # ---------------------------------------------------------------------------
@@ -290,6 +293,12 @@ class LiveMeasurementResult:
             # Dict form: {"public": {...}, "ct": {...}}
             d["public_terminal_state"] = "COMPLETED" if _sfo.get("public", {}).get("attempted") else "NEVER_ATTEMPTED"
             d["ct_terminal_state"] = "COMPLETED" if _sfo.get("ct", {}).get("attempted") else "NEVER_ATTEMPTED"
+        # F214F: Research quality top-level fields extracted from live_kpi["research_quality"]
+        _rq = _lk.get("research_quality", {})
+        if isinstance(_rq, dict):
+            d["research_quality_grade"] = _rq.get("grade")
+            d["research_quality_score"] = _rq.get("total_quality_score")
+            d["research_quality_comparable"] = _rq.get("research_quality_comparable")
         return d
 
     def to_json(self) -> str:
@@ -568,13 +577,26 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
 
             # findings_count
             branch_mix = rt.get("branch_mix", {})
+            # F214D: lane_verdict contains CT bridge loss telemetry including ct_findings
+            lane_verdict = rt.get("lane_verdict", {}) or {}
+            _lane_ct_findings = lane_verdict.get("ct_findings", 0) if isinstance(lane_verdict, dict) else 0
             result["findings_count"] = (
                 summary.get("findings_count")
                 or data.get("findings_count")
                 or branch_mix.get("feed_findings", 0)
                 + branch_mix.get("public_findings", 0)
-                + branch_mix.get("ct_findings", 0)
+                + _lane_ct_findings
             )
+            # F214D: Expose ct_loss_stage from lane_verdict in the parsed result
+            if isinstance(lane_verdict, dict):
+                result["ct_loss_stage"] = lane_verdict.get("ct_loss_stage", "no_loss")
+                result["ct_bridge_invoked"] = lane_verdict.get("ct_bridge_invoked", False)
+                result["ct_raw_sample_count"] = lane_verdict.get("ct_raw_sample_count", 0)
+                result["ct_candidates_built"] = lane_verdict.get("ct_candidates_built", 0)
+                result["ct_bridge_rejections_count"] = lane_verdict.get("ct_bridge_rejections_count", 0)
+                result["ct_candidates_accumulated"] = lane_verdict.get("ct_candidates_accumulated", 0)
+                result["ct_candidates_stored"] = lane_verdict.get("ct_candidates_stored", 0)
+                result["ct_storage_rejected"] = lane_verdict.get("ct_storage_rejected", 0)
 
             result["cycles_completed"] = rt.get("cycles_completed")
             result["cycles_started"] = rt.get("cycles_started")
@@ -773,6 +795,18 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
         result["primary_signal_source"] = (
             rt.get("primary_signal_source") or summary.get("primary_signal_source")
         )
+
+        # F214D: lane_verdict contains CT bridge loss telemetry
+        lane_verdict = rt.get("lane_verdict", {}) or {}
+        if isinstance(lane_verdict, dict):
+            result["ct_loss_stage"] = lane_verdict.get("ct_loss_stage", "no_loss")
+            result["ct_bridge_invoked"] = lane_verdict.get("ct_bridge_invoked", False)
+            result["ct_raw_sample_count"] = lane_verdict.get("ct_raw_sample_count", 0)
+            result["ct_candidates_built"] = lane_verdict.get("ct_candidates_built", 0)
+            result["ct_bridge_rejections_count"] = lane_verdict.get("ct_bridge_rejections_count", 0)
+            result["ct_candidates_accumulated"] = lane_verdict.get("ct_candidates_accumulated", 0)
+            result["ct_candidates_stored"] = lane_verdict.get("ct_candidates_stored", 0)
+            result["ct_storage_rejected"] = lane_verdict.get("ct_storage_rejected", 0)
 
         pp = data.get("public_pipeline") or {}
         result["public_pipeline"] = pp if isinstance(pp, dict) else None
@@ -1029,6 +1063,15 @@ def _derive_live_kpi(
       - terminality_failure_reasons           (F208I)
       - acquisition_report_schema_version      (F208I)
       - explicit_source_family_outcomes        (F210B)
+      # F214D: CT Live Bridge Loss Telemetry
+      - ct_loss_stage                       (F214D)  # from lane_verdict
+      - ct_bridge_invoked                  (F214D)  # from lane_verdict
+      - ct_raw_sample_count                (F214D)  # from lane_verdict
+      - ct_candidates_built                (F214D)  # from lane_verdict
+      - ct_bridge_rejections_count         (F214D)  # from lane_verdict
+      - ct_candidates_accumulated          (F214D)  # from lane_verdict
+      - ct_candidates_stored               (F214D)  # from lane_verdict
+      - ct_storage_rejected                (F214D)  # from lane_verdict
 
     Feed telemetry preference (F207K-C):
     - If runtime_truth contains rich feed_telemetry (F207I path), use it.
@@ -1043,6 +1086,8 @@ def _derive_live_kpi(
     """
     rt = runtime_truth or {}
     branch_mix = rt.get("branch_mix", {})
+    # F214D: CT Live Bridge Loss — lane_verdict carries all ct_loss_* telemetry
+    lane_verdict = rt.get("lane_verdict", {}) or {}
 
     # Rich feed telemetry from feed path (F207I), if present
     feed_telemetry = rt.get("feed_telemetry")
@@ -1490,6 +1535,15 @@ def _derive_live_kpi(
         "acquisition_prelude_errors": acquisition_prelude_errors,
         "acquisition_prelude_duration_s": acquisition_prelude_duration_s,
         "acquisition_prelude_reason": acquisition_prelude_reason,
+        # F214D: CT Live Bridge Loss Telemetry
+        "ct_loss_stage": lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss",
+        "ct_bridge_invoked": lane_verdict.get("ct_bridge_invoked", False) if isinstance(lane_verdict, dict) else False,
+        "ct_raw_sample_count": lane_verdict.get("ct_raw_sample_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_candidates_built": lane_verdict.get("ct_candidates_built", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_bridge_rejections_count": lane_verdict.get("ct_bridge_rejections_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_candidates_accumulated": lane_verdict.get("ct_candidates_accumulated", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_candidates_stored": lane_verdict.get("ct_candidates_stored", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_storage_rejected": lane_verdict.get("ct_storage_rejected", 0) if isinstance(lane_verdict, dict) else 0,
     }
 
 
@@ -1829,6 +1883,18 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         planned_duration_s=getattr(result, "planned_duration_s", None),
     )
     result.live_kpi = kpi
+
+    # F214C: Stamp research quality score into live_kpi
+    # score_research_quality expects a dict with runtime_truth / live_kpi fields
+    _rq_data = {
+        "mode": "live",
+        "findings_count": result.findings_count,
+        "runtime_truth": result.runtime_truth or {},
+        "live_kpi": kpi,
+        "uma_post_swap_gib": result.uma_post_swap_gib,
+    }
+    _rq = score_research_quality(_rq_data)
+    result.live_kpi["research_quality"] = _rq
 
 
 # ---------------------------------------------------------------------------
@@ -2645,6 +2711,41 @@ def _render_md(result: LiveMeasurementResult) -> str:
             f"| Hardware constrained | {kpi.get('hardware_constrained', 'N/A')} |",
             f"| **Next action** | **{kpi.get('next_action', 'unknown')}** |",
         ])
+
+        # F214C: Research Quality Score section — render when research_quality is present
+        _rq = kpi.get('research_quality')
+        if _rq:
+            _grade = _rq.get('grade', 'N/A')
+            _score = _rq.get('total_quality_score', 0.0)
+            _comp = _rq.get('components', {})
+            _flags = _rq.get('diagnostic_flags', {})
+            _comp_flag = _rq.get('comparable', True)
+            lines.extend([
+                "",
+                "## Research Quality Score",
+                "",
+                f"| Metric | Value |",
+                f"| --- | --- |",
+                f"| Total score | {_score:.1f}/100 |",
+                f"| Grade | `{_grade}` |",
+                f"| Comparable | {_comp_flag} |",
+                f"| Wallclock exceeded | {_flags.get('wallclock_exceeded', 'N/A')} |",
+                f"| Swap GiB | {_flags.get('swap_gib', 'N/A')} |",
+                f"| Swap warning | {_flags.get('swap_warning', 'N/A')} |",
+                f"| Hardware constrained | {_flags.get('hardware_constrained', 'N/A')} |",
+                "",
+                "| Component | Score |",
+                "| --- | --- |",
+                f"| Findings volume | {_comp.get('findings_volume_score', 0.0):.1f} |",
+                f"| Source diversity | {_comp.get('source_diversity_score', 0.0):.1f} |",
+                f"| Nonfeed evidence | {_comp.get('nonfeed_evidence_score', 0.0):.1f} |",
+                f"| CT evidence | {_comp.get('ct_evidence_score', 0.0):.1f} |",
+                f"| Public evidence | {_comp.get('public_evidence_score', 0.0):.1f} |",
+                f"| Passive evidence | {_comp.get('passive_evidence_score', 0.0):.1f} |",
+                f"| Feed dominance penalty | -{_comp.get('feed_dominance_penalty', 0.0):.1f} |",
+                f"| Wallclock penalty | -{_comp.get('wallclock_penalty', 0.0):.1f} |",
+                f"| Memory taint penalty | -{_comp.get('memory_taint_penalty', 0.0):.1f} |",
+            ])
 
         # Non-feed Starvation section (F207M)
         # Renders whenever timing data or eligible families are present

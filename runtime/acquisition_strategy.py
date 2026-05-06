@@ -1302,7 +1302,7 @@ async def run_enabled_acquisition_lanes(
                 ct_results_raw = ct_outcome.raw_count
 
                 # [F207K-A] Bridge conversion: raw hits → CanonicalFinding candidates + rejections
-                candidates, rejections = ct_results_to_findings(
+                candidates, rejections, _ct_telemetry = ct_results_to_findings(
                     result, ct_outcome, query, sprint_id=f"ct-{int(time.time())}"
                 )
                 candidate_findings = tuple(candidates)

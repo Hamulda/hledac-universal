@@ -283,6 +283,31 @@ _TIER_ORDER = [
     SourceTier.OTHER,
 ]
 
+
+# ---------------------------------------------------------------------------
+# CT Bridge Loss Tracking (F214D)
+# ---------------------------------------------------------------------------
+
+
+class CTLossStage(Enum):
+    """Enum describing where CT raw evidence is lost in the live bridge path.
+
+    Canonical live path: crtsh_adapter → ct_results_to_findings → candidates →
+    duckdb async_ingest → lane_ct_accepted_findings → benchmark report.
+
+    Any deviation from this path constitutes a loss stage.
+    """
+
+    NO_RAW = "no_raw"  # CT adapter returned 0 hits
+    BRIDGE_NOT_INVOKED = "bridge_not_invoked"  # CT raw existed but bridge was never called
+    UNSUPPORTED_RAW_SHAPE = "unsupported_raw_shape"  # batch_result has no .hits attribute
+    ALL_REJECTED_BY_BRIDGE = "all_rejected_by_bridge"  # hits existed but all candidates rejected
+    CANDIDATES_BUILT_NOT_ACCUMULATED = "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them
+    ACCUMULATED_NOT_STORED = "accumulated_not_stored"  # candidates accumulated but storage rejected
+    STORED_NOT_REPORTED = "stored_not_reported"  # stored in DB but not visible in benchmark
+    NO_LOSS = "no_loss"  # full path succeeded: raw → candidates → stored → reported
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -388,6 +413,17 @@ class SprintSchedulerResult:
     # additive to feed/public accepted_findings in canonical sprint truth surfaces
     ct_log_accepted_findings: int = 0
     ct_log_error: str = ""
+    # Sprint F214D: CT Bridge Loss Audit — tracks where raw CT evidence is lost
+    ct_loss_stage: str = "no_loss"
+    ct_bridge_invoked: bool = False
+    ct_raw_sample_keys: tuple[str, ...] = ()
+    ct_raw_sample_count: int = 0
+    ct_candidates_built: int = 0
+    ct_bridge_rejections_count: int = 0
+    ct_bridge_rejection_reasons: tuple[str, ...] = ()
+    ct_candidates_accumulated: int = 0
+    ct_candidates_stored: int = 0
+    ct_storage_rejected: int = 0
     # Sprint F166B: Pre-loop starvation tracking
     # Set when ACTIVE phase is first observed (loop guard entry)
     entered_active_at_monotonic: float | None = None
@@ -2239,6 +2275,7 @@ class SprintScheduler:
             _sample_rejections: tuple = ()
             _ct_error: str | None = None
             _ct_results_raw = 0
+            _candidates: tuple = ()  # initialized; set by ct_results_to_findings on success
             try:
                 async with asyncio.timeout(15.0):
                     _ct_call = _get_ct_adapter()
@@ -2255,7 +2292,7 @@ class SprintScheduler:
                     _ct_results_raw = ct_outcome.raw_count
 
                     # Bridge conversion
-                    candidates, rejections = ct_results_to_findings(
+                    candidates, rejections, _ct_telemetry = ct_results_to_findings(
                         result, ct_outcome, query, sprint_id=f"predispatch-{int(_time.time())}"
                     )
                     _candidate_findings = tuple(candidates)
@@ -2278,6 +2315,52 @@ class SprintScheduler:
                                 pass
                     if ct_outcome.error:
                         _ct_error = ct_outcome.error
+
+                    # ── Sprint F214D: CT Bridge Loss Audit ───────────────────────────
+                    # Derive ct_loss_stage and store telemetry on SprintSchedulerResult.
+                    # Bridge telemetry: _ct_telemetry (dict with ct_raw_entries,
+                    # ct_candidate_domains, ct_accepted_candidates, etc.)
+                    _bridge_raw = _ct_telemetry.get("ct_raw_entries", 0) if isinstance(_ct_telemetry, dict) else 0
+                    _bridge_candidates = len(candidates) if candidates else 0
+
+                    # Sanitized sample keys from raw hits (capped at 3 — no raw data exposed)
+                    _raw_keys: tuple[str, ...] = ()
+                    if _bridge_raw > 0 and hasattr(result, "hits") and result.hits:
+                        _sample_hits = list(result.hits)[:3]
+                        _raw_keys = tuple(sorted(set(
+                            k for hit in _sample_hits
+                            for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
+                            if k
+                        )))
+
+                    if _ct_results_raw == 0:
+                        _ct_loss_stage = CTLossStage.NO_RAW.value
+                    elif _bridge_candidates == 0 and _bridge_raw > 0:
+                        _ct_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
+                    elif _bridge_candidates > 0 and accepted == 0:
+                        _ct_loss_stage = CTLossStage.ACCUMULATED_NOT_STORED.value
+                    elif _bridge_candidates > 0 and accepted > 0:
+                        _ct_loss_stage = CTLossStage.NO_LOSS.value
+                    else:
+                        _ct_loss_stage = CTLossStage.BRIDGE_NOT_INVOKED.value
+
+                    # Persist CT bridge loss telemetry onto the canonical result
+                    self._result.ct_loss_stage = _ct_loss_stage
+                    self._result.ct_bridge_invoked = True
+                    self._result.ct_raw_sample_keys = _raw_keys
+                    self._result.ct_raw_sample_count = _bridge_raw
+                    self._result.ct_candidates_built = _bridge_candidates
+                    self._result.ct_bridge_rejections_count = _rejected_count
+                    self._result.ct_bridge_rejection_reasons = (
+                        str(_ct_telemetry.get("ct_rejected_wildcard", 0)) if isinstance(_ct_telemetry, dict) else "0",
+                        str(_ct_telemetry.get("ct_rejected_invalid", 0)) if isinstance(_ct_telemetry, dict) else "0",
+                        str(_ct_telemetry.get("ct_rejected_duplicate", 0)) if isinstance(_ct_telemetry, dict) else "0",
+                        str(_ct_telemetry.get("ct_rejected_missing_domain", 0)) if isinstance(_ct_telemetry, dict) else "0",
+                    )
+                    self._result.ct_candidates_accumulated = _bridge_candidates
+                    self._result.ct_candidates_stored = accepted
+                    self._result.ct_storage_rejected = max(0, _bridge_candidates - accepted)
+                    # ── End F214D ────────────────────────────────────────────────
 
                     return AcquisitionLaneOutcome(
                         lane=AcquisitionLane.CT,
@@ -2789,6 +2872,11 @@ class SprintScheduler:
         # ── CT prelude ───────────────────────────────────────────────────────
         if _needs_ct:
             _ct_outcome_prelude: Any = None
+            # F214D: Initialize CT prelude variables to avoid NameError in finally block
+            # These are set by ct_results_to_findings on success inside the inner try
+            _ct_result: Any = None
+            _candidates_prelude: tuple = ()
+            _rejections_prelude: tuple = ()
             try:
                 from hledac.universal.runtime.acquisition_strategy import (
                     build_lane_query,
@@ -2815,7 +2903,7 @@ class SprintScheduler:
                         _ct_error = getattr(_ct_outcome_obj, 'error', None)
 
                         # Convert to CanonicalFinding candidates (not stored in DB during prelude)
-                        _candidates, _rejections = ct_results_to_findings(
+                        _candidates_prelude, _rejections_prelude, _ct_telemetry_prelude = ct_results_to_findings(
                             _ct_result, _ct_outcome_obj, query, sprint_id=f"prelude-{int(_time.time())}"
                         )
                         _accepted = 0
@@ -2831,10 +2919,10 @@ class SprintScheduler:
                             ct_query=str(_shaped),
                             ct_results_raw=_ct_results_raw,
                             error=_ct_error,
-                            candidate_findings=tuple(_candidates),
-                            rejection_reasons=tuple(_rejections),
-                            rejected_count=len(_rejections),
-                            sample_rejections=tuple(_rejections[:3]),
+                            candidate_findings=tuple(_candidates_prelude),
+                            rejection_reasons=tuple(_rejections_prelude),
+                            rejected_count=len(_rejections_prelude),
+                            sample_rejections=tuple(_rejections_prelude[:3]),
                         )
                         _attempted_lanes.append("CT")
                         # raw>0 and accepted=0 is success_empty terminal
@@ -2867,6 +2955,37 @@ class SprintScheduler:
                 _prelude_outcomes.append(_ct_outcome_prelude)
                 # Also update counters
                 self._result.ct_log_discovered = getattr(_ct_outcome_prelude, 'ct_results_raw', 0) or 0
+                # ── Sprint F214D: CT Bridge Loss Audit (prelude path) ────────────
+                # Prelude does NOT accumulate into DuckDB, so accepted_findings=0 always.
+                # Any candidates built by the bridge are lost if not accumulated.
+                # _candidates is initialized to () above; set by ct_results_to_findings on success.
+                _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
+                if _ct_results_raw == 0:
+                    _prelude_loss_stage = CTLossStage.NO_RAW.value
+                elif _prelude_candidates == 0 and _ct_results_raw > 0:
+                    _prelude_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
+                else:
+                    _prelude_loss_stage = CTLossStage.CANDIDATES_BUILT_NOT_ACCUMULATED.value
+                # Sample keys from prelude hits
+                # _ct_result is set by the CT adapter on success; guarded by _ct_results_raw > 0
+                _prelude_keys: tuple[str, ...] = ()
+                if _ct_results_raw > 0 and hasattr(_ct_result, 'hits') and _ct_result.hits:
+                    _prelude_keys = tuple(sorted(set(
+                        k for hit in list(_ct_result.hits)[:3]
+                        for k in (getattr(hit, "url", None), getattr(hit, "ct_name_value", None))
+                        if k
+                    )))
+                self._result.ct_loss_stage = _prelude_loss_stage
+                self._result.ct_bridge_invoked = True
+                self._result.ct_raw_sample_keys = _prelude_keys
+                self._result.ct_raw_sample_count = _ct_results_raw
+                self._result.ct_candidates_built = _prelude_candidates
+                self._result.ct_bridge_rejections_count = len(_rejections_prelude) if _rejections_prelude else 0
+                self._result.ct_bridge_rejection_reasons = tuple(str(r) for r in (_rejections_prelude[:3] if _rejections_prelude else []))
+                self._result.ct_candidates_accumulated = 0  # prelude does not accumulate
+                self._result.ct_candidates_stored = 0  # prelude does not store
+                self._result.ct_storage_rejected = 0
+                # ── End F214D ─────────────────────────────────────────────────
 
         # Accumulate outcomes
         if _prelude_outcomes:
@@ -3270,6 +3389,19 @@ class SprintScheduler:
                 remaining_s, self._config._MIN_BRANCH_REMAINING_S,
             )
             self._result.public_error = "terminal:remaining_too_low"
+            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": True,
+                "skip_reason": "terminal:remaining_too_low",
+                "raw_count": 0,
+                "built_count": 0,
+                "accepted_count": 0,
+                "error": "terminal:remaining_too_low",
+                "timeout": False,
+                "duration_s": None,
+            }
         else:
             try:
                 async with asyncio.timeout(public_timeout):
@@ -3283,6 +3415,19 @@ class SprintScheduler:
                 log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
                 self._result.public_branch_timed_out = True
                 self._result.public_error = "terminal:timeout"
+                # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": self._result.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": self._result.public_accepted_findings,
+                    "error": "terminal:timeout",
+                    "timeout": True,
+                    "duration_s": public_timeout,
+                }
             except asyncio.CancelledError:
                 log.debug("[stable] PUBLIC branch cancelled")
                 raise  # [I6] propagate CancelledError
@@ -3442,6 +3587,19 @@ class SprintScheduler:
             if branch_timeout <= 0:
                 log.debug("[F212-B] PUBLIC branch skipped: remaining=%.1fs", remaining_s)
                 self._result.public_error = "terminal:remaining_too_low"
+                # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": True,
+                    "skip_reason": "terminal:remaining_too_low",
+                    "raw_count": 0,
+                    "built_count": 0,
+                    "accepted_count": 0,
+                    "error": "terminal:remaining_too_low",
+                    "timeout": False,
+                    "duration_s": None,
+                }
                 return
             try:
                 async with _asyncio.timeout(branch_timeout):
@@ -3455,12 +3613,38 @@ class SprintScheduler:
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
                 self._result.public_branch_timed_out = True
                 self._result.public_error = "terminal:timeout"
+                # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": self._result.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": self._result.public_accepted_findings,
+                    "error": "terminal:timeout",
+                    "timeout": True,
+                    "duration_s": branch_timeout,
+                }
             except _asyncio.CancelledError:
                 log.debug("[aggressive] Public branch cancelled")
                 raise  # [I6] propagate CancelledError
             except Exception as exc:
                 log.debug("[aggressive] Public branch error: %s", exc)
                 self._result.public_error = f"{type(exc).__name__}:{exc}"
+                # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": self._result.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": self._result.public_accepted_findings,
+                    "error": f"{type(exc).__name__}:{exc}",
+                    "timeout": False,
+                    "duration_s": branch_timeout,
+                }
 
         async def _run_ct_branch() -> None:
             """CT log discovery branch with remaining-time-aware asyncio.timeout."""
@@ -3506,7 +3690,22 @@ class SprintScheduler:
                 self._result.public_branch_timed_out = True
                 self._result.ct_branch_timed_out = True
                 self._result.branch_timeout_count += 2
+                self._result.public_error = "terminal:envelope_timeout"
+                self._result.ct_log_error = "terminal:envelope_timeout"
                 results = []
+                # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+                self._public_outcome = {
+                    "lane": "PUBLIC",
+                    "attempted": True,
+                    "skipped": False,
+                    "skip_reason": None,
+                    "raw_count": self._result.public_discovered,
+                    "built_count": 0,
+                    "accepted_count": self._result.public_accepted_findings,
+                    "error": "terminal:envelope_timeout",
+                    "timeout": True,
+                    "duration_s": outer_timeout,
+                }
             except _asyncio.CancelledError:
                 log.debug("[aggressive] Aggressive cycle cancelled")
                 raise  # [I6] propagate CancelledError
@@ -3519,6 +3718,21 @@ class SprintScheduler:
             self._result.public_branch_timed_out = True
             self._result.ct_branch_timed_out = True
             self._result.branch_timeout_count += 2
+            self._result.public_error = "terminal:remaining_too_low"
+            self._result.ct_log_error = "terminal:remaining_too_low"
+            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": True,
+                "skip_reason": "terminal:remaining_too_low",
+                "raw_count": 0,
+                "built_count": 0,
+                "accepted_count": 0,
+                "error": "terminal:remaining_too_low",
+                "timeout": False,
+                "duration_s": None,
+            }
 
         # Sprint F207A: Run enabled multi-source acquisition lanes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
         # STEALTH excluded — never auto-runs; FEED, PUBLIC, CT already handled as branches above
@@ -3574,6 +3788,19 @@ class SprintScheduler:
         except Exception as exc:
             log.debug(f"[8XE] Public pipeline import failed: {exc}")
             self._result.public_error = f"import:{type(exc).__name__}"
+            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": False,
+                "skip_reason": None,
+                "raw_count": self._result.public_discovered,
+                "built_count": 0,
+                "accepted_count": self._result.public_accepted_findings,
+                "error": f"import:{type(exc).__name__}",
+                "timeout": False,
+                "duration_s": None,
+            }
             return
 
         # Build query hint: real sprint query from __main__.py takes priority
@@ -3603,10 +3830,36 @@ class SprintScheduler:
                     raise e  # [I6] propagate CancelledError
                 log.error(f"Public pipeline task failed: {e}")
             self._result.public_error = f"TaskGroup: {type(eg).__name__}"
+            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": False,
+                "skip_reason": None,
+                "raw_count": self._result.public_discovered,
+                "built_count": 0,
+                "accepted_count": self._result.public_accepted_findings,
+                "error": f"TaskGroup: {type(eg).__name__}",
+                "timeout": False,
+                "duration_s": None,
+            }
             return
         except Exception as exc:
             log.debug(f"[8XE] Public pipeline error: {exc}")
             self._result.public_error = f"{type(exc).__name__}:{exc}"
+            # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
+            self._public_outcome = {
+                "lane": "PUBLIC",
+                "attempted": True,
+                "skipped": False,
+                "skip_reason": None,
+                "raw_count": self._result.public_discovered,
+                "built_count": 0,
+                "accepted_count": self._result.public_accepted_findings,
+                "error": f"{type(exc).__name__}:{exc}",
+                "timeout": False,
+                "duration_s": None,
+            }
             return
 
         # Task succeeded - accumulate results
@@ -7909,6 +8162,15 @@ class SprintScheduler:
                     "wayback_findings": self._result.lane_wayback_accepted_findings,
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
+                    # Sprint F214D: CT Bridge Loss Audit telemetry
+                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
+                    "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
+                    "ct_raw_sample_count": getattr(self._result, 'ct_raw_sample_count', 0),
+                    "ct_candidates_built": getattr(self._result, 'ct_candidates_built', 0),
+                    "ct_bridge_rejections_count": getattr(self._result, 'ct_bridge_rejections_count', 0),
+                    "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
+                    "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
+                    "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
                 }
         except Exception:
             result["lane_verdict"] = None
@@ -8074,6 +8336,15 @@ class SprintScheduler:
                     "wayback_findings": self._result.lane_wayback_accepted_findings,
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
+                    # Sprint F214D: CT Bridge Loss Audit telemetry
+                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
+                    "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
+                    "ct_raw_sample_count": getattr(self._result, 'ct_raw_sample_count', 0),
+                    "ct_candidates_built": getattr(self._result, 'ct_candidates_built', 0),
+                    "ct_bridge_rejections_count": getattr(self._result, 'ct_bridge_rejections_count', 0),
+                    "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
+                    "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
+                    "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
                 }
         except Exception:
             result["lane_verdict"] = None
