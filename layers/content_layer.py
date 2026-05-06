@@ -33,6 +33,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# F214OPT-A: selectolax-first HTML→text (used for OutputFormat.TEXT path)
+try:
+    from hledac.universal.utils.html_text_fast import html_to_text_fast
+
+    HTML_TEXT_FAST_AVAILABLE = True
+except ImportError:
+    HTML_TEXT_FAST_AVAILABLE = False
+    html_to_text_fast = None  # type: ignore[assignment]
+
 
 class OutputFormat(Enum):
     """Supported output formats."""
@@ -181,6 +190,20 @@ class SimpleHTMLCleaner:
                 format=output_format,
                 error="BeautifulSoup not available"
             )
+
+        # F214OPT-A: selectolax-first for OutputFormat.TEXT
+        if output_format == OutputFormat.TEXT and HTML_TEXT_FAST_AVAILABLE:
+            try:
+                content = html_to_text_fast(html)  # type: ignore[operator]
+                return CleaningResult(
+                    success=True,
+                    content=content,
+                    format=output_format,
+                    metadata={"method": "html_text_fast"}
+                )
+            except Exception as e:
+                logger.warning("html_to_text_fast failed for TEXT, falling back to BeautifulSoup: %s", e)
+                # fall through to BeautifulSoup path
 
         try:
             soup = self._bs4(html, 'html.parser')

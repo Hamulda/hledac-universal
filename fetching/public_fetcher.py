@@ -1810,6 +1810,7 @@ __all__ = [
 # HTML → text + pattern matching (CPU-bound, runs in shared CPU_EXECUTOR)
 # ---------------------------------------------------------------------------
 from hledac.universal.utils.executors import CPU_EXECUTOR
+from hledac.universal.utils.html_text_fast import html_to_text_fast
 
 
 def _sync_process_html(html: str) -> tuple[str, list]:
@@ -1822,13 +1823,10 @@ def _sync_process_html(html: str) -> tuple[str, list]:
     # configure_default_bootstrap_patterns_if_empty() in pattern_matcher.py.
     # Re-configuring on every call wastes CPU — removed per F184B.
 
-    # markdownify with plaintext fallback
-    try:
-        import markdownify as _md
-
-        text = _md.markdownify(html, strip=["script", "style"], heading_style="ATX")
-    except Exception as e:
-        logger.warning("markdownify failed, using regex fallback: %s", e)
+    # F214OPT-A: selectolax-first HTML→text extraction
+    text = html_to_text_fast(html)
+    if not text:
+        # Fail-soft: empty result on malformed HTML
         import html as _html
 
         text = re.sub(r"<[^>]+>", " ", _html.unescape(html))

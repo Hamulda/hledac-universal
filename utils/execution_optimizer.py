@@ -15,6 +15,7 @@ from dataclasses import dataclass, asdict, field
 from enum import Enum
 from datetime import datetime, timedelta
 import multiprocessing
+import os
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import threading
 from collections import deque
@@ -166,6 +167,63 @@ class ParallelExecutionOptimizer:
         self._execution_predictor = None
         self.load_balancer = LoadBalancer()
         self.resource_monitor = ResourceMonitor()
+        # Sprint F214OPT-D: Bounded pending ops — M1-safe default (4 concurrent)
+        # Higher values cause Metal memory pressure on M1 8GB
+        self._max_pending_ops = self._resolve_max_pending_ops()
+        self._pending_semaphore: Optional[asyncio.Semaphore] = None
+        # Sprint F214OPT-D: Telemetry
+        self._execution_max_pending = self._max_pending_ops
+        self._execution_pending_throttled_count = 0
+
+    @property
+    def _pending_limit(self) -> asyncio.Semaphore:
+        """Lazy semaphore for bounded pending ops.
+
+        F214OPT-D: Created on first access inside async context to avoid
+        creating asyncio primitives outside a running loop.
+        """
+        if self._pending_semaphore is None:
+            self._pending_semaphore = asyncio.Semaphore(self._max_pending_ops)
+        return self._pending_semaphore
+
+    def _resolve_max_pending_ops(self) -> int:
+        """Resolve max pending ops from env or return M1-safe default.
+
+        F214OPT-D: M1 8GB can only handle ~4-8 concurrent tasks before Metal
+        memory pressure causes OOM. Default to 4 (conservative) to leave headroom
+        for the LLM itself (~2GB KV cache + activations).
+        """
+        try:
+            raw = os.environ.get("HLEDAC_MAX_PENDING_OPS", "")
+            if raw:
+                val = int(raw)
+                # Sanitize: must be >= 1, cap at 16 for M1 8GB safety
+                return max(1, min(val, 16))
+        except (ValueError, TypeError):
+            pass
+        return 4  # M1-safe conservative default
+
+    async def _execute_with_semaphore(self, task: Callable) -> Any:
+        """Execute a single task with semaphore gating.
+
+        F214OPT-D: Wraps task execution with pending semaphore to prevent
+        unbounded concurrent task creation. Tracks throttling for telemetry.
+        """
+        try:
+            # F214OPT-D: Check if we need to wait before acquiring
+            if self._pending_limit.locked():
+                self._execution_pending_throttled_count += 1
+            await self._pending_limit.acquire()
+            try:
+                if inspect.iscoroutinefunction(task):
+                    return await task()
+                else:
+                    return await self._run_in_executor_safe(self.thread_pool, task)
+            finally:
+                self._pending_limit.release()
+        except asyncio.CancelledError:
+            self._pending_limit.release()
+            raise
 
     @property
     def execution_predictor(self):
@@ -419,14 +477,11 @@ class ParallelExecutionOptimizer:
         chunk_size = max(1, len(tasks) // max_workers)
         task_chunks = [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
 
-        # Execute chunks in parallel
+        # Execute chunks in parallel — semaphore gates each task to prevent unbounded pending
         async def execute_chunk(chunk):
             results = []
             for task in chunk:
-                if inspect.iscoroutinefunction(task):
-                        result = await task()
-                else:
-                    result = await self._run_in_executor_safe(self.thread_pool, task)
+                result = await self._execute_with_semaphore(task)
                 results.append(result)
             return results
 
@@ -452,11 +507,7 @@ class ParallelExecutionOptimizer:
             results = []
             for task in worker_tasks:
                 try:
-                    if inspect.iscoroutinefunction(task):
-                        result = await task()
-                    else:
-                        result = await self._run_in_executor_safe(self.thread_pool, task)
-                    results.append(result)
+                    result = await self._execute_with_semaphore(task)
                 except Exception as e:
                     logger.error(f"Task failed on worker {worker_id}: {e}")
                     results.append(None)
@@ -528,14 +579,11 @@ class ParallelExecutionOptimizer:
 
             batch_start = time.time()
 
-            # Execute batch
-            if inspect.iscoroutinefunction(batch[0]):
-                    batch_results = await asyncio.gather(*[task() for task in batch], return_exceptions=True)
-            else:
-                batch_results = await asyncio.gather(*[
-                    self._run_in_executor_safe(self.thread_pool, task)
-                    for task in batch
-                ], return_exceptions=True)
+            # Execute batch — F214OPT-D: semaphore gates each task to prevent unbounded pending
+            batch_results = await asyncio.gather(*[
+                self._execute_with_semaphore(task)
+                for task in batch
+            ], return_exceptions=True)
 
             results.extend(batch_results)
 
@@ -645,8 +693,9 @@ class ParallelExecutionOptimizer:
             cpu_workers = min(max_workers // 2, len(cpu_tasks))
             logger.info(f"Executing {len(cpu_tasks)} CPU tasks with {cpu_workers} workers")
 
+            # F214OPT-D: semaphore gates CPU tasks too
             cpu_results = await asyncio.gather(*[
-                self._run_in_executor_safe(self.process_pool, task)
+                self._execute_with_semaphore(task)
                 for task in cpu_tasks
             ], return_exceptions=True)
             results.extend(cpu_results)
@@ -657,7 +706,7 @@ class ParallelExecutionOptimizer:
             logger.info(f"Executing {len(memory_tasks)} memory tasks with {memory_workers} workers")
 
             memory_results = await asyncio.gather(*[
-                self._run_in_executor_safe(self.thread_pool, task)
+                self._execute_with_semaphore(task)
                 for task in memory_tasks
             ], return_exceptions=True)
             results.extend(memory_results)
@@ -668,12 +717,12 @@ class ParallelExecutionOptimizer:
             logger.info(f"Executing {len(io_tasks)} I/O tasks with {io_workers} workers")
 
             io_results = await asyncio.gather(*[
-                self._run_in_executor_safe(self.thread_pool, task)
+                self._execute_with_semaphore(task)
                 for task in io_tasks
             ], return_exceptions=True)
             results.extend(io_results)
 
-            return results
+        return results
 
     async def _train_prediction_model(self):
         """Train prediction model on historical task data"""
@@ -757,14 +806,11 @@ class ParallelExecutionOptimizer:
             batch_size = min(optimal_workers * 2, len(tasks) - task_index)
             batch = tasks[task_index:task_index + batch_size]
 
-            # Execute batch
-            if inspect.iscoroutinefunction(batch[0]):
-                    batch_results = await asyncio.gather(*[task() for task in batch], return_exceptions=True)
-            else:
-                batch_results = await asyncio.gather(*[
-                    self._run_in_executor_safe(self.thread_pool, task)
-                    for task in batch
-                ], return_exceptions=True)
+            # Execute batch — F214OPT-D: semaphore gates each task to prevent unbounded pending
+            batch_results = await asyncio.gather(*[
+                self._execute_with_semaphore(task)
+                for task in batch
+            ], return_exceptions=True)
 
             results.extend(batch_results)
             task_index += batch_size
@@ -845,13 +891,19 @@ class ParallelExecutionOptimizer:
     async def _record_execution_metrics(self, group_id: str, execution_time: float, task_count: int):
         """Record execution metrics for group"""
         if group_id in self.parallel_groups:
-                group = self.parallel_groups[group_id]
-
+            stored = self.parallel_groups[group_id]
+            # Sprint F214OPT-D FIX: stored dict has "payload" → ParallelGroup
+            group = stored.get("payload", stored)
+            # Fallback: if still a dict (legacy path), use stored['ts'] as start_time
+            if isinstance(group, dict):
+                _start_time = stored.get("ts", datetime.now())
+            else:
+                _start_time = group.created_at
             # Create aggregate metrics
-                metrics = TaskMetrics(
+            metrics = TaskMetrics(
                 task_id=group_id,
                 task_type=TaskType.MIXED,
-                start_time=group.created_at,
+                start_time=_start_time,
                 end_time=datetime.now(),
                 cpu_usage=psutil.cpu_percent(),
                 memory_usage=psutil.virtual_memory().percent / 100,
@@ -860,7 +912,7 @@ class ParallelExecutionOptimizer:
                 parallel_group=group_id
             )
 
-                self.task_history.append(metrics)
+            self.task_history.append(metrics)
 
     def get_performance_statistics(self) -> Dict[str, Any]:
         """Get performance statistics"""
@@ -880,6 +932,17 @@ class ParallelExecutionOptimizer:
         }
 
         return stats
+
+    # Sprint F214OPT-D: Bounded pending ops telemetry
+    def get_bounded_ops_telemetry(self) -> Dict[str, Any]:
+        """Return telemetry for bounded pending ops.
+
+        F214OPT-D: Exposes pending ops limits and throttling metrics.
+        """
+        return {
+            "execution_max_pending": self._execution_max_pending,
+            "execution_pending_throttled_count": self._execution_pending_throttled_count,
+        }
 
     def export_performance_report(self, filepath: str):
         """Export detailed performance report"""

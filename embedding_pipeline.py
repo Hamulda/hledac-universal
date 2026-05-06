@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, List
 
 import numpy as np
 import psutil
@@ -45,6 +45,124 @@ _BATCH_SIZE = 16
 
 # P19: Estimated embedding model size (ModernBERT ~500MB in 4bit)
 _ESTIMATED_EMBEDDING_MODEL_SIZE_GB = 0.5
+
+# F214OPT-F: Adaptive batch size default (never larger than this)
+_DEFAULT_BATCH_SIZE = 16
+
+# F214OPT-F: Env var names for batch override
+_ENV_BATCH_SIZE_VAR = "HLEDAC_MLX_EMBED_BATCH"
+_ENV_ALLOW_LARGE_BATCH_VAR = "HLEDAC_ALLOW_LARGE_MLX_BATCH"
+
+
+def _is_swap_detected() -> bool:
+    """Check if system is swapping (heuristic: psutil shows non-zero swap)."""
+    try:
+        import psutil
+        swap = psutil.swap_memory()
+        return swap.used > 0
+    except Exception:
+        return False
+
+
+def get_adaptive_batch_size() -> int:
+    """
+    F214OPT-F: UMA-aware adaptive embedding batch size resolver.
+
+    Returns a batch size that is safe for the current M1 8GB memory state.
+
+    Resolution order:
+    1. If UNA warn/critical/emergency: return 16 (memory pressure)
+    2. If swap detected: return 16 (system distress)
+    3. If HLEDAC_MLX_EMBED_BATCH env is set and valid: use it, capped at 32
+       unless HLEDAC_ALLOW_LARGE_MLX_BATCH=1
+    4. Otherwise: return _DEFAULT_BATCH_SIZE (16)
+
+    No model load at import time — only reads UMA status and env vars.
+
+    Returns:
+        int: Safe batch size, always >= 16 and <= 64.
+    """
+    # Step 1: UMA pressure — downgrade to safe minimum
+    try:
+        from hledac.universal.utils.uma_budget import (
+            is_uma_warn,
+            is_uma_critical,
+            is_uma_emergency,
+        )
+
+        if is_uma_emergency() or is_uma_critical() or is_uma_warn():
+            return 16
+    except Exception:
+        pass  # UMA not available — continue to env check
+
+    # Step 2: Swap detected — downgrade to safe minimum
+    if _is_swap_detected():
+        return 16
+
+    # Step 3: Env override
+    import os
+
+    raw_env = os.environ.get(_ENV_BATCH_SIZE_VAR, "").strip()
+    if raw_env:
+        try:
+            env_batch = int(raw_env)
+            if env_batch < 16:
+                return 16  # Invalid — fall back to safe minimum
+            if env_batch > 64:
+                env_batch = 64  # Cap at maximum
+
+            # Large batch (>32) requires explicit allow env
+            if env_batch > 32:
+                allow_large = os.environ.get(_ENV_ALLOW_LARGE_BATCH_VAR, "").strip()
+                if allow_large != "1":
+                    return 32  # Cap at 32 without explicit allow
+
+            return env_batch
+        except ValueError:
+            pass  # Non-integer env — ignore and fall back
+
+    # Step 4: Default safe
+    return _DEFAULT_BATCH_SIZE
+
+
+def _check_memory_guard() -> bool:
+    """
+    P19: Check if memory pressure allows embedding operations.
+
+    Returns False if RSS > _embed_max_rss_gb, preventing model load.
+    Also checks UmaWatchdog state for M1-specific pressure signals.
+
+    Returns:
+        True if safe to proceed, False to skip embedding.
+    """
+    # Check RSS against configurable limit
+    current_rss = _get_current_rss_gb()
+    if current_rss > _embed_max_rss_gb:
+        logger.warning(
+            f"[EMBED] Memory guard triggered: RSS={current_rss:.2f}GB "
+            f"> limit={_embed_max_rss_gb:.2f}GB"
+        )
+        return False
+
+    # F197C: Also check embedding depth (JS renderer conflict detection)
+    # If depth > 0, we are already inside an embedding lifecycle — don't recurse
+    with _embedding_depth_lock:
+        if _embedding_depth > 0:
+            logger.warning("[EMBED] Already in embedding context — skipping recursive call")
+            return False
+
+    # P13: Also check UmaWatchdog state
+    try:
+        from hledac.universal.utils.uma_budget import get_uma_pressure_level
+
+        level_int, level_str = get_uma_pressure_level()
+        if level_int >= 3:  # >= warning
+            logger.warning(f"[EMBED] UmaWatchdog level={level_str} — skipping embedding")
+            return False
+    except Exception:
+        pass  # uma_budget not available
+
+    return True
 
 
 def _get_embedder():
@@ -85,32 +203,6 @@ def _check_memory_before_load(max_rss_gb: float, model_size_gb: float) -> None:
             f"(max_rss_gb={max_rss_gb}, model_size_gb={model_size_gb}). "
             f"Skipping embedder load."
         )
-
-
-def _check_memory_guard() -> bool:
-    """
-    Check if memory allows embedding generation.
-
-    Returns True if memory is OK (can proceed), False if should skip.
-    """
-    try:
-        import psutil
-        process = psutil.Process()
-        rss = process.memory_info().rss
-        threshold = 6.5 * 1024**3  # 6.5 GB
-        if rss > threshold:
-            logger.warning(
-                f"[EMBED] Memory guard triggered: RSS={rss / 1024**3:.2f}GB > 6.5GB threshold. "
-                f"Skipping embedding generation."
-            )
-            return False
-        return True
-    except ImportError:
-        logger.debug("[EMBED] psutil not available, skipping memory guard")
-        return True
-    except Exception as e:
-        logger.debug(f"[EMBED] Memory check failed: {e}, proceeding anyway")
-        return True
 
 
 def _release_embedder() -> None:

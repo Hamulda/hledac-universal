@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
@@ -158,8 +159,22 @@ class Hermes3Engine:
         self._system_prompt_cache = None   # built KV cache object
         self._system_prompt_hash = None    # MD5 of last system prompt
 
-        # Sprint 41: Shared prefix cache for tokenization
-        self._prefix_cache: Dict[str, Any] = {}
+        # Sprint F214OPT-B: Bounded LRU prefix cache for tokenization
+        _raw_max = os.environ.get("HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE", "")
+        try:
+            _max = int(_raw_max) if _raw_max.strip() else None
+            self._prefix_cache_maxsize: int = max(1, _max) if _max is not None else 64
+        except (ValueError, TypeError):
+            self._prefix_cache_maxsize: int = 64
+        self._prefix_cache: OrderedDict[str, Any] = OrderedDict()  # type: ignore[assignment]
+        # Telemetry for prefix cache
+        self._prefix_cache_stats = {
+            "prefix_cache_maxsize": self._prefix_cache_maxsize,
+            "prefix_cache_size": 0,
+            "prefix_cache_evictions": 0,
+            "prefix_cache_hits": 0,
+            "prefix_cache_misses": 0,
+        }
 
         # Single-thread executor for MLX inference (M1 8GB safe)
         self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -1068,15 +1083,26 @@ class Hermes3Engine:
 
             system = system_msg or "You are a helpful research assistant."
 
-            # Sprint 41: Shared prefix cache for tokenization
+            # Sprint F214OPT-B: Bounded LRU prefix cache for tokenization
             cache_key = hashlib.sha256((system or "").encode()).hexdigest()
             if cache_key in self._prefix_cache:
+                self._prefix_cache.move_to_end(cache_key)
+                self._prefix_cache_stats["prefix_cache_hits"] += 1
+                self._prefix_cache_stats["prefix_cache_size"] = len(self._prefix_cache)
                 logger.debug(f"[CACHE] Prefix cache hit for key {cache_key[:8]}")
             else:
                 # Tokenize and cache
                 if self._tokenizer:
                     prefix_tokens = self._tokenizer.encode(system)
                     self._prefix_cache[cache_key] = prefix_tokens
+                    self._prefix_cache.move_to_end(cache_key)
+                    self._prefix_cache_stats["prefix_cache_misses"] += 1
+                    self._prefix_cache_stats["prefix_cache_size"] = len(self._prefix_cache)
+                    # Evict oldest entries above maxsize
+                    while len(self._prefix_cache) > self._prefix_cache_maxsize:
+                        evicted_key, _ = self._prefix_cache.popitem(last=False)
+                        self._prefix_cache_stats["prefix_cache_evictions"] += 1
+                        logger.debug(f"[CACHE] Prefix cache evicted key {evicted_key[:8]}")
 
             formatted_prompt = self._format_chatml(system, sanitized_prompt)
 
@@ -1607,10 +1633,14 @@ Do not include any other text. Output valid JSON only."""
         fields = {name: None for name in response_model.model_fields.keys()}
         return response_model.model_construct(**fields)
 
-    # Sprint 41: Invalidate prefix cache
+    # Sprint F214OPT-B: Invalidate prefix cache
     def invalidate_prefix_cache(self) -> None:
         """Clear the prefix cache (e.g., on model change)."""
         self._prefix_cache.clear()
+        self._prefix_cache_stats["prefix_cache_size"] = 0
+        self._prefix_cache_stats["prefix_cache_evictions"] = 0
+        self._prefix_cache_stats["prefix_cache_hits"] = 0
+        self._prefix_cache_stats["prefix_cache_misses"] = 0
         logger.info("[CACHE] Prefix cache invalidated")
 
     # Sprint 8N: Planner → runtime bridge helper

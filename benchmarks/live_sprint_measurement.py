@@ -1390,6 +1390,20 @@ def _derive_live_kpi(
         "wallclock_tolerance_s": wallclock_tolerance_s,
         "next_action": next_action,
         "next_action_detail": next_action_detail,
+        # F212R: Action family for runtime budget issues (backward-compat for F210D/F211D)
+        # Reuses wallclock_budget_exceeded computed at line 1273
+        "runtime_budget_action_family": (
+            "fix_runtime_budget_enforcement"
+            if wallclock_budget_exceeded
+            else None
+        ),
+        # F212R: Detailed deadline action when wallclock exceeded
+        # Reuses wallclock_budget_exceeded computed at line 1273
+        "deadline_action_detail": (
+            next_action
+            if wallclock_budget_exceeded
+            else None
+        ),
         # F207M: Nonfeed starvation
         "nonfeed_starvation_suspected": nonfeed_starvation_suspected,
         "nonfeed_starvation_reason": nonfeed_starvation_reason,

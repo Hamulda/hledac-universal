@@ -33,6 +33,15 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
+# F214OPT-A: selectolax-first HTML→text
+try:
+    from hledac.universal.utils.html_text_fast import html_to_text_fast
+
+    HTML_TEXT_FAST_AVAILABLE = True
+except ImportError:
+    HTML_TEXT_FAST_AVAILABLE = False
+    html_to_text_fast = None  # type: ignore[assignment]
+
 
 class ValidationSeverity(Enum):
     """Validation severity levels."""
@@ -356,37 +365,59 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         html: str,
         output_format: str
     ) -> Dict[str, Any]:
-        """Simple HTML extraction fallback."""
+        """
+        Simple HTML extraction fallback.
+
+        F214OPT-A notes:
+        - 'text' output: uses html_to_text_fast (selectolax-first, faster)
+        - 'markdown' output: keeps BeautifulSoup for DOM-specific element traversal
+          (heading/list structure) — selectolax text() doesn't preserve structure
+        """
+        # F214OPT-A: selectolax-first for plain text
+        if output_format == 'text' and HTML_TEXT_FAST_AVAILABLE:
+            try:
+                content = html_to_text_fast(html)  # type: ignore[operator]
+                return {
+                    'success': True,
+                    'content': content,
+                    'format': output_format,
+                    'metadata': {'method': 'html_text_fast'},
+                    'error': None
+                }
+            except Exception as e:
+                logger.warning("html_to_text_fast failed, falling back to BeautifulSoup: %s", e)
+                # fall through to BeautifulSoup path
+
         try:
             from bs4 import BeautifulSoup
-            
+
             soup = BeautifulSoup(html, 'html.parser')
-            
+
             # Remove unwanted elements
             for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
                 tag.decompose()
-            
+
             if output_format == 'text':
                 content = soup.get_text(separator=' ', strip=True)
             elif output_format == 'markdown':
                 # Simple markdown conversion
-                lines = []
+                lines_out = []
                 for elem in soup.find_all(['h1', 'h2', 'h3', 'p', 'li']):
                     text = elem.get_text(strip=True)
                     if elem.name == 'h1':
-                        lines.append(f'# {text}')
+                        lines_out.append(f'# {text}')
                     elif elem.name == 'h2':
-                        lines.append(f'## {text}')
+                        lines_out.append(f'## {text}')
                     elif elem.name == 'h3':
-                        lines.append(f'### {text}')
+                        lines_out.append(f'### {text}')
                     elif elem.name == 'li':
-                        lines.append(f'- {text}')
+                        lines_out.append(f'- {text}')
                     else:
-                        lines.append(text)
-                content = '\n\n'.join(lines)
+                        lines_out.append(text)
+                content = '\n\n'.join(lines_out)
             else:
                 content = soup.get_text(separator=' ', strip=True)
-            
+
             return {
                 'success': True,
                 'content': content,
@@ -394,13 +425,13 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 'metadata': {'method': 'beautifulsoup_fallback'},
                 'error': None
             }
-            
+
         except ImportError:
             # Ultimate fallback
             import re
             text = re.sub(r'<[^>]+>', ' ', html)
             text = re.sub(r'\s+', ' ', text).strip()
-            
+
             return {
                 'success': True,
                 'content': text,

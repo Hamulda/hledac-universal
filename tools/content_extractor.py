@@ -20,10 +20,22 @@ except ImportError:
     BS4_AVAILABLE = False
     BeautifulSoup = None
 
+# F214OPT-A: selectolax-first HTML→text
+try:
+    from hledac.universal.utils.html_text_fast import html_to_text_fast
+
+    HTML_TEXT_FAST_AVAILABLE = True
+except ImportError:
+    HTML_TEXT_FAST_AVAILABLE = False
+    html_to_text_fast = None  # type: ignore[assignment]
+
 
 def extract_main_text_from_html(html_preview: str, max_chars: int = 20_000) -> str:
     """
     Extract main text content from HTML preview.
+
+    F214OPT-A: uses html_to_text_fast (selectolax-first) when available,
+    preserving the same extraction semantics as the previous BeautifulSoup path.
 
     Args:
         html_preview: HTML content (first 50KB recommended)
@@ -38,9 +50,18 @@ def extract_main_text_from_html(html_preview: str, max_chars: int = 20_000) -> s
     # Truncate to avoid huge processing
     html_preview = html_preview[:50_000]
 
+    # F214OPT-A: selectolax-first (fastest)
+    if HTML_TEXT_FAST_AVAILABLE:
+        try:
+            return html_to_text_fast(html_preview, max_chars=max_chars)  # type: ignore[operator]
+        except Exception as e:
+            logger.warning("html_to_text_fast failed: %s", e)
+            # fall through to BeautifulSoup/regex fallback
+
+    # BeautifulSoup path (legacy)
     try:
         if BS4_AVAILABLE:
-            soup = BeautifulSoup(html_preview, 'html.parser')
+            soup = BeautifulSoup(html_preview, 'html.parser')  # type: ignore[operator]
 
             # Remove script and style elements
             for tag in soup(['script', 'style', 'noscript']):
@@ -85,7 +106,7 @@ def extract_main_text_from_html(html_preview: str, max_chars: int = 20_000) -> s
             main_content = re.sub(r'\s+', ' ', text).strip()
 
     except Exception as e:
-        logger.warning(f"HTML extraction failed: {e}")
+        logger.warning("HTML extraction failed: %s", e)
         # Ultimate fallback: strip all tags
         main_content = re.sub(r'<[^>]+>', ' ', html_preview)
         main_content = re.sub(r'\s+', ' ', main_content).strip()

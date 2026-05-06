@@ -20,7 +20,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Set
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,19 @@ class ReciprocalRankFusion:
         """Normalize text for similarity comparison"""
         return ' '.join(text.lower().split())
 
-    def _calculate_similarity(self, r1: RankedResult, r2: RankedResult) -> float:
-        """Calculate simple text similarity for deduplication"""
+    def _calculate_similarity(
+        self, r1: RankedResult, r2: RankedResult, cache1: Optional[Set[str]] = None, cache2: Optional[Set[str]] = None
+    ) -> float:
+        """Calculate simple text similarity for deduplication.
+
+        Uses pre-computed normalized token sets from cache when available.
+        """
         if r1.url and r2.url and r1.url == r2.url:
             return 1.0
 
-        words1 = set(self._normalize_text(r1.title + " " + r1.content[:300]).split())
-        words2 = set(self._normalize_text(r2.title + " " + r2.content[:300]).split())
+        # Use cached normalized token sets if provided, otherwise compute
+        words1 = cache1 if cache1 is not None else set(self._normalize_text(r1.title + " " + r1.content[:300]).split())
+        words2 = cache2 if cache2 is not None else set(self._normalize_text(r2.title + " " + r2.content[:300]).split())
 
         if not words1 or not words2:
             return 0.0
@@ -105,17 +111,50 @@ class ReciprocalRankFusion:
 
         return len(intersection) / len(union) if union else 0.0
 
+    def _normalize_and_tokenize(self, result: RankedResult) -> Set[str]:
+        """Pre-compute normalized token set for a result (used for dedup cache)."""
+        return set(self._normalize_text(result.title + " " + result.content[:300]).split())
+
     def _remove_duplicates(self, results: List[RankedResult]) -> List[RankedResult]:
-        """Remove near-duplicate results"""
+        """Remove near-duplicate results.
+
+        Optimized to avoid repeated normalization inside O(n²) comparison loop.
+        """
         if not self.config.deduplication:
             return results
 
         unique_results: List[RankedResult] = []
+        unique_indices: List[int] = []  # Track original indices for cache lookup
+        # Pre-compute normalized token sets for all results upfront
+        token_cache: List[Optional[Set[str]]] = [None] * len(results)
+        url_cache: List[Optional[str]] = [None] * len(results)
+        for i, result in enumerate(results):
+            if result.url:
+                url_cache[i] = result.url
+            token_cache[i] = self._normalize_and_tokenize(result)
 
-        for result in results:
+        for i, result in enumerate(results):
             is_duplicate = False
-            for existing in unique_results:
-                similarity = self._calculate_similarity(result, existing)
+            result_tokens = token_cache[i]
+            result_url = url_cache[i]
+
+            for uidx, existing in enumerate(unique_results):
+                existing_idx = unique_indices[uidx]
+                existing_url = url_cache[existing_idx]
+
+                # Early exit: exact URL match avoids the set ops entirely
+                if result_url and existing_url and result_url == existing_url:
+                    is_duplicate = True
+                    existing.metadata.update(result.metadata)
+                    if result.score > existing.score:
+                        existing.score = result.score
+                    break
+
+                similarity = self._calculate_similarity(
+                    result, existing,
+                    cache1=result_tokens,
+                    cache2=token_cache[existing_idx]
+                )
                 if similarity >= self.config.dedup_threshold:
                     is_duplicate = True
                     existing.metadata.update(result.metadata)
@@ -125,6 +164,7 @@ class ReciprocalRankFusion:
 
             if not is_duplicate:
                 unique_results.append(result)
+                unique_indices.append(i)
 
         return unique_results
 

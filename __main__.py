@@ -632,7 +632,8 @@ async def _run_public_passive_once(
                 # Trigger session creation (lazy init)
                 await async_get_aiohttp_session()
                 # Register session close in AsyncExitStack
-                exit_stack.callback(close_aiohttp_session_async)
+                # Sprint 8AM C.2: push_async_callback — callback() is sync, cannot await async coroutine
+                exit_stack.push_async_callback(close_aiohttp_session_async)
                 _owned_resources["session_owned"] = True
                 session_created = True
                 _boot_record("session_owned", "registered")
@@ -649,11 +650,11 @@ async def _run_public_passive_once(
                 # Async init
                 await store_instance.async_initialize()
                 # Register store.close() via AsyncExitStack callback
-                # store.aclose is async — wrap in lambda for callback
+                # Sprint 8AM C.3: push_async_callback — callback() is sync, cannot await async coroutine
                 async def close_store():
                     if store_instance is not None:
                         await store_instance.aclose()
-                exit_stack.callback(close_store)
+                exit_stack.push_async_callback(close_store)
                 _owned_resources["store_owned"] = True
                 _boot_record("store_owned", "registered")
             except Exception as e:

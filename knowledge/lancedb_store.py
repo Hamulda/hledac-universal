@@ -74,6 +74,41 @@ except ImportError:
 # Default database URI
 _DEFAULT_URI = Path(__file__).parent.parent.parent / "data" / "identity.lance"
 
+# Sprint F214OPT-C: M1 8GB-safe LanceDB cache bound
+# Default 256MB for M1-safe mode; env HLEDAC_LANCEDB_CACHE_MB overrides
+_HLEDAC_DEFAULT_CACHE_MB = 256
+_HLEDAC_HARD_MAX_CACHE_MB = 512  # hard cap without override
+_HLEDAC_LARGE_OVERRIDE_VAR = "HLEDAC_ALLOW_LARGE_LANCEDB_CACHE"
+_HLEDAC_CACHE_MB_VAR = "HLEDAC_LANCEDB_CACHE_MB"
+
+
+def _resolve_lancedb_cache_size() -> int:
+    """Resolve LMDB map_size from env with M1-safe defaults."""
+    import os
+    override_enabled = os.environ.get(_HLEDAC_LARGE_OVERRIDE_VAR, "").strip() in ("1", "true", "True")
+    raw = os.environ.get(_HLEDAC_CACHE_MB_VAR, "").strip()
+    if raw:
+        try:
+            mb = int(raw)
+            if mb <= 0:
+                logger.warning(f"[LANCEDB_CACHE] Invalid {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")
+                mb = _HLEDAC_DEFAULT_CACHE_MB
+            elif not override_enabled and mb > _HLEDAC_HARD_MAX_CACHE_MB:
+                logger.warning(f"[LANCEDB_CACHE] {mb}MB exceeds hard max {_HLEDAC_HARD_MAX_CACHE_MB}MB without {_HLEDAC_LARGE_OVERRIDE_VAR}=1, capping")
+                mb = _HLEDAC_HARD_MAX_CACHE_MB
+            return mb * 1024 * 1024
+        except ValueError:
+            logger.warning(f"[LANCEDB_CACHE] Non-integer {_HLEDAC_CACHE_MB_VAR}={raw}, using default {_HLEDAC_DEFAULT_CACHE_MB}MB")
+            return _HLEDAC_DEFAULT_CACHE_MB * 1024 * 1024
+    if override_enabled:
+        # Large override: allow up to 1GB (backward compat with prior default)
+        return 1024 * 1024 * 1024
+    return _HLEDAC_DEFAULT_CACHE_MB * 1024 * 1024
+
+
+# Sprint 77: Writeback buffer limits
+_WRITEBACK_MAX = 1000
+
 
 class LanceDBIdentityStore:
     """
@@ -100,12 +135,10 @@ class LanceDBIdentityStore:
     """
 
     # Sprint 76: Bounded limits
-    _MAX_CACHE_SIZE = 1024**3  # 1GB
+    _MAX_CACHE_SIZE = _resolve_lancedb_cache_size()  # F214OPT-C: env-configurable M1-safe default
     _BINARY_FILTER_COUNT = 500
     _MMR_TOP_K = 50
-
-    # Sprint 77: Writeback buffer limits
-    _WRITEBACK_MAX = 1000
+    _EVICTION_THRESHOLD_RATIO = 0.85  # F214OPT-C: evict when map is 85% full
 
     def __init__(self, uri: str = str(_DEFAULT_URI), orchestrator=None):
         """
@@ -186,7 +219,10 @@ class LanceDBIdentityStore:
             'cache_misses': 0,
             'quantization_errors': deque(maxlen=100),
             'search_latencies': deque(maxlen=1000),
+            'cache_evictions': 0,  # F214OPT-C: eviction count
         }
+        # F214OPT-C: telemetry flags
+        self._large_override_enabled = _resolve_lancedb_cache_size() > (_HLEDAC_HARD_MAX_CACHE_MB * 1024 * 1024)
 
         self._initialize()
 
@@ -457,7 +493,8 @@ class LanceDBIdentityStore:
             'cache_size': len(self._writeback_buffer),
             'index_exists': False,
             'embedder_type': getattr(self, '_embedder_type', 'not_initialized'),
-            'errors': []
+            'errors': [],
+            **self.get_cache_telemetry(),  # F214OPT-C: include telemetry in health check
         }
         try:
             # Check embedder
@@ -477,6 +514,25 @@ class LanceDBIdentityStore:
         except Exception as e:
             result['healthy'] = False
             result['errors'].append(str(e))
+        return result
+
+    def get_cache_telemetry(self) -> Dict[str, Any]:
+        """F214OPT-C: Telemetry accessor for LanceDB cache bounds and stats."""
+        result = {
+            'lancedb_cache_limit_mb': self._MAX_CACHE_SIZE / (1024 * 1024),
+            'lancedb_cache_current_items': len(self._writeback_buffer),
+            'lancedb_cache_evictions': self._metrics.get('cache_evictions', 0),
+            'lancedb_cache_large_override_enabled': self._large_override_enabled,
+        }
+        try:
+            if self._cache_env is not None:
+                info = self._cache_env.info()
+                stat = self._cache_env.stat()
+                result['lancedb_cache_map_size_bytes'] = info['map_size']
+                result['lancedb_cache_used_bytes'] = stat['last_pgno'] * stat['psize']
+                result['lancedb_cache_used_ratio'] = result['lancedb_cache_used_bytes'] / info['map_size']
+        except Exception:
+            pass
         return result
 
     async def shutdown(self) -> None:
@@ -579,7 +635,7 @@ class LanceDBIdentityStore:
         async with self._writeback_lock:
             self._writeback_buffer[text_hash] = new_data
             # Flush oldest if buffer full
-            if len(self._writeback_buffer) > self._WRITEBACK_MAX:
+            if len(self._writeback_buffer) > _WRITEBACK_MAX:
                 flush_key, flush_val = self._writeback_buffer.popitem(last=False)
                 flush_item = (flush_key, flush_val)
             else:
@@ -597,6 +653,18 @@ class LanceDBIdentityStore:
         if self._cache_env is None:
             return
 
+        # F214OPT-C: byte-limit guard — skip storing if map is near full (fail-safe degradation)
+        try:
+            info = self._cache_env.info()
+            stat = self._cache_env.stat()
+            map_size = info['map_size']
+            cache_usage = stat['last_pgno'] * stat['psize']
+            if cache_usage / map_size >= self._EVICTION_THRESHOLD_RATIO:
+                logger.debug(f"[LANCEDB_CACHE] Skipping store — map near full ({cache_usage / map_size:.2f})")
+                return
+        except Exception:
+            pass
+
         try:
             emb_np = np.array(embedding, dtype=np.float16)
             data = {
@@ -612,7 +680,7 @@ class LanceDBIdentityStore:
             async with self._writeback_lock:
                 self._writeback_buffer[text_hash] = data
                 # Flush oldest if buffer full
-                if len(self._writeback_buffer) > self._WRITEBACK_MAX:
+                if len(self._writeback_buffer) > _WRITEBACK_MAX:
                     flush_key, flush_val = self._writeback_buffer.popitem(last=False)
                     flush_item = (flush_key, flush_val)
                 else:
@@ -860,10 +928,55 @@ class LanceDBIdentityStore:
             return 0.0
 
     async def _evict_if_needed(self) -> None:
-        """Pre-emptive eviction based on prediction."""
-        predicted = await self._predict_memory_pressure()
-        if predicted > self._eviction_threshold:
-            logger.info(f"Pre-emptive cache eviction: predicted={predicted:.2f}")
+        """F214OPT-C: Pre-emptive eviction when LMDB map is near full."""
+        if self._cache_env is None:
+            return
+        try:
+            info = self._cache_env.info()
+            map_size = info['map_size']
+            # Use page-level usage: last_pgno * psize
+            stat = self._cache_env.stat()
+            cache_usage = stat['last_pgno'] * stat['psize']
+            ratio = cache_usage / map_size
+
+            if ratio < self._EVICTION_THRESHOLD_RATIO:
+                return
+
+            # F214OPT-C: actual LRU eviction — evict oldest 10% of entries
+            logger.info(f"[LANCEDB_CACHE] Eviction triggered: ratio={ratio:.2f}, map_size={map_size}")
+            evicted = 0
+
+            def _scan_and_evict():
+                nonlocal evicted
+                try:
+                    with self._cache_env.begin() as txn:
+                        cursor = txn.cursor()
+                        entries = []
+                        for key, value in cursor:
+                            try:
+                                data = orjson.loads(value)
+                                entries.append((key, data))
+                            except Exception:
+                                pass
+                    if not entries:
+                        return
+                    # Sort by access_count then last_access (LRU)
+                    entries.sort(key=lambda x: (x[1].get('access_count', 0), x[1].get('last_access', 0)))
+                    evict_count = max(1, len(entries) // 10)
+                    to_evict = entries[:evict_count]
+                    with self._cache_env.begin(write=True) as txn:
+                        for key, _ in to_evict:
+                            txn.delete(key)
+                            evicted += 1
+                except Exception as e:
+                    logger.debug(f"[LANCEDB_CACHE] Eviction scan failed: {e}")
+
+            await asyncio.to_thread(_scan_and_evict)
+            if evicted > 0:
+                self._metrics['cache_evictions'] = self._metrics.get('cache_evictions', 0) + evicted
+                logger.info(f"[LANCEDB_CACHE] Evicted {evicted} entries")
+        except Exception as e:
+            logger.debug(f"[LANCEDB_CACHE] Eviction error: {e}")
 
     async def _get_colbert_reranker(self):
         """Lazy load ColBERT."""

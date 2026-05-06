@@ -550,6 +550,10 @@ class SprintSchedulerResult:
     acquisition_prelude_errors: dict[str, str] = field(default_factory=dict)
     acquisition_prelude_duration_s: float = 0.0
     acquisition_prelude_reason: str = ""
+    # Sprint F214OPT-D: Arrow batch hard cap telemetry
+    arrow_batch_hard_cap: int = 0
+    arrow_batch_dropped_after_flush_failure: int = 0
+    arrow_last_flush_error: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +804,13 @@ class SprintScheduler:
         self._hermes_engine: Any = None
         self._memory_manager: Any = None
         self._ARROW_FLUSH_S: float = 60.0
+        # Sprint F214OPT-D: Arrow batch hard cap — prevents unbounded growth after flush failure
+        # Default: max(2 * _ARROW_FLUSH_N, 2000) = 2000
+        # Env override via HLEDAC_ARROW_BATCH_HARD_CAP
+        self._ARROW_BATCH_HARD_CAP: int = self._resolve_arrow_batch_hard_cap()
+        # Sprint F214OPT-D: Arrow flush failure telemetry
+        self._arrow_batch_dropped_after_flush_failure: int = 0
+        self._arrow_last_flush_error: Optional[str] = None
         self._fetch_semaphore: asyncio.Semaphore = asyncio.Semaphore(20)
         self.sprint_id: str = ""
         # Sprint F202J: M1 resource governor advisory (lazy init)
@@ -1251,6 +1262,8 @@ class SprintScheduler:
         # Sprint F212A: Derive hard deadline from sprint_duration_s
         self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
         self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
+        # Sprint F214OPT-D: Wire Arrow batch hard cap to result
+        self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
         # Sprint F195: Store duckdb_store on self for task handler access
         self._duckdb_store = duckdb_store
 
@@ -7178,8 +7191,28 @@ class SprintScheduler:
 
     # ── Sprint 8VD §B: Arrow / Parquet columnar buffer ────────────────────
 
+    def _resolve_arrow_batch_hard_cap(self) -> int:
+        """Resolve Arrow batch hard cap from env or return M1-safe default.
+
+        F214OPT-D: Prevents unbounded Arrow batch growth after flush failure.
+        Default is max(2 * _ARROW_FLUSH_N, 2000) = 2000 entries (~10MB range).
+        Env override: HLEDAC_ARROW_BATCH_HARD_CAP (min 100, max 50000).
+        """
+        try:
+            raw = os.environ.get("HLEDAC_ARROW_BATCH_HARD_CAP", "")
+            if raw:
+                val = int(raw)
+                return max(100, min(val, 50000))
+        except (ValueError, TypeError):
+            pass
+        return max(2 * self._ARROW_FLUSH_N, 2000)
+
     async def _maybe_flush_to_parquet(self) -> None:
-        """Flush Arrow batch to Parquet when N or S threshold is hit."""
+        """Flush Arrow batch to Parquet when N or S threshold is hit.
+
+        F214OPT-D: On flush failure, batch is truncated to HARD_CAP to prevent
+        unbounded growth. Failed entries are dropped (oldest first) and counted.
+        """
         import time as _time
         now = _time.monotonic()
         if (
@@ -7198,8 +7231,7 @@ class SprintScheduler:
             return
 
         batch = self._arrow_batch[:]
-        self._arrow_batch.clear()
-        self._arrow_last_flush = now
+        # F214OPT-D: Do NOT clear batch until flush succeeds — preserves data on failure
 
         schema = pa.schema([
             ("url",        pa.string()),
@@ -7219,11 +7251,31 @@ class SprintScheduler:
         sid = self.sprint_id or getattr(self, "sprint_id", "unknown")
         path = get_sprint_parquet_dir(sid) / f"batch_{int(now * 1000)}.parquet"
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None, lambda: pq.write_table(table, path, compression="snappy")
-        )
-        log.info(f"[8VD-PARQUET] flushed {len(batch)} rows → {path}")
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, lambda: pq.write_table(table, path, compression="snappy")
+            )
+            log.info(f"[8VD-PARQUET] flushed {len(batch)} rows → {path}")
+            # F214OPT-D: SUCCESS — clear batch only after successful write
+            self._arrow_batch.clear()
+            self._arrow_last_flush = now
+        except Exception as exc:
+            # F214OPT-D: Flush failed — record error, enforce HARD_CAP, keep partial
+            self._result.arrow_last_flush_error = str(exc)[:256]
+            batch_len = len(self._arrow_batch)
+            hard_cap = self._ARROW_BATCH_HARD_CAP
+            if batch_len > hard_cap:
+                drop_count = batch_len - hard_cap
+                self._arrow_batch = self._arrow_batch[drop_count:]
+                self._result.arrow_batch_dropped_after_flush_failure += drop_count
+                log.warning(
+                    f"[8VD-PARQUET] flush failed ({exc}), dropped {drop_count} oldest "
+                    f"entries to enforce HARD_CAP={hard_cap}, {len(self._arrow_batch)} remain"
+                )
+            else:
+                # Keep batch intact — it will retry on next call
+                log.warning(f"[8VD-PARQUET] flush failed ({exc}), batch intact ({batch_len}), will retry")
 
     def buffer_finding(self, finding: dict) -> None:
         """Buffer a finding into the Arrow batch."""
