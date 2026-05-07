@@ -26,6 +26,42 @@ class Grade(str, Enum):
     DEEP_RESEARCH_READY = "DEEP_RESEARCH_READY"
 
 
+def _coerce_feed_dominance_score(value, total_findings: int, feed_findings: int | None) -> float:
+    """Coerce feed_dominance_score to numeric, fail-safe.
+
+    Returns 1.0 when:
+      - value is None, NaN, or non-numeric
+      - total_findings is 0 or negative
+      - feed/total ratio is unavailable
+
+    Otherwise returns feed/total clamped to [0.0, 1.0].
+    """
+    if value is None:
+        pass  # falls through to ratio fallback below
+    elif isinstance(value, float):
+        if value != value:  # NaN
+            pass
+        elif 0.0 <= value <= 1.0:
+            return value
+        else:
+            pass  # out-of-range, fall through to ratio
+    elif isinstance(value, (int, str)):
+        try:
+            f = float(value)
+            if 0.0 <= f <= 1.0:
+                return f
+        except (ValueError, TypeError):
+            pass
+    else:
+        pass
+
+    # Fallback: compute from feed/total ratio
+    if total_findings > 0 and feed_findings is not None:
+        ratio = feed_findings / total_findings
+        return max(0.0, min(1.0, ratio))
+    return 1.0
+
+
 class QualityGate(str, Enum):
     QUALITY_PASS = "QUALITY_PASS"
     QUALITY_FAIL_FEED_ONLY = "QUALITY_FAIL_FEED_ONLY"
@@ -131,14 +167,18 @@ def _normalize_benchmark(data: dict) -> dict:
 
     return {
         "total_findings": data.get("findings_count", 0),
-        "accepted_findings": rt.get("accepted_findings", data.get("accepted_findings", data.get("findings_count", 0))) if isinstance(rt, dict) else data.get("findings_count", 0),
+        "accepted_findings": (rt.get("accepted_findings") if isinstance(rt, dict) else None) or data.get("accepted_findings") or data.get("findings_count") or 0,
         "feed_findings": feed,
         "ct_findings": ct,
         "public_findings": pub,
         "passive_findings": passive,
         "nonfeed_findings": ct + pub + passive,
         "source_family_count": sum(1 for v in branch_mix.values() if v > 0) if branch_mix else 0,
-        "feed_dominance_score": live_kpi.get("feed_dominance_score", 1.0) if live_kpi else 1.0,
+        "feed_dominance_score": _coerce_feed_dominance_score(
+            live_kpi.get("feed_dominance_score") if live_kpi else None,
+            data.get("findings_count") or 0,
+            feed,
+        ),
         "planned_duration_s": data.get("planned_duration_s") or data.get("requested_duration_s"),
         "actual_duration_s": rt.get("actual_duration_s", data.get("actual_duration_s")) if isinstance(rt, dict) else data.get("actual_duration_s"),
         "swap_gib": _extract_uma_swap_gib(data),
@@ -168,14 +208,18 @@ def _normalize_live(data: dict) -> dict:
 
     return {
         "total_findings": data.get("findings_count", 0),
-        "accepted_findings": data.get("accepted_findings", data.get("findings_count", 0)),
+        "accepted_findings": data.get("accepted_findings") or data.get("findings_count") or 0,
         "feed_findings": feed,
         "ct_findings": ct,
         "public_findings": pub,
         "passive_findings": passive,
         "nonfeed_findings": nonfeed_total,
         "source_family_count": live_kpi.get("source_family_count", sum(1 for v in branch_mix.values() if v > 0)) if live_kpi else 0,
-        "feed_dominance_score": live_kpi.get("feed_dominance_score", 1.0) if live_kpi else 1.0,
+        "feed_dominance_score": _coerce_feed_dominance_score(
+            live_kpi.get("feed_dominance_score") if live_kpi else None,
+            data.get("findings_count") or 0,
+            feed,
+        ),
         "planned_duration_s": data.get("planned_duration_s") or data.get("duration_s"),
         "actual_duration_s": data.get("actual_duration_s") or (rt.get("actual_duration_s") if isinstance(rt, dict) else None),
         "swap_gib": _extract_uma_swap_gib(data),
@@ -321,14 +365,14 @@ def _memory_taint_penalty(swap_gib: float | None, swap_warning: bool) -> float:
 
 def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     total = norm["total_findings"]
-    accepted = norm["accepted_findings"]
+    accepted = norm["accepted_findings"] or 0
     nonfeed = norm["nonfeed_findings"]
     ct = norm["ct_findings"]
     pub = norm["public_findings"]
     passive = norm["passive_findings"]
     feed = norm["feed_findings"]
     family_count = norm["source_family_count"]
-    feed_dom = norm["feed_dominance_score"]
+    feed_dom = _coerce_feed_dominance_score(norm["feed_dominance_score"], total, feed)
     planned = norm["planned_duration_s"]
     actual = norm["actual_duration_s"]
     swap_gib = norm["swap_gib"]
