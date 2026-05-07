@@ -10,6 +10,7 @@ import psutil
 import logging
 import json
 import time
+from collections import deque
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -89,7 +90,7 @@ class IntelligentResourceAllocator:
         # Sprint F206X: dict keyed by task_id for O(1) removal after allocation, bounded size
         self._pending_requests_dict: Dict[str, ResourceRequest] = {}
         self.active_allocations = {}
-        self.completed_allocations = []
+        self.completed_allocations = deque(maxlen=2000)  # M218C: bounded to prevent unbounded growth
         self.resource_history = []
         # Sprint 72: Lazy init for sklearn models
         self._prediction_model = None
@@ -417,7 +418,7 @@ class IntelligentResourceAllocator:
                 if duration > 0:
                     allocation.efficiency_score = min(1.0, allocation.allocated_resources.get('cpu_cores', 1) / duration)
 
-                self.completed_allocations.append(allocation)
+                self.completed_allocations.append(allocation)  # M218C: deque auto-evicts oldest
                 del self.active_allocations[task_id]
 
                 logger.info(f"Resources released for task {task_id}")
@@ -570,6 +571,10 @@ class IntelligentResourceAllocator:
                 total_efficiency = sum(alloc.efficiency_score for alloc in self.completed_allocations)
                 stats['average_efficiency'] = total_efficiency / len(self.completed_allocations)
 
+        # M218C telemetry
+        stats['completed_allocations_maxlen'] = getattr(self.completed_allocations, 'maxlen', None)
+        stats['completed_allocations_current_len'] = len(self.completed_allocations)
+
         if self.resource_history:
             latest = self.resource_history[-1]
             stats['resource_utilization'] = {
@@ -602,7 +607,7 @@ class IntelligentResourceAllocator:
                     'end_time': alloc.end_time.isoformat() if alloc.end_time else None,
                     'efficiency_score': alloc.efficiency_score
                 }
-                for alloc in self.completed_allocations[-20:]  # Last 20 allocations
+                for alloc in list(self.completed_allocations)[-20:]  # Last 20 allocations
             ]
         }
 

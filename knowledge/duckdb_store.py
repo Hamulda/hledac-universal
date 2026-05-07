@@ -425,7 +425,7 @@ def _get_duckdb() -> Any:
 # Env-configurable limits
 # ---------------------------------------------------------------------------
 
-_DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "1GB")
+_DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
 _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 
 
@@ -1417,6 +1417,8 @@ class DuckDBShadowStore:
             conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             conn.execute("SET temp_directory = ?", [temp_dir_val])
             conn.execute("PRAGMA threads=2")
+            conn.execute("PRAGMA enable_progress_bar=false")
+            conn.execute("PRAGMA enable_object_cache=false")
             conn.execute(_SCHEMA_SQL)
             conn.close()
             # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
@@ -1431,6 +1433,8 @@ class DuckDBShadowStore:
             self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
             self._file_conn.execute("PRAGMA threads=2")
+            self._file_conn.execute("PRAGMA enable_progress_bar=false")
+            self._file_conn.execute("PRAGMA enable_object_cache=false")
         else:
             # MODE B: RAMDISK inactive — :memory: with PERSISTENT single connection
             self._persistent_conn = duckdb.connect(":memory:")
@@ -1439,6 +1443,8 @@ class DuckDBShadowStore:
             self._persistent_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
             self._persistent_conn.execute("PRAGMA threads=2")
+            self._persistent_conn.execute("PRAGMA enable_progress_bar=false")
+            self._persistent_conn.execute("PRAGMA enable_object_cache=false")
             self._persistent_conn.execute(_SCHEMA_SQL)
 
     # Sprint 8RC: Retrokompatibilita — add missing columns to old DB files (B.2)
@@ -2047,6 +2053,7 @@ class DuckDBShadowStore:
                     FROM source_hit_log
                     WHERE ts > ?
                     GROUP BY source_type
+                    LIMIT 10000
                     ORDER BY total_findings DESC
                     """,
                     [since_ts],
@@ -2062,6 +2069,7 @@ class DuckDBShadowStore:
                     FROM source_hit_log
                     WHERE ts > ?
                     GROUP BY source_type
+                    LIMIT 10000
                     ORDER BY total_findings DESC
                     """,
                     [since_ts],
@@ -2095,6 +2103,7 @@ class DuckDBShadowStore:
                     FROM source_hit_log
                     WHERE ts > ?
                     GROUP BY source_type
+                    LIMIT 10000
                     """,
                     [cutoff],
                 ).fetchall()
@@ -2106,6 +2115,7 @@ class DuckDBShadowStore:
                     FROM source_hit_log
                     WHERE ts > ?
                     GROUP BY source_type
+                    LIMIT 10000
                     """,
                     [cutoff],
                 ).fetchall()
@@ -3485,6 +3495,7 @@ class DuckDBShadowStore:
                 FROM source_hit_log
                 WHERE ts > ?
                 GROUP BY source_type, sprint_id
+                LIMIT 10000
                 ORDER BY sprint_id DESC, total_findings DESC
                 """,
                 [since_ts],

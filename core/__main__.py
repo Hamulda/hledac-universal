@@ -521,6 +521,61 @@ def _get_live_feed_urls() -> list[str]:
 # Pre-sprint checks
 # =============================================================================
 
+# Sprint M218A: GC startup tuning for M1 UMA stability.
+# gc.freeze() reduces GC pause variance during long sprints.
+# gc.set_threshold(1000,50,50) reduces collection frequency.
+# Opt-out via HLEDAC_DISABLE_GC_FREEZE=1.
+_gc_configured: bool = False
+
+
+def _configure_gc_for_sprint() -> dict:
+    """
+    Configure Python GC for sprint workload.
+
+    Called once at sprint boot. Freezes GC to reduce pause variance on M1.
+    Sets threshold to (1000, 50, 50) to reduce collection frequency.
+    Opt-out via HLEDAC_DISABLE_GC_FREEZE=1.
+
+    Returns a dict with telemetry fields.
+    """
+    global _gc_configured
+    result = {
+        "gc_freeze_attempted": False,
+        "gc_freeze_applied": False,
+        "gc_thresholds": None,
+        "gc_freeze_error": None,
+    }
+    if _gc_configured:
+        return result
+
+    import gc as _gc
+
+    result["gc_freeze_attempted"] = True
+    if os.environ.get("HLEDAC_DISABLE_GC_FREEZE") == "1":
+        logger.info("[GC] HLEDAC_DISABLE_GC_FREEZE=1 — skipping gc.freeze()")
+    else:
+        try:
+            if hasattr(_gc, "freeze"):
+                _gc.freeze()
+                result["gc_freeze_applied"] = True
+                logger.info("[GC] gc.freeze() applied — reduces GC pause variance")
+            else:
+                logger.debug("[GC] gc.freeze() not available on this Python build")
+        except Exception as exc:
+            result["gc_freeze_error"] = str(exc)
+            logger.debug(f"[GC] gc.freeze() failed (non-fatal): {exc}")
+
+    try:
+        _gc.set_threshold(1000, 50, 50)
+        result["gc_thresholds"] = (1000, 50, 50)
+        logger.debug("[GC] gc.set_threshold(1000, 50, 50)")
+    except Exception as exc:
+        result["gc_thresholds"] = None
+        logger.debug(f"[GC] set_threshold failed (non-fatal): {exc}")
+
+    _gc_configured = True
+    return result
+
 
 def run_pre_sprint_checks() -> bool:
     """
@@ -646,6 +701,9 @@ async def run_sprint(
     # Sprint 8SA: Phase timing instrumentation
     _phase_times: dict[str, float] = {}
     _phase_times["BOOT"] = time.monotonic()
+
+    # M218A: GC tuning for M1 UMA stability — runs once per process
+    _gc_telemetry = _configure_gc_for_sprint()
 
     # Pre-sprint checks
     run_pre_sprint_checks()
@@ -1379,6 +1437,8 @@ async def run_sprint(
             },
             "runtime_truth": runtime_truth,
             "timing_truth": timing_truth,
+            # Sprint M218A: GC startup tuning telemetry
+            "gc_telemetry": _gc_telemetry,
             # Sprint F217B: Nonfeed mission controller telemetry
             "nonfeed_mission_active": getattr(result, "nonfeed_mission_active", False),
             "nonfeed_required_families": getattr(result, "nonfeed_required_families", ()),

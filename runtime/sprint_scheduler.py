@@ -46,6 +46,9 @@ from hledac.universal.transport.circuit_breaker import (
     get_all_breaker_states,
     MAX_TRACKED_DOMAINS,
 )
+
+# Sprint F218D: Lane rejection bound
+MAX_LANE_REJECTIONS: int = 1000
 from hledac.universal.runtime.shadow_inputs import (
     collect_lifecycle_snapshot,
     collect_graph_summary,
@@ -1236,6 +1239,9 @@ class SprintScheduler:
         self._lane_outcomes: tuple = ()
         # Sprint F207K-A: Rejection tracking for non-feed bridge outcomes
         self._lane_rejections: list[dict] = []
+        # Sprint F218D: Lane rejection counters
+        self._lane_rejections_total_seen: int = 0
+        self._lane_rejections_dropped: int = 0
         # Sprint F207J-A: Lane verdict accumulators for compute_sprint_intelligence
         # (tag, signal, fallback_use, fallback_waste, quality)
         self._lane_verdicts: list[tuple[str, int, int, int, int]] = []
@@ -5022,11 +5028,14 @@ class SprintScheduler:
             if rejected_count > 0 and source_family != "unknown":
                 if not hasattr(self, "_lane_rejections") or self._lane_rejections is None:
                     self._lane_rejections = []
+                    self._lane_rejections_total_seen = 0
+                    self._lane_rejections_dropped = 0
                 verdict_tag = _LANE_SOURCE_MAP.get(lane_name, "unknown_lane")
                 reason_counts: dict[str, int] = {}
                 for reason in rejection_reasons:
                     reason_counts[reason] = reason_counts.get(reason, 0) + 1
                 for reason, count in reason_counts.items():
+                    self._lane_rejections_total_seen += count
                     self._lane_rejections.append({
                         "source_family": source_family,
                         "rejection_reason": reason,
@@ -5035,6 +5044,9 @@ class SprintScheduler:
                         "verdict_tag": verdict_tag,
                         "lane_name": str(lane_name) if lane_name else "unknown",
                     })
+                    if len(self._lane_rejections) > MAX_LANE_REJECTIONS:
+                        self._lane_rejections_dropped += len(self._lane_rejections) - MAX_LANE_REJECTIONS
+                        self._lane_rejections = self._lane_rejections[-MAX_LANE_REJECTIONS:]
 
     # ── F202B: Identity Stitching Sidecar ────────────────────────────────────
 
@@ -9640,6 +9652,8 @@ class SprintScheduler:
         self._lane_outcomes = ()
         # Sprint F207K-A: Reset lane rejection tracking
         self._lane_rejections = []
+        self._lane_rejections_total_seen = 0
+        self._lane_rejections_dropped = 0
         self._result.acquisition_lane_outcomes = ()
         # Sprint F207J-A: Clear lane verdict accumulators
         self._lane_verdicts.clear()

@@ -92,6 +92,7 @@ class LMDBKVStore:
         self._max_keys = max_keys
 
         # Sprint 3D: use open_lmdb() for env-driven discipline + lock recovery
+        # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
         if _USE_CANONICAL and open_lmdb is not None:
             self._env = open_lmdb(
                 self._path,
@@ -99,15 +100,18 @@ class LMDBKVStore:
                 max_dbs=1,
                 writemap=False,
                 metasync=True,
+                readahead=False,  # M218C: added
             )
         else:
             # Fallback: direct lmdb.open (backward compat, no lock recovery)
+            # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
             self._env = lmdb.open(
                 str(self._path),
                 map_size=map_size,
                 max_dbs=1,
                 writemap=False,
                 metasync=True,
+                readahead=False,
             )
         logger.info(f"LMDB KV store initialized at {self._path}")
 
@@ -277,8 +281,9 @@ class AsyncLMDBKVStore:
                 self._use_async = False
 
         # Fallback to ThreadPoolExecutor
+        # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
         if LMDB_AVAILABLE:
-            self._env = lmdb.open(str(self.path), map_size=self.map_size)
+            self._env = lmdb.open(str(self.path), map_size=self.map_size, readahead=False)
             logger.info(f"AsyncLMDBKVStore opened (ThreadPoolExecutor) at {self.path}")
         else:
             raise ImportError("Neither aiolmdb nor lmdb available")

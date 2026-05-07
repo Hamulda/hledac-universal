@@ -403,9 +403,23 @@ class MLXEmbeddingManager:
             self._model = None
             self._tokenizer = None
             self._is_loaded = False
-            
+
             import gc
             gc.collect()
+
+            # M218A: Force Metal to release buffers — mx.eval() flushes pending ops,
+            # clear_cache() releases GPU memory back to the OS. Fail-soft if MLX
+            # is unavailable or clear_cache raises.
+            if MLX_AVAILABLE:
+                try:
+                    import mlx.core as mx
+                    mx.eval([])
+                    try:
+                        mx.metal.clear_cache()
+                    except Exception as exc:
+                        logger.debug(f"mx.metal.clear_cache() raised (non-fatal): {exc}")
+                except Exception as exc:
+                    logger.debug(f"MLX eval during unload raised (non-fatal): {exc}")
     
     def get_info(self) -> dict:
         """Vrátí informace o manageru."""
