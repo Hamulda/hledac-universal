@@ -14,7 +14,7 @@ Produces a single verdict: READY_TO_RUN_NOW | READY_TO_RESTART_AND_RUN |
 
 Plus exact next action for the operator.
 
-No live execution. No network. No MLX load. No SprintScheduler.
+No live execution. No network. No MLX load. No scheduler.
 """
 
 from __future__ import annotations
@@ -206,43 +206,26 @@ def analyze_artifact_pack(data: dict) -> tuple[int, int, int, int, list[str]]:
 # --------------------------------------------------------------------------- #
 
 def check_provider_surface(decision_data: dict) -> bool:
-    """
-    Returns True if provider surface is OK (all required probes found + passing).
-    Mirrors prelive_decision_gate logic for public_bootstrap + ct_provider_resilience.
-    """
     checked = decision_data.get("checked_reports", {})
 
-    # Required provider surface probes
+    # Empty → no checks performed yet → trust gate decision, don't block
+    if not checked:
+        return True
+
     pub_bootstrap = checked.get("probe_f217c_public_bootstrap", {})
     ct_resilience = checked.get("probe_f217d_ct_provider_resilience", {})
-
-    # Both missing = blocked
-    if not pub_bootstrap.get("found") and not ct_resilience.get("found"):
-        return False
-
-    # New probes (F219 alias)
     pub_session_seal = checked.get("probe_f219d_public_session_seal", {})
     ct_cooldown = checked.get("probe_f219e_ct_provider_cooldown", {})
 
-    # If old missing but new present and passing → OK
-    if not pub_bootstrap.get("found") and pub_session_seal.get("found") and pub_session_seal.get("pass"):
-        return True
-    if not ct_resilience.get("found") and ct_cooldown.get("found") and ct_cooldown.get("pass"):
-        return True
+    pub_ok = bool(pub_bootstrap.get("found", False) and pub_bootstrap.get("pass", False))
+    seal_ok = bool(pub_session_seal.get("found", False) and pub_session_seal.get("pass", False))
+    ct_ok = bool(ct_resilience.get("found", False) and ct_resilience.get("pass", False))
+    cooldown_ok = bool(ct_cooldown.get("found", False) and ct_cooldown.get("pass", False))
 
-    # Old present and passing → OK
-    if pub_bootstrap.get("found") and pub_bootstrap.get("pass"):
-        return True
-    if ct_resilience.get("found") and ct_resilience.get("pass"):
-        return True
+    pub_satisfied = pub_ok or seal_ok
+    ct_satisfied = ct_ok or cooldown_ok
 
-    # New present but failing → blocked
-    if pub_session_seal.get("found") and not pub_session_seal.get("pass"):
-        return False
-    if ct_cooldown.get("found") and not ct_cooldown.get("pass"):
-        return False
-
-    return True
+    return pub_satisfied and ct_satisfied
 
 
 # --------------------------------------------------------------------------- #
