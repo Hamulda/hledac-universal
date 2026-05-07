@@ -59,6 +59,47 @@ try:
 except ImportError:
     mlx_managed = None  # Fallback - decorator not available
 
+
+# F219B: Safe MLX eval + clear cache helper
+# Ensures lazy MLX work is settled before clearing Metal cache.
+# NEVER raises during teardown — fail-soft always.
+def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
+    """
+    Settle lazy MLX ops and clear Metal cache.
+
+    Call mx.eval([]) to flush pending lazy computations before
+    mx.metal.clear_cache(), ensuring the cache clear actually reclaims
+    memory from pending GPU work.
+
+    Args:
+        reason: Telemetry label for this clear event.
+
+    Returns:
+        dict with keys: cleared (bool), reason (str), error (str or None)
+    """
+    result = {"cleared": False, "reason": reason, "error": None}
+    try:
+        import mlx.core as _mx
+        # Step 1: settle lazy eval
+        try:
+            _mx.eval([])
+        except Exception as _e:
+            result["error"] = f"eval_failed:{_e}"
+            # Continue to clear_cache even if eval fails
+        # Step 2: clear Metal cache
+        try:
+            if hasattr(_mx.metal, "clear_cache"):
+                _mx.metal.clear_cache()
+                result["cleared"] = True
+            elif hasattr(_mx, "clear_cache"):
+                _mx.clear_cache()
+                result["cleared"] = True
+        except Exception as _e:
+            result["error"] = f"{result['error']};clear_cache_failed:{_e}" if result["error"] else f"clear_cache_failed:{_e}"
+    except Exception as _e:
+        result["error"] = f"import_failed:{_e}"
+    return result
+
 # Sprint 7B: MLX availability flag (imported from mlx_cache for consistency)
 try:
     from ..utils.mlx_cache import MLX_AVAILABLE as _MLX_AVAILABLE_GLOBAL
@@ -853,14 +894,8 @@ class Hermes3Engine:
                         ):
                             pass
                     finally:
-                        # Sprint 8UD B.2 + F179C: mx.eval([]) barrier before clear_cache
-                        try:
-                            import mlx.core as _mx
-                            if _mx.metal.is_available():
-                                _mx.eval([])  # F179C: settle lazy eval
-                                _mx.metal.clear_cache()
-                        except Exception:
-                            pass  # Non-fatal
+                        # F219B: safe eval + clear via helper (replaces direct _mx.eval/_mx.metal.clear_cache)
+                        _safe_mlx_eval_and_clear_cache("system_prompt_cache_prefill")
 
                 await asyncio.to_thread(_prefill)
                 self._kv_cache_stats['cache_prefills'] = 1
@@ -1811,7 +1846,7 @@ Do not include any other text. Output valid JSON only."""
         4. _prompt_cache / _system_prompt_cache eviction
         5. _model = None + _tokenizer = None
         6. gc.collect()
-        7. mx.eval([]) + mx.metal.clear_cache()
+        7. Flush lazy ops + reclaim Metal memory (via helper — F219B)
 
         Safe-clear: Emergency flag is NOT auto-cleared here — caller decides.
         """
@@ -1856,22 +1891,8 @@ Do not include any other text. Output valid JSON only."""
         import gc
         gc.collect()
 
-        # Step 7: mx.eval([]) + mx.metal.clear_cache()
-        try:
-            import mlx.core as mx
-            try:
-                mx.eval([])
-            except Exception:
-                pass
-            try:
-                if hasattr(mx.metal, 'clear_cache'):
-                    mx.metal.clear_cache()
-                elif hasattr(mx, 'clear_cache'):
-                    mx.clear_cache()
-            except Exception:
-                pass
-        except Exception:
-            pass
+        # Step 7: mx.eval([]) + mx.metal.clear_cache() — F219B via helper
+        _safe_mlx_eval_and_clear_cache("hermes_unload")
 
         logger.info("✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)")
 
@@ -2056,16 +2077,8 @@ Do not include any other text. Output valid JSON only."""
 
         response = mlx_generate(**generate_kwargs)
 
-        # F192B: mx.eval([]) barrier + clear_cache after inference (canonical 7K order)
-        try:
-            import mlx.core as _mx
-            _mx.eval([])
-            if hasattr(_mx.metal, 'clear_cache'):
-                _mx.metal.clear_cache()
-            elif hasattr(_mx, 'clear_cache'):
-                _mx.clear_cache()
-        except Exception:
-            pass
+        # F192B: mx.eval([]) barrier + clear_cache after inference (canonical 7K order) — F219B via helper
+        _safe_mlx_eval_and_clear_cache("sustain_inference")
 
         # Log memory snapshot (best-effort)
         try:

@@ -369,9 +369,33 @@ def _scheduler_result_acquisition_payload(
             prewindup_barrier=_pwb,
             scheduler_exit=_se_dict,
             windup_guard_observation=_wg_dict,
+            # F216B: Nonfeed diagnostic profile telemetry (from _nd already built above)
+            acquisition_profile=_nd.get("acquisition_profile", "default") if _nd else "default",
+            feed_cap_reason=_nd.get("feed_cap_reason") if _nd else None,
+            nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else False,
+            nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
+            # F217C: PUBLIC bootstrap telemetry
+            public_terminal_stage=getattr(result, "public_terminal_stage", ""),
+            public_stage_counters=getattr(result, "public_stage_counters", None),
+            # F217D: CT provider resilience telemetry
+            ct_provider_status=getattr(result, "ct_provider_status", ""),
+            ct_cache_used=getattr(result, "ct_cache_used", False),
+            ct_cache_stale=getattr(result, "ct_cache_stale", False),
+            ct_cache_age_s=getattr(result, "ct_cache_age_s", 0.0),
+            ct_quarantine_count=getattr(result, "ct_quarantine_count", 0),
+            ct_quarantine_samples=list(getattr(result, "ct_quarantine_samples", ()) or ()),
+            # F216G: Quality/duplicate/low-info rejection ledgers (from result if available)
+            quality_rejection_summary_by_family=getattr(result, "quality_rejection_summary_by_family", None),
+            duplicate_rejection_summary_by_family=getattr(result, "duplicate_rejection_summary_by_family", None),
+            low_information_by_family=getattr(result, "low_information_by_family", None),
+            # F217E: Nonfeed candidate ledger summary
+            nonfeed_candidate_ledger_summary=getattr(result, "nonfeed_candidate_ledger_summary", None),
+            # F216E: Feed dominance budget telemetry (from _plan if available)
+            feed_dominance_budget=getattr(_plan, "feed_dominance_budget", None) if _plan else None,
         )
     except Exception:
         # Fallback: emit explicit fallback acquisition_report
+        # F219A: Even the fallback includes all schema fields (no silent truncation)
         _acq_report = {
             "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
             "terminality": _term_rep,
@@ -383,6 +407,29 @@ def _scheduler_result_acquisition_payload(
             "fallback_reason": "canonical_owner_missing_scheduler_report",
             "plan": None,
             "nonfeed_plan_debug": None,
+            # F216B: Nonfeed diagnostic profile telemetry
+            "acquisition_profile": "default",
+            "feed_cap_reason": None,
+            "nonfeed_priority_enabled": False,
+            "nonfeed_profile_expected_lanes": [],
+            # F217C: PUBLIC bootstrap telemetry
+            "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
+            "public_stage_counters": getattr(result, "public_stage_counters", None),
+            # F217D: CT provider resilience telemetry
+            "ct_provider_status": getattr(result, "ct_provider_status", ""),
+            "ct_cache_used": getattr(result, "ct_cache_used", False),
+            "ct_cache_stale": getattr(result, "ct_cache_stale", False),
+            "ct_cache_age_s": getattr(result, "ct_cache_age_s", 0.0),
+            "ct_quarantine_count": getattr(result, "ct_quarantine_count", 0),
+            "ct_quarantine_samples": list(getattr(result, "ct_quarantine_samples", ()) or ()),
+            # F216G: Quality/duplicate/low-info rejection ledgers
+            "quality_rejection_summary_by_family": None,
+            "duplicate_rejection_summary_by_family": None,
+            "low_information_by_family": None,
+            # F217E: Nonfeed candidate ledger summary
+            "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
+            # F216E: Feed dominance budget telemetry
+            "feed_dominance_budget": None,
         }
 
     return {

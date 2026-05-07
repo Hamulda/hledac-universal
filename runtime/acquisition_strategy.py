@@ -689,15 +689,39 @@ def terminality_report(
 def build_acquisition_report(
     plan: AcquisitionStrategySnapshot | None = None,
     terminality: dict | None = None,
-    nonfeed_plan_debug: NonfeedPlanDebug | None = None,
+    nonfeed_plan_debug: NonfeedPlanDebug | dict | None = None,
     source_family_outcomes: list[dict] | None = None,
     return_guard: dict | None = None,
     prewindup_barrier: dict | None = None,
     scheduler_exit: dict | None = None,
     windup_guard_observation: dict | None = None,
+    # F216B: Nonfeed diagnostic profile telemetry
+    acquisition_profile: str = "default",
+    feed_cap_reason: str | None = None,
+    nonfeed_priority_enabled: bool = False,
+    nonfeed_profile_expected_lanes: list[str] | None = None,
+    # F217C: PUBLIC bootstrap telemetry
+    public_terminal_stage: str = "",
+    public_stage_counters: dict | None = None,
+    # F217D: CT provider resilience telemetry
+    ct_provider_status: str = "",
+    ct_cache_used: bool = False,
+    ct_cache_stale: bool = False,
+    ct_cache_age_s: float = 0.0,
+    ct_quarantine_count: int = 0,
+    ct_quarantine_samples: list[str] | None = None,
+    # F216G: Quality/duplicate/low-info rejection ledgers
+    quality_rejection_summary_by_family: dict | None = None,
+    duplicate_rejection_summary_by_family: dict | None = None,
+    low_information_by_family: dict | None = None,
+    # F217E: Nonfeed candidate ledger summary
+    nonfeed_candidate_ledger_summary: dict | None = None,
+    # F216E: Feed dominance budget telemetry
+    feed_dominance_budget: dict | None = None,
 ) -> dict:
     """
     [F208C] Build a stable canonical acquisition report dict.
+    [F219A] Canonical Surface Contract Seal — extends F208C with full F216/F217 telemetry.
 
     This is the ONE canonical schema for acquisition telemetry. The benchmark
     parser checks report["acquisition_report"] FIRST before falling back to
@@ -715,6 +739,31 @@ def build_acquisition_report(
             "prewindup_barrier": ...  # prewindup barrier dict
             "scheduler_exit": ...  # scheduler exit telemetry dict
             "windup_guard_observation": ...  # windup guard observation dict
+            # F216B: Nonfeed diagnostic profile telemetry
+            "acquisition_profile": "default",
+            "feed_cap_reason": None,
+            "nonfeed_priority_enabled": False,
+            "nonfeed_profile_expected_lanes": [],
+            # F217C: PUBLIC bootstrap telemetry
+            "public_terminal_stage": "",
+            "public_stage_counters": {},
+            # F217D: CT provider resilience telemetry
+            "ct_provider_status": "",
+            "ct_cache_used": False,
+            "ct_cache_stale": False,
+            "ct_cache_age_s": 0.0,
+            "ct_quarantine_count": 0,
+            "ct_quarantine_samples": [],
+            # F216G: Quality rejection ledger
+            "quality_rejection_summary_by_family": {},
+            # F216G: Duplicate rejection ledger
+            "duplicate_rejection_summary_by_family": {},
+            # F216G: Low information rejection
+            "low_information_by_family": {},
+            # F217E: Nonfeed candidate ledger summary
+            "nonfeed_candidate_ledger_summary": {},
+            # F216E: Feed dominance budget telemetry
+            "feed_dominance_budget": {},
         }
 
     Args:
@@ -726,6 +775,23 @@ def build_acquisition_report(
         prewindup_barrier:             Pre-windup barrier dict.
         scheduler_exit:                Scheduler exit telemetry dict.
         windup_guard_observation:      Windup guard observation dict.
+        acquisition_profile:            F216B: Nonfeed diagnostic profile name.
+        feed_cap_reason:                F216B: Reason FEED was capped (if any).
+        nonfeed_priority_enabled:       F216B: Whether nonfeed priority was active.
+        nonfeed_profile_expected_lanes: F216B: Expected nonfeed lanes for profile.
+        public_terminal_stage:          F217C: PUBLIC bootstrap terminal stage.
+        public_stage_counters:          F217C: PUBLIC stage counters dict.
+        ct_provider_status:             F217D: CT provider status string.
+        ct_cache_used:                 F217D: Whether CT cache was used.
+        ct_cache_stale:                F217D: Whether CT cache was stale.
+        ct_cache_age_s:                F217D: CT cache age in seconds.
+        ct_quarantine_count:           F217D: CT quarantine entry count.
+        ct_quarantine_samples:         F217D: CT quarantine sample strings.
+        quality_rejection_summary_by_family: F216G: Quality rejection counts by family.
+        duplicate_rejection_summary_by_family: F216G: Duplicate rejection counts.
+        low_information_by_family:     F216G: Low-information rejection counts.
+        nonfeed_candidate_ledger_summary: F217E: Nonfeed candidate ledger summary.
+        feed_dominance_budget:         F216E: Feed dominance budget telemetry.
 
     Returns:
         Canonical acquisition report dict with schema_version="f208.v1".
@@ -750,24 +816,33 @@ def build_acquisition_report(
     nonfeed_debug_dict: dict | None = None
     if nonfeed_plan_debug is not None:
         nd = nonfeed_plan_debug
-        nonfeed_debug_dict = {
-            "domain_detected": nd.domain_detected,
-            "wallet_detected": nd.wallet_detected,
-            "enabled_nonfeed_lanes": list(nd.enabled_nonfeed_lanes),
-            "disabled_nonfeed_lanes": list(nd.disabled_nonfeed_lanes),
-            "disabled_reasons": list(nd.disabled_reasons),
-            "scheduled_nonfeed_lanes": list(nd.scheduled_nonfeed_lanes),
-            "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
-            "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
-            "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
-            # F216F: Pivot executor telemetry
-            "pivot_executor_enabled": nd.pivot_executor_enabled,
-            "pivot_candidates_count": nd.pivot_candidates_count,
-            "pivot_candidate_types": list(nd.pivot_candidate_types),
-            "pivot_scheduled_lanes": list(nd.pivot_scheduled_lanes),
-            "pivot_skip_reason": nd.pivot_skip_reason,
-            "pivot_errors": list(nd.pivot_errors),
-        }
+        # F219A: Handle both NonfeedPlanDebug object and pre-serialized dict
+        if isinstance(nd, dict):
+            nonfeed_debug_dict = nd
+        else:
+            nonfeed_debug_dict = {
+                "domain_detected": nd.domain_detected,
+                "wallet_detected": nd.wallet_detected,
+                "enabled_nonfeed_lanes": list(nd.enabled_nonfeed_lanes),
+                "disabled_nonfeed_lanes": list(nd.disabled_nonfeed_lanes),
+                "disabled_reasons": list(nd.disabled_reasons),
+                "scheduled_nonfeed_lanes": list(nd.scheduled_nonfeed_lanes),
+                "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
+                "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
+                "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
+                # F216B: Nonfeed diagnostic profile telemetry
+                "acquisition_profile": getattr(nd, "acquisition_profile", "default"),
+                "feed_cap_reason": getattr(nd, "feed_cap_reason", None),
+                "nonfeed_priority_enabled": getattr(nd, "nonfeed_priority_enabled", False),
+                "nonfeed_profile_expected_lanes": list(getattr(nd, "nonfeed_profile_expected_lanes", ()) or ()),
+                # F216F: Pivot executor telemetry
+                "pivot_executor_enabled": getattr(nd, "pivot_executor_enabled", False),
+                "pivot_candidates_count": getattr(nd, "pivot_candidates_count", 0),
+                "pivot_candidate_types": list(getattr(nd, "pivot_candidate_types", ()) or ()),
+                "pivot_scheduled_lanes": list(getattr(nd, "pivot_scheduled_lanes", ()) or ()),
+                "pivot_skip_reason": getattr(nd, "pivot_skip_reason", None),
+                "pivot_errors": list(getattr(nd, "pivot_errors", ()) or ()),
+            }
 
     return {
         "schema_version": ACQUISITION_REPORT_SCHEMA_VERSION,
@@ -779,6 +854,29 @@ def build_acquisition_report(
         "prewindup_barrier": prewindup_barrier,
         "scheduler_exit": scheduler_exit,
         "windup_guard_observation": windup_guard_observation,
+        # F216B: Nonfeed diagnostic profile telemetry
+        "acquisition_profile": acquisition_profile,
+        "feed_cap_reason": feed_cap_reason,
+        "nonfeed_priority_enabled": nonfeed_priority_enabled,
+        "nonfeed_profile_expected_lanes": nonfeed_profile_expected_lanes or [],
+        # F217C: PUBLIC bootstrap telemetry
+        "public_terminal_stage": public_terminal_stage,
+        "public_stage_counters": public_stage_counters or {},
+        # F217D: CT provider resilience telemetry
+        "ct_provider_status": ct_provider_status,
+        "ct_cache_used": ct_cache_used,
+        "ct_cache_stale": ct_cache_stale,
+        "ct_cache_age_s": ct_cache_age_s,
+        "ct_quarantine_count": ct_quarantine_count,
+        "ct_quarantine_samples": ct_quarantine_samples or [],
+        # F216G: Quality/duplicate/low-info rejection ledgers
+        "quality_rejection_summary_by_family": quality_rejection_summary_by_family or {},
+        "duplicate_rejection_summary_by_family": duplicate_rejection_summary_by_family or {},
+        "low_information_by_family": low_information_by_family or {},
+        # F217E: Nonfeed candidate ledger summary
+        "nonfeed_candidate_ledger_summary": nonfeed_candidate_ledger_summary or {},
+        # F216E: Feed dominance budget telemetry
+        "feed_dominance_budget": feed_dominance_budget or {},
     }
 
 

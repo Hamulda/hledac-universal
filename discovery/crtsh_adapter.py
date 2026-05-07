@@ -36,7 +36,7 @@ __all__ = ["async_search_crtsh", "call_crtsh", "CTOutcome", "CTProviderStatus"]
 
 
 class CTProviderStatus(Enum):
-    """F217D: Explicit CT provider status tags."""
+    """F217D: Explicit CT provider status tags. F219E adds cooldown states."""
 
     OK = "ok"
     HTTP_5XX = "http_5xx"
@@ -46,12 +46,16 @@ class CTProviderStatus(Enum):
     EMPTY = "empty"
     DISABLED = "disabled"
     CACHE_HIT_STALE = "cache_hit_stale"
+    # F219E: cooldown states
+    COOLDOWN_ACTIVE = "cooldown_active"
+    PROVIDER_FAILURE = "provider_failure"
 
 
 @dataclass(frozen=True)
 class CTProviderStatusReport:
     """
     F217D: Explicit CT provider status report with bounded error sampling.
+    F219E adds cooldown fields.
 
     Fields:
         provider_name:    Always "crtsh".
@@ -62,6 +66,13 @@ class CTProviderStatusReport:
         ct_cache_used:   True if response came from stale cache.
         ct_cache_stale:  True if cached response was stale when served.
         ct_cache_age_s: Seconds since cache file was written (0 if not cached).
+        # F219E: cooldown fields
+        cooldown_active:              True if provider is in cooldown for this key.
+        cooldown_reason:              Reason cooldown was entered (None if not in cooldown).
+        cooldown_remaining_s:         Seconds remaining in cooldown (0 if not in cooldown).
+        cooldown_started_at_monotonic: Monotonic timestamp when cooldown started (0 if not in cooldown).
+        stale_cache_preferred:        True if stale cache was preferred due to cooldown.
+        provider_attempt_suppressed:  True if provider call was suppressed due to cooldown.
     """
 
     provider_name: str = "crtsh"
@@ -72,6 +83,13 @@ class CTProviderStatusReport:
     ct_cache_used: bool = False
     ct_cache_stale: bool = False
     ct_cache_age_s: float = 0.0
+    # F219E cooldown fields
+    cooldown_active: bool = False
+    cooldown_reason: Optional[str] = None
+    cooldown_remaining_s: float = 0.0
+    cooldown_started_at_monotonic: float = 0.0
+    stale_cache_preferred: bool = False
+    provider_attempt_suppressed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +147,10 @@ _HTTP_TIMEOUT_S = 8.0
 
 # F217D: Stale cache window — up to 7 days old for diagnostic reuse
 _STALE_THRESHOLD_S = 604800  # 7 days
+
+# F219E: Provider cooldown — 300s default after 5xx/timeout
+_COOLDOWN_DEFAULT_S = 300.0
+_MAX_COOLDOWN_KEYS = 256
 
 # Reserved/special names that are never valid public hosts.
 _PRIVATE_HOSTNAMES = {
@@ -319,6 +341,48 @@ def _build_hits_from_raw(
     return hits, raw_count
 
 
+# F219E: Provider cooldown map — keyed by normalized domain, FIFO eviction at cap
+# {domain_lower: (cooldown_started_at_monotonic, reason)}
+_ct_provider_cooldown: dict[str, tuple[float, str]] = {}
+
+
+def _enter_cooldown(domain: str, reason: str, now: float) -> None:
+    """
+    F219E: Enter cooldown for a domain after provider failure.
+
+    Bounds: max _MAX_COOLDOWN_KEYS entries, FIFO eviction.
+    """
+    domain_key = domain.lower()
+    # Evict oldest if at cap (simple FIFO: remove first inserted key)
+    if len(_ct_provider_cooldown) >= _MAX_COOLDOWN_KEYS and domain_key not in _ct_provider_cooldown:
+        oldest_key = next(iter(_ct_provider_cooldown))
+        _ct_provider_cooldown.pop(oldest_key, None)
+    _ct_provider_cooldown[domain_key] = (now, reason)
+
+
+def _check_cooldown(domain: str, now: float) -> tuple[bool, float, str]:
+    """
+    F219E: Check if domain is in active cooldown.
+
+    Returns (is_cooldown_active, remaining_s, reason).
+    """
+    domain_key = domain.lower()
+    entry = _ct_provider_cooldown.get(domain_key)
+    if entry is None:
+        return False, 0.0, ""
+    started_at, reason = entry
+    remaining = _COOLDOWN_DEFAULT_S - (now - started_at)
+    if remaining <= 0:
+        _ct_provider_cooldown.pop(domain_key, None)
+        return False, 0.0, ""
+    return True, remaining, reason
+
+
+def _clear_cooldown(domain: str) -> None:
+    """F219E: Clear cooldown for a domain on provider success."""
+    _ct_provider_cooldown.pop(domain.lower(), None)
+
+
 # ---------------------------------------------------------------------------
 # call_crtsh
 # ---------------------------------------------------------------------------
@@ -411,6 +475,64 @@ async def call_crtsh(
         )
         return result, outcome
 
+    # F219E: Check cooldown before making any provider call
+    cooldown_now = time.monotonic()
+    in_cooldown, cooldown_remaining, cooldown_reason = _check_cooldown(domain_candidate, cooldown_now)
+    if in_cooldown:
+        # F219E: Cooldown active — check for stale cache before returning failure
+        stale_data, stale_age = _read_stale_cache(
+            domain_candidate, cache_dir, _STALE_THRESHOLD_S
+        )
+        elapsed = time.monotonic() - start
+        if stale_data is not None:
+            # Serve stale cache — diagnostic use, not accepted evidence
+            stale_hits, stale_raw_count = _build_hits_from_raw(
+                stale_data, domain_candidate, query_stripped, max_results
+            )
+            cache_outcome = CTOutcome(
+                attempted=True,
+                query=domain_candidate,
+                raw_count=stale_raw_count,
+                built_count=len(stale_hits),
+                error="cooldown_stale_cache",
+                timeout=False,
+                duration_s=elapsed,
+                ct_cache_used=True,
+                ct_cache_stale=True,
+                ct_cache_age_s=stale_age,
+                provider_status=CTProviderStatus.CACHE_HIT_STALE,
+            )
+            cache_result = DiscoveryBatchResult(
+                hits=tuple(stale_hits),
+                error="cooldown_stale_cache",
+                error_type="cooldown_cache_fallback",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=elapsed,
+            )
+            return cache_result, cache_outcome
+        # No stale cache — explicit cooldown failure (not empty CT)
+        outcome = CTOutcome(
+            attempted=True,
+            query=domain_candidate,
+            raw_count=0,
+            built_count=0,
+            error="cooldown_active",
+            duration_s=elapsed,
+            provider_status=CTProviderStatus.COOLDOWN_ACTIVE,
+        )
+        result = DiscoveryBatchResult(
+            hits=(),
+            error="cooldown_active",
+            error_type="cooldown_active",
+            provider_name="crtsh",
+            provider_chain=("crtsh",),
+            source_family="ct",
+            elapsed_s=elapsed,
+        )
+        return result, outcome
+
     # Session via canonical shared session_runtime
     session: aiohttp.ClientSession | None = None
     raw_count = 0
@@ -451,6 +573,8 @@ async def call_crtsh(
             else:
                 err_tag = "network_error"
 
+            # F219E: Enter cooldown on provider failure before stale-cache fallback
+            _enter_cooldown(domain_candidate, err, cooldown_now)
             # F217D: Try stale cache on timeout/network errors before failing
             _stale_data, _stale_age = _read_stale_cache(
                 domain_candidate, cache_dir, _STALE_THRESHOLD_S
@@ -549,6 +673,8 @@ async def call_crtsh(
             return result, outcome
         if resp.status >= 500:
             elapsed = time.monotonic() - start
+            # F219E: Enter cooldown on 5xx before stale-cache fallback
+            _enter_cooldown(domain_candidate, f"http_{resp.status}", cooldown_now)
             # F217D: Try stale cache on 5xx before returning failure
             stale_data, stale_age = _read_stale_cache(
                 domain_candidate, cache_dir, _STALE_THRESHOLD_S
@@ -752,6 +878,9 @@ async def call_crtsh(
             )
             return result, outcome
 
+        # F219E: Clear cooldown on provider success
+        _clear_cooldown(domain_candidate)
+
         outcome = CTOutcome(
             attempted=True,
             query=domain_candidate,
@@ -777,8 +906,9 @@ async def call_crtsh(
 
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
-        # F217D: Try stale cache on TimeoutError before failing
         _dc_for_cache = domain_candidate if 'domain_candidate' in dir() else query_stripped
+        # F219E: Enter cooldown on timeout before stale-cache fallback
+        _enter_cooldown(_dc_for_cache, "timeout", start)
         _stale_d, _stale_a = _read_stale_cache(_dc_for_cache, cache_dir, _STALE_THRESHOLD_S)
         if _stale_d is not None:
             _s_hits, _s_raw = _build_hits_from_raw(

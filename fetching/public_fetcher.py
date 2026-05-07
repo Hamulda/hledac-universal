@@ -70,6 +70,11 @@ _tor_session_lock: "asyncio.Lock" = asyncio.Lock()
 # P10: Module-level state for I2P session management
 _i2p_session: Optional["aiohttp.ClientSession"] = None
 
+# F219D: Module-level state to track whether local sessions were created by us.
+# Prevents closing injected sessions when close_public_fetcher_sessions_async is called.
+_tor_session_locally_created: bool = False
+_i2p_session_locally_created: bool = False
+
 # F206AT: Public fetcher pool authority verdict.
 # Tor and I2P sessions are LOCAL FALLBACK pools managed directly by public_fetcher.
 # They are NOT coordinated through FetchCoordinator transport policy.
@@ -107,12 +112,15 @@ def inject_session_provider(
         tor_session: Canonical Tor aiohttp session, or None to use local fallback.
         i2p_session: Canonical I2P aiohttp session, or None to use local fallback.
     """
-    global _injected_session_provider
+    global _injected_session_provider, _tor_session_locally_created, _i2p_session_locally_created
     # Deactivate seam if both are None — reset to local pools
     if tor_session is None and i2p_session is None:
         _injected_session_provider = None
     else:
         _injected_session_provider = (tor_session, i2p_session)
+        # Injected provider is active — local sessions should not be closed by us
+        _tor_session_locally_created = False
+        _i2p_session_locally_created = False
 
 
 def get_session_source_telemetry() -> dict[str, str]:
@@ -648,7 +656,7 @@ async def _get_tor_session() -> "aiohttp.ClientSession":
     and records source as 'injected'. Otherwise uses local _tor_session and
     records source as 'local_tor'.
     """
-    global _tor_session, _session_source_telemetry
+    global _tor_session, _session_source_telemetry, _tor_session_locally_created
     # F206AT: Check for injected provider first
     if _injected_session_provider is not None:
         injected_tor, _ = _injected_session_provider
@@ -662,6 +670,7 @@ async def _get_tor_session() -> "aiohttp.ClientSession":
             raise RuntimeError("aiohttp_socks required for Tor: pip install aiohttp_socks")
         connector = ProxyConnector.from_url(TOR_SOCKS_PROXY, rdns=True)
         _tor_session = aiohttp.ClientSession(connector=connector)
+        _tor_session_locally_created = True
     _session_source_telemetry["tor"] = "local_tor"
     return _tor_session
 
@@ -675,7 +684,7 @@ async def _get_i2p_session() -> "aiohttp.ClientSession":
     and records source as 'injected'. Otherwise uses local _i2p_session and
     records source as 'local_i2p'.
     """
-    global _i2p_session, _session_source_telemetry
+    global _i2p_session, _session_source_telemetry, _i2p_session_locally_created
     # F206AT: Check for injected provider first
     if _injected_session_provider is not None:
         _, injected_i2p = _injected_session_provider
@@ -690,6 +699,7 @@ async def _get_i2p_session() -> "aiohttp.ClientSession":
         # I2P default SOCKS port is 7654
         connector = ProxyConnector.from_url("socks5://127.0.0.1:7654", rdns=True)
         _i2p_session = aiohttp.ClientSession(connector=connector)
+        _i2p_session_locally_created = True
     _session_source_telemetry["i2p"] = "local_i2p"
     return _i2p_session
 
@@ -727,44 +737,232 @@ async def _jitter_delay() -> None:
 
 async def _close_tor_session() -> None:
     """Close the Tor session (for cleanup)."""
-    global _tor_session
-    if _tor_session is not None and not _tor_session.closed:
+    global _tor_session, _tor_session_locally_created
+    if _tor_session is not None and not _tor_session.closed and _tor_session_locally_created:
         await _tor_session.close()
-        _tor_session = None
+    _tor_session = None
+    _tor_session_locally_created = False
 
 
 def _close_tor_session_sync() -> None:
-    """Sync wrapper for Tor session cleanup via atexit."""
-    global _tor_session
-    if _tor_session is not None and not _tor_session.closed:
+    """Sync wrapper for Tor session cleanup via atexit.
+
+    F219D: Safe teardown that avoids calling run_until_complete on a running loop.
+    Uses a fresh event loop in a daemon thread when no running loop exists.
+    """
+    import threading
+    global _tor_session, _tor_session_locally_created
+
+    # Nothing to do if session is None or already closed
+    if _tor_session is None or _tor_session.closed:
+        return
+
+    # Only close locally-created sessions — never touch injected providers
+    if not _tor_session_locally_created:
+        _tor_session = None
+        return
+
+    try:
+        _loop = asyncio.get_running_loop()
+        # A loop is running — spawn a daemon thread to run the async cleanup
+        def _run_closer() -> None:
+            global _tor_session
+            try:
+                asyncio.run(_tor_session.close())
+            except Exception as e:
+                logger.warning("Error closing Tor session in thread: %s", e)
+            finally:
+                _tor_session = None
+
+        _t = threading.Thread(target=_run_closer, daemon=True)
+        _t.start()
+        # Don't wait — daemon thread will complete asynchronously
+    except RuntimeError:
+        # No running loop — use a fresh event loop synchronously
         try:
-            _tor_session.close()
+            _new_loop = asyncio.new_event_loop()
+            _new_loop.run_until_complete(_tor_session.close())
+            _new_loop.close()
         except Exception as e:
             logger.warning("Error closing Tor session: %s", e)
-        _tor_session = None
+        finally:
+            _tor_session = None
+    finally:
+        _tor_session_locally_created = False
 
 
 async def _close_i2p_session() -> None:
     """
     P10: Close the I2P session (for cleanup).
     """
-    global _i2p_session
-    if _i2p_session is not None and not _i2p_session.closed:
+    global _i2p_session, _i2p_session_locally_created
+    if _i2p_session is not None and not _i2p_session.closed and _i2p_session_locally_created:
         await _i2p_session.close()
-        _i2p_session = None
+    _i2p_session = None
+    _i2p_session_locally_created = False
 
 
 def _close_i2p_session_sync() -> None:
-    """Sync wrapper for I2P session cleanup via atexit."""
-    global _i2p_session
-    if _i2p_session is not None and not _i2p_session.closed:
+    """Sync wrapper for I2P session cleanup via atexit.
+
+    F219D: Safe teardown that avoids calling run_until_complete on a running loop.
+    Uses a fresh event loop in a daemon thread when no running loop exists.
+    """
+    import threading
+    global _i2p_session, _i2p_session_locally_created
+
+    # Nothing to do if session is None or already closed
+    if _i2p_session is None or _i2p_session.closed:
+        return
+
+    # Only close locally-created sessions — never touch injected providers
+    if not _i2p_session_locally_created:
+        _i2p_session = None
+        return
+
+    try:
+        _loop = asyncio.get_running_loop()
+        # A loop is running — spawn a daemon thread to run the async cleanup
+        def _run_closer() -> None:
+            global _i2p_session
+            try:
+                asyncio.run(_i2p_session.close())
+            except Exception as e:
+                logger.warning("Error closing I2P session in thread: %s", e)
+            finally:
+                _i2p_session = None
+
+        _t = threading.Thread(target=_run_closer, daemon=True)
+        _t.start()
+        # Don't wait — daemon thread will complete asynchronously
+    except RuntimeError:
+        # No running loop — use a fresh event loop synchronously
         try:
-            _i2p_session.close()
+            _new_loop = asyncio.new_event_loop()
+            _new_loop.run_until_complete(_i2p_session.close())
+            _new_loop.close()
         except Exception as e:
             logger.warning("Error closing I2P session: %s", e)
-        _i2p_session = None
+        finally:
+            _i2p_session = None
+    finally:
+        _i2p_session_locally_created = False
 
 
+# F219D: Canonical public teardown — closes all local fallback sessions safely.
+# Injected provider sessions are NOT closed by this function (owned elsewhere).
+async def close_public_fetcher_sessions_async() -> dict:
+    """Close all locally-managed Tor and I2P aiohttp sessions.
+
+    F219D: This is the canonical teardown surface for public_fetcher local sessions.
+    It safely closes local _tor_session and _i2p_session that were created by
+    _get_tor_session() and _get_i2p_session(). Injected provider sessions
+    (via inject_session_provider) are NOT closed — they are owned externally.
+
+    Returns:
+        dict with keys:
+            - tor_close_attempted: bool
+            - tor_close_success: bool
+            - tor_close_error: str | None
+            - i2p_close_attempted: bool
+            - i2p_close_success: bool
+            - i2p_close_error: str | None
+            - injected_provider_active: bool
+    """
+    global _tor_session, _i2p_session, _session_source_telemetry
+    global _tor_session_locally_created, _i2p_session_locally_created
+
+    _injected_active = _injected_session_provider is not None
+
+    # --- Tor close ---
+    _tor_attempted = False
+    _tor_success = False
+    _tor_error: str | None = None
+
+    if _tor_session is not None and not _tor_session.closed:
+        _tor_attempted = True
+        if _tor_session_locally_created:
+            try:
+                await _tor_session.close()
+                _tor_success = True
+            except asyncio.CancelledError:
+                raise
+            except Exception as _e:
+                _tor_error = str(_e)
+                logger.warning("Error closing Tor session: %s", _e)
+        # else: injected session — don't close
+    _tor_session = None
+    _tor_session_locally_created = False
+
+    # --- I2P close ---
+    _i2p_attempted = False
+    _i2p_success = False
+    _i2p_error: str | None = None
+
+    if _i2p_session is not None and not _i2p_session.closed:
+        _i2p_attempted = True
+        if _i2p_session_locally_created:
+            try:
+                await _i2p_session.close()
+                _i2p_success = True
+            except asyncio.CancelledError:
+                raise
+            except Exception as _e:
+                _i2p_error = str(_e)
+                logger.warning("Error closing I2P session: %s", _e)
+        # else: injected session — don't close
+    _i2p_session = None
+    _i2p_session_locally_created = False
+
+    # Reset telemetry to unavailable
+    _session_source_telemetry["tor"] = "unavailable"
+    _session_source_telemetry["i2p"] = "unavailable"
+
+    return {
+        "tor_close_attempted": _tor_attempted,
+        "tor_close_success": _tor_success,
+        "tor_close_error": _tor_error,
+        "i2p_close_attempted": _i2p_attempted,
+        "i2p_close_success": _i2p_success,
+        "i2p_close_error": _i2p_error,
+        "injected_provider_active": _injected_active,
+    }
+
+
+def get_public_fetcher_session_status() -> dict:
+    """Return lightweight status of public_fetcher local sessions (O(1), side-effect free).
+
+    F219D: Reports the state of locally-managed Tor/I2P sessions. Does NOT
+    report on injected provider sessions (those are owned externally).
+
+    Returns:
+        dict with keys:
+            - tor_session_present: bool
+            - tor_session_closed: bool
+            - i2p_session_present: bool
+            - i2p_session_closed: bool
+            - injected_provider_active: bool
+            - session_source_telemetry: dict (snapshot)
+    """
+    global _tor_session, _i2p_session, _injected_session_provider, _session_source_telemetry
+
+    _tor_present = _tor_session is not None
+    _tor_closed = (_tor_session is None) or (_tor_session.closed)
+
+    _i2p_present = _i2p_session is not None
+    _i2p_closed = (_i2p_session is None) or (_i2p_session.closed)
+
+    return {
+        "tor_session_present": _tor_present,
+        "tor_session_closed": _tor_closed,
+        "i2p_session_present": _i2p_present,
+        "i2p_session_closed": _i2p_closed,
+        "injected_provider_active": _injected_session_provider is not None,
+        "session_source_telemetry": dict(_session_source_telemetry),
+    }
+
+
+# F219D: Register atexit only after defining the safe sync wrappers
 atexit.register(_close_tor_session_sync)
 atexit.register(_close_i2p_session_sync)
 
@@ -1804,6 +2002,9 @@ __all__ = [
     "PUBLIC_FETCHER_POOL_AUTHORITY",
     "inject_session_provider",
     "get_session_source_telemetry",
+    # F219D: Public teardown surface
+    "close_public_fetcher_sessions_async",
+    "get_public_fetcher_session_status",
 ]
 
 # ---------------------------------------------------------------------------
