@@ -58,6 +58,7 @@ from tools.research_quality_score import score_research_quality
 
 PROFILE_DURATION: dict[str, int] = {
     "smoke180": 180,
+    "nonfeed_diagnostic180": 180,
     "active300": 300,
     "active600": 600,
 }
@@ -73,6 +74,12 @@ PROFILE_META: dict[str, dict] = {
         "expected_windup_lead_s": 180,   # full duration is lead/windup — no active window
         "expected_active_window_s": 0,   # zero → smoke180 is ENTRY_SMOKE_ONLY
         "active_runtime_expected": False,
+    },
+    "nonfeed_diagnostic180": {
+        "planned_duration_s": 180,
+        "expected_windup_lead_s": 0,     # diagnostic: immediate entry, no windup phase
+        "expected_active_window_s": 180,  # full 180s is active runtime for domain queries
+        "active_runtime_expected": True,  # diagnostic profiles produce active runtime
     },
     "active300": {
         "planned_duration_s": 300,
@@ -2766,6 +2773,7 @@ Safety:
 
 Examples:
   python benchmarks/live_sprint_measurement.py --profile smoke180 --query "LockBit ransomware"
+  python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "mozilla.org certificate transparency subdomains" --live
   python benchmarks/live_sprint_measurement.py --profile active300 --query "APT29" --live
   python benchmarks/live_sprint_measurement.py --profile active600 --query "ransomware" --live --output-json /tmp/measure.json
   python benchmarks/live_sprint_measurement.py --print-preflight-only --output-json /tmp/preflight.json

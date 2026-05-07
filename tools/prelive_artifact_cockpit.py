@@ -47,6 +47,7 @@ class NextAction(str, Enum):
     RUN_LIVE_NOW = "run_live_now"
     RUN_WITH_HARDWARE_TAINT = "run_with_hardware_taint"
     RESTART_THEN_RUN_LIVE = "restart_then_run_live"
+    RUN_NONFEED_DIAGNOSTIC = "run_nonfeed_diagnostic"
     RUN_MISSING_PROBE = "run_missing_probe"
     FIX_PROVIDER_SURFACE = "fix_provider_surface"
     FIX_CONTRACT_GATE = "fix_contract_gate"
@@ -397,6 +398,95 @@ def merge_cockpit(
         swap_gate_reason = uma.swap_gate_reason
         log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
 
+    # F221G: Feed-only detection — nonfeed_diagnostic path
+    # Priority: if nonfeed_diagnostic signal present and gate is live-ready and all
+    # artifacts ready, override swap-based verdicts and recommend nonfeed diagnostic.
+    elif gate_live_allowed and ready == total:
+        suggested_cmd = decision_data.get("suggested_live_command", "")
+        suggested_highswap_cmd = decision_data.get("suggested_highswap_diagnostic_command", "")
+        nonfeed_signal = (
+            "nonfeed_diagnostic" in suggested_cmd.lower()
+            or "nonfeed_diagnostic" in suggested_highswap_cmd.lower()
+            or any("nonfeed_diagnostic" in r.lower() for r in gate_reasons)
+        )
+
+        if nonfeed_signal:
+            if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
+                verdict = Verdict.READY_TO_RUN_NOW
+                next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
+                next_action_detail = suggested_cmd or "nonfeed_diagnostic180 — F220-like feed-only detected"
+                live_allowed = True
+                uma.hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
+                uma.swap_policy_tier = "clean" if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB else "diagnostic"
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB"
+                hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
+                swap_policy_tier = uma.swap_policy_tier
+                swap_gate_reason = uma.swap_gate_reason
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only nonfeed_diagnostic path)")
+            elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
+                verdict = Verdict.READY_DIAGNOSTIC_ONLY
+                next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
+                next_action_detail = suggested_highswap_cmd or "nonfeed_diagnostic180 — F220-like feed-only, hardware taint"
+                live_allowed = True
+                uma.hardware_constrained = True
+                uma.swap_policy_tier = "diagnostic"
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB (diagnostic tier)"
+                hardware_constrained = True
+                swap_policy_tier = "diagnostic"
+                swap_gate_reason = uma.swap_gate_reason
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)")
+            else:
+                verdict = Verdict.READY_TO_RESTART_AND_RUN
+                next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180"
+                live_allowed = False
+                uma.hardware_constrained = True
+                uma.swap_policy_tier = "hard_block"
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+                hardware_constrained = True
+                swap_policy_tier = "hard_block"
+                swap_gate_reason = uma.swap_gate_reason
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, hard_block)")
+            log.append("F221G: nonfeed_diagnostic feed-only path selected")
+        else:
+            # No nonfeed signal — normal READY_TO_RUN_NOW (no regression)
+            if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
+                verdict = Verdict.READY_TO_RUN_NOW
+                next_action = NextAction.RUN_LIVE_NOW
+                next_action_detail = ""
+                live_allowed = True
+                uma.hardware_constrained = False
+                uma.swap_policy_tier = "clean"
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
+                hardware_constrained = False
+                swap_policy_tier = "clean"
+                swap_gate_reason = uma.swap_gate_reason
+                log.append("verdict=READY_TO_RUN_NOW")
+            elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
+                verdict = Verdict.READY_DIAGNOSTIC_ONLY
+                next_action = NextAction.RUN_WITH_HARDWARE_TAINT
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
+                live_allowed = True
+                uma.hardware_constrained = True
+                uma.swap_policy_tier = "diagnostic"
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
+                hardware_constrained = True
+                swap_policy_tier = "diagnostic"
+                swap_gate_reason = uma.swap_gate_reason
+                log.append(f"verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})")
+            else:
+                verdict = Verdict.READY_TO_RESTART_AND_RUN
+                next_action = NextAction.RESTART_THEN_RUN_LIVE
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
+                live_allowed = False
+                uma.hardware_constrained = True
+                uma.swap_policy_tier = "hard_block"
+                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+                hardware_constrained = True
+                swap_policy_tier = "hard_block"
+                swap_gate_reason = uma.swap_gate_reason
+                log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
+
     # H: Catch-all unknown
     else:
         verdict = Verdict.BLOCKED_BY_UNKNOWN
@@ -436,7 +526,7 @@ def merge_cockpit(
 def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
     """Render cockpit result as markdown report."""
     icon = "✅" if result.live_allowed else "❌"
-    action_icon = "🚀" if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RUN_WITH_HARDWARE_TAINT, NextAction.RESTART_THEN_RUN_LIVE) else "🔧"
+    action_icon = "🚀" if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RUN_WITH_HARDWARE_TAINT, NextAction.RESTART_THEN_RUN_LIVE, NextAction.RUN_NONFEED_DIAGNOSTIC) else "🔧"
 
     lines = [
         "# Pre-Live Artifact Cockpit Report",
@@ -536,6 +626,13 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
 
     elif result.next_action == NextAction.FIX_CONTRACT_GATE:
         lines.extend(["", "Investigate contract gate failures in the decision gate report."])
+
+    elif result.next_action == NextAction.RUN_NONFEED_DIAGNOSTIC:
+        lines.extend(["", "F220-like feed-only detected. Run nonfeed diagnostic profile:"])
+        lines.append("```bash")
+        cmd = result.next_action_detail or f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query \"mozilla.org certificate transparency subdomains april 2026\" --live"
+        lines.append(cmd)
+        lines.append("```")
 
     lines.extend([
         "",

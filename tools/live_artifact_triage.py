@@ -456,14 +456,14 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
         return TriageResult(
             root_cause_class=RootCause.QUALITY_GATE_FAIL,
             confidence=0.92,
-            reasons=["quality_gate=QUALITY_FAIL_FEED_ONLY — no nonfeed evidence accepted"],
-            next_best_action="re-run with nonfeed families (CT/public) explicitly enabled; check F217 nonfeed scheduler",
-            recommended_sprint_family=SprintFamily.F217,
+            reasons=["quality_gate=QUALITY_FAIL_FEED_ONLY — no nonfeed evidence accepted, feed-only active300"],
+            next_best_action="F220-like feed-only: switch to nonfeed_diagnostic180 for domain query diagnostics",
+            recommended_sprint_family=SprintFamily.NONE,
             another_live_useful=True,
             memory_restart_recommended=False,
             extracted_metrics={"quality_gate": quality_gate},
             exact_followup_command=(
-                f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
                 f'--query "{_query(data)}" --live'
             ),
         )
@@ -505,13 +505,13 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 data,
                 f"feed_share={feed_share:.2f}, public_rejected > 0 but accepted = 0"
             )
-        # CT was attempted but failed — already caught above, so this is feed-dominated
+        # F221G: feed-only active300 run — redirect to nonfeed_diagnostic180 for domain query diagnosis
         return TriageResult(
             root_cause_class=RootCause.FEED_DOMINATED,
-            confidence=0.85,
-            reasons=[f"feed_share={feed_share:.2f} >= 0.9, nonfeed_accepted=0"],
-            next_best_action="enable nonfeed families (public, CT, passive) in acquisition strategy; check F217 scheduler gap",
-            recommended_sprint_family=SprintFamily.F217,
+            confidence=0.90,
+            reasons=[f"feed_share={feed_share:.2f} >= 0.9, nonfeed_accepted=0 — feed-only active300 detected"],
+            next_best_action="F220-like feed-only run: switch to nonfeed_diagnostic180 for domain query diagnostics",
+            recommended_sprint_family=SprintFamily.NONE,
             another_live_useful=True,
             memory_restart_recommended=False,
             extracted_metrics={
@@ -520,7 +520,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 "feed_dominance_score": _feed_dominance_score(data),
             },
             exact_followup_command=(
-                f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
                 f'--query "{_query(data)}" --live'
             ),
         )
@@ -581,12 +581,13 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
     if not pub_fetched and pub_acc == 0 and not _has_ct(data):
         # No public, no CT — this is a feed-only run
         if feed_share >= 0.9:
+            # F221G: feed-only run — redirect to nonfeed_diagnostic180
             return TriageResult(
                 root_cause_class=RootCause.FEED_DOMINATED,
-                confidence=0.80,
-                reasons=["public_fetch_attempted=False, no CT evidence, feed-dominated"],
-                next_best_action="enable public discovery in acquisition strategy",
-                recommended_sprint_family=SprintFamily.F207,
+                confidence=0.85,
+                reasons=["public_fetch_attempted=False, no CT evidence, feed_share >= 0.9 — feed-only"],
+                next_best_action="F220-like feed-only: switch to nonfeed_diagnostic180 for domain query diagnostics",
+                recommended_sprint_family=SprintFamily.NONE,
                 another_live_useful=True,
                 memory_restart_recommended=False,
                 extracted_metrics={
@@ -595,7 +596,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                     "feed_share": round(feed_share, 3),
                 },
                 exact_followup_command=(
-                    f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                    f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
                     f'--query "{_query(data)}" --live'
                 ),
             )
