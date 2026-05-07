@@ -356,51 +356,9 @@ def merge_cockpit(
         swap_gate_reason = "missing/stale artifacts"
         log.append("verdict=BLOCKED_BY_ARTIFACTS")
 
-    # F: Gate READY, all artifacts ready, swap clean (tier 1)
-    elif gate_live_allowed and ready == total and uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
-        verdict = Verdict.READY_TO_RUN_NOW
-        next_action = NextAction.RUN_LIVE_NOW
-        next_action_detail = ""
-        live_allowed = True
-        uma.hardware_constrained = False
-        uma.swap_policy_tier = "clean"
-        uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
-        hardware_constrained = False
-        swap_policy_tier = "clean"
-        swap_gate_reason = uma.swap_gate_reason
-        log.append("verdict=READY_TO_RUN_NOW")
-
-    # G: Gate READY, all artifacts ready, diagnostic tier (2.0 < swap <= 4.0) — F220F
-    elif gate_live_allowed and ready == total and uma.swap_used_gib > CLEAN_SWAP_MAX_GIB and uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
-        verdict = Verdict.READY_DIAGNOSTIC_ONLY
-        next_action = NextAction.RUN_WITH_HARDWARE_TAINT
-        next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
-        live_allowed = True  # allowed with --allow-high-swap
-        uma.hardware_constrained = True
-        uma.swap_policy_tier = "diagnostic"
-        uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
-        hardware_constrained = True
-        swap_policy_tier = "diagnostic"
-        swap_gate_reason = uma.swap_gate_reason
-        log.append(f"verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})")
-
-    # H: Gate READY, all artifacts ready, but high swap > 4.0 GiB → restart — F220F
-    elif gate_live_allowed and ready == total and uma.swap_used_gib > DIAGNOSTIC_SWAP_MAX_GIB:
-        verdict = Verdict.READY_TO_RESTART_AND_RUN
-        next_action = NextAction.RESTART_THEN_RUN_LIVE
-        next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
-        live_allowed = False
-        uma.hardware_constrained = True
-        uma.swap_policy_tier = "hard_block"
-        uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
-        hardware_constrained = True
-        swap_policy_tier = "hard_block"
-        swap_gate_reason = uma.swap_gate_reason
-        log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
-
-    # F221G: Feed-only detection — nonfeed_diagnostic path
-    # Priority: if nonfeed_diagnostic signal present and gate is live-ready and all
-    # artifacts ready, override swap-based verdicts and recommend nonfeed diagnostic.
+    # F221G: Feed-only detection + swap-tier READY gate
+    # Priority: if nonfeed_diagnostic signal present → override swap verdict with nonfeed diagnostic.
+    # Otherwise: fall through to normal swap-tier verdicts (clean / diagnostic / hard_block).
     elif gate_live_allowed and ready == total:
         suggested_cmd = decision_data.get("suggested_live_command", "")
         suggested_highswap_cmd = decision_data.get("suggested_highswap_diagnostic_command", "")
@@ -411,18 +369,19 @@ def merge_cockpit(
         )
 
         if nonfeed_signal:
+            # F220-like feed-only: route to nonfeed_diagnostic180 regardless of swap tier
             if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
                 verdict = Verdict.READY_TO_RUN_NOW
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
                 next_action_detail = suggested_cmd or "nonfeed_diagnostic180 — F220-like feed-only detected"
                 live_allowed = True
                 uma.hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
-                uma.swap_policy_tier = "clean" if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB else "diagnostic"
-                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB"
+                uma.swap_policy_tier = "clean"
+                uma.swap_gate_reason = "nonfeed_diagnostic: swap={:.2f}GiB".format(uma.swap_used_gib)
                 hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
-                swap_policy_tier = uma.swap_policy_tier
+                swap_policy_tier = "clean"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only nonfeed_diagnostic path)")
+                log.append("verdict=RUN_NONFEED_DIAGNOSTIC (feed-only nonfeed_diagnostic path)")
             elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
                 verdict = Verdict.READY_DIAGNOSTIC_ONLY
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
@@ -430,26 +389,27 @@ def merge_cockpit(
                 live_allowed = True
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "diagnostic"
-                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB (diagnostic tier)"
+                uma.swap_gate_reason = "nonfeed_diagnostic: swap={:.2f}GiB (diagnostic tier)".format(uma.swap_used_gib)
                 hardware_constrained = True
                 swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)")
+                log.append("verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={:.2f}GiB, diagnostic tier)".format(uma.swap_used_gib))
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180"
+                next_action_detail = "swap={:.2f}GiB > {:.1f}GiB — restart then nonfeed_diagnostic180".format(uma.swap_used_gib, DIAGNOSTIC_SWAP_MAX_GIB)
                 live_allowed = False
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "hard_block"
-                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+                uma.swap_gate_reason = "nonfeed_diagnostic: swap={:.2f}GiB > {:.1f}GiB".format(uma.swap_used_gib, HARD_BLOCK_SWAP_GIB)
                 hardware_constrained = True
                 swap_policy_tier = "hard_block"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, hard_block)")
+                log.append("verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={:.2f}GiB, hard_block)".format(uma.swap_used_gib))
             log.append("F221G: nonfeed_diagnostic feed-only path selected")
+
         else:
-            # No nonfeed signal — normal READY_TO_RUN_NOW (no regression)
+            # No nonfeed signal — normal swap-tier verdicts (F220F policy)
             if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
                 verdict = Verdict.READY_TO_RUN_NOW
                 next_action = NextAction.RUN_LIVE_NOW
@@ -457,7 +417,7 @@ def merge_cockpit(
                 live_allowed = True
                 uma.hardware_constrained = False
                 uma.swap_policy_tier = "clean"
-                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
+                uma.swap_gate_reason = "swap={:.2f}GiB <= {:.1f}GiB threshold".format(uma.swap_used_gib, CLEAN_SWAP_MAX_GIB)
                 hardware_constrained = False
                 swap_policy_tier = "clean"
                 swap_gate_reason = uma.swap_gate_reason
@@ -465,27 +425,27 @@ def merge_cockpit(
             elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
                 verdict = Verdict.READY_DIAGNOSTIC_ONLY
                 next_action = NextAction.RUN_WITH_HARDWARE_TAINT
-                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
+                next_action_detail = "swap={:.2f}GiB in ({:.1f}GiB, {:.1f}GiB] — hardware taint".format(uma.swap_used_gib, CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB)
                 live_allowed = True
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "diagnostic"
-                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
+                uma.swap_gate_reason = "swap={:.2f}GiB in ({:.1f}GiB, {:.1f}GiB]".format(uma.swap_used_gib, CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB)
                 hardware_constrained = True
                 swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f"verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})")
+                log.append("verdict=READY_DIAGNOSTIC_ONLY (swap={:.2f})".format(uma.swap_used_gib))
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RESTART_THEN_RUN_LIVE
-                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
+                next_action_detail = "swap={:.2f}GiB > {:.1f}GiB — restart required".format(uma.swap_used_gib, DIAGNOSTIC_SWAP_MAX_GIB)
                 live_allowed = False
                 uma.hardware_constrained = True
                 uma.swap_policy_tier = "hard_block"
-                uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+                uma.swap_gate_reason = "swap={:.2f}GiB > {:.1f}GiB".format(uma.swap_used_gib, HARD_BLOCK_SWAP_GIB)
                 hardware_constrained = True
                 swap_policy_tier = "hard_block"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
+                log.append("verdict=READY_TO_RESTART_AND_RUN (swap={:.2f})".format(uma.swap_used_gib))
 
     # H: Catch-all unknown
     else:

@@ -389,8 +389,8 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 root_cause_class=RootCause.CT_PROVIDER_FAILURE,
                 confidence=0.88,
                 reasons=[f"ct_provider_status={ct_status}"],
-                next_best_action="wait for CT provider cooldown; retry with extended timeout",
-                recommended_sprint_family=SprintFamily.F215,
+                next_best_action="F220-like: CT provider failure, switch to nonfeed_diagnostic180 for domain query diagnostics",
+                recommended_sprint_family=SprintFamily.NONE,
                 another_live_useful=True,
                 memory_restart_recommended=False,
                 extracted_metrics={
@@ -398,7 +398,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                     "ct_accepted": ct_accepted,
                 },
                 exact_followup_command=(
-                    f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                    f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
                     f'--query "{_query(data)}" --live'
                 ),
             )
@@ -411,8 +411,8 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
             root_cause_class=RootCause.CT_ALL_QUARANTINED,
             confidence=0.90,
             reasons=[f"ct_quarantine_count={ct_quarantine}, ct_accepted=0"],
-            next_best_action="inspect ct_quarantine_reason; check CT provider blocklist; retry after provider resolves",
-            recommended_sprint_family=SprintFamily.F215,
+            next_best_action="F220-like: CT quarantined, switch to nonfeed_diagnostic180 for domain query diagnostics",
+            recommended_sprint_family=SprintFamily.NONE,
             another_live_useful=True,
             memory_restart_recommended=False,
             extracted_metrics={
@@ -421,7 +421,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 "ct_attempted": ct_attempted,
             },
             exact_followup_command=(
-                f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
                 f'--query "{_query(data)}" --live'
             ),
         )
@@ -434,8 +434,8 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
             root_cause_class=RootCause.CT_ALL_REJECTED_BY_BRIDGE,
             confidence=0.88,
             reasons=["ct source_family_outcomes shows all CT candidates rejected by bridge"],
-            next_best_action="check bridge rejection reasons in source_family_outcomes; fix domain extraction or candidate shape",
-            recommended_sprint_family=SprintFamily.F215,
+            next_best_action="F220-like: CT all-rejected, switch to nonfeed_diagnostic180 for domain query diagnostics",
+            recommended_sprint_family=SprintFamily.NONE,
             another_live_useful=True,
             memory_restart_recommended=False,
             extracted_metrics={
@@ -443,7 +443,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
                 "ct_attempted": ct_attempted,
             },
             exact_followup_command=(
-                f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
                 f'--query "{_query(data)}" --live'
             ),
         )
