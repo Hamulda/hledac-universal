@@ -38,6 +38,8 @@ __all__ = [
     "PivotType",
     "PivotPlanner",
     "MAX_PIVOTS",
+    "MAX_PIVOT_CANDIDATES",
+    "generate_pivot_candidates_from_query",
 ]
 
 # Optional import for F203G feedback — no hard dependency
@@ -52,6 +54,8 @@ logger = logging.getLogger(__name__)
 
 # Bounded: max 20 pivots per sprint
 MAX_PIVOTS: int = 20
+# F216F: Max pivot candidates generated from query (not from findings)
+MAX_PIVOT_CANDIDATES: int = 25
 
 
 class PivotType:
@@ -666,6 +670,305 @@ class PivotPlanner:
         if match:
             return match.group(1).lower()
         return None
+
+
+# ---------------------------------------------------------------------------
+# F216F: Pivot candidate generation from query string (no findings needed)
+# ---------------------------------------------------------------------------
+
+def _looks_like_ip(s: str) -> bool:
+    """Check if string looks like an IP address."""
+    if not s:
+        return False
+    parts = s.split('.')
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(p) <= 255 for p in parts)
+    except (ValueError, TypeError):
+        return False
+
+
+def _looks_like_domain(s: str) -> bool:
+    """Check if string looks like a domain name (module-level, no self)."""
+    if not s or len(s) < 4:
+        return False
+    if "." not in s:
+        return False
+    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", s):
+        return False
+    if not re.match(r"^[a-zA-Z0-9.\-]+$", s):
+        return False
+    return True
+
+
+def _looks_like_hash(s: str) -> bool:
+    """Check if string looks like a hash."""
+    if not s:
+        return False
+    if len(s) not in (32, 40, 64):
+        return False
+    return bool(re.match(r'^[a-fA-F0-9]+$', s))
+
+
+def _looks_like_url(s: str) -> bool:
+    """Check if string looks like a URL."""
+    return bool(re.match(r'^https?://', s)) or bool(re.match(r'^ftp://', s))
+
+
+def _looks_like_email(s: str) -> bool:
+    """Check if string looks like an email address."""
+    return '@' in s and '.' in s.split('@')[-1]
+
+
+def _extract_root_domain(domain: str) -> str:
+    """Extract root domain from subdomain."""
+    parts = domain.split('.')
+    if len(parts) <= 2:
+        return domain
+    # Strip leading subdomains, keep last 2 parts
+    return '.'.join(parts[-2:])
+
+
+def generate_pivot_candidates_from_query(
+    query: str,
+    max_candidates: int = MAX_PIVOT_CANDIDATES,
+) -> list[Pivot]:
+    """
+    [F216F] Generate bounded pivot candidates from a query string.
+
+    This is the FIRST-CLASS pivot executor entry point: given only a query
+    (no findings needed), generate diagnostic pivot candidates that can be
+    used even when no lane accepts the query.
+
+    Generation rules (NO network, NO brute-force):
+    - domain: root domain, www prefix variant, archive pivot
+    - IP: reverse DNS domain pivot, graph pivot
+    - URL: extract domain and generate domain/archive pivots
+    - Hash: graph pivot
+    - Email: leak pivot, identity pivot
+    - unknown: no pivots generated
+
+    Args:
+        query: The input query string
+        max_candidates: Maximum number of candidates (default MAX_PIVOT_CANDIDATES=25)
+
+    Returns:
+        List of Pivot objects, sorted by priority (highest first).
+        Empty list if query type is not pivotable or is None.
+    """
+    if not query or not isinstance(query, str):
+        return []
+
+    query = query.strip()
+    if not query:
+        return []
+
+    candidates: list[Pivot] = []
+    pivot_id_base = str(uuid.uuid4())[:8]
+
+    # Determine IOC type from query
+    ioc_type: str = "unknown"
+    ioc_value: str = query
+
+    if _looks_like_ip(query):
+        ioc_type = "ip"
+        ioc_value = query
+    elif _looks_like_hash(query):
+        # Determine hash type by length
+        h = query.lower()
+        if len(h) == 32:
+            ioc_type = "md5"
+        elif len(h) == 40:
+            ioc_type = "sha1"
+        elif len(h) == 64:
+            ioc_type = "sha256"
+        else:
+            ioc_type = "hash"
+    elif _looks_like_url(query):
+        ioc_type = "url"
+        # Extract domain from URL
+        url_match = re.search(
+            r'https?://([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)',
+            query,
+        )
+        if url_match:
+            ioc_value = url_match.group(1).lower()
+        else:
+            ioc_type = "unknown"
+    elif _looks_like_email(query):
+        ioc_type = "email"
+    elif _looks_like_domain(query):
+        ioc_type = "domain"
+        ioc_value = query
+    else:
+        # Unknown type - try to extract something
+        # Check for domain-like pattern
+        domain_match = re.search(
+            r'([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+)',
+            query,
+        )
+        if domain_match:
+            ioc_type = "domain"
+            ioc_value = domain_match.group(1).lower()
+
+    if ioc_type == "unknown":
+        return []
+
+    # Generate pivots based on IOC type
+    source_hint = "query:direct"
+
+    # Domain pivots
+    if ioc_type == "domain":
+        # Root domain pivot
+        root_domain = _extract_root_domain(ioc_value)
+        candidates.append(Pivot(
+            priority=-0.9,
+            pivot_id=f"{pivot_id_base}-root",
+            pivot_type=PivotType.DOMAIN,
+            ioc_value=root_domain,
+            ioc_type="domain",
+            reason="Root domain extracted from query",
+            expected_value=0.9,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+        # If original was subdomain, also add www variant
+        if ioc_value != root_domain:
+            # Try www.{root_domain}
+            www_domain = f"www.{root_domain}"
+            candidates.append(Pivot(
+                priority=-0.7,
+                pivot_id=f"{pivot_id_base}-www",
+                pivot_type=PivotType.DOMAIN,
+                ioc_value=www_domain,
+                ioc_type="domain",
+                reason="Common www prefix variant",
+                expected_value=0.7,
+                source_hint=source_hint,
+                evidence_pointers=(),
+            ))
+
+        # Archive pivot for domain
+        candidates.append(Pivot(
+            priority=-0.5,
+            pivot_id=f"{pivot_id_base}-archive",
+            pivot_type=PivotType.ARCHIVE,
+            ioc_value=ioc_value,
+            ioc_type="domain",
+            reason="Archive historical records for domain",
+            expected_value=0.5,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+    # IP pivots
+    elif ioc_type == "ip":
+        # Domain pivot for IP (reverse DNS hint)
+        candidates.append(Pivot(
+            priority=-0.7,
+            pivot_id=f"{pivot_id_base}-rdns",
+            pivot_type=PivotType.DOMAIN,
+            ioc_value=ioc_value,
+            ioc_type="ip",
+            reason="Reverse DNS / domain lookup for IP",
+            expected_value=0.7,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+        # Graph pivot for IP
+        candidates.append(Pivot(
+            priority=-0.5,
+            pivot_id=f"{pivot_id_base}-graph",
+            pivot_type=PivotType.GRAPH,
+            ioc_value=ioc_value,
+            ioc_type="ip",
+            reason="Graph traversal from IP IOC",
+            expected_value=0.5,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+    # URL pivots
+    elif ioc_type == "url" and ioc_value != query:
+        # Domain pivot from URL
+        candidates.append(Pivot(
+            priority=-0.8,
+            pivot_id=f"{pivot_id_base}-url-domain",
+            pivot_type=PivotType.DOMAIN,
+            ioc_value=ioc_value,
+            ioc_type="domain",
+            reason="Domain extracted from URL",
+            expected_value=0.8,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+        # Archive pivot for URL
+        candidates.append(Pivot(
+            priority=-0.4,
+            pivot_id=f"{pivot_id_base}-url-archive",
+            pivot_type=PivotType.ARCHIVE,
+            ioc_value=query,
+            ioc_type="url",
+            reason="Archive historical snapshot of URL",
+            expected_value=0.4,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+    # Hash pivots
+    elif ioc_type in ("md5", "sha1", "sha256", "hash"):
+        candidates.append(Pivot(
+            priority=-0.6,
+            pivot_id=f"{pivot_id_base}-threat",
+            pivot_type=PivotType.GRAPH,
+            ioc_value=ioc_value,
+            ioc_type=ioc_type,
+            reason=f"Threat intelligence lookup for {ioc_type.upper() if ioc_type != 'hash' else 'hash'} hash",
+            expected_value=0.6,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+    # Email pivots
+    elif ioc_type == "email":
+        # Leak pivot
+        candidates.append(Pivot(
+            priority=-0.7,
+            pivot_id=f"{pivot_id_base}-leak",
+            pivot_type=PivotType.LEAK,
+            ioc_value=ioc_value,
+            ioc_type="email",
+            reason="Check email for breach/leak exposure",
+            expected_value=0.7,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+        # Identity pivot
+        candidates.append(Pivot(
+            priority=-0.5,
+            pivot_id=f"{pivot_id_base}-identity",
+            pivot_type=PivotType.IDENTITY,
+            ioc_value=ioc_value,
+            ioc_type="email",
+            reason="Identity resolution for email address",
+            expected_value=0.5,
+            source_hint=source_hint,
+            evidence_pointers=(),
+        ))
+
+    # Sort by priority (highest first, since priority is negative)
+    candidates.sort(key=lambda p: p.priority)
+
+    # Enforce bound
+    if len(candidates) > max_candidates:
+        candidates = candidates[:max_candidates]
+
+    return candidates
 
 
 # ---------------------------------------------------------------------------

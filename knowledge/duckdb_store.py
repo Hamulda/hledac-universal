@@ -65,6 +65,7 @@ import os
 import time as _time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 import psutil
 import msgspec
@@ -196,6 +197,30 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     entropy: float
     normalized_hash: str | None
     duplicate: bool
+
+
+# Sprint F216G: Quality Rejection Ledger
+@dataclass(frozen=True)
+class QualityRejectionRecord:
+    """
+    Sprint F216G: Bounded per-finding quality gate rejection record.
+
+    Records individual quality gate rejections for CanonicalFinding ingest,
+    grouped by source_family and reason. Used to diagnose accepted=0
+    without changing quality/dedup/storage behavior.
+
+    Fields:
+        source_family: source_type of the finding (e.g., "ct", "public", "wayback")
+        reason:         FindingQualityDecision.reason (e.g., "low_entropy_rejected",
+                       "persistent_duplicate", "semantic_duplicate")
+        finding_id:     Bounded sample: first 40 chars of finding_id
+        url_sample:      Bounded sample: provenance URL if available, else query (max 200 chars)
+    """
+
+    source_family: str
+    reason: str
+    finding_id: str
+    url_sample: str
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +661,12 @@ class DuckDBShadowStore:
 
         # Sprint 8AK: Persistent duplicate counter (LMDB-backed, cross-source dedup)
         self._persistent_duplicate_count: int = 0
+
+        # Sprint F216G: Quality Rejection Ledger — bounded per-finding rejection records
+        # Used to diagnose accepted=0 by source_family and reason
+        # Max 200 entries; oldest dropped when cap reached
+        self._quality_rejection_ledger: list[QualityRejectionRecord] = []
+        self._MAX_QUALITY_REJECTION_LEDGER: int = 200
 
         # Sprint 8AV: Accepted findings counter (quality gate passed → stored)
         self._accepted_count: int = 0
@@ -4783,6 +4814,42 @@ class DuckDBShadowStore:
                 return item
         return ""
 
+    # ── Sprint F216G: Quality Rejection Ledger ───────────────────────────────
+
+    def _record_quality_rejection(
+        self,
+        finding: CanonicalFinding,
+        decision: FindingQualityDecision,
+    ) -> None:
+        """
+        Sprint F216G: Record a quality gate rejection to the bounded ledger.
+
+        Bounded: max 200 entries; oldest dropped when cap exceeded.
+        No full payload text stored — only bounded samples.
+        """
+        if decision.accepted:
+            return
+        source_family = getattr(finding, "source_type", "unknown") or "unknown"
+        url = self._extract_url_from_provenance(getattr(finding, "provenance", ()) or ())
+        url_sample = url[:200] if url else (getattr(finding, "query", "") or "")[:200]
+        record = QualityRejectionRecord(
+            source_family=source_family,
+            reason=decision.reason or "unknown",
+            finding_id=(getattr(finding, "finding_id", "") or "")[:40],
+            url_sample=url_sample,
+        )
+        self._quality_rejection_ledger.append(record)
+        if len(self._quality_rejection_ledger) > self._MAX_QUALITY_REJECTION_LEDGER:
+            self._quality_rejection_ledger.pop(0)
+
+    def get_quality_rejection_ledger(self) -> tuple[QualityRejectionRecord, ...]:
+        """
+        Sprint F216G: Expose the quality rejection ledger to callers (e.g. scheduler).
+
+        Returns a tuple (immutable view) of all recorded rejection records.
+        """
+        return tuple(self._quality_rejection_ledger)
+
     def _assess_finding_quality(self, finding: CanonicalFinding) -> FindingQualityDecision:
         """
         Sprint 8W + 8AG + 8AK: Assess a single finding's quality via entropy + dedup.
@@ -4977,6 +5044,8 @@ class DuckDBShadowStore:
             return result
 
         if not decision.accepted:
+            # F216G: record quality gate rejection to bounded ledger
+            self._record_quality_rejection(finding, decision)
             return decision
 
         # Phase 2: legacy storage path (WAL-first)
@@ -5028,6 +5097,8 @@ class DuckDBShadowStore:
                 continue
 
             if not decision.accepted:
+                # F216G: record quality gate rejection to bounded ledger
+                self._record_quality_rejection(f, decision)
                 results[i] = decision
             else:
                 accepted_findings.append(f)

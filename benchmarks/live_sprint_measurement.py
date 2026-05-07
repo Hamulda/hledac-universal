@@ -38,6 +38,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 import uuid
@@ -229,6 +230,9 @@ class LiveMeasurementResult:
     # Acquisition strategy telemetry (F207Q)
     acquisition_strategy: dict | None = None
 
+    # F216B: Acquisition profile telemetry
+    acquisition_profile: str | None = None  # "default" | "nonfeed_diagnostic"
+
     # Windup guard observation telemetry (F207S)
     windup_guard_observation: dict | None = None
 
@@ -254,6 +258,17 @@ class LiveMeasurementResult:
     runtime_authority_function: str | None = None  # e.g. "run_sprint"
     runtime_authority_is_canonical: bool | None = None
     runtime_authority_evidence: dict | None = None  # extra context for audit
+
+    # F215G: Runtime provenance — exact source files and environment used for this run
+    core_run_sprint_module_file: str | None = None  # e.g. ".../hledac/universal/core/__main__.py"
+    core_run_sprint_function_qualname: str | None = None  # "run_sprint"
+    sprint_scheduler_module_file: str | None = None  # e.g. ".../hledac/universal/runtime/sprint_scheduler.py"
+    live_sprint_measurement_module_file: str | None = None  # e.g. ".../hledac/universal/benchmarks/live_sprint_measurement.py"
+    python_executable: str | None = None  # sys.executable
+    runtime_cwd: str | None = None  # os.getcwd()
+    sys_path_head: str | None = None  # sys.path[0] if not empty
+    core_main_mtime: float | None = None  # source file mtime for core/__main__.py
+    sprint_scheduler_mtime: float | None = None  # source file mtime for runtime/sprint_scheduler.py
 
     # F209B: Acquisition prelude telemetry
     acquisition_prelude_checked: bool | None = None
@@ -2112,6 +2127,7 @@ async def _run_preflight() -> LiveMeasurementResult:
         hermetic_regression_manifest_present=readiness.get("hermetic_regression_manifest", False),
         transport_authority_status_present=readiness.get("transport_authority_status", False),
         mlx_wired_limit_seal_present=readiness.get("mlx_wired_limit_seal", False),
+        acquisition_profile=None,
     )
 
     # F2130: Runtime Authority — preflight does not invoke any sprint runtime
@@ -2235,6 +2251,7 @@ async def _run_dry_run(
         hermetic_regression_manifest_present=readiness.get("hermetic_regression_manifest", False),
         transport_authority_status_present=readiness.get("transport_authority_status", False),
         mlx_wired_limit_seal_present=readiness.get("mlx_wired_limit_seal", False),
+        acquisition_profile=os.environ.get("HLEDAC_ACQUISITION_PROFILE"),
     )
 
     # F2130: Runtime Authority — dry-run does not invoke any sprint runtime
@@ -2407,6 +2424,8 @@ async def _run_live_sprint(
         hermetic_regression_manifest_present=READINESS_ARTIFACTS["hermetic_regression_manifest"].exists(),
         transport_authority_status_present=READINESS_ARTIFACTS["transport_authority_status"].exists(),
         mlx_wired_limit_seal_present=READINESS_ARTIFACTS["mlx_wired_limit_seal"].exists(),
+        # F216B: Acquisition profile telemetry
+        acquisition_profile=os.environ.get("HLEDAC_ACQUISITION_PROFILE"),
     )
 
     # Memory gate: abort before live execution if memory is critical
@@ -2508,6 +2527,21 @@ async def _run_live_sprint(
         return _patched_sprint_ids.pop(0) if _patched_sprint_ids else _original_make_sprint_id()
 
     core_main._make_sprint_id = _patched_make_sprint_id
+
+    # F215G: Capture runtime provenance before sprint execution
+    import os as _os
+    import sys as _sys
+    from pathlib import Path as _Path
+    result.core_run_sprint_module_file = str(_Path(core_main.__file__).resolve()) if hasattr(core_main, '__file__') else None
+    result.core_run_sprint_function_qualname = "run_sprint"
+    result.sprint_scheduler_module_file = str(_Path(__file__).resolve().parent.parent / "runtime" / "sprint_scheduler.py")
+    result.live_sprint_measurement_module_file = str(_Path(__file__).resolve())
+    result.python_executable = _sys.executable
+    result.runtime_cwd = _os.getcwd()
+    result.sys_path_head = _sys.path[0] if _sys.path else None
+    _core_main_path = _Path(core_main.__file__) if hasattr(core_main, '__file__') else None
+    result.core_main_mtime = _core_main_path.stat().st_mtime if _core_main_path and _core_main_path.exists() else None
+    result.sprint_scheduler_mtime = _Path(__file__).resolve().parent.parent.joinpath("runtime", "sprint_scheduler.py").stat().st_mtime
 
     try:
         logging.info(

@@ -1,0 +1,83 @@
+{
+  "sprint": "F216A",
+  "title": "Runtime Hygiene + Event-Sourced Lane Truth Seed",
+  "status": "COMPLETE",
+  "date": "2026-05-07",
+  "tests": {
+    "probe_f216a_runtime_hygiene_event_truth": {
+      "passed": 16,
+      "failed": 0,
+      "total": 16
+    },
+    "probe_f215e_live_surface_truth": {
+      "passed": 17,
+      "failed": 0,
+      "total": 17
+    },
+    "probe_f214teardown": {
+      "passed": 17,
+      "failed": 0,
+      "total": 17
+    }
+  },
+  "changes": [
+    {
+      "area": "governor_await",
+      "file": "runtime/sprint_scheduler.py",
+      "description": "All 7 self._governor.evaluate() calls now properly awaited in async context",
+      "tests": ["test_all_governor_evaluate_sites_are_awaited", "test_governor_evaluate_is_async_coroutine"]
+    },
+    {
+      "area": "aiohttp_teardown",
+      "file": "core/__main__.py",
+      "description": "close_aiohttp_session_async() called in run_sprint() finally block",
+      "tests": ["test_close_aiohttp_session_async_is_idempotent", "test_core_teardown_calls_close_aiohttp_session"]
+    },
+    {
+      "area": "source_family_events",
+      "file": "runtime/sprint_scheduler.py",
+      "description": "source_family_events field added to SprintSchedulerResult with MAX_SOURCE_FAMILY_EVENTS=200 cap",
+      "tests": [
+        "test_source_family_events_field_exists_in_result",
+        "test_source_family_events_has_cap",
+        "test_source_family_events_bounded_by_cap",
+        "test_source_family_events_schema"
+      ]
+    },
+    {
+      "area": "event_emissions",
+      "file": "runtime/sprint_scheduler.py",
+      "description": "Events emitted at FEED accepted, CT raw_received, PUBLIC timeout lifecycle points",
+      "tests": [
+        "test_feed_accepted_event_emitted",
+        "test_public_timeout_event_emitted",
+        "test_ct_raw_received_event_emitted",
+        "test_event_log_cleared_on_reset"
+      ]
+    },
+    {
+      "area": "benchmark_boundary",
+      "file": "benchmarks/live_sprint_measurement.py",
+      "description": "Benchmark uses run_sprint, not direct SprintScheduler construction",
+      "tests": ["test_benchmark_uses_run_sprint_not_direct_scheduler", "test_benchmark_no_live_network"]
+    },
+    {
+      "area": "hermetic_constraints",
+      "file": "tests/probe_f216a_runtime_hygiene_event_truth/test_sprint_f216a.py",
+      "description": "No model load, no browser, no dependency install in tests",
+      "tests": ["test_no_model_load_in_tests", "test_no_browser_in_tests"]
+    }
+  ],
+  "abort_conditions_verified": [
+    "no_benchmark_manual_scheduler_construction",
+    "no_live_network_in_tests",
+    "no_dependency_install_required",
+    "no_model_load_in_tests",
+    "no_browser_in_tests"
+  ],
+  "files_modified": [
+    "runtime/sprint_scheduler.py",
+    "core/__main__.py",
+    "tests/probe_f216a_runtime_hygiene_event_truth/test_sprint_f216a.py"
+  ]
+}

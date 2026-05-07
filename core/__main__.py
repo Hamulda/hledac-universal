@@ -346,6 +346,19 @@ def _scheduler_result_acquisition_payload(
                 "nonfeed_execution_skip_reason": getattr(
                     _plan.nonfeed_plan_debug, "nonfeed_execution_skip_reason", None
                 ),
+                # F216B: nonfeed_diagnostic profile telemetry
+                "acquisition_profile": getattr(
+                    _plan.nonfeed_plan_debug, "acquisition_profile", "default"
+                ),
+                "feed_cap_reason": getattr(
+                    _plan.nonfeed_plan_debug, "feed_cap_reason", None
+                ),
+                "nonfeed_priority_enabled": getattr(
+                    _plan.nonfeed_plan_debug, "nonfeed_priority_enabled", False
+                ),
+                "nonfeed_profile_expected_lanes": list(
+                    getattr(_plan.nonfeed_plan_debug, "nonfeed_profile_expected_lanes", ()) or ()
+                ),
             }
         _acq_report = build_acquisition_report(
             plan=_plan,
@@ -1528,6 +1541,14 @@ async def run_sprint(
             raise
         except Exception as e:
             logger.debug(f"[TEARDOWN] curl_cffi sessions close failed: {e}")  # fail-soft
+        # Sprint F216A: Close aiohttp session used by public_fetcher
+        try:
+            from hledac.universal.network.session_runtime import close_aiohttp_session_async
+            await close_aiohttp_session_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[TEARDOWN] aiohttp session close failed: {e}")  # fail-soft
 
 
 # =============================================================================
@@ -1638,12 +1659,22 @@ def main() -> None:
         action="store_true",
         help="Run deep probe research post-sprint (deep web, S3 buckets, IPFS)",
     )
+    parser.add_argument(
+        "--acquisition-profile",
+        type=str,
+        default="default",
+        choices=["default", "nonfeed_diagnostic"],
+        help="F216B: Acquisition runtime profile (default | nonfeed_diagnostic)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    # F216B: Set acquisition profile env var so build_acquisition_plan picks it up
+    os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
 
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))

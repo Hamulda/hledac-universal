@@ -89,6 +89,7 @@ MAX_BRIDGE_OUTPUT: int = 500
 MAX_PAYLOAD_TEXT_CHARS: int = 2000
 MAX_PROVENANCE_ITEMS: int = 20
 MAX_SAMPLE_REJECTIONS: int = 5
+MAX_CT_QUARANTINE_SAMPLES: int = 10
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -236,6 +237,61 @@ def _is_private_hostname(domain: str) -> bool:
     return domain in _PRIVATE_HOSTNAMES
 
 
+def _classify_domain_shape(domain: str, url: str, ct_name_value: str) -> str:
+    """Classify the candidate shape for quarantine entry classification."""
+    if domain.startswith("*."):
+        return "wildcard"
+    if not domain or "." not in domain:
+        return "single_label"
+    if ct_name_value and len(ct_name_value.split("\n")) > 2:
+        return "multi_san"
+    if url.startswith("https://"):
+        return "https_derived"
+    if url.startswith("http://"):
+        return "http_derived"
+    return "ct_entry"
+
+
+def _make_ct_quarantine_entry(
+    domain: str,
+    reject_reason: str,
+    query: str,
+    source_url: str,
+    candidate_shape: str,
+    ts: float,
+) -> dict[str, Any]:
+    """
+    Build a bounded CT quarantine entry for raw hits rejected by bridge criteria.
+
+    Quarantine entries are inspectable evidence of bridge rejections WITHOUT
+    being counted as accepted CanonicalFinding candidates.
+
+    Schema:
+        family         — "CT" (source family identifier)
+        raw_value      — sanitized domain or subdomain if safe to log
+        source_url     — sanitized source URL (no credentials)
+        reject_reason  — rejection reason from RejectionReason constants
+        normalized_query — query used for this CT lookup
+        candidate_shape — domain shape classification
+        accepted       — False (quarantine is not accepted evidence)
+        quarantine     — True (this entry is quarantined)
+        ts             — Unix timestamp from hit or current time
+
+    No full sensitive payload is stored — only bounded metadata for triage.
+    """
+    return {
+        "family": "CT",
+        "raw_value": domain[:253] if domain else "",
+        "source_url": source_url[:500] if source_url else "",
+        "reject_reason": reject_reason,
+        "normalized_query": query[:200] if query else "",
+        "candidate_shape": candidate_shape,
+        "accepted": False,
+        "quarantine": True,
+        "ts": ts,
+    }
+
+
 def _build_ct_payload(
     domain: str,
     issuer_name: str | None,
@@ -367,6 +423,7 @@ def ct_results_to_findings(
     findings: List[Any] = []
     rejections: List[RejectionReason] = []
     seen_domains: set[str] = set()
+    ct_quarantine_entries: list[dict[str, Any]] = []
 
     # Telemetry counters
     ct_raw_entries = 0
@@ -388,6 +445,8 @@ def ct_results_to_findings(
             "ct_rejected_duplicate": 0,
             "ct_rejected_missing_domain": 0,
             "ct_rejected_missing_value": 0,
+            "ct_quarantine_count": 0,
+            "ct_quarantine_entries": [],
         }
 
     hits = batch_result.hits
@@ -406,6 +465,8 @@ def ct_results_to_findings(
             "ct_rejected_duplicate": 0,
             "ct_rejected_missing_domain": 0,
             "ct_rejected_missing_value": 0,
+            "ct_quarantine_count": 0,
+            "ct_quarantine_entries": [],
         }
 
     capped = hits[:MAX_BRIDGE_OUTPUT]
@@ -450,42 +511,133 @@ def ct_results_to_findings(
             if cn and not _is_wildcard_domain(cn):
                 candidate_domains.append(cn.lower())
 
+        # Always initialize ts from retrieved_ts (used in both branches)
+        ts = retrieved_ts if retrieved_ts > 0 else time.time()
+
         if not candidate_domains:
             # Wildcard-only name_value: reject all wildcards before the domain-level rejection
             for _wc in name_value_wildcards:
                 rejections.append(REJECTION_WILDCARD_DOMAIN)
+                entry = _make_ct_quarantine_entry(
+                    domain=_wc,
+                    reject_reason=REJECTION_WILDCARD_DOMAIN,
+                    query=query,
+                    source_url=url,
+                    candidate_shape="wildcard",
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
             if not url and not title:
                 rejections.append(REJECTION_MISSING_VALUE)
+                entry = _make_ct_quarantine_entry(
+                    domain="",
+                    reject_reason=REJECTION_MISSING_VALUE,
+                    query=query,
+                    source_url=url or "",
+                    candidate_shape="missing",
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
             else:
                 rejections.append(REJECTION_MISSING_DOMAIN)
+                entry = _make_ct_quarantine_entry(
+                    domain="",
+                    reject_reason=REJECTION_MISSING_DOMAIN,
+                    query=query,
+                    source_url=url or "",
+                    candidate_shape="missing",
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
             continue
 
-        # Reject wildcard siblings found alongside concrete domains
+        # Track wildcards already quarantined via name_value_wildcards loop
+        # to avoid double-quarantining URL-derived wildcards that also appear in name_value_wildcards
+        _quarantined_wildcards: set[str] = set()
         for _wc in name_value_wildcards:
             rejections.append(REJECTION_WILDCARD_DOMAIN)
+            entry = _make_ct_quarantine_entry(
+                domain=_wc,
+                reject_reason=REJECTION_WILDCARD_DOMAIN,
+                query=query,
+                source_url=url,
+                candidate_shape="wildcard",
+                ts=ts,
+            )
+            if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                ct_quarantine_entries.append(entry)
+            _quarantined_wildcards.add(_wc.lower())
 
         for domain in candidate_domains:
             ct_extracted_domains += 1
 
-            # Private/reserved check
-            if _is_private_hostname(domain):
-                rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
+            # Skip if already quarantined as sibling wildcard (from name_value_wildcards)
+            if domain.lower() in _quarantined_wildcards:
+                # Already quarantined in name_value_wildcards loop above, skip duplicate
                 continue
 
-            # Single-label (no TLD) check
+            # Private/reserved check FIRST — more specific than single-label
+            if _is_private_hostname(domain):
+                rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
+                entry = _make_ct_quarantine_entry(
+                    domain=domain,
+                    reject_reason=REJECTION_PRIVATE_OR_RESERVED_DOMAIN,
+                    query=query,
+                    source_url=url,
+                    candidate_shape="single_label",
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
+                continue
+
+            # Single-label (no TLD) check — after private check
             if "." not in domain:
                 rejections.append(REJECTION_LOW_INFORMATION)
+                entry = _make_ct_quarantine_entry(
+                    domain=domain,
+                    reject_reason=REJECTION_LOW_INFORMATION,
+                    query=query,
+                    source_url=url,
+                    candidate_shape="single_label",
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
                 continue
 
             # Wildcard check — handles URL-derived wildcards (e.g. https://*.example.com/)
-            # Wildcards from ct_name_value are already in name_value_wildcards, not here
+            # Wildcards from ct_name_value are already handled via _quarantined_wildcards above
             if _is_wildcard_domain(domain):
                 rejections.append(REJECTION_WILDCARD_DOMAIN)
+                entry = _make_ct_quarantine_entry(
+                    domain=domain,
+                    reject_reason=REJECTION_WILDCARD_DOMAIN,
+                    query=query,
+                    source_url=url,
+                    candidate_shape="wildcard",
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
                 continue
 
             # Duplicate check
             if domain in seen_domains:
                 rejections.append(REJECTION_DUPLICATE_CANDIDATE)
+                entry = _make_ct_quarantine_entry(
+                    domain=domain,
+                    reject_reason=REJECTION_DUPLICATE_CANDIDATE,
+                    query=query,
+                    source_url=url,
+                    candidate_shape=_classify_domain_shape(domain, url, ct_name_value),
+                    ts=ts,
+                )
+                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
+                    ct_quarantine_entries.append(entry)
                 continue
             seen_domains.add(domain)
             ct_candidate_domains += 1
@@ -550,6 +702,8 @@ def ct_results_to_findings(
         "ct_rejected_missing_value": sum(
             1 for r in rejections if r == REJECTION_MISSING_VALUE
         ),
+        "ct_quarantine_count": len(ct_quarantine_entries),
+        "ct_quarantine_entries": ct_quarantine_entries,
     }
 
     return findings, rejections, telemetry

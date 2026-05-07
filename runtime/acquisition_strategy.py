@@ -59,12 +59,15 @@ from hledac.universal.runtime.source_finding_bridge import (
 
 __all__ = [
     "AcquisitionLane",
+    "AcquisitionProfile",
     "AcquisitionLanePlan",
     "AcquisitionStrategySnapshot",
     "AcquisitionLaneOutcome",
     "SourceFamilyOutcome",
     "NonfeedPlanDebug",
     "MandatoryLaneTerminality",
+    "FeedDominanceBudget",
+    "_load_feed_budget_from_env",
     "required_terminal_lanes",
     "lane_is_terminal",
     "terminality_report",
@@ -96,6 +99,120 @@ class AcquisitionLane:
     BLOCKCHAIN = "BLOCKCHAIN"
     STEALTH = "STEALTH"
     PIVOT_EXECUTOR = "PIVOT_EXECUTOR"
+
+
+class AcquisitionProfile:
+    """F216B: Acquisition runtime profile controlling lane caps and priorities."""
+
+    DEFAULT = "default"
+    NONFEED_DIAGNOSTIC = "nonfeed_diagnostic"
+
+
+@dataclass(frozen=True)
+class FeedDominanceBudget:
+    """F216E: Canonical feed dominance budget policy.
+
+    Limits how many feed findings can be accepted before nonfeed lanes
+    are given priority. Activated for non-default profiles when mandatory
+    nonfeed lanes are unresolved.
+
+    Invariants:
+      - max_feed_accepted_before_nonfeed_terminal >= max_feed_per_source
+      - All limits are bounded (min 1, max 10000)
+      - Safe to use as frozen dataclass field
+    """
+
+    max_feed_accepted_before_nonfeed_terminal: int = 0  # 0 = no cap
+    max_feed_per_source: int = 0                         # 0 = no cap
+    max_feed_share_before_nonfeed_terminal: float = 0.0 # 0.0 = no cap (1.0 = 100%)
+
+    def is_active(self) -> bool:
+        """Return True when any cap is configured."""
+        return (
+            self.max_feed_accepted_before_nonfeed_terminal > 0
+            or self.max_feed_per_source > 0
+            or self.max_feed_share_before_nonfeed_terminal > 0.0
+        )
+
+    def cap_feeding(
+        self,
+        feed_accepted_so_far: int,
+        nonfeed_accepted_so_far: int,
+        feed_per_source: dict[str, int],
+    ) -> tuple[bool, str]:
+        """Check if feeding should be capped.
+
+        Returns (should_cap, reason) where reason is empty when cap not active.
+        """
+        if not self.is_active():
+            return False, ""
+
+        # Cap 1: global feed accepted before nonfeed terminal
+        if (
+            self.max_feed_accepted_before_nonfeed_terminal > 0
+            and nonfeed_accepted_so_far == 0
+            and feed_accepted_so_far >= self.max_feed_accepted_before_nonfeed_terminal
+        ):
+            return True, (
+                f"feed_cap_active:global:{feed_accepted_so_far}"
+                f">={self.max_feed_accepted_before_nonfeed_terminal}"
+            )
+
+        # Cap 3: per-source cap
+        if self.max_feed_per_source > 0:
+            for source, count in feed_per_source.items():
+                if count >= self.max_feed_per_source:
+                    return True, (
+                        f"feed_cap_active:per_source:{source}:{count}"
+                        f">={self.max_feed_per_source}"
+                    )
+
+        # Cap 2: feed share of total (only meaningful when nonfeed unresolved)
+        if (
+            self.max_feed_share_before_nonfeed_terminal > 0.0
+            and nonfeed_accepted_so_far == 0
+        ):
+            total = feed_accepted_so_far + nonfeed_accepted_so_far
+            if total > 0:
+                share = feed_accepted_so_far / total
+                if share >= self.max_feed_share_before_nonfeed_terminal:
+                    return True, (
+                        f"feed_cap_active:share:{share:.2f}"
+                        f">={self.max_feed_share_before_nonfeed_terminal}"
+                    )
+
+        return False, ""
+
+
+def _load_feed_budget_from_env() -> FeedDominanceBudget:
+    """Load FeedDominanceBudget from environment variables with safe fallback."""
+    import os
+
+    def _int(key: str, default: int) -> int:
+        try:
+            val = os.environ.get(key, "")
+            return max(1, min(10000, int(val))) if val else default
+        except (ValueError, OverflowError):
+            return default
+
+    def _float(key: str, default: float) -> float:
+        try:
+            val = os.environ.get(key, "")
+            return max(0.0, min(1.0, float(val))) if val else default
+        except (ValueError, OverflowError):
+            return default
+
+    return FeedDominanceBudget(
+        max_feed_accepted_before_nonfeed_terminal=_int(
+            "HLEDAC_FEED_MAX_ACCEPTED_BEFORE_NONFEED", 0
+        ),
+        max_feed_per_source=_int(
+            "HLEDAC_FEED_MAX_PER_SOURCE", 0
+        ),
+        max_feed_share_before_nonfeed_terminal=_float(
+            "HLEDAC_FEED_MAX_SHARE_BEFORE_NONFEED", 0.0
+        ),
+    )
 
 
 # ── Risk levels ───────────────────────────────────────────────────────────────
@@ -142,6 +259,18 @@ class NonfeedPlanDebug:
     hardware_skipped_lanes: tuple[str, ...] = ()
     nonfeed_execution_scheduled: bool = False
     nonfeed_execution_skip_reason: str | None = None
+    # F216B: Nonfeed diagnostic profile telemetry
+    acquisition_profile: str = "default"
+    feed_cap_reason: str | None = None
+    nonfeed_priority_enabled: bool = False
+    nonfeed_profile_expected_lanes: tuple[str, ...] = ()
+    # F216F: Pivot executor telemetry — first-class diagnostic source
+    pivot_executor_enabled: bool = False
+    pivot_candidates_count: int = 0
+    pivot_candidate_types: tuple[str, ...] = ()
+    pivot_scheduled_lanes: tuple[str, ...] = ()
+    pivot_skip_reason: str | None = None
+    pivot_errors: tuple[str, ...] = ()
 
 
 @dataclass
@@ -160,6 +289,8 @@ class AcquisitionStrategySnapshot:
     plans: tuple[AcquisitionLanePlan, ...] = ()
     # [F207L] Nonfeed lane planning debug snapshot for live KPI diagnosis
     nonfeed_plan_debug: NonfeedPlanDebug | None = None
+    # F216E: Feed dominance budget — active when non-default profile and nonfeed unresolved
+    feed_dominance_budget: FeedDominanceBudget = FeedDominanceBudget()
 
 
 @dataclass
@@ -627,6 +758,13 @@ def build_acquisition_report(
             "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
             "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
             "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
+            # F216F: Pivot executor telemetry
+            "pivot_executor_enabled": nd.pivot_executor_enabled,
+            "pivot_candidates_count": nd.pivot_candidates_count,
+            "pivot_candidate_types": list(nd.pivot_candidate_types),
+            "pivot_scheduled_lanes": list(nd.pivot_scheduled_lanes),
+            "pivot_skip_reason": nd.pivot_skip_reason,
+            "pivot_errors": list(nd.pivot_errors),
         }
 
     return {
@@ -984,6 +1122,7 @@ def build_acquisition_plan(
     branch_timeout_count: int = 0,
     transport_authority_status: Optional[dict] = None,
     stealth_phase: Optional[dict] = None,
+    acquisition_profile: str = "default",
 ) -> AcquisitionStrategySnapshot:
     """
     Build an acquisition strategy snapshot for the given sprint context.
@@ -1004,6 +1143,10 @@ def build_acquisition_plan(
             Supported keys:
               - "phase": int — current stealth phase
               - "breaker_seam_ready": bool — True when phase >= 3
+        acquisition_profile: F216B: Runtime profile controlling lane caps.
+            "default" = standard behavior.
+            "nonfeed_diagnostic" = caps FEED at 25, enables nonfeed lanes for domain queries.
+            Falls back to HLEDAC_ACQUISITION_PROFILE env var if not explicitly passed.
 
     Returns:
         AcquisitionStrategySnapshot with per-lane plans.
@@ -1015,6 +1158,12 @@ def build_acquisition_plan(
       - Bounded: max 8 lane plans
       - Fail-soft: on any error returns minimal snapshot with all lanes disabled
     """
+    # F216B: Fall back to env var if not explicitly passed
+    if acquisition_profile == "default":
+        import os
+        acquisition_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "default")
+    # F216E: Load feed dominance budget from env (active for non-default profiles)
+    feed_budget = _load_feed_budget_from_env() if acquisition_profile != "default" else FeedDominanceBudget()
     try:
         return _build_plan_impl(
             query=query,
@@ -1026,6 +1175,8 @@ def build_acquisition_plan(
             branch_timeout_count=branch_timeout_count,
             transport_authority_status=transport_authority_status,
             stealth_phase=stealth_phase,
+            acquisition_profile=acquisition_profile,
+            feed_budget=feed_budget,
         )
     except Exception:
         # Fail-soft: return minimal snapshot with all lanes disabled
@@ -1037,6 +1188,8 @@ def build_acquisition_plan(
             swap_detected=swap_detected,
             accepted_findings_so_far=accepted_findings_so_far,
             branch_timeout_count=branch_timeout_count,
+            feed_dominance_budget=feed_budget,
+            nonfeed_plan_debug=None,
             plans=(),
         )
 
@@ -1051,6 +1204,8 @@ def _build_plan_impl(
     branch_timeout_count: int,
     transport_authority_status: Optional[dict],
     stealth_phase: Optional[dict],
+    acquisition_profile: str = "default",
+    feed_budget: FeedDominanceBudget = FeedDominanceBudget(),
 ) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
 
@@ -1060,6 +1215,10 @@ def _build_plan_impl(
     has_url = _has_url(query)
     has_crypto = _has_crypto_indicator(query)
     has_long_duration = duration_s >= 300.0
+
+    # F216B: Nonfeed diagnostic profile flags
+    is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
+    nonfeed_priority_enabled = is_nonfeed_diagnostic
 
     # Transport authority signals
     transport_degraded = False
@@ -1080,13 +1239,20 @@ def _build_plan_impl(
     plans: list[AcquisitionLanePlan] = []
 
     # ── FEED ────────────────────────────────────────────────────────────────
-    # Always allowed unless hardware critical
+    # F216B: nonfeed_diagnostic caps FEED at 25 so nonfeed lanes get oxygen
+    if is_nonfeed_diagnostic:
+        feed_max_items = 25
+        feed_cap_reason = "nonfeed_diagnostic_profile_capped_25"
+    else:
+        feed_max_items = 50
+        feed_cap_reason = None
+
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.FEED,
             enabled=not hardware_critical,
             reason="hardware_critical" if hardware_critical else "always_allowed",
-            max_items=50,
+            max_items=feed_max_items,
             timeout_s=30,
             concurrency=_lane_concurrency(AcquisitionLane.FEED, base_conc, uma_state),
             risk_level=RiskLevel.LOW,
@@ -1094,15 +1260,25 @@ def _build_plan_impl(
     )
 
     # ── PUBLIC ─────────────────────────────────────────────────────────────
-    # Allowed unless transport degraded or hardware critical
-    public_enabled = not hardware_critical and not transport_degraded
+    # F216B: nonfeed_diagnostic enables PUBLIC for domain/IP even under memory emergency
+    if is_nonfeed_diagnostic:
+        # nonfeed_diagnostic: PUBLIC enabled for domain query regardless of hardware state
+        public_enabled = bool(has_domain) and not transport_degraded
+        public_reason = "nonfeed_diagnostic_domain" if public_enabled else (
+            "transport_degraded" if transport_degraded else "query_not_domain"
+        )
+    else:
+        public_enabled = not hardware_critical and not transport_degraded
+        public_reason = (
+            "hardware_critical"
+            if hardware_critical
+            else ("transport_degraded" if transport_degraded else "query_eligible")
+        )
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.PUBLIC,
             enabled=public_enabled,
-            reason="hardware_critical"
-            if hardware_critical
-            else ("transport_degraded" if transport_degraded else "query_eligible"),
+            reason=public_reason,
             max_items=30,
             timeout_s=45,
             concurrency=_lane_concurrency(AcquisitionLane.PUBLIC, base_conc, uma_state),
@@ -1111,13 +1287,13 @@ def _build_plan_impl(
     )
 
     # ── CT ─────────────────────────────────────────────────────────────────
-    # Allowed for domain-like queries OR aggressive mode
-    ct_enabled = bool(has_domain) or aggressive_mode
+    # F216B: nonfeed_diagnostic enables CT for domain unless memory emergency
+    ct_enabled = bool(has_domain) or aggressive_mode or is_nonfeed_diagnostic
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.CT,
             enabled=ct_enabled and not hardware_critical,
-            reason="domain_or_aggressive"
+            reason="domain_or_aggressive_or_nonfeed_diagnostic"
             if ct_enabled
             else "query_not_domain_like",
             max_items=100,
@@ -1128,13 +1304,13 @@ def _build_plan_impl(
     )
 
     # ── WAYBACK ────────────────────────────────────────────────────────────
-    # Allowed when query has URL/domain OR long sprint duration
-    wayback_enabled = has_url or has_long_duration
+    # F216B: nonfeed_diagnostic enables WAYBACK for domain/URL even under hardware_critical
+    wayback_enabled = has_url or has_long_duration or (is_nonfeed_diagnostic and has_domain)
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.WAYBACK,
             enabled=wayback_enabled and not hardware_critical,
-            reason="has_url_or_long_duration"
+            reason="has_url_or_long_duration_or_nonfeed_domain"
             if wayback_enabled
             else "query_without_url",
             max_items=20,
@@ -1145,11 +1321,12 @@ def _build_plan_impl(
     )
 
     # ── PASSIVE_DNS ─────────────────────────────────────────────────────────
-    # Allowed for domain/IP indicators
+    # F216B: nonfeed_diagnostic enables PASSIVE_DNS for domain even under hardware_critical
+    pdns_enabled = has_domain and (not hardware_critical or is_nonfeed_diagnostic)
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.PASSIVE_DNS,
-            enabled=has_domain and not hardware_critical,
+            enabled=pdns_enabled,
             reason="has_domain_or_ip" if has_domain else "query_without_indicator",
             max_items=50,
             timeout_s=30,
@@ -1173,15 +1350,16 @@ def _build_plan_impl(
     )
 
     # ── STEALTH ────────────────────────────────────────────────────────────
-    # Disabled by default; requires stealth_ready and not hardware critical
-    stealth_enabled = stealth_ready and not hardware_critical
+    # F216B: nonfeed_diagnostic explicitly disables STEALTH
+    stealth_enabled = stealth_ready and not hardware_critical and not is_nonfeed_diagnostic
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.STEALTH,
             enabled=stealth_enabled,
             reason="stealth_ready"
             if stealth_enabled
-            else ("hardware_critical" if hardware_critical else "disabled_by_default"),
+            else ("nonfeed_diagnostic_disabled" if is_nonfeed_diagnostic
+                  else ("hardware_critical" if hardware_critical else "disabled_by_default")),
             max_items=10,
             timeout_s=120,
             concurrency=1,
@@ -1204,6 +1382,7 @@ def _build_plan_impl(
     )
 
     # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
+    # F216B: Updated to include nonfeed_diagnostic telemetry
     _NONFEED_LANES = (
         AcquisitionLane.CT,
         AcquisitionLane.WAYBACK,
@@ -1243,6 +1422,22 @@ def _build_plan_impl(
         nonfeed_execution_skip_reason=(
             "hardware_critical" if hardware_critical else None
         ),
+        # F216B: Nonfeed diagnostic profile telemetry
+        acquisition_profile=acquisition_profile,
+        feed_cap_reason=feed_cap_reason,
+        nonfeed_priority_enabled=nonfeed_priority_enabled,
+        nonfeed_profile_expected_lanes=(
+            (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR)
+            if is_nonfeed_diagnostic
+            else ()
+        ),
+        # F216F: Pivot executor telemetry — initialized here, filled by scheduler
+        pivot_executor_enabled=False,
+        pivot_candidates_count=0,
+        pivot_candidate_types=(),
+        pivot_scheduled_lanes=(),
+        pivot_skip_reason=None,
+        pivot_errors=(),
     )
 
     return AcquisitionStrategySnapshot(
@@ -1257,6 +1452,7 @@ def _build_plan_impl(
         transport_degraded=transport_degraded,
         plans=tuple(plans),
         nonfeed_plan_debug=_nonfeed_debug,
+        feed_dominance_budget=feed_budget,
     )
 
 

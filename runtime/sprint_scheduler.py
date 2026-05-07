@@ -81,6 +81,7 @@ from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionLaneOutcome,
     MandatoryLaneTerminality,
     NonfeedPlanDebug,
+    FeedDominanceBudget,
     normalize_source_family_outcome,
     build_acquisition_plan,
     is_lane_enabled,
@@ -92,7 +93,10 @@ from hledac.universal.runtime.acquisition_strategy import (
     terminality_report,
     lane_is_terminal,
     _get_ct_adapter,
+    _load_feed_budget_from_env,
 )
+# F216F: Pivot candidate generation from query
+from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
 from hledac.universal.runtime.source_finding_bridge import (
     ct_results_to_findings,
     wayback_results_to_findings,
@@ -106,6 +110,196 @@ import lmdb
 import xxhash
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F216C: PUBLIC stage machine helper
+# ---------------------------------------------------------------------------
+# Explicit PUBLIC stage machine for zero-evidence diagnosis.
+# PUBLIC=0 can occur at any of: discovery, fetch, parse, quality, storage.
+# Maps _public_outcome dict (and optionally PipelineRunResult) to precise stage.
+# ---------------------------------------------------------------------------
+
+# PUBLIC stage names
+class _PublicStage:
+    NOT_SCHEDULED = "NOT_SCHEDULED"
+    SCHEDULED = "SCHEDULED"
+    DISCOVERY_ATTEMPTED = "DISCOVERY_ATTEMPTED"
+    DISCOVERY_ZERO_RESULTS = "DISCOVERY_ZERO_RESULTS"
+    DISCOVERY_TIMEOUT = "DISCOVERY_TIMEOUT"
+    DISCOVERY_ERROR = "DISCOVERY_ERROR"
+    FETCH_ATTEMPTED = "FETCH_ATTEMPTED"
+    FETCH_ZERO_SUCCESS = "FETCH_ZERO_SUCCESS"
+    FETCH_TIMEOUT = "FETCH_TIMEOUT"
+    FETCH_ERROR = "FETCH_ERROR"
+    PARSE_ATTEMPTED = "PARSE_ATTEMPTED"
+    PARSE_ZERO_TEXT = "PARSE_ZERO_TEXT"
+    QUALITY_REJECTED = "QUALITY_REJECTED"
+    STORAGE_REJECTED = "STORAGE_REJECTED"
+    ACCEPTED = "ACCEPTED"
+    TERMINAL = "TERMINAL"
+
+
+def _compute_public_stage(outcome: dict | None, public_result: Any | None = None) -> tuple[str, dict]:
+    """
+    Compute public_terminal_stage and public_stage_counters from _public_outcome.
+
+    The stage machine traces the full discovery→fetch→parse→quality→storage
+    pipeline to explain why PUBLIC=0.
+
+    Returns (terminal_stage: str, stage_counters: dict).
+    """
+    # NOT_SCHEDULED: _public_outcome never set (branch never ran)
+    if outcome is None:
+        return _PublicStage.NOT_SCHEDULED, {
+            "discovered_urls": 0,
+            "fetch_attempted": 0,
+            "fetch_success": 0,
+            "fetch_timeout": 0,
+            "fetch_error": 0,
+            "parse_attempted": 0,
+            "parse_success": 0,
+            "quality_rejected": 0,
+            "storage_rejected": 0,
+            "accepted_findings": 0,
+        }
+
+    error = outcome.get("error", "") or ""
+    timeout = outcome.get("timeout", False)
+    skip_reason = outcome.get("skip_reason", "") or ""
+    raw_count = outcome.get("raw_count", 0) or 0
+    built_count = outcome.get("built_count", 0) or 0
+    accepted_count = outcome.get("accepted_count", 0) or 0
+    attempted = outcome.get("attempted", False)
+    skipped = outcome.get("skipped", False)
+
+    # Build stage_counters from PipelineRunResult if available
+    if public_result is not None:
+        pr = public_result
+        stage_counters = {
+            "discovered_urls": getattr(pr, 'public_discovery_raw_count', 0) or 0,
+            "fetch_attempted": getattr(pr, 'public_fetch_attempted', 0) or 0,
+            "fetch_success": getattr(pr, 'public_fetch_success', 0) or 0,
+            "fetch_timeout": getattr(pr, 'public_skipped_timeout', 0) or 0,
+            "fetch_error": getattr(pr, 'public_skipped_fetch_error', 0) or 0,
+            "parse_attempted": getattr(pr, 'public_fetch_success', 0) or 0,
+            "parse_success": getattr(pr, 'public_fetch_success', 0) or 0,
+            "quality_rejected": getattr(pr, 'public_acceptance_rejected', 0) or 0,
+            "storage_rejected": getattr(pr, 'public_rejected_storage_rejected', 0) or 0,
+            "accepted_findings": getattr(pr, 'public_findings_accepted', 0) or 0,
+        }
+        # Bounded samples (max 5 each) — already capped in PipelineRunResult
+        stage_counters["rejection_reasons"] = list(
+            (getattr(pr, 'public_acceptance_reject_reasons', None) or {}).items()
+        )[:5]
+        stage_counters["error_samples"] = list(
+            (getattr(pr, 'public_skipped_url_sample', None) or ())[:5]
+        )
+        stage_counters["rejected_url_samples"] = list(
+            (getattr(pr, 'public_rejected_url_samples', None) or ())[:5]
+        )
+        # public_stage_failure from PipelineRunResult if available
+        psf = getattr(pr, 'public_stage_failure', None)
+        if psf == "fetch_zero" and accepted_count == 0:
+            terminal_stage = _PublicStage.FETCH_ZERO_SUCCESS
+        else:
+            terminal_stage = _derive_terminal_stage(
+                error=error,
+                timeout=timeout,
+                skip_reason=skip_reason,
+                raw_count=raw_count,
+                built_count=built_count,
+                accepted_count=accepted_count,
+                attempted=attempted,
+                skipped=skipped,
+                public_stage_failure=psf,
+            )
+    else:
+        # No PipelineRunResult — use only _public_outcome dict fields
+        stage_counters = {
+            "discovered_urls": raw_count,
+            "fetch_attempted": 0,
+            "fetch_success": 0,
+            "fetch_timeout": 0,
+            "fetch_error": 0,
+            "parse_attempted": built_count,
+            "parse_success": built_count,
+            "quality_rejected": 0,
+            "storage_rejected": 0,
+            "accepted_findings": accepted_count,
+        }
+        terminal_stage = _derive_terminal_stage(
+            error=error,
+            timeout=timeout,
+            skip_reason=skip_reason,
+            raw_count=raw_count,
+            built_count=built_count,
+            accepted_count=accepted_count,
+            attempted=attempted,
+            skipped=skipped,
+            public_stage_failure=None,
+        )
+
+    return terminal_stage, stage_counters
+
+
+def _derive_terminal_stage(
+    error: str,
+    timeout: bool,
+    skip_reason: str,
+    raw_count: int,
+    built_count: int,
+    accepted_count: int,
+    attempted: bool,
+    skipped: bool,
+    public_stage_failure: str | None,
+) -> str:
+    """Derive terminal stage from outcome fields."""
+    # NOT_SCHEDULED: never attempted
+    if not attempted:
+        return _PublicStage.NOT_SCHEDULED
+
+    # SCHEDULED: attempted but skipped before discovery
+    if skipped and skip_reason:
+        if "remaining_too_low" in skip_reason:
+            return _PublicStage.DISCOVERY_TIMEOUT
+        return _PublicStage.DISCOVERY_ERROR
+
+    # Discovery failure classification
+    if raw_count == 0:
+        if timeout or "timeout" in error.lower() or "timeout" in skip_reason.lower():
+            return _PublicStage.DISCOVERY_TIMEOUT
+        if error and error not in ("null", ""):
+            return _PublicStage.DISCOVERY_ERROR
+        return _PublicStage.DISCOVERY_ZERO_RESULTS
+
+    # Discovery succeeded but fetch never produced anything
+    if built_count == 0:
+        if timeout or "timeout" in error.lower():
+            return _PublicStage.FETCH_TIMEOUT
+        if error and error not in ("null", ""):
+            return _PublicStage.FETCH_ERROR
+        return _PublicStage.FETCH_ZERO_SUCCESS
+
+    # Discovery and fetch succeeded but no findings accepted
+    if accepted_count == 0:
+        # Use PipelineRunResult public_stage_failure if available
+        if public_stage_failure == "fetch_zero":
+            return _PublicStage.FETCH_ZERO_SUCCESS
+        if public_stage_failure == "discovery_empty":
+            return _PublicStage.DISCOVERY_ZERO_RESULTS
+        # Infer from built_count vs accepted_count gap
+        if built_count > 0:
+            # Fetch produced pages but no findings accepted
+            return _PublicStage.QUALITY_REJECTED
+        return _PublicStage.PARSE_ZERO_TEXT
+
+    # Some findings accepted
+    if accepted_count > 0:
+        return _PublicStage.ACCEPTED
+
+    # Fallback
+    return _PublicStage.TERMINAL
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +654,16 @@ class SprintSchedulerResult:
     ct_candidates_accumulated: int = 0
     ct_candidates_stored: int = 0
     ct_storage_rejected: int = 0
+    # Sprint F216G: Quality Rejection Ledger — canonical ingest quality gate rejections
+    # Bounded ledger: max 200 entries (source_family, reason, finding_id, url_sample)
+    quality_rejection_ledger: tuple = ()  # tuple[QualityRejectionRecord, ...]
+    # Sprint F216G: Pre-computed summaries by rejection category
+    quality_rejection_summary_by_family: dict = field(default_factory=dict)
+    duplicate_rejection_summary_by_family: dict = field(default_factory=dict)
+    low_information_by_family: dict = field(default_factory=dict)
+    # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge criteria
+    ct_quarantine_count: int = 0
+    ct_quarantine_samples: tuple[str, ...] = ()  # bounded samples as JSON strings
     # Sprint F166B: Pre-loop starvation tracking
     # Set when ACTIVE phase is first observed (loop guard entry)
     entered_active_at_monotonic: float | None = None
@@ -622,6 +826,15 @@ class SprintSchedulerResult:
     acquisition_prelude_errors: dict[str, str] = field(default_factory=dict)
     acquisition_prelude_duration_s: float = 0.0
     acquisition_prelude_reason: str = ""
+    # Sprint F216E: Feed dominance budget telemetry
+    # Populated by _check_feed_dominance_budget() called per-cycle and at teardown
+    feed_budget_active: bool = False                    # True when budget policy is configured
+    feed_budget_reason: str = ""                       # Human-readable cap activation reason
+    feed_accepted_before_cap: int = 0                 # Feed accepted count when cap first triggered
+    feed_suppressed_by_budget: int = 0                 # Feed findings suppressed due to cap
+    feed_budget_per_source: dict[str, int] = field(default_factory=dict)  # per-source counts at cap trigger
+    top_feed_source_counts: tuple[tuple[str, int], ...] = ()  # top-N (source, count) pairs at cap trigger
+    max_per_source_applied: str = ""                   # Source URL that hit per-source cap first
     # Sprint F214OPT-D: Arrow batch hard cap telemetry
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
@@ -635,6 +848,22 @@ class SprintSchedulerResult:
     active_window_elapsed_s: float = 0.0  # wall-clock spent in ACTIVE phase
     early_exit_class: str = ""             # EarlyExitClass value or "" if not yet computed
     early_exit_reason: str = ""            # Human-readable reason for early_exit_class
+    # Sprint F216A: Minimal event-sourced lane truth seed
+    # Bounded list of source-family lifecycle events for diagnostics
+    # Event schema: {family, event, count, reason, terminal_state, ts_monotonic}
+    # Max 200 events, oldest dropped when cap reached
+    source_family_events: list[dict] = field(default_factory=list)
+    MAX_SOURCE_FAMILY_EVENTS: int = 200   # class-level cap constant
+    # Sprint F216C: PUBLIC stage machine — explicit terminal stage + bounded counters
+    # terminal_stage: one of NOT_SCHEDULED | DISCOVERY_ZERO_RESULTS | DISCOVERY_TIMEOUT |
+    #                 DISCOVERY_ERROR | FETCH_ZERO_SUCCESS | FETCH_TIMEOUT | FETCH_ERROR |
+    #                 PARSE_ZERO_TEXT | QUALITY_REJECTED | STORAGE_REJECTED | ACCEPTED | TERMINAL
+    public_terminal_stage: str = ""
+    # stage_counters: bounded diagnostics for PUBLIC=0 diagnosis
+    # Keys: discovered_urls, fetch_attempted, fetch_success, fetch_timeout, fetch_error,
+    #       parse_attempted, parse_success, quality_rejected, storage_rejected, accepted_findings,
+    #       rejection_reasons (top 5), error_samples (top 5), rejected_url_samples (top 5)
+    public_stage_counters: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -844,6 +1073,11 @@ class SprintScheduler:
         # Sprint F199A: Per-source quality feedback for reward-driven weight adaptation
         # Bounded accumulation: feed_url → {fetched, accepted} — reset per sprint via _reset_result
         self._source_quality_feedback: dict[str, dict[str, int]] = {}
+        # Sprint F216E: Feed dominance budget per-source tracking
+        # feed_url → accepted count — used to enforce per-source cap
+        self._feed_accepted_per_source: dict[str, int] = {}
+        # True once budget cap has been triggered (latch — once suppressed, stays suppressed)
+        self._feed_budget_triggered: bool = False
         # Sprint 8TB: Agentic Pivot Loop state
         self._pivot_queue: asyncio.PriorityQueue[PivotTask] = asyncio.PriorityQueue(maxsize=200)
         # Sprint 8XE: Last sources list for public discovery query hint
@@ -949,6 +1183,8 @@ class SprintScheduler:
         self._public_verdicts: list[dict] = []  # public_branch_verdict dicts
         # Sprint F207H: Public pipeline outcome for source_family_outcomes consumption
         self._public_outcome: dict | None = None  # normalized public outcome dict
+        # Sprint F216C: PipelineRunResult reference for stage machine computation
+        self._public_pipeline_result: Any | None = None  # PipelineRunResult from _run_public_discovery_in_cycle
         # Sprint F160C: Per-sprint source economics — bounded local economics layer
         # In-memory only, reset per sprint, no cross-sprint state
         self._source_economics: dict[str, SourceEconomics] = {}
@@ -1434,6 +1670,18 @@ class SprintScheduler:
             )
             # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
+            # F216F: Generate pivot candidates from query and fill telemetry
+            if self._result.nonfeed_plan_debug is not None:
+                try:
+                    _pivot_candidates = generate_pivot_candidates_from_query(query)
+                    _nd = self._result.nonfeed_plan_debug
+                    _nd.pivot_candidates_count = len(_pivot_candidates)
+                    _nd.pivot_candidate_types = tuple(set(p.pivot_type for p in _pivot_candidates))
+                    _nd.pivot_scheduled_lanes = ()
+                    _nd.pivot_skip_reason = None
+                    _nd.pivot_errors = ()
+                except Exception:
+                    pass  # Fail-soft
         except Exception:
             self._acquisition_plan = None
 
@@ -1443,7 +1691,7 @@ class SprintScheduler:
             self._result, query, duckdb_store, self._ct_log_client
         )
         # Capture initial terminality after prelude
-        self._finalize_result_truth("prelude_complete", "acquisition prelude finished", "BOOT", query)
+        await self._finalize_result_truth("prelude_complete", "acquisition prelude finished", "BOOT", query)
 
         try:
             # Sprint 8VD §C: Start memory pressure monitoring loop
@@ -1461,7 +1709,7 @@ class SprintScheduler:
                             query, "stop_requested_break"
                         )
                         self._capture_timing_fields()
-                        self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
+                        await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1480,7 +1728,7 @@ class SprintScheduler:
                         query, "lifecycle_abort_break"
                     )
                     self._capture_timing_fields()
-                    self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
+                    await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
                     break
 
                 # Periodic tick
@@ -1564,7 +1812,7 @@ class SprintScheduler:
                             query, "windup_barrier_passed"
                         )
                         self._capture_timing_fields()
-                        self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
+                        await self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
                         break  # exit work loop → teardown
                     # Guard blocked — force one bounded terminalization pass then break
                     await self._ensure_mandatory_nonfeed_before_return(
@@ -1574,7 +1822,7 @@ class SprintScheduler:
                         query, "windup_barrier_break"
                     )
                     self._capture_timing_fields()
-                    self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
+                    await self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
                     break  # exit work loop → teardown
 
                 # ── Sprint 8SA: Source scoring re-ordering ───────────────────
@@ -1597,7 +1845,7 @@ class SprintScheduler:
                         query, "max_cycles_break"
                     )
                     self._capture_timing_fields()
-                    self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
+                    await self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
                     break
 
                 self._result.cycles_started += 1
@@ -1630,7 +1878,7 @@ class SprintScheduler:
                         query, "duration_budget_break"
                     )
                     self._capture_timing_fields()
-                    self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
+                    await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
                     break
                 # ── Sprint F212A: Hard deadline check before new cycle ─────────
                 if not self._check_hard_deadline():
@@ -1639,7 +1887,7 @@ class SprintScheduler:
                         query, "hard_deadline_exceeded"
                     )
                     self._capture_timing_fields()
-                    self._finalize_result_truth(
+                    await self._finalize_result_truth(
                         "hard_deadline_exceeded",
                         f"hard deadline exceeded at cycle {self._result.cycles_started}",
                         "GATHER",
@@ -1682,7 +1930,7 @@ class SprintScheduler:
                             query, "cycle_ok_false_break"
                         )
                         self._capture_timing_fields()
-                        self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
+                        await self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1701,7 +1949,7 @@ class SprintScheduler:
                             query, "stop_on_first_accepted_break"
                         )
                         self._capture_timing_fields()
-                        self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
+                        await self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
                         break
                     # Guard blocked: continue loop to satisfy nonfeed lanes
                     continue
@@ -1726,7 +1974,7 @@ class SprintScheduler:
                             query, "post_sleep_windup_break"
                         )
                         self._capture_timing_fields()
-                        self._finalize_result_truth("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP", query)
+                        await self._finalize_result_truth("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP", query)
                         break
                     # Guard blocked — continue loop once to satisfy nonfeed lanes
                     continue
@@ -1784,6 +2032,14 @@ class SprintScheduler:
         # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
         await self._close_metrics_registry()
 
+        # Sprint F215G: Close aiohttp sessions for Tor/I2P (session leak fix)
+        # F215G: These are local singletons in public_fetcher, not shared with session_runtime
+        try:
+            from hledac.universal.fetching import public_fetcher
+            await public_fetcher._close_tor_session()
+            await public_fetcher._close_i2p_session()
+        except Exception:
+            pass  # fail-safe: session close must not crash teardown
 
         # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
         _r = self._result
@@ -1862,7 +2118,7 @@ class SprintScheduler:
         # Early exit paths (break statements) call _finalize_result_truth BEFORE reaching
         # here with the correct exit_path — we must NOT overwrite with "run_complete".
         if not self._result.early_exit_class:
-            self._finalize_result_truth(
+            await self._finalize_result_truth(
                 exit_path="run_complete",
                 exit_reason="run() finished normally",
                 exit_phase="TEARDOWN",
@@ -1997,7 +2253,7 @@ class SprintScheduler:
 
     # ── Sprint F208I-B: Result finalization ──────────────────────────────────
 
-    def _finalize_result_truth(
+    async def _finalize_result_truth(
         self,
         exit_path: str,
         exit_reason: str,
@@ -2024,7 +2280,7 @@ class SprintScheduler:
             swap_detected = False
             if self._governor is not None:
                 try:
-                    _snap = self._governor.evaluate()
+                    _snap = await self._governor.evaluate()
                     uma_state = getattr(_snap, "uma_state", "ok")
                     swap_detected = getattr(_snap, "swap_detected", False)
                 except Exception:
@@ -2090,6 +2346,15 @@ class SprintScheduler:
 
         # Record scheduler exit path
         self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
+
+        # Sprint F216C: Compute PUBLIC stage machine — must happen after all _public_outcome
+        # assignments are complete (including in _run_public_discovery_in_cycle and
+        # _attempt_public_prewindup_barrier and all error/timeout branches)
+        _pub_stage, _pub_counters = _compute_public_stage(
+            self._public_outcome, self._public_pipeline_result
+        )
+        self._result.public_terminal_stage = _pub_stage
+        self._result.public_stage_counters = _pub_counters
 
     # ── Sprint F208M-A: Nonfeed predispatch before final terminality ──────────
 
@@ -2419,7 +2684,7 @@ class SprintScheduler:
         _uma = "ok"
         if self._governor is not None:
             try:
-                _snap = self._governor.evaluate()
+                _snap = await self._governor.evaluate()
                 _uma = getattr(_snap, "uma_state", "ok")
             except Exception:
                 pass
@@ -2485,6 +2750,8 @@ class SprintScheduler:
                                 )
                             except Exception:
                                 pass
+                            # Sprint F216G: Record quality gate rejections from this ingest
+                            self._record_quality_rejections_from_store(duckdb_store)
                     if ct_outcome.error:
                         _ct_error = ct_outcome.error
 
@@ -2540,6 +2807,20 @@ class SprintScheduler:
                     # Persist CT bridge loss telemetry onto the canonical result
                     self._result.ct_loss_stage = _ct_loss_stage
                     self._result.ct_bridge_invoked = True
+                    # Sprint F216A: Emit CT raw_received and CT terminal events
+                    _ct_raw = _ct_results_raw
+                    if _ct_raw > 0:
+                        self._emit_source_family_event(
+                            family="CT",
+                            event="raw_received",
+                            count=_ct_raw,
+                        )
+                    self._emit_source_family_event(
+                        family="CT",
+                        event="terminal",
+                        reason="bridge_invoked",
+                        terminal_state="success",
+                    )
                     self._result.ct_raw_sample_keys = _raw_keys
                     self._result.ct_raw_sample_count = _bridge_raw
                     self._result.ct_raw_count = _ct_results_raw
@@ -2549,7 +2830,21 @@ class SprintScheduler:
                     self._result.ct_candidates_accumulated = _bridge_candidates
                     self._result.ct_candidates_stored = accepted
                     self._result.ct_storage_rejected = max(0, _bridge_candidates - accepted)
-                    # ── End F214D ────────────────────────────────────────────────
+                    # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
+                    _ct_quarantine_count = _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0
+                    _ct_quarantine_entries = _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []
+                    self._result.ct_quarantine_count = _ct_quarantine_count
+                    # Bounded samples: cap at 10, store as JSON strings for report persistence
+                    if _ct_quarantine_entries:
+                        import json
+                        _samples: list[str] = []
+                        for _entry in _ct_quarantine_entries[:10]:
+                            try:
+                                _samples.append(json.dumps(_entry, ensure_ascii=True))
+                            except Exception:
+                                pass
+                        self._result.ct_quarantine_samples = tuple(_samples)
+                    # ── End F216D ────────────────────────────────────────────────
 
                     return AcquisitionLaneOutcome(
                         lane=AcquisitionLane.CT,
@@ -2671,7 +2966,7 @@ class SprintScheduler:
 
     # ── Sprint F207Q-A: Pre-windup barrier helpers ─────────────────────────────
 
-    def _required_pre_windup_lanes(
+    async def _required_pre_windup_lanes(
         self,
         query: str,
         acquisition_plan: Any,
@@ -2693,7 +2988,7 @@ class SprintScheduler:
         swap_detected = False
         if self._governor is not None:
             try:
-                _snap = self._governor.evaluate()
+                _snap = await self._governor.evaluate()
                 uma_state = getattr(_snap, "uma_state", memory_state)
                 swap_detected = getattr(_snap, "swap_detected", False)
             except Exception:
@@ -2738,7 +3033,7 @@ class SprintScheduler:
         """
         import time as _time
 
-        required = self._required_pre_windup_lanes(query, acquisition_plan, memory_state)
+        required = await self._required_pre_windup_lanes(query, acquisition_plan, memory_state)
         # F214WINDUP: ALWAYS record barrier checked=True, even when no lanes required.
         # The _get_prewindup_barrier_report() reads prewindup_barrier_checked to decide
         # whether to return the barrier dict. Without this, active300 runs show
@@ -2951,7 +3246,7 @@ class SprintScheduler:
         _uma = "ok"
         if self._governor is not None:
             try:
-                _snap = self._governor.evaluate()
+                _snap = await self._governor.evaluate()
                 _uma = getattr(_snap, "uma_state", "ok")
             except Exception:
                 pass
@@ -3036,6 +3331,8 @@ class SprintScheduler:
                                 memory_manager=None,
                                 enqueue_hypothesis_pivot=None,
                             )
+                        # Sprint F216C: Store PipelineRunResult for stage machine
+                        self._public_pipeline_result = _pipeline_result
                         _public_result = {
                             "lane": "PUBLIC",
                             "attempted": True,
@@ -3195,6 +3492,21 @@ class SprintScheduler:
                 self._result.ct_candidates_accumulated = 0  # prelude does not accumulate
                 self._result.ct_candidates_stored = 0  # prelude does not store
                 self._result.ct_storage_rejected = 0
+                # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
+                _ct_quarantine_count = _ct_telemetry_prelude.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_prelude, dict) else 0
+                _ct_quarantine_entries = _ct_telemetry_prelude.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_prelude, dict) else []
+                self._result.ct_quarantine_count = _ct_quarantine_count
+                # Bounded samples: cap at 10, store as JSON strings for report persistence
+                if _ct_quarantine_entries:
+                    import json
+                    _samples: list[str] = []
+                    for _entry in _ct_quarantine_entries[:10]:
+                        try:
+                            _samples.append(json.dumps(_entry, ensure_ascii=True))
+                        except Exception:
+                            pass
+                    self._result.ct_quarantine_samples = tuple(_samples)
+                # ── End F216D ─────────────────────────────────────────────────
                 # ── End F214D ─────────────────────────────────────────────────
 
         # Accumulate outcomes
@@ -3266,7 +3578,7 @@ class SprintScheduler:
         _uma = "ok"
         if self._governor is not None:
             try:
-                _snap = self._governor.evaluate()
+                _snap = await self._governor.evaluate()
                 _uma = getattr(_snap, "uma_state", "ok")
             except Exception:
                 pass
@@ -3295,7 +3607,7 @@ class SprintScheduler:
         swap_detected = False
         if self._governor is not None:
             try:
-                _snap = self._governor.evaluate()
+                _snap = await self._governor.evaluate()
                 uma_state = getattr(_snap, "uma_state", _memory_state)
                 swap_detected = getattr(_snap, "swap_detected", False)
             except Exception:
@@ -3530,11 +3842,37 @@ class SprintScheduler:
 
         remaining_s = lifecycle.remaining_time()
 
+        # F216E: Determine nonfeed terminality before feed cycle
+        # If nonfeed is terminal, feed budget does not apply
+        _nonfeed_terminal = bool(
+            self._result.lane_ct_accepted_findings > 0
+            or self._result.lane_wayback_accepted_findings > 0
+            or self._result.lane_pdns_accepted_findings > 0
+            or self._result.lane_blockchain_accepted_findings > 0
+        )
+
         # Run sources under TaskGroup (bounded concurrency)
         semaphore = asyncio.Semaphore(self._config.max_parallel_sources)
 
         async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
             async with semaphore:
+                # F216E: Feed dominance budget check before calling async_run_live_feed
+                should_fetch, budget_reason = self._feed_dominance_should_fetch(work, _nonfeed_terminal)
+                if not should_fetch:
+                    log.debug(
+                        "[F216E] Feed source skipped by budget cap: url=%s reason=%s",
+                        work.feed_url, budget_reason,
+                    )
+                    return work.feed_url, FeedPipelineRunResult(
+                        feed_url=work.feed_url,
+                        fetched_entries=0,
+                        accepted_findings=0,
+                        stored_findings=0,
+                        patterns_configured=0,
+                        matched_patterns=0,
+                        pages=(),
+                        error="feed_budget_cap_suppressed",
+                    )
                 try:
                     result = await asyncio.wait_for(
                         async_run_live_feed(
@@ -3625,6 +3963,13 @@ class SprintScheduler:
                 log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
                 self._result.public_branch_timed_out = True
                 self._result.public_error = "terminal:timeout"
+                # Sprint F216A: Emit PUBLIC timeout event
+                self._emit_source_family_event(
+                    family="PUBLIC",
+                    event="timeout",
+                    reason="terminal:timeout",
+                    terminal_state="terminal",
+                )
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
                 self._public_outcome = {
                     "lane": "PUBLIC",
@@ -3660,6 +4005,8 @@ class SprintScheduler:
                         self._lane_outcomes = _outcomes
                         self._result.acquisition_lane_outcomes = _outcomes
                         self._accumulate_lane_findings(_outcomes, query)
+                        # Sprint F216G: Read quality rejection ledger from duckdb_store
+                        self._record_quality_rejections_from_store(duckdb_store)
             except asyncio.TimeoutError:
                 log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
             except asyncio.CancelledError:
@@ -3730,7 +4077,28 @@ class SprintScheduler:
             self._result.branch_timeout_count += 2
             self._result.public_error = "terminal:remaining_too_low"
             self._result.ct_log_error = "terminal:remaining_too_low"
+            # Sprint F216A: Emit PUBLIC and CT timeout events
+            self._emit_source_family_event(
+                family="PUBLIC",
+                event="timeout",
+                reason="terminal:remaining_too_low",
+                terminal_state="terminal",
+            )
+            self._emit_source_family_event(
+                family="CT",
+                event="timeout",
+                reason="terminal:remaining_too_low",
+                terminal_state="terminal",
+            )
             return True
+
+        # F216E: nonfeed terminality for aggressive mode budget gate
+        _nonfeed_terminal = bool(
+            self._result.lane_ct_accepted_findings > 0
+            or self._result.lane_wayback_accepted_findings > 0
+            or self._result.lane_pdns_accepted_findings > 0
+            or self._result.lane_blockchain_accepted_findings > 0
+        )
 
         async def _run_feed_branch() -> None:
             """Feed branch: fetches all sources concurrently."""
@@ -3745,6 +4113,19 @@ class SprintScheduler:
             semaphore = _asyncio.Semaphore(min(branch_concurrency, self._config.max_parallel_sources))
 
             async def fetch_one(work) -> tuple[str, FeedPipelineRunResult]:
+                # F216E: budget gate before fetching
+                should_fetch, budget_reason = self._feed_dominance_should_fetch(work, _nonfeed_terminal)
+                if not should_fetch:
+                    return work.feed_url, FeedPipelineRunResult(
+                        feed_url=work.feed_url,
+                        fetched_entries=0,
+                        accepted_findings=0,
+                        stored_findings=0,
+                        patterns_configured=0,
+                        matched_patterns=0,
+                        pages=(),
+                        error="feed_budget_cap_suppressed",
+                    )
                 async with semaphore:
                     try:
                         result = await _asyncio.wait_for(
@@ -3823,6 +4204,13 @@ class SprintScheduler:
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
                 self._result.public_branch_timed_out = True
                 self._result.public_error = "terminal:timeout"
+                # Sprint F216A: Emit PUBLIC timeout event
+                self._emit_source_family_event(
+                    family="PUBLIC",
+                    event="timeout",
+                    reason="terminal:timeout",
+                    terminal_state="terminal",
+                )
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
                 self._public_outcome = {
                     "lane": "PUBLIC",
@@ -3902,6 +4290,19 @@ class SprintScheduler:
                 self._result.branch_timeout_count += 2
                 self._result.public_error = "terminal:envelope_timeout"
                 self._result.ct_log_error = "terminal:envelope_timeout"
+                # Sprint F216A: Emit PUBLIC and CT timeout events
+                self._emit_source_family_event(
+                    family="PUBLIC",
+                    event="timeout",
+                    reason="terminal:envelope_timeout",
+                    terminal_state="terminal",
+                )
+                self._emit_source_family_event(
+                    family="CT",
+                    event="timeout",
+                    reason="terminal:envelope_timeout",
+                    terminal_state="terminal",
+                )
                 results = []
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
                 self._public_outcome = {
@@ -3930,6 +4331,19 @@ class SprintScheduler:
             self._result.branch_timeout_count += 2
             self._result.public_error = "terminal:remaining_too_low"
             self._result.ct_log_error = "terminal:remaining_too_low"
+            # Sprint F216A: Emit PUBLIC and CT timeout events
+            self._emit_source_family_event(
+                family="PUBLIC",
+                event="timeout",
+                reason="terminal:remaining_too_low",
+                terminal_state="terminal",
+            )
+            self._emit_source_family_event(
+                family="CT",
+                event="timeout",
+                reason="terminal:remaining_too_low",
+                terminal_state="terminal",
+            )
             # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
             self._public_outcome = {
                 "lane": "PUBLIC",
@@ -3962,6 +4376,8 @@ class SprintScheduler:
                         self._lane_outcomes = _outcomes
                         self._result.acquisition_lane_outcomes = _outcomes
                         self._accumulate_lane_findings(_outcomes, query)
+                        # Sprint F216G: Read quality rejection ledger from duckdb_store
+                        self._record_quality_rejections_from_store(duckdb_store)
             except _asyncio.TimeoutError:
                 log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
             except _asyncio.CancelledError:
@@ -4011,6 +4427,8 @@ class SprintScheduler:
                 "timeout": False,
                 "duration_s": None,
             }
+            # Sprint F216C: Clear stale PipelineRunResult on early exit
+            self._public_pipeline_result = None
             return
 
         # Build query hint: real sprint query from __main__.py takes priority
@@ -4053,6 +4471,8 @@ class SprintScheduler:
                 "timeout": False,
                 "duration_s": None,
             }
+            # Sprint F216C: Clear stale PipelineRunResult on early exit
+            self._public_pipeline_result = None
             return
         except Exception as exc:
             log.debug(f"[8XE] Public pipeline error: {exc}")
@@ -4070,10 +4490,15 @@ class SprintScheduler:
                 "timeout": False,
                 "duration_s": None,
             }
+            # Sprint F216C: Clear stale PipelineRunResult on early exit
+            self._public_pipeline_result = None
             return
 
         # Task succeeded - accumulate results
         public_result = public_task.result()
+
+        # Sprint F216C: Store PipelineRunResult for stage machine computation
+        self._public_pipeline_result = public_result
 
         # Accumulate into result — fail-soft aggregation
         self._result.public_discovered += public_result.discovered
@@ -4269,6 +4694,62 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: graph must never block sprint
         return count
+
+    # ── Sprint F216G: Quality Rejection Ledger recording ─────────────────────────
+
+    def _record_quality_rejections_from_store(self, store: Any | None) -> None:
+        """
+        Sprint F216G: Read quality rejection ledger from duckdb_store and
+        compute summary dictionaries.
+
+        Called after run_enabled_acquisition_lanes() completes (both advisory
+        and aggressive cycles) so that all lane ingest quality gate rejections
+        are captured in SprintSchedulerResult.
+
+        Also called from _maybe_dispatch_nonfeed_probe_lanes after its
+        direct async_ingest_findings_batch call.
+
+        Invariants (strict):
+          - No threshold changes
+          - No dedup behavior changes
+          - No destructive DB schema migration
+          - No benchmark-owned scoring change
+        """
+        if store is None:
+            return
+        try:
+            if not hasattr(store, "get_quality_rejection_ledger"):
+                return
+            ledger = store.get_quality_rejection_ledger()
+            if not ledger:
+                return
+            # Store raw ledger (bounded tuple)
+            self._result.quality_rejection_ledger = ledger
+
+            # Compute summaries by family and reason
+            quality_sum: dict[str, dict[str, int]] = {}
+            dup_sum: dict[str, dict[str, int]] = {}
+            low_info_sum: dict[str, dict[str, int]] = {}
+
+            for rec in ledger:
+                fam = rec.source_family or "unknown"
+                reason = rec.reason or "unknown"
+                if reason in ("low_entropy_rejected",):
+                    d = low_info_sum.setdefault(fam, {})
+                    d[reason] = d.get(reason, 0) + 1
+                elif reason in ("persistent_duplicate", "duplicate_detected", "semantic_duplicate"):
+                    d = dup_sum.setdefault(fam, {})
+                    d[reason] = d.get(reason, 0) + 1
+                else:
+                    d = quality_sum.setdefault(fam, {})
+                    d[reason] = d.get(reason, 0) + 1
+
+            self._result.quality_rejection_summary_by_family = quality_sum
+            self._result.duplicate_rejection_summary_by_family = dup_sum
+            self._result.low_information_by_family = low_info_sum
+        except Exception:
+            pass  # Fail-soft: ledger recording must never block sprint
+
 
     # ── Sprint F207J-A: Lane findings accumulation into scheduler truth ──────────
 
@@ -6041,6 +6522,94 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-safe: never crash
 
+    # ── Sprint F216E: Feed Dominance Budget ────────────────────────────────
+
+    def _feed_dominance_should_fetch(
+        self,
+        work: "_FeedWorkItem",
+        nonfeed_terminal: bool,
+    ) -> tuple[bool, str]:
+        """F216E: Determine if a feed source should be fetched given current budget state.
+
+        Returns (should_fetch, reason):
+          - (True, "")       — source should run normally
+          - (False, reason)  — source should be skipped due to budget cap
+
+        Rules:
+          - If budget is not active, always fetch.
+          - If nonfeed lanes ARE terminal, budget does not apply — always fetch.
+          - If budget triggered globally, skip all.
+          - If per-source cap would be exceeded, skip that source.
+        """
+        budget = None
+        if self._acquisition_plan is not None:
+            budget = getattr(self._acquisition_plan, "feed_dominance_budget", None)
+
+        if budget is None or not budget.is_active():
+            return True, ""
+
+        if nonfeed_terminal:
+            return True, ""
+
+        if self._feed_budget_triggered:
+            return False, "feed_budget_triggered:global_suppressed"
+
+        budget_reason = budget.cap_feeding(
+            feed_accepted_so_far=self._result.accepted_findings,
+            nonfeed_accepted_so_far=(
+                self._result.lane_ct_accepted_findings
+                + self._result.lane_wayback_accepted_findings
+                + self._result.lane_pdns_accepted_findings
+                + self._result.lane_blockchain_accepted_findings
+            ),
+            feed_per_source=self._feed_accepted_per_source,
+        )
+        if budget_reason[0]:
+            return False, budget_reason[1]
+
+        return True, ""
+
+    def _feed_dominance_record_result(
+        self,
+        feed_url: str,
+        accepted_count: int,
+        suppressed: bool,
+        reason: str,
+    ) -> None:
+        """F216E: Record feed result into budget telemetry.
+
+        Called from _process_result after each feed source completes.
+        """
+        if accepted_count > 0:
+            self._feed_accepted_per_source[feed_url] = (
+                self._feed_accepted_per_source.get(feed_url, 0) + accepted_count
+            )
+
+        if suppressed:
+            self._result.feed_suppressed_by_budget += accepted_count
+
+        if not self._feed_budget_triggered and reason:
+            self._feed_budget_triggered = True
+            self._result.feed_budget_active = True
+            self._result.feed_budget_reason = reason
+            self._result.feed_accepted_before_cap = self._result.accepted_findings
+            self._result.feed_budget_per_source = dict(self._feed_accepted_per_source)
+            top = sorted(
+                self._feed_accepted_per_source.items(),
+                key=lambda x: x[1],
+                reverse=True,
+            )[:10]
+            self._result.top_feed_source_counts = tuple(top)
+
+            budget = None
+            if self._acquisition_plan is not None:
+                budget = getattr(self._acquisition_plan, "feed_dominance_budget", None)
+            if budget and budget.max_feed_per_source > 0:
+                for src, cnt in top:
+                    if cnt >= budget.max_feed_per_source:
+                        self._result.max_per_source_applied = src
+                        break
+
     # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
 
     async def _enrich_ct_findings_forensics(self, findings: list) -> None:
@@ -6094,6 +6663,13 @@ class SprintScheduler:
         self._result.hits_per_source[feed_url] = self._hits_per_source[feed_url]
         self._result.total_pattern_hits += result.matched_patterns
         self._result.accepted_findings += result.accepted_findings
+        # Sprint F216A: Emit FEED accepted event when findings are accepted
+        if result.accepted_findings > 0:
+            self._emit_source_family_event(
+                family="FEED",
+                event="accepted",
+                count=result.accepted_findings,
+            )
         # Sprint 8VD §F: Track finding count for scorecard
         self._finding_count += result.accepted_findings
         # Sprint 8VN §C: Accumulate feed economics verdict (additive, fail-soft)
@@ -6156,6 +6732,13 @@ class SprintScheduler:
                 )
             except Exception:
                 pass  # Advisory only — never affect scheduler
+        # Sprint F216E: Record feed result into budget telemetry
+        self._feed_dominance_record_result(
+            feed_url=feed_url,
+            accepted_count=result.accepted_findings,
+            suppressed=(getattr(result, "error", "") == "feed_budget_cap_suppressed"),
+            reason=getattr(result, "feed_budget_cap_reason", ""),
+        )
 
     # ── Dedup ─────────────────────────────────────────────────────────────
 
@@ -6690,7 +7273,7 @@ class SprintScheduler:
         ) = _import_exporters()
 
         # Build minimal diagnostic report from result
-        report = self._build_diagnostic_report(lifecycle)
+        report = await self._build_diagnostic_report(lifecycle)
 
         export_dir = self._config.export_dir
 
@@ -6764,7 +7347,7 @@ class SprintScheduler:
         except Exception as exc:
             self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
 
-    def _build_diagnostic_report(self, lifecycle) -> dict:
+    async def _build_diagnostic_report(self, lifecycle) -> dict:
         """Build a diagnostic report dict for exporters."""
         # Sprint F350D: Use truthful sprint_id — NOT synthetic time-based run_id.
         # sprint_id is set during run() from lifecycle.sprint_id attribute.
@@ -6908,6 +7491,15 @@ class SprintScheduler:
             "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
             "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
         }
+        # Sprint F216E: Feed dominance budget telemetry
+        report["feed_dominance_budget"] = {
+            "active": getattr(self._result, "feed_budget_active", False),
+            "reason": getattr(self._result, "feed_budget_reason", ""),
+            "feed_accepted_before_cap": getattr(self._result, "feed_accepted_before_cap", 0),
+            "feed_suppressed_by_budget": getattr(self._result, "feed_suppressed_by_budget", 0),
+            "top_feed_source_counts": list(getattr(self._result, "top_feed_source_counts", ()) or ()),
+            "max_per_source_applied": getattr(self._result, "max_per_source_applied", ""),
+        }
         # Sprint F208B: Acquisition terminality consumer report
         # Merge terminality into the existing acquisition_strategy block
         _term_rep = getattr(self._result, "acquisition_terminality_report", {}) or {}
@@ -7003,7 +7595,7 @@ class SprintScheduler:
             _term_swap = False
             if self._governor is not None:
                 try:
-                    _snap = self._governor.evaluate()
+                    _snap = await self._governor.evaluate()
                     _term_uma = getattr(_snap, "uma_state", "ok")
                     _term_swap = getattr(_snap, "swap_detected", False)
                 except Exception:
@@ -8405,6 +8997,11 @@ class SprintScheduler:
                     "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
                     "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
                     "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
+                    # Sprint F216G: Quality gate rejection summaries by category
+                    "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),
+                    "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),
+                    "low_information_by_family": getattr(self._result, 'low_information_by_family', {}),
+                    "quality_rejection_ledger_size": len(getattr(self._result, 'quality_rejection_ledger', ())),
                 }
         except Exception:
             result["lane_verdict"] = None
@@ -8829,6 +9426,9 @@ class SprintScheduler:
                 pass  # Advisory only — never affect scheduler
         # Sprint 8VN: Clear intelligence caches and findings accumulator
         self._all_findings.clear()
+        # Sprint F216E: Clear feed dominance budget state for new sprint
+        self._feed_accepted_per_source.clear()
+        self._feed_budget_triggered = False
         self._correlation_cache = None
         self._hypothesis_pack_cache = None
         self._branch_value_summary = None
@@ -8837,6 +9437,8 @@ class SprintScheduler:
         self._public_verdicts.clear()
         # Sprint F207H: Reset public pipeline outcome
         self._public_outcome = None
+        # Sprint F216C: Reset PipelineRunResult reference for stage machine
+        self._public_pipeline_result = None
         # Sprint F210A: Reset query for new sprint
         self._query = ""
         # Sprint F207M-A: Reset nonfeed pre-dispatch guard for new sprint
@@ -8881,6 +9483,39 @@ class SprintScheduler:
         self._result.lane_wayback_accepted_findings = 0
         self._result.lane_pdns_accepted_findings = 0
         self._result.lane_blockchain_accepted_findings = 0
+        # Sprint F216A: Clear event log for new sprint
+        self._result.source_family_events.clear()
+
+    # -------------------------------------------------------------------------
+    # Sprint F216A: Source family event log helpers
+    # -------------------------------------------------------------------------
+
+    def _emit_source_family_event(
+        self,
+        family: str,
+        event: str,
+        count: int = 0,
+        reason: str = "",
+        terminal_state: str = "",
+    ) -> None:
+        """
+        Emit a bounded source-family lifecycle event for diagnostics.
+
+        Caps at MAX_SOURCE_FAMILY_EVENTS (200), dropping oldest when full.
+        Event dict contains: family, event, count, reason, terminal_state, ts_monotonic
+        """
+        evt = {
+            "family": family,
+            "event": event,
+            "count": count,
+            "reason": reason,
+            "terminal_state": terminal_state,
+            "ts_monotonic": _time.monotonic(),
+        }
+        events = self._result.source_family_events
+        if len(events) >= self._result.MAX_SOURCE_FAMILY_EVENTS:
+            events.pop(0)
+        events.append(evt)
 
 
 # ---------------------------------------------------------------------------
