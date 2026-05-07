@@ -36,7 +36,7 @@ _REQUIRED_PROBES = [
     ("probe_f219a_surface_contract", "surface_contract.json"),
     ("probe_f219b_hermes_metal_finalizer", "hermes_metal_finalizer.json"),
     ("probe_f219d_public_session_seal", "public_session_seal.json"),
-    ("probe_f219e_ct_provider_cooldown", "ct_cooldown.json"),
+    ("probe_f219e_ct_provider_cooldown", "ct_provider_cooldown.json"),
 ]
 
 # Optional probe lanes

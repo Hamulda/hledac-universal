@@ -53,15 +53,18 @@ MAX_LANE_REJECTIONS: int = 1000
 
 # E4: gc.callbacks for sprint-level GC telemetry — module-level state
 _gc_sprint_callback_handle: Optional[Callable] = None  # stores registered callback function
+MAX_GC_STATS: int = 1000  # Sprint F219M: bound GC telemetry
+
 _gc_sprint_stats: list[dict] = []
 
 
 def _gc_sprint_callback(phase: str, info: dict) -> None:
     """E4: GC per-collection callback — records generation and collection counts."""
-    _gc_sprint_stats.append({
-        'gen': info.get('generation', -1),
-        'collected': info.get('collected', -1),
-    })
+    if len(_gc_sprint_stats) < MAX_GC_STATS:
+        _gc_sprint_stats.append({
+            'gen': info.get('generation', -1),
+            'collected': info.get('collected', -1),
+        })
 
 
 from hledac.universal.runtime.shadow_inputs import (
@@ -1686,11 +1689,17 @@ class SprintScheduler:
         gc.callbacks.append(_gc_sprint_callback)
 
         # E2: Opt-in tracemalloc snapshot diff via HLEDAC_TRACEMALLOC env var
+        # Sprint F219M: init before try so finally always has consistent reference
         _trace_snap_before: Any = None
-        if os.environ.get("HLEDAC_TRACEMALLOC"):
-            import tracemalloc
-            tracemalloc.start(10)  # 10-frame depth limit
-            _trace_snap_before = tracemalloc.take_snapshot()
+        _trace_enabled = os.environ.get("HLEDAC_TRACEMALLOC")
+        if _trace_enabled:
+            try:
+                import tracemalloc
+                tracemalloc.start(10)  # 10-frame depth limit
+                _trace_snap_before = tracemalloc.take_snapshot()
+            except Exception as _e:
+                log.warning(f"[E2] tracemalloc start failed: {_e}")
+                _trace_enabled = False  # prevent finally from attempting stop/compare
 
         # Initial tick to enter ACTIVE
         phase = self._runner.tick(now_monotonic)
@@ -2107,13 +2116,27 @@ class SprintScheduler:
                     log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
 
             # E2: Opt-in tracemalloc snapshot diff
-            if _trace_snap_before is not None:
-                import tracemalloc
-                tracemalloc.stop()
-                snap_after = tracemalloc.take_snapshot()
-                diff = snap_after.compare_to(_trace_snap_before, 'lineno')
-                for stat in diff[:10]:
-                    log.info(f"[E2] Alloc delta: {stat}")
+            if _trace_snap_before is not None and _trace_enabled:
+                try:
+                    import tracemalloc
+                    tracemalloc.stop()
+                    snap_after = tracemalloc.take_snapshot()
+                    diff = snap_after.compare_to(_trace_snap_before, 'lineno')
+                    for stat in diff[:10]:
+                        log.info(f"[E2] Alloc delta: {stat}")
+                except Exception as _e:
+                    log.warning(f"[E2] tracemalloc compare failed: {_e}")
+                finally:
+                    # Sprint F219M: delete snapshot refs so they cannot survive beyond sprint
+                    # Use try/except since snap_after/diff may not be defined if tracemalloc.stop() raised
+                    try:
+                        del snap_after
+                    except NameError:
+                        pass
+                    try:
+                        del diff
+                    except NameError:
+                        pass
 
         # ── Teardown / Export ───────────────────────────────────────────────
         # Sprint F206C: Delegated to runner.teardown()

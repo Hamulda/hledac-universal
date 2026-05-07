@@ -165,7 +165,7 @@ def _check_memory_guard() -> bool:
     return True
 
 
-def _uma_guard_before_batch() -> bool:
+def _uma_guard_before_batch() -> tuple[bool, dict]:
     """
     B3: Combined UMA guard — Metal active memory + RSS pre-batch.
 
@@ -173,19 +173,33 @@ def _uma_guard_before_batch() -> bool:
     the 6.5GB UMA ceiling (6656MB). Flushes Metal cache if threshold breached.
 
     Returns:
-        True if safe to proceed, False to skip batch.
+        (True, {}) if safe to proceed.
+        (False, telemetry_dict) if batch blocked — caller MUST record telemetry.
     """
+    telemetry: dict = {
+        "uma_guard_blocked_batch": False,
+        "uma_guard_reason": "",
+        "combined_memory_mb": 0,
+        "rss_mb": 0,
+        "metal_active_mb": 0,
+    }
     try:
-        from hledac.universal.utils.mlx_memory import get_active_memory_mb
+        from hledac.universal.utils.mlx_memory import get_mlx_active_memory_mb
 
-        active_mb = get_active_memory_mb()
+        active_mb = get_mlx_active_memory_mb()
         if active_mb is None:
-            return True  # Cannot measure — allow through
+            return True, {}
 
         rss_mb = psutil.Process().memory_info().rss // (1024 * 1024)
         combined_mb = active_mb + rss_mb
 
+        telemetry["combined_memory_mb"] = combined_mb
+        telemetry["rss_mb"] = rss_mb
+        telemetry["metal_active_mb"] = active_mb
+
         if combined_mb > 6656:
+            telemetry["uma_guard_blocked_batch"] = True
+            telemetry["uma_guard_reason"] = f"combined_uma_pressure_{combined_mb}mb_exceeds_6656mb"
             logger.warning(
                 f"[EMBED:UMA] Combined UMA pressure {combined_mb}MB "
                 f"(Metal={active_mb}MB + RSS={rss_mb}MB) > 6656MB — flushing cache"
@@ -197,10 +211,10 @@ def _uma_guard_before_batch() -> bool:
                     mx.metal.clear_cache()
             except Exception:
                 pass
-            return False
-        return True
+            return False, telemetry
+        return True, {}
     except Exception:
-        return True  # Fail-safe — allow through
+        return True, {}  # Fail-safe — allow through
 
 
 def _get_embedder():
@@ -592,8 +606,12 @@ async def generate_embeddings_streaming(
             if not load_embedding_model():
                 # Fall back: materialize all at once
                 # B3: Combined UMA guard pre-batch
-                if not _uma_guard_before_batch():
-                    logger.warning("[EMBED:streaming] Fallback batch skipped due to UMA pressure")
+                safe, telemetry = _uma_guard_before_batch()
+                if not safe:
+                    logger.warning(
+                        f"[EMBED:streaming] Fallback batch skipped due to UMA pressure: "
+                        f"combined={telemetry.get('combined_memory_mb', 0)}MB"
+                    )
                     return
                 loop = asyncio.get_running_loop()
                 embs = await loop.run_in_executor(
@@ -611,8 +629,12 @@ async def generate_embeddings_streaming(
             chunk_ids = [str(i + j) for j in range(len(chunk))]
 
             # B3: Combined UMA guard pre-batch
-            if not _uma_guard_before_batch():
-                logger.warning("[EMBED:streaming] Batch skipped due to UMA pressure")
+            safe, telemetry = _uma_guard_before_batch()
+            if not safe:
+                logger.warning(
+                    f"[EMBED:streaming] Batch {i} skipped due to UMA pressure: "
+                    f"combined={telemetry.get('combined_memory_mb', 0)}MB"
+                )
                 break
 
             loop = asyncio.get_running_loop()

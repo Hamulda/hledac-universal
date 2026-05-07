@@ -1658,6 +1658,14 @@ async def run_sprint(
             raise
         except Exception as e:
             logger.debug(f"[TEARDOWN] curl_cffi sessions close failed: {e}")  # fail-soft
+        # Sprint F219K: Close public_fetcher local Tor/I2P sessions
+        try:
+            from hledac.universal.fetching.public_fetcher import close_public_fetcher_sessions_async
+            await close_public_fetcher_sessions_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[TEARDOWN] public_fetcher sessions close failed: {e}")  # fail-soft
         # Sprint F216A: Close aiohttp session used by public_fetcher
         try:
             from hledac.universal.network.session_runtime import close_aiohttp_session_async

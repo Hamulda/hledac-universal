@@ -21,6 +21,7 @@ from __future__ import annotations
 import gc
 import logging
 import time as _time
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -300,3 +301,31 @@ def set_cache_limit_with_debounce(limit_mb: int, min_interval_seconds: float = 1
 
     _debounce_last_clear = now
     return configure_mlx_limits(cache_limit_mb=limit_mb)
+
+
+# -----------------------------------------------------------------------
+# F219L: Metal stream context helper — single source of truth for mx.stream guard
+# -----------------------------------------------------------------------
+
+def get_metal_stream_context():
+    """
+    F219L: Return mx.stream(mx.gpu) or nullcontext if GPU unavailable.
+
+    Guards against:
+    - MLX not available
+    - mx.gpu attribute missing
+    - mx.gpu is None
+    - Any exception during stream creation
+
+    Fail-open: returns nullcontext() so callers always have a valid context manager.
+
+    Returns:
+        context manager: mx.stream(mx.gpu) or nullcontext()
+    """
+    _stream = nullcontext()
+    try:
+        if _ensure_mlx() and hasattr(_get_mlx_core(), 'gpu') and _get_mlx_core().gpu is not None:
+            _stream = _get_mlx_core().stream(_get_mlx_core().gpu)
+    except Exception:
+        pass
+    return _stream

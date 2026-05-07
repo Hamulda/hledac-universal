@@ -209,6 +209,94 @@ def _zero_findings_quality_sane(report: ProbeReport) -> tuple[bool, str]:
 
 
 # --------------------------------------------------------------------------- #
+# Provider surface check — unified F219 alias table  (read-only, no network)
+# --------------------------------------------------------------------------- #
+# Alias table:
+#   probe_f217c_public_bootstrap        → probe_f219h_public_fetcher_import_seal  (public fetcher import/seal)
+#                                          → probe_f219d_public_session_seal       (public session seal)
+#   probe_f217d_ct_provider_resilience  → probe_f219e_ct_provider_cooldown         (CT cooldown/resilience)
+#
+# Decision rules:
+#   - Missing both old AND new → BLOCKED_BY_PROVIDER_SURFACE
+#   - Missing old but new present and passing → READY (alias satisfied)
+#   - Old present and passing → READY (backward-compat)
+#   - New present and failing → BLOCKED
+#   - Optional reports missing → warning only, never block
+# --------------------------------------------------------------------------- #
+
+_PROVIDER_SURFACE_ALIASES = {
+    "probe_f217c_public_bootstrap": [
+        ("probe_f219h_public_fetcher_import_seal", "public_fetcher_import_seal.json"),
+        ("probe_f219d_public_session_seal", "public_session_seal.json"),
+    ],
+    "probe_f217d_ct_provider_resilience": [
+        ("probe_f219e_ct_provider_cooldown", "ct_provider_cooldown.json"),
+    ],
+}
+
+
+def _check_provider_surface(repo_root: Path) -> tuple[list[str], list[str], dict]:
+    """
+    Unified provider surface check with F217→F219 aliasing.
+    Returns (missing_required_old_probes, warnings, checked_dict).
+
+    missing_required_old_probes: old probe names with no passing alias
+    warnings: for optional alias probes absent
+    checked_dict: for DecisionResult.checked_reports
+    """
+    missing_required: list[str] = []
+    warnings: list[str] = []
+    checked: dict[str, dict] = {}
+
+    for old_probe, alias_list in _PROVIDER_SURFACE_ALIASES.items():
+        old_filename = (
+            "public_bootstrap.json" if "bootstrap" in old_probe
+            else "ct_provider_resilience.json"
+        )
+        old_report = _load_report(repo_root, old_probe, old_filename)
+
+        alias_satisfied = False
+        alias_failures: list[str] = []
+
+        for new_probe, report_filename in alias_list:
+            new_report = _load_report(repo_root, new_probe, report_filename)
+            key = f"{old_probe}_alias_{new_probe}"
+            if new_report.found:
+                if new_report.parse_error:
+                    checked[key] = {"found": True, "parse_error": new_report.parse_error, "pass": False}
+                    alias_failures.append(f"{new_probe} parse error")
+                else:
+                    new_pass = _is_pass(new_report)
+                    checked[key] = {"found": True, "pass": new_pass, "detail": f"alias: {new_probe}"}
+                    if new_pass:
+                        alias_satisfied = True
+                    else:
+                        alias_failures.append(f"{new_probe} FAILED")
+            else:
+                checked[key] = {"found": False, "pass": False, "detail": "alias absent — skipped"}
+
+        # Store old probe result
+        old_pass = old_report.found and _is_pass(old_report)
+        checked[old_probe] = {
+            "found": old_report.found,
+            "parse_error": old_report.parse_error,
+            "pass": old_pass,
+            "alias_satisfied": alias_satisfied,
+        }
+
+        if old_report.found:
+            if old_pass:
+                alias_satisfied = True  # backward-compat: old passing satisfies
+            else:
+                alias_failures.append(f"{old_probe} FAILED")
+
+        if not alias_satisfied:
+            missing_required.append(old_probe)
+
+    return missing_required, warnings, checked
+
+
+# --------------------------------------------------------------------------- #
 # Surface-contract check  (read-only — no live network, no model load)
 # --------------------------------------------------------------------------- #
 
@@ -262,7 +350,7 @@ def _check_ct_cooldown(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport
     """
     Check F219E CT provider cooldown if its probe directory exists.
     """
-    report = _load_report(repo_root, "probe_f219e_ct_provider_cooldown", "ct_cooldown.json")
+    report = _load_report(repo_root, "probe_f219e_ct_provider_cooldown", "ct_provider_cooldown.json")
 
     if not report.found:
         return True, "optional report absent — skipped", report
@@ -405,36 +493,17 @@ def run_gate(
         reasons.append("BLOCKED_BY_CONTRACT: nonfeed recovery guard FAILED")
 
     # --------------------------------------------------------------------------- #
-    # 4. PUBLIC bootstrap — REQUIRED
+    # 4-5. Provider surface — REQUIRED (F217→F219 alias table)
     # --------------------------------------------------------------------------- #
-    bootstrap_report = _load_report(repo_root, "probe_f217c_public_bootstrap", "public_bootstrap.json")
-    bootstrap_pass = _is_pass(bootstrap_report)
-    checked["probe_f217c_public_bootstrap"] = {
-        "found": bootstrap_report.found,
-        "parse_error": bootstrap_report.parse_error,
-        "pass": bootstrap_pass,
-    }
-    if not bootstrap_report.found:
-        missing_required.append("probe_f217c_public_bootstrap")
-        reasons.append("BLOCKED_BY_PROVIDER_SURFACE: public bootstrap missing")
-    elif not bootstrap_pass:
-        reasons.append("BLOCKED_BY_PROVIDER_SURFACE: public bootstrap FAILED")
-
-    # --------------------------------------------------------------------------- #
-    # 5. CT provider resilience — REQUIRED
-    # --------------------------------------------------------------------------- #
-    ct_report = _load_report(repo_root, "probe_f217d_ct_provider_resilience", "ct_provider_resilience.json")
-    ct_pass = _is_pass(ct_report)
-    checked["probe_f217d_ct_provider_resilience"] = {
-        "found": ct_report.found,
-        "parse_error": ct_report.parse_error,
-        "pass": ct_pass,
-    }
-    if not ct_report.found:
-        missing_required.append("probe_f217d_ct_provider_resilience")
-        reasons.append("BLOCKED_BY_PROVIDER_SURFACE: CT provider resilience missing")
-    elif not ct_pass:
-        reasons.append("BLOCKED_BY_PROVIDER_SURFACE: CT provider resilience FAILED")
+    surf_missing, surf_warnings, surf_checked = _check_provider_surface(repo_root)
+    checked.update(surf_checked)
+    warnings.extend(surf_warnings)
+    for old_probe in surf_missing:
+        missing_required.append(old_probe)
+        if "bootstrap" in old_probe:
+            reasons.append("BLOCKED_BY_PROVIDER_SURFACE: public bootstrap missing (no passing F219H/F219D alias)")
+        else:
+            reasons.append("BLOCKED_BY_PROVIDER_SURFACE: CT provider resilience missing (no passing F219E alias)")
 
     # --------------------------------------------------------------------------- #
     # 6. CT cooldown — IF PRESENT
@@ -510,13 +579,18 @@ def run_gate(
     # --------------------------------------------------------------------------- #
     # 11. Fallback acquisition schema marker — always checked
     # --------------------------------------------------------------------------- #
-    all_reports = [
+    fallback_reports: list[Optional[ProbeReport]] = [
         mig_report, mig_manifest, nrg_report, nrg_manifest,
-        zf_sanity, zf_quality, bootstrap_report, ct_report,
+        zf_sanity, zf_quality,
         ct_cooldown_report, sc_report, hmf_report, pss_report,
     ]
-    for r in all_reports:
-        if _has_fallback_schema_marker(r):
+    for old_probe, alias_list in _PROVIDER_SURFACE_ALIASES.items():
+        for new_probe, report_filename in alias_list:
+            fallback_reports.append(_load_report(repo_root, new_probe, report_filename))
+        old_filename = "public_bootstrap.json" if "bootstrap" in old_probe else "ct_provider_resilience.json"
+        fallback_reports.append(_load_report(repo_root, old_probe, old_filename))
+    for r in fallback_reports:
+        if r is not None and _has_fallback_schema_marker(r):
             fallback_blocked = True
             reasons.append("BLOCKED_BY_UNKNOWN: fallback acquisition schema marker detected")
             break
@@ -645,6 +719,24 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
     lines.extend(["", "---", "", "## Missing Reports", ""])
     lines.append(f"**Required:** {', '.join(result.missing_required_reports) or '(none)'}")
     lines.append(f"**Optional:** {', '.join(result.missing_optional_reports) or '(none)'}")
+
+    lines.extend(["", "---", "", "## Provider Surface Alias Table (F217→F219)", ""])
+    lines.append("| Old Probe | Current Alias | Status |")
+    lines.append("|-----------|---------------|--------|")
+    aliases = [
+        ("probe_f217c_public_bootstrap", "probe_f219h_public_fetcher_import_seal / probe_f219d_public_session_seal"),
+        ("probe_f217d_ct_provider_resilience", "probe_f219e_ct_provider_cooldown"),
+    ]
+    checked = result.checked_reports
+    for old, new_alias in aliases:
+        old_info = checked.get(old, {})
+        alias_keys = [k for k in checked if k.startswith(old + "_alias_")]
+        alias_statuses = []
+        for ak in alias_keys:
+            ai = checked.get(ak, {})
+            alias_statuses.append(f"{ak.split('_alias_', 1)[1]}: pass={ai.get('pass')}, found={ai.get('found')}")
+        status = "PASS" if old_info.get("alias_satisfied") else ("absent" if not old_info.get("found") else "FAIL")
+        lines.append(f"| {old} | {new_alias} | {status} |")
 
     lines.extend(["", "---", "", "## Checked Reports", ""])
     for name, info in result.checked_reports.items():

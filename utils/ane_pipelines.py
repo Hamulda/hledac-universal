@@ -120,10 +120,12 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
     Returns:
         Embedding array
     """
+    # F219L: single-source guard via mlx_memory helper
+    from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
     try:
-        # Try model forward pass
-        # B4: scope Metal buffers to with-block for immediate release on UMA
-        with mx.stream(mx.gpu):
+        # Try model forward pass — Metal buffers scoped to with-block for immediate release on UMA
+        with get_metal_stream_context():
             if hasattr(model, '__call__'):
                 return model(tokens)
             if hasattr(model, 'embed'):

@@ -297,8 +297,10 @@ class MLXEmbeddingManager:
             )
 
             # Forward pass - mlx-embeddings returns pooled text_embeds
-            # B4: scope Metal buffers to with-block for immediate release on UMA
-            with mx.stream(mx.gpu):
+            # B4: scope Metal buffers to with-block for immediate release on UMA.
+            # F219L: single-source guard via mlx_memory helper
+            from hledac.universal.utils.mlx_memory import get_metal_stream_context
+            with get_metal_stream_context():
                 outputs = self._model(
                     input_ids=inputs.input_ids,
                     attention_mask=inputs.attention_mask
@@ -316,8 +318,15 @@ class MLXEmbeddingManager:
                 norms = mx.linalg.norm(embeddings, axis=1, keepdims=True)
                 embeddings = embeddings / mx.clip(norms, a_min=1e-12, a_max=None)
 
-            # Konverze zpět na numpy (already normalized in MLX when normalize=True)
+            # B4: Convert to numpy THEN release MLX refs while still in scope.
+            # This ensures Metal buffers are freed before next batch on UMA.
             embeddings_np = np.array(embeddings)
+
+            # Release large MLX objects immediately — reduces peak on M1 8GB.
+            # These may share backing storage with the GPU buffer, so del is critical.
+            del outputs
+            del embeddings
+            del inputs
 
             all_embeddings.append(embeddings_np)
         
