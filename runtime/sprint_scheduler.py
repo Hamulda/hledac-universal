@@ -81,6 +81,7 @@ from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionLaneOutcome,
     MandatoryLaneTerminality,
     NonfeedPlanDebug,
+    NonfeedMissionController,
     FeedDominanceBudget,
     normalize_source_family_outcome,
     build_acquisition_plan,
@@ -96,6 +97,21 @@ from hledac.universal.runtime.acquisition_strategy import (
     _load_feed_budget_from_env,
 )
 # F216F: Pivot candidate generation from query
+# F217E: Nonfeed candidate evidence ledger
+from hledac.universal.runtime.nonfeed_candidate_ledger import (
+    NonfeedCandidateLedger,
+    STAGE_ACCEPTED,
+    STAGE_DISCOVERED,
+    STAGE_FETCHED,
+    STAGE_PARSED,
+    STAGE_PROVIDER_FAILED,
+    STAGE_QUARANTINED,
+    STAGE_REJECTED,
+    STAGE_STORED,
+    FAMILY_CT,
+    FAMILY_PUBLIC,
+    FAMILY_PIVOT,
+)
 from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
 from hledac.universal.runtime.source_finding_bridge import (
     ct_results_to_findings,
@@ -124,6 +140,11 @@ log = logging.getLogger(__name__)
 class _PublicStage:
     NOT_SCHEDULED = "NOT_SCHEDULED"
     SCHEDULED = "SCHEDULED"
+    # Sprint F217C: Deterministic bootstrap stages
+    BOOTSTRAP_ATTEMPTED = "BOOTSTRAP_ATTEMPTED"
+    BOOTSTRAP_ZERO_SUCCESS = "BOOTSTRAP_ZERO_SUCCESS"
+    BOOTSTRAP_ACCEPTED = "BOOTSTRAP_ACCEPTED"
+    # Normal discovery stages
     DISCOVERY_ATTEMPTED = "DISCOVERY_ATTEMPTED"
     DISCOVERY_ZERO_RESULTS = "DISCOVERY_ZERO_RESULTS"
     DISCOVERY_TIMEOUT = "DISCOVERY_TIMEOUT"
@@ -198,9 +219,27 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
         stage_counters["rejected_url_samples"] = list(
             (getattr(pr, 'public_rejected_url_samples', None) or ())[:5]
         )
+        # Sprint F217C: Deterministic bootstrap stage counters
+        stage_counters["bootstrap_candidates"] = getattr(pr, 'public_bootstrap_candidates_count', 0) or 0
+        stage_counters["bootstrap_fetch_attempted"] = getattr(pr, 'public_bootstrap_fetch_attempted', 0) or 0
+        stage_counters["bootstrap_fetch_success"] = getattr(pr, 'public_bootstrap_fetch_success', 0) or 0
+        stage_counters["bootstrap_accepted_findings"] = getattr(pr, 'public_bootstrap_accepted_findings', 0) or 0
+        stage_counters["bootstrap_errors"] = getattr(pr, 'public_bootstrap_errors', 0) or 0
+        # Bootstrap-enabled flag for stage derivation
+        bootstrap_enabled = getattr(pr, 'public_bootstrap_enabled', False)
         # public_stage_failure from PipelineRunResult if available
         psf = getattr(pr, 'public_stage_failure', None)
-        if psf == "fetch_zero" and accepted_count == 0:
+        # Sprint F217C: Bootstrap-aware stage derivation
+        # When bootstrap was enabled, the discovery flow is:
+        # BOOTSTRAP_ATTEMPTED → discovery proceeds (with bootstrap URLs prepended)
+        # If bootstrap produced URLs but none succeeded → BOOTSTRAP_ZERO_SUCCESS
+        # If bootstrap produced URLs and at least one was accepted → BOOTSTRAP_ACCEPTED
+        if bootstrap_enabled and raw_count > 0:
+            if accepted_count > 0:
+                terminal_stage = _PublicStage.BOOTSTRAP_ACCEPTED
+            else:
+                terminal_stage = _PublicStage.BOOTSTRAP_ZERO_SUCCESS
+        elif psf == "fetch_zero" and accepted_count == 0:
             terminal_stage = _PublicStage.FETCH_ZERO_SUCCESS
         else:
             terminal_stage = _derive_terminal_stage(
@@ -508,6 +547,8 @@ class CTLossStage(Enum):
     NO_LOSS = "no_loss"  # full path succeeded: raw → candidates → stored → reported
     # F215C: Unknown loss — raw > 0 but telemetry insufficient to determine loss stage
     UNKNOWN_LOSS = "unknown_loss"  # raw > 0 but cannot determine which loss stage
+    # F217D: Provider failure — live provider failed and no stale cache available
+    PROVIDER_FAILURE = "provider_failure"
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +705,11 @@ class SprintSchedulerResult:
     # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge criteria
     ct_quarantine_count: int = 0
     ct_quarantine_samples: tuple[str, ...] = ()  # bounded samples as JSON strings
+    # Sprint F217D: CT provider resilience — explicit provider status and stale cache
+    ct_provider_status: str = ""  # CTProviderStatus.value or ""
+    ct_cache_used: bool = False  # True when stale cache was used
+    ct_cache_stale: bool = False  # True when cache was already stale when used
+    ct_cache_age_s: float = 0.0  # Seconds since cache was written (0 if not cached)
     # Sprint F166B: Pre-loop starvation tracking
     # Set when ACTIVE phase is first observed (loop guard entry)
     entered_active_at_monotonic: float | None = None
@@ -864,6 +910,20 @@ class SprintSchedulerResult:
     #       parse_attempted, parse_success, quality_rejected, storage_rejected, accepted_findings,
     #       rejection_reasons (top 5), error_samples (top 5), rejected_url_samples (top 5)
     public_stage_counters: dict = field(default_factory=dict)
+    # Sprint F217B: Nonfeed Mission Controller telemetry
+    # Populated by NonfeedMissionController.build_snapshot() called at teardown
+    # and optionally per-cycle when nonfeed_diagnostic profile is active
+    nonfeed_mission_active: bool = False
+    nonfeed_required_families: tuple[str, ...] = ()
+    nonfeed_optional_families: tuple[str, ...] = ()
+    nonfeed_family_status: dict[str, str] = field(default_factory=dict)
+    nonfeed_all_required_terminal: bool = False
+    nonfeed_any_accepted: bool = False
+    nonfeed_provider_failures: tuple[str, ...] = ()
+    nonfeed_memory_skips: tuple[str, ...] = ()
+    nonfeed_mission_exit_reason: str = ""
+    # Sprint F217E: Nonfeed candidate evidence ledger summary (records kept runtime only)
+    nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,6 +1117,8 @@ class SprintScheduler:
         self._result = SprintSchedulerResult()
         # Cancellation flag
         self._stop_requested = False
+        # Sprint F217E: Nonfeed candidate evidence ledger (runtime only, not persisted)
+        self._nonfeed_ledger: NonfeedCandidateLedger = NonfeedCandidateLedger()
         # Sprint 8RA: Store lifecycle reference for UMA callbacks
         self._lifecycle = None
         # Sprint F210A: Query stored for terminality recompute at export time
@@ -2356,6 +2418,35 @@ class SprintScheduler:
         self._result.public_terminal_stage = _pub_stage
         self._result.public_stage_counters = _pub_counters
 
+        # Sprint F217B: Compute nonfeed mission telemetry
+        # NonfeedMissionController.build_snapshot() reads acquisition_lane_outcomes
+        # and _public_outcome to produce mission status without benchmark-owned logic.
+        _acq_profile = getattr(self._config, "acquisition_profile", "default")
+        if NonfeedMissionController.is_mission_profile(_acq_profile):
+            try:
+                _mission_snapshot = NonfeedMissionController.build_snapshot(
+                    acquisition_profile=_acq_profile,
+                    acquisition_lane_outcomes=self._result.acquisition_lane_outcomes or (),
+                    public_outcome=self._public_outcome,
+                    ct_quarantine_count=self._result.ct_quarantine_count,
+                    quality_rejection_ledger=self._result.quality_rejection_ledger or (),
+                )
+                self._result.nonfeed_mission_active = _mission_snapshot.mission_active
+                self._result.nonfeed_required_families = _mission_snapshot.required_families
+                self._result.nonfeed_optional_families = _mission_snapshot.optional_families
+                self._result.nonfeed_family_status = _mission_snapshot.family_status
+                self._result.nonfeed_all_required_terminal = _mission_snapshot.all_required_terminal
+                self._result.nonfeed_any_accepted = _mission_snapshot.any_accepted
+                self._result.nonfeed_provider_failures = _mission_snapshot.provider_failures
+                self._result.nonfeed_memory_skips = _mission_snapshot.memory_skips
+                self._result.nonfeed_mission_exit_reason = _mission_snapshot.mission_exit_reason
+                # Sprint F217E: Record ledger summary at teardown
+                if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None:
+                    self._result.nonfeed_candidate_ledger_summary = self._nonfeed_ledger.summary()
+            except Exception as _exc:
+                log.debug("[F217B] NonfeedMissionController snapshot failed: %s", _exc)
+                # Fail-soft: telemetry errors don't block return
+
     # ── Sprint F208M-A: Nonfeed predispatch before final terminality ──────────
 
     async def _ensure_nonfeed_predispatch_before_finalization(
@@ -2752,6 +2843,17 @@ class SprintScheduler:
                                 pass
                             # Sprint F216G: Record quality gate rejections from this ingest
                             self._record_quality_rejections_from_store(duckdb_store)
+                            # Sprint F217E: Mirror quality rejections in ledger
+                            for _rec in self._result.quality_rejection_ledger or ():
+                                try:
+                                    self._nonfeed_ledger.add_quality_rejection(
+                                        source_family=_rec.source_family or "unknown",
+                                        reason=_rec.reason or "unknown",
+                                        sample_url=getattr(_rec, "url_sample", "") or "",
+                                        sample_value=getattr(_rec, "finding_id", "")[:16],
+                                    )
+                                except Exception:
+                                    pass  # fail-soft
                     if ct_outcome.error:
                         _ct_error = ct_outcome.error
 
@@ -2779,8 +2881,12 @@ class SprintScheduler:
                         and duckdb_store is not None
                         and hasattr(duckdb_store, "async_ingest_findings_batch")
                     )
-                    if _ct_results_raw == 0:
-                        _ct_loss_stage = CTLossStage.NO_RAW.value
+                    # F217D: Check for stale cache before provider-failure derivation
+                    # Stale cache sets ct_cache_used=True and raw_count > 0 — diagnostic only
+                    _ct_cache_used = getattr(ct_outcome, "ct_cache_used", False)
+                    if not _ct_cache_used and _ct_results_raw == 0:
+                        # F217D: raw=0 and no stale cache used — explicit provider failure
+                        _ct_loss_stage = CTLossStage.PROVIDER_FAILURE.value
                     elif (
                         _bridge_raw == 0
                         and _ct_results_raw > 0
@@ -2845,6 +2951,23 @@ class SprintScheduler:
                                 pass
                         self._result.ct_quarantine_samples = tuple(_samples)
                     # ── End F216D ────────────────────────────────────────────────
+                    # Sprint F217E: Record CT quarantine events in ledger
+                    for _entry in _ct_quarantine_entries:
+                        try:
+                            self._nonfeed_ledger.add_ct_quarantine(
+                                domain=_entry.get("raw_value", ""),
+                                reject_reason=_entry.get("reject_reason", "unknown"),
+                                source_url=_entry.get("source_url", ""),
+                                query=_entry.get("normalized_query", ""),
+                            )
+                        except Exception:
+                            pass  # fail-soft: ledger must never block sprint
+                    # Sprint F217D: CT provider resilience telemetry
+                    self._result.ct_provider_status = str(getattr(ct_outcome, "provider_status", "") or "")
+                    self._result.ct_cache_used = getattr(ct_outcome, "ct_cache_used", False)
+                    self._result.ct_cache_stale = getattr(ct_outcome, "ct_cache_stale", False)
+                    self._result.ct_cache_age_s = getattr(ct_outcome, "ct_cache_age_s", 0.0)
+                    # ── End F217D ────────────────────────────────────────────────
 
                     return AcquisitionLaneOutcome(
                         lane=AcquisitionLane.CT,
@@ -3507,6 +3630,17 @@ class SprintScheduler:
                             pass
                     self._result.ct_quarantine_samples = tuple(_samples)
                 # ── End F216D ─────────────────────────────────────────────────
+                # Sprint F217E: Record CT quarantine events in ledger (prelude)
+                for _entry in _ct_quarantine_entries:
+                    try:
+                        self._nonfeed_ledger.add_ct_quarantine(
+                            domain=_entry.get("raw_value", ""),
+                            reject_reason=_entry.get("reject_reason", "unknown"),
+                            source_url=_entry.get("source_url", ""),
+                            query=_entry.get("normalized_query", ""),
+                        )
+                    except Exception:
+                        pass  # fail-soft: ledger must never block sprint
                 # ── End F214D ─────────────────────────────────────────────────
 
         # Accumulate outcomes
@@ -4007,6 +4141,17 @@ class SprintScheduler:
                         self._accumulate_lane_findings(_outcomes, query)
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
+                        # Sprint F217E: Mirror quality rejections in ledger (stable advisory)
+                        for _rec in self._result.quality_rejection_ledger or ():
+                            try:
+                                self._nonfeed_ledger.add_quality_rejection(
+                                    source_family=_rec.source_family or "unknown",
+                                    reason=_rec.reason or "unknown",
+                                    sample_url=getattr(_rec, "url_sample", "") or "",
+                                    sample_value=getattr(_rec, "finding_id", "")[:16],
+                                )
+                            except Exception:
+                                pass  # fail-soft
             except asyncio.TimeoutError:
                 log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
             except asyncio.CancelledError:
@@ -4194,11 +4339,17 @@ class SprintScheduler:
                 return
             try:
                 async with _asyncio.timeout(branch_timeout):
+                    # Sprint F217C: Enable deterministic bootstrap for nonfeed_diagnostic profile
+                    # Bootstrap provides fallback when search discovery fails or returns zero.
+                    _bootstrap_enabled = (
+                        getattr(self._config, "acquisition_profile", "") == "nonfeed_diagnostic"
+                    )
                     await self._run_public_discovery_in_cycle(
                         query=query,
                         duckdb_store=duckdb_store,
                         hermes_engine=self._hermes_engine,
                         memory_manager=self._memory_manager,
+                        public_bootstrap_enabled=_bootstrap_enabled,
                     )
             except _asyncio.TimeoutError:
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
@@ -4378,6 +4529,17 @@ class SprintScheduler:
                         self._accumulate_lane_findings(_outcomes, query)
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
+                        # Sprint F217E: Mirror quality rejections in ledger (aggressive advisory)
+                        for _rec in self._result.quality_rejection_ledger or ():
+                            try:
+                                self._nonfeed_ledger.add_quality_rejection(
+                                    source_family=_rec.source_family or "unknown",
+                                    reason=_rec.reason or "unknown",
+                                    sample_url=getattr(_rec, "url_sample", "") or "",
+                                    sample_value=getattr(_rec, "finding_id", "")[:16],
+                                )
+                            except Exception:
+                                pass  # fail-soft
             except _asyncio.TimeoutError:
                 log.debug("[aggressive] ADVISORY lanes timed out after %ss", lanes_timeout)
             except _asyncio.CancelledError:
@@ -4393,8 +4555,9 @@ class SprintScheduler:
         self,
         query: str = "",
         duckdb_store: Any = None,
-        hermes_engine: Any = None,
-        memory_manager: Any = None,
+        hermes_engine: Any | None = None,
+        memory_manager: Any | None = None,
+        public_bootstrap_enabled: bool = False,  # Sprint F217C: deterministic bootstrap
     ) -> None:
         """
         Sprint 8XE: Run public discovery pipeline in the current cycle.
@@ -4446,6 +4609,7 @@ class SprintScheduler:
                         hermes_engine=hermes_engine,  # P12: post-storage ToT hypothesis layer
                         memory_manager=memory_manager,  # P11: session history for RAG context
                         enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
+                        public_bootstrap_enabled=public_bootstrap_enabled,  # Sprint F217C: deterministic bootstrap
                     ),
                     name="sprint:public",
                 )

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 # F206AB: discovery error taxonomy helper
 from hledac.universal.discovery.duckduckgo_adapter import (  # noqa: E402
+    DiscoveryHit,
     classify_discovery_error,
 )
 
@@ -109,6 +110,140 @@ _DISCOVERY_FALSE_POSITIVE_THRESHOLD: float = 0.5
 # Sprint F150J: pre-fetch skip threshold — below this score with no strong signal → SKIP tier
 _DISCOVERY_SKIP_THRESHOLD: float = 0.15
 """If discovery_score is below this AND no strong signal, skip fetch entirely."""
+
+# Sprint F217C: Deterministic bootstrap URL generator
+# Bounded, no brute force, no wordlists, no JS, no stealth.
+_MAX_BOOTSTRAP_URLS: int = 5
+"""Max bootstrap URLs per query (domain-sourced)."""
+_BOOTSTRAP_DEFAULT_URLS: list[str] = [
+    "",           # https://domain/
+    "/www.",      # https://www.domain/
+    "/.well-known/security.txt",   # deterministic security policy endpoint
+    "/robots.txt",                  # robots directive
+    "/sitemap.xml",                 # sitemap reference
+]
+"""Ordered list of URL path templates for deterministic bootstrap."""
+
+
+def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> list[str]:
+    """
+    Generate deterministic bootstrap URLs for domain/URL queries.
+
+    Bounded: at most max_urls URLs returned.
+    Fail-safe: returns empty list for non-domain queries or parse errors.
+    No network I/O — pure synchronous URL construction.
+
+    Bootstrap targets (in order):
+      1. https://domain/
+      2. https://www.domain/
+      3. https://domain/.well-known/security.txt
+      4. https://domain/robots.txt
+      5. https://domain/sitemap.xml
+
+    Args:
+        query: The original OSINT query string.
+        max_urls: Maximum number of bootstrap URLs to return (default 5).
+
+    Returns:
+        List of absolute URL strings (max max_urls). Empty list if query
+        is not a domain or URL cannot be parsed.
+    """
+    if not query or max_urls < 1:
+        return []
+
+    # Strip common prefix operators used in OSINT queries
+    clean_query = query.strip()
+    for prefix in ("site:", "domain:", "url:"):
+        if clean_query.lower().startswith(prefix):
+            clean_query = clean_query[len(prefix):].strip()
+            break
+
+    # Attempt to extract a domain from the query
+    domain = _extract_domain_from_query(clean_query)
+    if not domain:
+        return []
+
+    # Build bootstrap URL list (paths in order of priority)
+    paths = _BOOTSTRAP_DEFAULT_URLS[:max_urls]
+    urls: list[str] = []
+    for path in paths:
+        if path == "/www.":
+            # https://www.domain/
+            urls.append(f"https://www.{domain}")
+        elif path:
+            # https://domain/<path>
+            urls.append(f"https://{domain}{path}")
+        else:
+            # https://domain/
+            urls.append(f"https://{domain}")
+
+    return urls
+
+
+def _extract_domain_from_query(query: str) -> str | None:
+    """
+    Extract the registered domain from an OSINT query string.
+
+    Handles:
+      - Plain domains: example.com, www.example.com, *.example.com
+      - URLs: https://example.com/path, https://www.example.com/path
+      - IP addresses: ignored (no domain bootstrap for IPs)
+      - Non-domain strings: returns None
+
+    Returns:
+        Lower-case domain string suitable for bootstrap URL construction,
+        or None if no domain pattern found.
+    """
+    if not query:
+        return None
+
+    # Strip trailing slashes and path components from URL
+    q = query.rstrip("/")
+    if "/" in q and "://" in q:
+        # It's a full URL — extract just the host part
+        try:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(q)
+            host = parsed.netloc or parsed.path.split("/")[0]
+        except Exception:
+            host = None
+        if host:
+            q = host
+
+    # Remove common port suffix
+    if ":" in q:
+        q = q.rsplit(":", 1)[0]
+
+    # Strip www. prefix for base domain
+    if q.lower().startswith("www."):
+        q = q[4:]
+
+    # Remove wildcard prefix
+    if q.startswith("*."):
+        q = q[2:]
+
+    # Validate: must look like a domain (has TLD with 2+ chars)
+    # Must have at least one dot and a plausible TLD
+    if not q or "." not in q:
+        return None
+
+    # Reject if it looks like an IP address
+    import re as _re
+    if _re.match(r"^\d{1,3}(\.\d{1,3}){3}$", q):
+        return None
+
+    # Reject if contains path-like characters (more than one / or unusual chars)
+    # Domain should only contain letters, digits, hyphens, dots
+    if not _re.match(r"^[a-zA-Z0-9.\-]+$", q):
+        return None
+
+    # Reject single-char TLDs or obviously invalid
+    tld = q.rsplit(".", 1)[-1] if "." in q else ""
+    if len(tld) < 2:
+        return None
+
+    return q.lower()
+
 
 # -----------------------------------------------------------------------------
 # DTOs
@@ -292,6 +427,13 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # P20: PastebinMonitor + GitHubSecretScanner telemetry (additive)
     pastebin_findings_count: int = 0
     github_secrets_count: int = 0
+    # Sprint F217C: Deterministic bootstrap telemetry
+    public_bootstrap_enabled: bool = False  # True when bootstrap URLs were generated
+    public_bootstrap_candidates_count: int = 0  # bootstrap URLs generated from query
+    public_bootstrap_fetch_attempted: int = 0  # bootstrap URLs sent to fetch
+    public_bootstrap_fetch_success: int = 0  # bootstrap URLs that fetched successfully
+    public_bootstrap_accepted_findings: int = 0  # findings accepted from bootstrap hits
+    public_bootstrap_errors: int = 0  # bootstrap-specific errors (parse, dedup, etc.)
     # zero_hit_quality_reason_counts: breakdown of WHY zero-hit pages failed
     # keys are the specific quality_reason values from PipelinePageResult
     zero_hit_quality_reason_counts: dict = {}
@@ -2096,6 +2238,8 @@ async def async_run_live_public_pipeline(
     run_loop: bool = False,  # P16: If True, run ResearchLoop after pipeline
     rl_steps: int = 0,  # P17: Number of RL steps (0 = use time limit)
     enqueue_hypothesis_pivot: Any | None = None,  # Sprint F193B: bounded feedback seam
+    # Sprint F217C: Deterministic bootstrap — if True, prepend bootstrap URLs before discovery
+    public_bootstrap_enabled: bool = False,
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -2274,6 +2418,36 @@ async def async_run_live_public_pipeline(
     public_discovery_cache_hit: int = 0
     public_discovery_query_count: int = 0
 
+    # Sprint F217C: Deterministic bootstrap telemetry (initialized before try block)
+    # Local telemetry vars — public_bootstrap_enabled parameter used directly
+    _pub_bootstrap_candidates_count: int = 0
+    _pub_bootstrap_fetch_attempted: int = 0
+    _pub_bootstrap_fetch_success: int = 0
+    _pub_bootstrap_accepted_findings: int = 0
+    _pub_bootstrap_errors: int = 0
+
+    # Sprint F217C: Deterministic bootstrap — generate before discovery attempt
+    # Only runs when bootstrap is enabled; bootstrap URLs are prepended to duckduckgo hits.
+    bootstrap_hits: list[DiscoveryHit] = []
+    if public_bootstrap_enabled:
+        try:
+            bootstrap_urls = generate_bootstrap_urls(query, max_urls=_MAX_BOOTSTRAP_URLS)
+            _pub_bootstrap_candidates_count = len(bootstrap_urls)
+            for idx, url in enumerate(bootstrap_urls):
+                bootstrap_hits.append(DiscoveryHit(
+                    query=query,
+                    title=f"Bootstrap {idx+1}",
+                    url=url,
+                    snippet=f"Deterministic bootstrap URL: {url}",
+                    score=0.85,  # High confidence — deterministic, not speculative
+                    reason="deterministic_bootstrap",
+                    rank=-1,  # Negative rank: bootstrap hits sort before discovery hits
+                    source="bootstrap",
+                    retrieved_ts=0.0,
+                ))
+        except Exception:
+            _pub_bootstrap_candidates_count = 0
+
     try:
         # 8AC surface — duckduckgo_search passive discovery
         _discovery_start = time.monotonic()
@@ -2290,6 +2464,12 @@ async def async_run_live_public_pipeline(
             hits = discovery_result.hits
         elif isinstance(discovery_result, dict):
             hits = discovery_result.get("hits", ())
+
+        # Sprint F217C: Prepend deterministic bootstrap hits to discovery results
+        # bootstrap_hits is empty list when public_bootstrap_enabled is False
+        if bootstrap_hits:
+            hits = tuple(bootstrap_hits) + tuple(hits)
+            _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
 
         err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
         if err_val:
@@ -3506,6 +3686,13 @@ async def async_run_live_public_pipeline(
         # P20: PastebinMonitor + GitHubSecretScanner telemetry
         pastebin_findings_count=pastebin_findings_count,
         github_secrets_count=github_secrets_count,
+        # Sprint F217C: Deterministic bootstrap telemetry
+        public_bootstrap_enabled=public_bootstrap_enabled,
+        public_bootstrap_candidates_count=_pub_bootstrap_candidates_count,
+        public_bootstrap_fetch_attempted=_pub_bootstrap_fetch_attempted,
+        public_bootstrap_fetch_success=_pub_bootstrap_fetch_success,
+        public_bootstrap_accepted_findings=_pub_bootstrap_accepted_findings,
+        public_bootstrap_errors=_pub_bootstrap_errors,
         # F207F: PUBLIC Yield telemetry
         public_discovered=public_discovered,
         public_fetch_attempted=public_fetch_attempted,

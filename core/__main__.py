@@ -1379,6 +1379,16 @@ async def run_sprint(
             },
             "runtime_truth": runtime_truth,
             "timing_truth": timing_truth,
+            # Sprint F217B: Nonfeed mission controller telemetry
+            "nonfeed_mission_active": getattr(result, "nonfeed_mission_active", False),
+            "nonfeed_required_families": getattr(result, "nonfeed_required_families", ()),
+            "nonfeed_optional_families": getattr(result, "nonfeed_optional_families", ()),
+            "nonfeed_family_status": getattr(result, "nonfeed_family_status", {}),
+            "nonfeed_all_required_terminal": getattr(result, "nonfeed_all_required_terminal", False),
+            "nonfeed_any_accepted": getattr(result, "nonfeed_any_accepted", False),
+            "nonfeed_provider_failures": getattr(result, "nonfeed_provider_failures", ()),
+            "nonfeed_memory_skips": getattr(result, "nonfeed_memory_skips", ()),
+            "nonfeed_mission_exit_reason": getattr(result, "nonfeed_mission_exit_reason", ""),
         }
         report_path.write_bytes(orjson.dumps(report_dict, option=orjson.OPT_INDENT_2))
         logger.info(f"[REPORT] {report_path}")

@@ -281,6 +281,17 @@ class LiveMeasurementResult:
     acquisition_prelude_duration_s: float | None = None
     acquisition_prelude_reason: str | None = None
 
+    # F217B: Nonfeed mission controller telemetry (copied from canonical SprintSchedulerResult)
+    nonfeed_mission_active: bool | None = None
+    nonfeed_required_families: tuple[str, ...] | None = None
+    nonfeed_optional_families: tuple[str, ...] | None = None
+    nonfeed_family_status: dict | None = None
+    nonfeed_all_required_terminal: bool | None = None
+    nonfeed_any_accepted: bool | None = None
+    nonfeed_provider_failures: tuple[str, ...] | None = None
+    nonfeed_memory_skips: tuple[str, ...] | None = None
+    nonfeed_mission_exit_reason: str | None = None
+
     # F208H: Full acquisition report (canonical, not reconstructed)
     # Stored at top-level for validator self-containment
     acquisition_report: dict | None = None
@@ -2628,6 +2639,16 @@ async def _run_live_sprint(
                 result.acquisition_prelude_errors = parsed.get("acquisition_prelude_errors")
                 result.acquisition_prelude_duration_s = parsed.get("acquisition_prelude_duration_s")
                 result.acquisition_prelude_reason = parsed.get("acquisition_prelude_reason")
+                # F217B: Nonfeed mission controller telemetry — copied from canonical report
+                result.nonfeed_mission_active = parsed.get("nonfeed_mission_active")
+                result.nonfeed_required_families = parsed.get("nonfeed_required_families")
+                result.nonfeed_optional_families = parsed.get("nonfeed_optional_families")
+                result.nonfeed_family_status = parsed.get("nonfeed_family_status")
+                result.nonfeed_all_required_terminal = parsed.get("nonfeed_all_required_terminal")
+                result.nonfeed_any_accepted = parsed.get("nonfeed_any_accepted")
+                result.nonfeed_provider_failures = parsed.get("nonfeed_provider_failures")
+                result.nonfeed_memory_skips = parsed.get("nonfeed_memory_skips")
+                result.nonfeed_mission_exit_reason = parsed.get("nonfeed_mission_exit_reason")
                 # F208H: Read full canonical acquisition_report from sprint JSON
                 # for validator self-containment (not just the sanitized subset)
                 try:

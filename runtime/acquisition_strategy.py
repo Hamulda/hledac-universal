@@ -45,7 +45,7 @@ INVARIANTS (GHOST_INVARIANTS):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 # [F207K-A] Non-feed bridge helpers — rejection tracking + candidate conversion
@@ -82,6 +82,8 @@ __all__ = [
     "normalize_terminal_state",
     "TERMINAL_STATES",
     "NON_TERMINAL_STATES",
+    "NonfeedMissionController",
+    "NonfeedMissionSnapshot",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -1026,6 +1028,378 @@ class AcquisitionLaneOutcome:
             "rejected_count": self.rejected_count,
             "sample_rejections": list(self.sample_rejections),
         }
+
+
+# ── F217B: Nonfeed Mission Controller ────────────────────────────────────────
+# Lane family → AcquisitionLane mapping for mission tracking
+_NONFEED_LANE_FAMILY_MAP = {
+    "PUBLIC": AcquisitionLane.PUBLIC,
+    "CT": AcquisitionLane.CT,
+    "PIVOT_EXECUTOR": AcquisitionLane.PIVOT_EXECUTOR,
+    "WAYBACK": AcquisitionLane.WAYBACK,
+    "PASSIVE_DNS": AcquisitionLane.PASSIVE_DNS,
+}
+
+# Canonical terminal states that count as "accepted evidence"
+_ACCEPTED_TERMINAL_STATES = frozenset(["success", "success_empty", "empty"])
+
+
+@dataclass
+class NonfeedMissionSnapshot:
+    """F217B: Snapshot of nonfeed mission controller state at a point in time.
+
+    This is a plain dataclass (not frozen) so that the scheduler can
+    accumulate state over the sprint lifetime.
+    """
+
+    # Mission identity
+    mission_active: bool = False
+    acquisition_profile: str = "default"
+
+    # Lane family contracts
+    required_families: tuple[str, ...] = ()   # PUBLIC, CT, PIVOT_EXECUTOR
+    optional_families: tuple[str, ...] = ()   # WAYBACK, PASSIVE_DNS
+
+    # Per-family status: family → NonfeedFamilyStatus
+    family_status: dict[str, str] = field(default_factory=dict)
+    #   "accepted"       — lane produced accepted evidence (accepted_findings > 0)
+    #   "terminal"        — lane reached terminal state without accepted evidence
+    #   "provider_failure" — lane errored with provider/system failure
+    #   "memory_skip"     — lane skipped due to memory pressure
+    #   "pending"         — lane has not yet reached a terminal state
+    #   "missing"         — lane never scheduled
+
+    # Aggregate diagnostics
+    all_required_terminal: bool = False   # True when every required family is terminal/accepted
+    any_accepted: bool = False            # True when any nonfeed family produced accepted evidence
+    provider_failures: tuple[str, ...] = ()   # families with provider_failure status
+    memory_skips: tuple[str, ...] = ()        # families skipped due to memory
+
+    # Exit reason — canonical mission outcome
+    mission_exit_reason: str = ""  # ""=not finished, see NonfeedMissionExitReason values
+
+    def to_dict(self) -> dict:
+        return {
+            "nonfeed_mission_active": self.mission_active,
+            "nonfeed_acquisition_profile": self.acquisition_profile,
+            "nonfeed_required_families": list(self.required_families),
+            "nonfeed_optional_families": list(self.optional_families),
+            "nonfeed_family_status": dict(self.family_status),
+            "nonfeed_all_required_terminal": self.all_required_terminal,
+            "nonfeed_any_accepted": self.any_accepted,
+            "nonfeed_provider_failures": list(self.provider_failures),
+            "nonfeed_memory_skips": list(self.memory_skips),
+            "nonfeed_mission_exit_reason": self.mission_exit_reason,
+        }
+
+
+class NonfeedMissionExitReason:
+    """F217B: Canonical mission exit reason values."""
+    # Mission not yet evaluated
+    MISSION_NOT_FINISHED = ""
+
+    # Terminal reached with accepted evidence
+    DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED = "diagnostic_complete_nonfeed_accepted"
+
+    # Terminal reached, no accepted evidence, all required lanes terminal
+    DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED = "diagnostic_complete_no_nonfeed_accepted"
+
+    # Blocked by memory pressure before any nonfeed lane could run
+    DIAGNOSTIC_BLOCKED_BY_MEMORY = "diagnostic_blocked_by_memory"
+
+    # Required lanes never reached terminal state (mission incomplete)
+    MISSION_INCOMPLETE = "mission_incomplete"
+
+
+class NonfeedMissionController:
+    """F217B: Canonical nonfeed mission contract for nonfeed_diagnostic profile.
+
+    Coordinates lane family expectations without benchmark-owned logic.
+    For acquisition_profile=nonfeed_diagnostic:
+      - Required lane families: PUBLIC, CT, PIVOT_EXECUTOR
+      - Optional lane families: WAYBACK, PASSIVE_DNS
+      - FEED is capped until required nonfeed lanes are terminal
+      - Mission finishes only when each required family has:
+          accepted evidence
+          OR explicit terminal state
+          OR explicit provider failure
+          OR explicit memory skip
+
+    IMPORTANT — what does NOT count as accepted evidence:
+      - CT quarantine is NOT accepted evidence (raw hits rejected by bridge criteria)
+      - Quality rejection ledger is NOT accepted evidence (quality gate rejection)
+      - PUBLIC explicit failure (FETCH_ZERO_SUCCESS, QUALITY_REJECTED, etc.) counts
+        as terminal but NOT accepted
+      - Feed findings do NOT satisfy nonfeed mission
+    """
+
+    __slots__ = ()
+
+    @staticmethod
+    def is_mission_profile(acquisition_profile: str) -> bool:
+        """Return True when the profile is nonfeed_diagnostic."""
+        return acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
+
+    @staticmethod
+    def get_required_families() -> tuple[str, ...]:
+        """Required lane families for nonfeed_diagnostic mission."""
+        return ("PUBLIC", "CT", "PIVOT_EXECUTOR")
+
+    @staticmethod
+    def get_optional_families() -> tuple[str, ...]:
+        """Optional lane families for nonfeed_diagnostic mission."""
+        return ("WAYBACK", "PASSIVE_DNS")
+
+    @staticmethod
+    def _family_to_lane(family: str) -> str:
+        """Map lane family string to AcquisitionLane constant."""
+        return _NONFEED_LANE_FAMILY_MAP.get(family, family)
+
+    @staticmethod
+    def _get_lane_outcome(
+        family: str,
+        acquisition_lane_outcomes: tuple,
+        public_outcome: dict | None,
+        ct_quarantine_count: int,
+        quality_rejection_ledger: tuple,
+    ) -> dict | None:
+        """Get the outcome dict for a lane family.
+
+        Returns a dict with keys: accepted_findings, terminal_state, error, skipped
+        suitable for mission evaluation.
+
+        Args:
+            family: Lane family string (PUBLIC, CT, etc.)
+            acquisition_lane_outcomes: Tuple of AcquisitionLaneOutcome from run_enabled_acquisition_lanes
+            public_outcome: _public_outcome dict from SprintScheduler (for PUBLIC lane)
+            ct_quarantine_count: ct_quarantine_count from SprintSchedulerResult
+            quality_rejection_ledger: quality_rejection_ledger from SprintSchedulerResult
+        """
+        if family == "PUBLIC":
+            if public_outcome is None:
+                return None
+            accepted = public_outcome.get("accepted_count", 0) or 0
+            terminal_state = normalize_terminal_state(public_outcome)
+            return {
+                "accepted_findings": accepted,
+                "terminal_state": terminal_state,
+                "error": public_outcome.get("error"),
+                "skipped": public_outcome.get("skipped", False),
+            }
+        elif family == "CT":
+            # Map to acquisition lane outcome
+            lane = AcquisitionLane.CT
+            for outcome in acquisition_lane_outcomes:
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    # CT quarantine is NOT accepted evidence — raw hits rejected by bridge
+                    # Only genuine accepted findings count
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
+            return None
+        elif family == "PIVOT_EXECUTOR":
+            lane = AcquisitionLane.PIVOT_EXECUTOR
+            for outcome in acquisition_lane_outcomes:
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
+            return None
+        elif family == "WAYBACK":
+            lane = AcquisitionLane.WAYBACK
+            for outcome in acquisition_lane_outcomes:
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
+            return None
+        elif family == "PASSIVE_DNS":
+            lane = AcquisitionLane.PASSIVE_DNS
+            for outcome in acquisition_lane_outcomes:
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
+            return None
+        return None
+
+    @staticmethod
+    def _evaluate_family_status(outcome: dict | None, memory_skipped: bool = False) -> str:
+        """Evaluate the mission status of a single family.
+
+        Returns one of: accepted, terminal, provider_failure, memory_skip, pending, missing
+        """
+        if memory_skipped:
+            return "memory_skip"
+
+        if outcome is None:
+            return "missing"
+
+        accepted = outcome.get("accepted_findings", 0) or 0
+        if accepted > 0:
+            return "accepted"
+
+        terminal_state = outcome.get("terminal_state", "")
+        error = outcome.get("error", "")
+        skipped = outcome.get("skipped", False)
+
+        # Explicit provider failure: network error, timeout, system error
+        # These are terminal but not accepted
+        if error and any(err in str(error).lower() for err in ["timeout", "error", "unavailable", "connection", "refused", "dns"]):
+            # Distinguish provider failure from lane error
+            if any(err in str(error).lower() for err in ["timeout", "unavailable", "connection", "refused", "dns", "network"]):
+                return "provider_failure"
+            return "terminal"
+
+        if skipped:
+            return "terminal"
+
+        if terminal_state in _ACCEPTED_TERMINAL_STATES:
+            # success/success_empty/empty but no accepted findings — still terminal
+            return "terminal"
+
+        if terminal_state:
+            # attempted/error/timeout/skipped — lane ran to completion without accepted evidence
+            return "terminal"
+
+        # Not terminal yet — lane hasn't reached any terminal state
+        return "pending"
+
+    @classmethod
+    def build_snapshot(
+        cls,
+        acquisition_profile: str,
+        acquisition_lane_outcomes: tuple,
+        public_outcome: dict | None,
+        ct_quarantine_count: int,
+        quality_rejection_ledger: tuple,
+        memory_skipped_families: tuple[str, ...] = (),
+    ) -> NonfeedMissionSnapshot:
+        """Build a NonfeedMissionSnapshot from current scheduler state.
+
+        Args:
+            acquisition_profile: Current acquisition profile name
+            acquisition_lane_outcomes: Tuple of AcquisitionLaneOutcome from run_enabled_acquisition_lanes
+            public_outcome: _public_outcome dict from SprintScheduler (None if PUBLIC never ran)
+            ct_quarantine_count: ct_quarantine_count from SprintSchedulerResult
+            quality_rejection_ledger: quality_rejection_ledger from SprintSchedulerResult
+            memory_skipped_families: Families skipped due to memory pressure
+        """
+        snapshot = NonfeedMissionSnapshot()
+        snapshot.acquisition_profile = acquisition_profile
+        snapshot.mission_active = cls.is_mission_profile(acquisition_profile)
+
+        if not snapshot.mission_active:
+            return snapshot
+
+        snapshot.required_families = cls.get_required_families()
+        snapshot.optional_families = cls.get_optional_families()
+
+        # Memory skips
+        snapshot.memory_skips = tuple(memory_skipped_families)
+
+        all_statuses: list[str] = []
+        accepted_families: list[str] = []
+        provider_failure_families: list[str] = []
+
+        # Evaluate required families
+        for family in snapshot.required_families:
+            memory_skip = family in memory_skipped_families
+            outcome = cls._get_lane_outcome(
+                family, acquisition_lane_outcomes, public_outcome,
+                ct_quarantine_count, quality_rejection_ledger
+            )
+            status = cls._evaluate_family_status(outcome, memory_skipped=memory_skip)
+            snapshot.family_status[family] = status
+            all_statuses.append(status)
+
+            if status == "accepted":
+                accepted_families.append(family)
+            elif status == "provider_failure":
+                provider_failure_families.append(family)
+            elif status == "memory_skip":
+                pass  # counts as terminal for mission purposes
+            elif status == "missing":
+                # missing is not terminal — mission incomplete
+                pass
+
+        # Evaluate optional families (informational only)
+        for family in snapshot.optional_families:
+            memory_skip = family in memory_skipped_families
+            outcome = cls._get_lane_outcome(
+                family, acquisition_lane_outcomes, public_outcome,
+                ct_quarantine_count, quality_rejection_ledger
+            )
+            status = cls._evaluate_family_status(outcome, memory_skipped=memory_skip)
+            snapshot.family_status[family] = status
+            all_statuses.append(status)
+
+            if status == "accepted":
+                accepted_families.append(family)
+            elif status == "provider_failure":
+                provider_failure_families.append(family)
+
+        snapshot.any_accepted = len(accepted_families) > 0
+        snapshot.provider_failures = tuple(provider_failure_families)
+
+        # All required terminal: every required family is terminal/accepted/memory_skip/provider_failure
+        # NOT terminal: pending or missing
+        terminal_statuses = {"accepted", "terminal", "provider_failure", "memory_skip"}
+        snapshot.all_required_terminal = all(
+            snapshot.family_status.get(f, "missing") in terminal_statuses
+            for f in snapshot.required_families
+        )
+
+        # Determine exit reason
+        snapshot.mission_exit_reason = cls._derive_exit_reason(
+            snapshot, memory_skipped_families
+        )
+
+        return snapshot
+
+    @classmethod
+    def _derive_exit_reason(
+        cls,
+        snapshot: NonfeedMissionSnapshot,
+        memory_skipped_families: tuple[str, ...],
+    ) -> str:
+        """Derive the canonical mission exit reason."""
+        if not snapshot.mission_active:
+            return ""
+
+        # If we have accepted nonfeed evidence, mission is complete
+        if snapshot.any_accepted:
+            return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED
+
+        # Memory blocked — if all required families were memory-skipped before any ran
+        if memory_skipped_families:
+            # Check if the skipped families cover all required ones
+            required_set = set(snapshot.required_families)
+            skipped_set = set(memory_skipped_families)
+            if skipped_set.issuperset(required_set) or all(
+                snapshot.family_status.get(f, "missing") == "memory_skip"
+                for f in snapshot.required_families
+            ):
+                return NonfeedMissionExitReason.DIAGNOSTIC_BLOCKED_BY_MEMORY
+
+        # All required families are terminal but no accepted evidence
+        if snapshot.all_required_terminal:
+            return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED
+
+        # Required lanes not all terminal — mission incomplete
+        return NonfeedMissionExitReason.MISSION_INCOMPLETE
 
 
 # ── Indicator patterns ──────────────────────────────────────────────────────

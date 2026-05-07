@@ -17,6 +17,9 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Optional
 
 import aiohttp
 
@@ -25,16 +28,64 @@ from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
 
-__all__ = ["async_search_crtsh", "call_crtsh", "CTOutcome"]
+__all__ = ["async_search_crtsh", "call_crtsh", "CTOutcome", "CTProviderStatus"]
+
+# ---------------------------------------------------------------------------
+# Provider status
+# ---------------------------------------------------------------------------
+
+
+class CTProviderStatus(Enum):
+    """F217D: Explicit CT provider status tags."""
+
+    OK = "ok"
+    HTTP_5XX = "http_5xx"
+    HTTP_4XX = "http_4xx"
+    TIMEOUT = "timeout"
+    PARSE_ERROR = "parse_error"
+    EMPTY = "empty"
+    DISABLED = "disabled"
+    CACHE_HIT_STALE = "cache_hit_stale"
+
+
+@dataclass(frozen=True)
+class CTProviderStatusReport:
+    """
+    F217D: Explicit CT provider status report with bounded error sampling.
+
+    Fields:
+        provider_name:    Always "crtsh".
+        attempted:       True if HTTP call was attempted (also True on cache hit).
+        status:          CTProviderStatus tag.
+        raw_count:       Certs from live call or cached response (0 if no call and no cache).
+        error_sample:    Bounded error message (max 200 chars, None on success).
+        ct_cache_used:   True if response came from stale cache.
+        ct_cache_stale:  True if cached response was stale when served.
+        ct_cache_age_s: Seconds since cache file was written (0 if not cached).
+    """
+
+    provider_name: str = "crtsh"
+    attempted: bool = False
+    status: CTProviderStatus = CTProviderStatus.DISABLED
+    raw_count: int = 0
+    error_sample: Optional[str] = None
+    ct_cache_used: bool = False
+    ct_cache_stale: bool = False
+    ct_cache_age_s: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# CTOutcome (legacy — extended with cache fields in call_crtsh)
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class CTOutcome:
     """
-    Normalized CT adapter outcome — F207F.
+    Normalized CT adapter outcome — F207F, extended F217D with cache fields.
 
     Fields:
-        attempted:    True if HTTP call was attempted.
+        attempted:    True if HTTP call was attempted (also True on cache hit).
         query:        Domain/query that was submitted.
         raw_count:    Certs received from crt.sh before filtering (0 if not attempted).
         built_count:  DiscoveryHit records built after filtering (0 if not attempted).
@@ -43,6 +94,11 @@ class CTOutcome:
         timeout:      True if call timed out.
         duration_s:   Wall-clock seconds for the call.
         skip_reason:  Reason for skip or None if attempted/errored.
+        # F217D: cache fields
+        ct_cache_used:  True if response was served from stale cache.
+        ct_cache_stale: True if cached response was already stale when served.
+        ct_cache_age_s: Seconds since cache was written (0 if not cached).
+        provider_status: CTProviderStatus enum tag for explicit provider state.
     """
     attempted: bool = False
     query: str = ""
@@ -53,6 +109,11 @@ class CTOutcome:
     timeout: bool = False
     duration_s: float = 0.0
     skip_reason: str | None = None
+    # F217D cache fields
+    ct_cache_used: bool = False
+    ct_cache_stale: bool = False
+    ct_cache_age_s: float = 0.0
+    provider_status: CTProviderStatus = CTProviderStatus.DISABLED
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +126,9 @@ _CRTSH_URL = "https://crt.sh/"
 
 # Timeout for the HTTP call
 _HTTP_TIMEOUT_S = 8.0
+
+# F217D: Stale cache window — up to 7 days old for diagnostic reuse
+_STALE_THRESHOLD_S = 604800  # 7 days
 
 # Reserved/special names that are never valid public hosts.
 _PRIVATE_HOSTNAMES = {
@@ -146,27 +210,150 @@ def _is_wildcard_only(domain: str) -> bool:
     return bool(_WILDCARD_ONLY_RE.match(domain))
 
 
+# ---------------------------------------------------------------------------
+# Cache helpers (F217D)
+# ---------------------------------------------------------------------------
+
+
+def _make_cache_key(domain: str) -> str:
+    """Make a cache key for a domain using xxhash."""
+    try:
+        import xxhash
+
+        return f"{xxhash.xxh64(domain.encode()).hexdigest()}.json"
+    except ImportError:
+        import hashlib
+
+        return f"{hashlib.sha256(domain.encode()).hexdigest()[:16]}.json"
+
+
+def _read_stale_cache(
+    domain: str, cache_dir: Path | None, max_age_s: float
+) -> tuple[Optional[list], float]:
+    """
+    F217D: Read a stale cache entry for diagnostic reuse.
+
+    Returns (raw_data, age_s) if a cache file exists and is within max_age_s.
+    Returns (None, 0.0) if no cache or cache is older than max_age_s.
+
+    This does NOT count as fresh accepted evidence — callers must set
+    ct_cache_used=True, ct_cache_stale=True on the returned outcome.
+    """
+    if cache_dir is None:
+        return None, 0.0
+    cache_key = _make_cache_key(domain)
+    cache_path = cache_dir / cache_key
+    if not cache_path.exists():
+        return None, 0.0
+    age_s = time.time() - cache_path.stat().st_mtime
+    if age_s > max_age_s:
+        return None, 0.0
+    try:
+        import orjson
+
+        raw_data = orjson.loads(cache_path.read_bytes())
+        return raw_data, age_s
+    except Exception:
+        return None, 0.0
+
+
+def _build_hits_from_raw(
+    raw_data: list, domain_candidate: str, query: str, max_results: int
+) -> tuple[list[DiscoveryHit], int]:
+    """
+    F217D: Build DiscoveryHit list from raw crt.sh JSON data (live or cached).
+
+    Used by stale-cache fallback path. Returns (hits, raw_count) where raw_count
+    is the total certs before filtering (diagnostic signal, not accepted evidence).
+    """
+    seen_domains: set[str] = set()
+    hits: list[DiscoveryHit] = []
+    now = time.time()
+    raw_count = len(raw_data) if isinstance(raw_data, list) else 0
+
+    for cert in (raw_data if isinstance(raw_data, list) else [])[:_MAX_CERTS]:
+        if not isinstance(cert, dict):
+            continue
+        name_value = cert.get("name_value", "")
+        if not name_value:
+            continue
+
+        for subdomain in name_value.split("\n"):
+            subdomain = subdomain.strip()
+            if not subdomain:
+                continue
+            if _is_wildcard_only(subdomain):
+                continue
+            if _is_private_domain(subdomain):
+                continue
+            subdomain_lower = subdomain.lower()
+            if subdomain_lower in seen_domains:
+                continue
+            if len(hits) >= max_results:
+                break
+
+            seen_domains.add(subdomain_lower)
+            hits.append(
+                DiscoveryHit(
+                    query=query,
+                    title=f"CT: {subdomain}",
+                    url=f"https://{subdomain}/",
+                    snippet=f"Certificate Transparency match via crt.sh — {subdomain}",
+                    source="crtsh",
+                    rank=len(hits),
+                    retrieved_ts=now,
+                    score=1.0 - (len(hits) / max_results),
+                    reason="ct_subdomain",
+                    ct_name_value=name_value,
+                    ct_common_name=cert.get("common_name"),
+                    ct_issuer_name=cert.get("issuer_name"),
+                    ct_not_before=cert.get("not_before"),
+                    ct_not_after=cert.get("not_after"),
+                    ct_entry_timestamp=cert.get("entry_timestamp"),
+                    ct_serial_number=cert.get("serial_number"),
+                )
+            )
+        if len(hits) >= max_results:
+            break
+
+    return hits, raw_count
+
+
+# ---------------------------------------------------------------------------
+# call_crtsh
+# ---------------------------------------------------------------------------
+
+
 async def call_crtsh(
     query: str,
     max_results: int = 20,
     timeout_s: float = 8.0,
+    cache_dir: Path | None = None,
 ) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """
-    crt.sh search with normalized outcome — F207F.
+    crt.sh search with normalized outcome — F207F, extended F217D.
 
-    Returns (DiscoveryBatchResult, CTOutcome) so callers can measure yield
-    without changing the existing DiscoveryBatchResult contract.
+    F217D adds stale-cache diagnostic reuse:
+      - If live provider fails with HTTP 5xx/timeout and a stale cache exists
+        (within _STALE_THRESHOLD_S), the cached response is returned with
+        ct_cache_used=True and ct_cache_stale=True.
+      - Cached raw is NOT counted as fresh accepted evidence.
+      - Provider status is explicitly tagged via CTProviderStatus.
 
     Args:
         query:       Search query string (domain or free-text).
         max_results: Max hits to return (default 20, hard cap 50).
         timeout_s:   HTTP timeout in seconds (default 8.0).
+        cache_dir:   Optional cache directory for stale-cache reuse (F217D).
+                    When provided and live call fails, a stale cache (up to 7 days)
+                    is used for diagnostic purposes.
 
     Returns:
         (DiscoveryBatchResult, CTOutcome) tuple.
-        outcome.attempted=True on every code path including skips.
-        outcome.raw_count = certs received from crt.sh (0 if not attempted).
-        outcome.built_count = DiscoveryHit records built after filtering.
+        outcome.attempted=True on every code path including cache hits.
+        outcome.raw_count = certs from live call or cached response (0 if neither).
+        outcome.ct_cache_used=True when response is from stale cache.
+        outcome.provider_status = CTProviderStatus tag.
     """
     start = time.monotonic()
     elapsed = start - start  # 0.0 placeholder
@@ -264,6 +451,38 @@ async def call_crtsh(
             else:
                 err_tag = "network_error"
 
+            # F217D: Try stale cache on timeout/network errors before failing
+            _stale_data, _stale_age = _read_stale_cache(
+                domain_candidate, cache_dir, _STALE_THRESHOLD_S
+            )
+            if _stale_data is not None and is_timeout:
+                _stale_hits, _stale_raw = _build_hits_from_raw(
+                    _stale_data, domain_candidate, query_stripped, max_results
+                )
+                _cache_outcome = CTOutcome(
+                    attempted=True,
+                    query=domain_candidate,
+                    raw_count=_stale_raw,
+                    built_count=len(_stale_hits),
+                    error=f"{err}_stale_cache",
+                    timeout=True,
+                    duration_s=elapsed,
+                    ct_cache_used=True,
+                    ct_cache_stale=True,
+                    ct_cache_age_s=_stale_age,
+                    provider_status=CTProviderStatus.CACHE_HIT_STALE,
+                )
+                _cache_result = DiscoveryBatchResult(
+                    hits=tuple(_stale_hits),
+                    error=f"{err}_stale_cache",
+                    error_type="timeout_cache_fallback",
+                    provider_name="crtsh",
+                    provider_chain=("crtsh",),
+                    source_family="ct",
+                    elapsed_s=elapsed,
+                )
+                return _cache_result, _cache_outcome
+
             outcome = CTOutcome(
                 attempted=True,
                 query=domain_candidate,
@@ -272,6 +491,7 @@ async def call_crtsh(
                 error=err,
                 timeout=is_timeout,
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.TIMEOUT if is_timeout else CTProviderStatus.HTTP_5XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -294,6 +514,7 @@ async def call_crtsh(
                 built_count=0,
                 error="rate_limited",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.HTTP_5XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -314,6 +535,7 @@ async def call_crtsh(
                 built_count=0,
                 error="captcha_or_blocked",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.HTTP_4XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -327,6 +549,40 @@ async def call_crtsh(
             return result, outcome
         if resp.status >= 500:
             elapsed = time.monotonic() - start
+            # F217D: Try stale cache on 5xx before returning failure
+            stale_data, stale_age = _read_stale_cache(
+                domain_candidate, cache_dir, _STALE_THRESHOLD_S
+            )
+            if stale_data is not None:
+                # Serve stale cache as diagnostic — NOT fresh accepted evidence
+                stale_hits, stale_raw_count = _build_hits_from_raw(
+                    stale_data, domain_candidate, query_stripped, max_results
+                )
+                elapsed = time.monotonic() - start
+                cache_outcome = CTOutcome(
+                    attempted=True,
+                    query=domain_candidate,
+                    raw_count=stale_raw_count,
+                    built_count=len(stale_hits),
+                    error=f"http_{resp.status}_stale_cache",
+                    timeout=False,
+                    duration_s=elapsed,
+                    ct_cache_used=True,
+                    ct_cache_stale=True,
+                    ct_cache_age_s=stale_age,
+                    provider_status=CTProviderStatus.CACHE_HIT_STALE,
+                )
+                cache_result = DiscoveryBatchResult(
+                    hits=tuple(stale_hits),
+                    error=f"http_{resp.status}_stale_cache",
+                    error_type="http_5xx_cache_fallback",
+                    provider_name="crtsh",
+                    provider_chain=("crtsh",),
+                    source_family="ct",
+                    elapsed_s=elapsed,
+                )
+                return cache_result, cache_outcome
+            # No cache — explicit provider failure
             outcome = CTOutcome(
                 attempted=True,
                 query=domain_candidate,
@@ -334,6 +590,7 @@ async def call_crtsh(
                 built_count=0,
                 error=f"http_{resp.status}",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.HTTP_5XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -354,6 +611,7 @@ async def call_crtsh(
                 built_count=0,
                 error=f"http_{resp.status}",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.HTTP_4XX,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -377,6 +635,7 @@ async def call_crtsh(
                 built_count=0,
                 error=f"parse_error:{e}",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.PARSE_ERROR,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -398,6 +657,7 @@ async def call_crtsh(
                 built_count=0,
                 error="unexpected_response_format",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.PARSE_ERROR,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -479,6 +739,7 @@ async def call_crtsh(
                 built_count=0,
                 error="no_subdomains_found",
                 duration_s=elapsed,
+                provider_status=CTProviderStatus.EMPTY,
             )
             result = DiscoveryBatchResult(
                 hits=(),
@@ -498,6 +759,7 @@ async def call_crtsh(
             built_count=built_count,
             error=None,
             duration_s=elapsed,
+            provider_status=CTProviderStatus.OK,
         )
         result = DiscoveryBatchResult(
             hits=tuple(hits),
@@ -515,14 +777,45 @@ async def call_crtsh(
 
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
+        # F217D: Try stale cache on TimeoutError before failing
+        _dc_for_cache = domain_candidate if 'domain_candidate' in dir() else query_stripped
+        _stale_d, _stale_a = _read_stale_cache(_dc_for_cache, cache_dir, _STALE_THRESHOLD_S)
+        if _stale_d is not None:
+            _s_hits, _s_raw = _build_hits_from_raw(
+                _stale_d, _dc_for_cache, query_stripped, max_results
+            )
+            _cache_outcome = CTOutcome(
+                attempted=True,
+                query=_dc_for_cache,
+                raw_count=_s_raw,
+                built_count=len(_s_hits),
+                error="timeout_stale_cache",
+                timeout=True,
+                duration_s=elapsed,
+                ct_cache_used=True,
+                ct_cache_stale=True,
+                ct_cache_age_s=_stale_a,
+                provider_status=CTProviderStatus.CACHE_HIT_STALE,
+            )
+            _cache_result = DiscoveryBatchResult(
+                hits=tuple(_s_hits),
+                error="timeout_stale_cache",
+                error_type="timeout_cache_fallback",
+                provider_name="crtsh",
+                provider_chain=("crtsh",),
+                source_family="ct",
+                elapsed_s=elapsed,
+            )
+            return _cache_result, _cache_outcome
         outcome = CTOutcome(
             attempted=True,
-            query=domain_candidate if 'domain_candidate' in dir() else query_stripped,
+            query=_dc_for_cache,
             raw_count=raw_count if 'raw_count' in dir() else 0,
             built_count=0,
             error="timeout",
             timeout=True,
             duration_s=elapsed,
+            provider_status=CTProviderStatus.TIMEOUT,
         )
         result = DiscoveryBatchResult(
             hits=(),
@@ -545,6 +838,7 @@ async def call_crtsh(
             built_count=0,
             error=str(e),
             duration_s=elapsed,
+            provider_status=CTProviderStatus.PARSE_ERROR,
         )
         result = DiscoveryBatchResult(
             hits=(),
