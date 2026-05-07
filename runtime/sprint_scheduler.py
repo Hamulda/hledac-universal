@@ -28,6 +28,7 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import os
 import struct
@@ -36,7 +37,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Final, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Final, Optional, Sequence
 
 from hledac.universal.patterns.pattern_matcher import match_text
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
@@ -49,6 +50,20 @@ from hledac.universal.transport.circuit_breaker import (
 
 # Sprint F218D: Lane rejection bound
 MAX_LANE_REJECTIONS: int = 1000
+
+# E4: gc.callbacks for sprint-level GC telemetry — module-level state
+_gc_sprint_callback_handle: Optional[Callable] = None  # stores registered callback function
+_gc_sprint_stats: list[dict] = []
+
+
+def _gc_sprint_callback(phase: str, info: dict) -> None:
+    """E4: GC per-collection callback — records generation and collection counts."""
+    _gc_sprint_stats.append({
+        'gen': info.get('generation', -1),
+        'collected': info.get('collected', -1),
+    })
+
+
 from hledac.universal.runtime.shadow_inputs import (
     collect_lifecycle_snapshot,
     collect_graph_summary,
@@ -1663,6 +1678,20 @@ class SprintScheduler:
         # F205H: Capture baseline RSS at sprint start (not just at cycle end)
         self._tick_metrics_on_cycle_end()
 
+        # E4: Register GC sprint callbacks (remove stale handle first to prevent doubles)
+        if _gc_sprint_callback_handle is not None:
+            gc.callbacks.remove(_gc_sprint_callback_handle)
+        _gc_sprint_stats.clear()
+        _gc_sprint_callback_handle = _gc_sprint_callback
+        gc.callbacks.append(_gc_sprint_callback)
+
+        # E2: Opt-in tracemalloc snapshot diff via HLEDAC_TRACEMALLOC env var
+        _trace_snap_before: Any = None
+        if os.environ.get("HLEDAC_TRACEMALLOC"):
+            import tracemalloc
+            tracemalloc.start(10)  # 10-frame depth limit
+            _trace_snap_before = tracemalloc.take_snapshot()
+
         # Initial tick to enter ACTIVE
         phase = self._runner.tick(now_monotonic)
 
@@ -2068,6 +2097,23 @@ class SprintScheduler:
             self._result.abort_reason = f"{type(exc).__name__}"
             # Sprint F215D: Mark exception path so _finalize_result_truth knows this is an error abort
             self._run_exit_path_override = "aborted_by_error"
+
+        finally:
+            # E4: Remove GC callbacks and log stats
+            if _gc_sprint_callback_handle is not None:
+                gc.callbacks.remove(_gc_sprint_callback_handle)
+                _gc_sprint_callback_handle = None
+                if _gc_sprint_stats:
+                    log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
+
+            # E2: Opt-in tracemalloc snapshot diff
+            if _trace_snap_before is not None:
+                import tracemalloc
+                tracemalloc.stop()
+                snap_after = tracemalloc.take_snapshot()
+                diff = snap_after.compare_to(_trace_snap_before, 'lineno')
+                for stat in diff[:10]:
+                    log.info(f"[E2] Alloc delta: {stat}")
 
         # ── Teardown / Export ───────────────────────────────────────────────
         # Sprint F206C: Delegated to runner.teardown()

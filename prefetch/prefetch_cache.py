@@ -24,7 +24,7 @@ class PrefetchCache:
         # Sprint 3D: use open_lmdb() for env-driven discipline + lock recovery
         self.env = open_lmdb(self.db_path, map_size=max_size_mb * 1024 * 1024)
         self.max_entries = max_entries
-        self._write_queue = asyncio.Queue()
+        self._write_queue = asyncio.Queue(maxsize=1000)  # C2: bounded to prevent unbounded growth
         self._writer_task: Optional[asyncio.Task] = None
         self._running = True
 

@@ -122,10 +122,12 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
     """
     try:
         # Try model forward pass
-        if hasattr(model, '__call__'):
-            return model(tokens)
-        if hasattr(model, 'embed'):
-            return model.embed(tokens)
+        # B4: scope Metal buffers to with-block for immediate release on UMA
+        with mx.stream(mx.gpu):
+            if hasattr(model, '__call__'):
+                return model(tokens)
+            if hasattr(model, 'embed'):
+                return model.embed(tokens)
     except Exception as e:
         logger.warning(f"Model forward failed: {e}")
 

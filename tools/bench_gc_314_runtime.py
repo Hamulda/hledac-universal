@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# F2: Run with PYTHONMALLOCSTATS=1 for allocator diagnostics on exit:
+#   PYTHONMALLOCSTATS=1 python -m hledac.universal.tools.bench_gc_314_runtime
 """
 F214G: Python 3.14.4 vs 3.14.5+ GC Reality Benchmark
 ======================================================
@@ -248,7 +250,9 @@ async def run_phase(name: str, coro, timeout_s: float = 60) -> PhaseResult:
     start = time.monotonic()
 
     try:
-        result = await asyncio.wait_for(coro(), timeout=timeout_s)
+        # C4: use asyncio.timeout for structured concurrency
+        async with asyncio.timeout(timeout_s):
+            result = await coro()
         if isinstance(result, dict):
             errors.extend(result.get('errors', []))
     except asyncio.TimeoutError:

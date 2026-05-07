@@ -172,7 +172,7 @@ async def map_as_completed(
     Yields:
         (index, result) tuple - výsledky jakmile jsou hotové
     """
-    q: asyncio.Queue = asyncio.Queue()
+    q: asyncio.Queue = asyncio.Queue(maxsize=max_concurrent * 2)  # C2: bounded to prevent unbounded memory growth
     sem = asyncio.Semaphore(max_concurrent)
 
     async def _worker(idx: int, fn: Callable[..., Awaitable[T]], args: tuple, kw: dict):

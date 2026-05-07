@@ -165,6 +165,44 @@ def _check_memory_guard() -> bool:
     return True
 
 
+def _uma_guard_before_batch() -> bool:
+    """
+    B3: Combined UMA guard — Metal active memory + RSS pre-batch.
+
+    Prevents batch submission when combined Metal buffers + RSS would exceed
+    the 6.5GB UMA ceiling (6656MB). Flushes Metal cache if threshold breached.
+
+    Returns:
+        True if safe to proceed, False to skip batch.
+    """
+    try:
+        from hledac.universal.utils.mlx_memory import get_active_memory_mb
+
+        active_mb = get_active_memory_mb()
+        if active_mb is None:
+            return True  # Cannot measure — allow through
+
+        rss_mb = psutil.Process().memory_info().rss // (1024 * 1024)
+        combined_mb = active_mb + rss_mb
+
+        if combined_mb > 6656:
+            logger.warning(
+                f"[EMBED:UMA] Combined UMA pressure {combined_mb}MB "
+                f"(Metal={active_mb}MB + RSS={rss_mb}MB) > 6656MB — flushing cache"
+            )
+            try:
+                import mlx.core as mx
+                mx.eval([])
+                if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
+                    mx.metal.clear_cache()
+            except Exception:
+                pass
+            return False
+        return True
+    except Exception:
+        return True  # Fail-safe — allow through
+
+
 def _get_embedder():
     """
     Get MLXEmbeddingManager singleton.
@@ -553,6 +591,10 @@ async def generate_embeddings_streaming(
         if not _get_embedder().is_loaded:
             if not load_embedding_model():
                 # Fall back: materialize all at once
+                # B3: Combined UMA guard pre-batch
+                if not _uma_guard_before_batch():
+                    logger.warning("[EMBED:streaming] Fallback batch skipped due to UMA pressure")
+                    return
                 loop = asyncio.get_running_loop()
                 embs = await loop.run_in_executor(
                     None, generate_embeddings, texts, batch_size
@@ -567,6 +609,11 @@ async def generate_embeddings_streaming(
         for i in range(0, len(texts), batch_size):
             chunk = texts[i:i + batch_size]
             chunk_ids = [str(i + j) for j in range(len(chunk))]
+
+            # B3: Combined UMA guard pre-batch
+            if not _uma_guard_before_batch():
+                logger.warning("[EMBED:streaming] Batch skipped due to UMA pressure")
+                break
 
             loop = asyncio.get_running_loop()
             try:

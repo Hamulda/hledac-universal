@@ -358,12 +358,10 @@ class AgentCoordinationEngine:
         start_time = time.time()
         async with sem:
             try:
-                # Execute with timeout
-                data = await asyncio.wait_for(
-                    executor(request),
-                    timeout=request.timeout
-                )
-                
+                # Execute with timeout (C4: use asyncio.timeout for structured concurrency)
+                async with asyncio.timeout(request.timeout):
+                    data = await executor(request)
+
                 duration = time.time() - start_time
                 return TaskResult(
                     task_id=request.id,
@@ -372,7 +370,7 @@ class AgentCoordinationEngine:
                     data=data,
                     duration=duration
                 )
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # C4: TimeoutError is alias in 3.11+, catches both
                 duration = time.time() - start_time
                 return TaskResult(
                     task_id=request.id,

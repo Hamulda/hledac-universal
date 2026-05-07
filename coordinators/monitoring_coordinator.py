@@ -528,12 +528,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 elif self._current_memory_pressure == MemoryPressureLevel.CRITICAL:
                     interval *= 3.0
                 
-                # Wait with cancellation support
+                # Wait with cancellation support (C4: use asyncio.timeout for structured concurrency)
                 try:
-                    await asyncio.wait_for(
-                        self._stop_collection.wait(),
-                        timeout=interval
-                    )
+                    async with asyncio.timeout(interval):
+                        await self._stop_collection.wait()
                 except asyncio.TimeoutError:
                     pass  # Normal - continue loop
                     

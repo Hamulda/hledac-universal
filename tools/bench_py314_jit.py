@@ -1,4 +1,6 @@
 #!/usr/bin/env python3.14
+# F2: Run with PYTHONMALLOCSTATS=1 for allocator diagnostics on exit:
+#   PYTHONMALLOCSTATS=1 python3.14 -m hledac.universal.tools.bench_py314_jit
 """
 F214I-2 — Python 3.14 Experimental JIT Benchmark
 

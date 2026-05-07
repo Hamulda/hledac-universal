@@ -297,10 +297,12 @@ class MLXEmbeddingManager:
             )
 
             # Forward pass - mlx-embeddings returns pooled text_embeds
-            outputs = self._model(
-                input_ids=inputs.input_ids,
-                attention_mask=inputs.attention_mask
-            )
+            # B4: scope Metal buffers to with-block for immediate release on UMA
+            with mx.stream(mx.gpu):
+                outputs = self._model(
+                    input_ids=inputs.input_ids,
+                    attention_mask=inputs.attention_mask
+                )
 
             # Use pre-pooled embeddings from the model (includes attention mask pooling internally)
             embeddings = outputs.text_embeds
