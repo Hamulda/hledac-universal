@@ -26,10 +26,20 @@ from typing import Optional
 
 class Decision(str, Enum):
     READY_FOR_LIVE = "READY_FOR_LIVE"
+    READY_FOR_LIVE_HARDWARE_TAINTED = "READY_FOR_LIVE_HARDWARE_TAINTED"
     BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
     BLOCKED_BY_CONTRACT = "BLOCKED_BY_CONTRACT"
     BLOCKED_BY_PROVIDER_SURFACE = "BLOCKED_BY_PROVIDER_SURFACE"
     BLOCKED_BY_UNKNOWN = "BLOCKED_BY_UNKNOWN"
+
+
+# --------------------------------------------------------------------------- #
+# Swap tiered policy constants (F220F: macOS swap gate calibration)
+# --------------------------------------------------------------------------- #
+# Imported from core.resource_governor (F220F: single source of truth for constants).
+# --------------------------------------------------------------------------- #
+
+from core.resource_governor import get_swap_policy_tier
 
 
 # --------------------------------------------------------------------------- #
@@ -405,6 +415,10 @@ class DecisionResult:
     suggested_live_command: str = ""
     suggested_highswap_diagnostic_command: str = ""
     fallback_schema_blocked: bool = False
+    # F220F: swap tiered policy telemetry
+    hardware_constrained: bool = False
+    swap_policy_tier: str = "unknown"  # "clean" | "diagnostic" | "hard_block"
+    swap_gate_reason: str = ""
 
 
 def run_gate(
@@ -601,18 +615,55 @@ def run_gate(
 
     # --------------------------------------------------------------------------- #
     # 12. UMA check — done last; memory decision overrides contract/other blocks
+    # F220F: Tiered macOS swap-aware policy (no longer hard-blocks on tiny swap)
     # --------------------------------------------------------------------------- #
     uma = _check_uma()
-    swap_high = uma.get("swap_used_gib", 0.0) > 2.0
+    swap_gib = uma.get("swap_used_gib", 0.0)
+    uma_state = uma.get("uma_state", "unknown")
 
     checked["uma"] = uma
 
-    if swap_high:
+    # F220F: Determine swap tier using canonical helper from resource_governor
+    swap_policy_tier, swap_gate_reason = get_swap_policy_tier(swap_gib)
+    hardware_constrained = swap_policy_tier in ("diagnostic", "hard_block")
+
+    # F220F: Emergency/critical UMA state always blocks regardless of swap tier
+    if uma_state in ("critical", "emergency"):
         decision = Decision.BLOCKED_BY_MEMORY
         live_allowed = False
-        reasons.insert(0, f"BLOCKED_BY_MEMORY: swap={uma.get('swap_used_gib'):.2f}GiB > 2.0GiB threshold")
+        hardware_constrained = True
+        swap_policy_tier = "hard_block"
+        swap_gate_reason = f"uma_state={uma_state} (override)"
+        reasons.insert(0, f"BLOCKED_BY_MEMORY: uma_state={uma_state} (override)")
+
+    # F220F: Hard block tier overrides everything
+    elif swap_policy_tier == "hard_block":
+        decision = Decision.BLOCKED_BY_MEMORY
+        live_allowed = False
+        reasons.insert(0, f"BLOCKED_BY_MEMORY: {swap_gate_reason}")
+
+    # F220F: Diagnostic tier — allowed with explicit flag but tainted
+    elif swap_policy_tier == "diagnostic":
+        # Check if any contract/provider blocks exist
+        if reasons:
+            first_reason = reasons[0]
+            if "BLOCKED_BY_PROVIDER_SURFACE" in first_reason:
+                decision = Decision.BLOCKED_BY_PROVIDER_SURFACE
+            elif "BLOCKED_BY_CONTRACT" in first_reason:
+                decision = Decision.BLOCKED_BY_CONTRACT
+            elif "BLOCKED_BY_UNKNOWN" in first_reason:
+                decision = Decision.BLOCKED_BY_UNKNOWN
+            else:
+                decision = Decision.BLOCKED_BY_UNKNOWN
+            live_allowed = False
+        else:
+            decision = Decision.READY_FOR_LIVE_HARDWARE_TAINTED
+            live_allowed = True  # allowed with --allow-high-swap
+            reasons.append(f"HARDWARE_TAINTED: {swap_gate_reason}")
+            warnings.append("Swap elevated: results will be non-comparable (use --require-memory-ok for clean run)")
+
+    # Tier 1: Clean swap
     elif reasons:
-        # Pick the most specific reason (first in list is priority)
         first_reason = reasons[0]
         if "BLOCKED_BY_PROVIDER_SURFACE" in first_reason:
             decision = Decision.BLOCKED_BY_PROVIDER_SURFACE
@@ -630,14 +681,18 @@ def run_gate(
 
     # --------------------------------------------------------------------------- #
     # 13. Build command suggestions
+    # F220F: Clean command includes --require-memory-ok; diagnostic uses --allow-high-swap
     # --------------------------------------------------------------------------- #
     encoded_query = query.replace('"', '\\"')
+    # Clean run: use --require-memory-ok to confirm memory cleanliness
     live_cmd = (
         f"python -m core "
         f"--profile {profile} "
         f'--query "{encoded_query}" '
-        f"--live"
+        f"--live "
+        f"--require-memory-ok"
     )
+    # Diagnostic run with hardware taint: use --allow-high-swap
     highswap_cmd = (
         f"python -m core "
         f"--profile {profile} "
@@ -658,6 +713,9 @@ def run_gate(
         suggested_live_command=live_cmd,
         suggested_highswap_diagnostic_command=highswap_cmd,
         fallback_schema_blocked=fallback_blocked,
+        hardware_constrained=hardware_constrained,
+        swap_policy_tier=swap_policy_tier,
+        swap_gate_reason=swap_gate_reason,
     )
 
 
@@ -685,6 +743,7 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
         "",
         f"**Decision:** `{result.decision.value}`",
         f"**Live Allowed:** `{result.live_allowed}`",
+        f"**Hardware Constrained:** `{result.hardware_constrained}`",
         f"**Profile:** `{profile}`",
         f"**Query:** `{query}`",
         "",
@@ -701,6 +760,16 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
         val = uma.get(key)
         if val is not None:
             lines.append(f"| {key} | {val} |")
+
+    # F220F: Swap tiered policy section
+    lines.extend(["", "---", "", "## Swap Policy (F220F)", ""])
+    lines.extend([
+        f"| Field | Value |",
+        f"|-------|-------|",
+        f"| Swap Policy Tier | `{result.swap_policy_tier}` |",
+        f"| Swap Gate Reason | `{result.swap_gate_reason}` |",
+        f"| Hardware Constrained | `{result.hardware_constrained}` |",
+    ])
 
     lines.extend(["", "---", "", "## Reasons", ""])
     if result.reasons:
@@ -757,10 +826,13 @@ def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
         lines.append("")
 
     lines.extend(["", "---", "", "## Suggested Commands", ""])
-    if result.live_allowed:
-        lines.append(f"**Live run:**\n```bash\n{result.suggested_live_command}\n```")
-    if uma.get("swap_used_gib", 0) > 2.0:
-        lines.append(f"\n**High-swap diagnostic:**\n```bash\n{result.suggested_highswap_diagnostic_command}\n```")
+    # F220F: Always show clean command with --require-memory-ok
+    lines.append(f"**Clean run (--require-memory-ok):**\n```bash\n{result.suggested_live_command}\n```")
+    # F220F: Show diagnostic command only when swap is elevated (diagnostic tier)
+    if result.swap_policy_tier == "diagnostic":
+        lines.append(f"\n**Diagnostic run (--allow-high-swap — results non-comparable):**\n```bash\n{result.suggested_highswap_diagnostic_command}\n```")
+    elif result.swap_policy_tier == "hard_block":
+        lines.append(f"\n**Hard block — restart required before running**")
 
     return "\n".join(lines)
 
@@ -790,6 +862,10 @@ def main() -> int:
             "suggested_live_command": result.suggested_live_command,
             "suggested_highswap_diagnostic_command": result.suggested_highswap_diagnostic_command,
             "fallback_schema_blocked": result.fallback_schema_blocked,
+            # F220F: swap tiered policy telemetry
+            "hardware_constrained": result.hardware_constrained,
+            "swap_policy_tier": result.swap_policy_tier,
+            "swap_gate_reason": result.swap_gate_reason,
             "checked_reports": {
                 k: {kk: vv for kk, vv in v.items() if kk not in ("data",)}
                 for k, v in result.checked_reports.items()
@@ -813,6 +889,9 @@ def main() -> int:
     print(f"\n{'='*60}")
     print(f"  Decision: {result.decision.value}")
     print(f"  Live Allowed: {result.live_allowed}")
+    print(f"  Hardware Constrained: {result.hardware_constrained}")
+    print(f"  Swap Policy Tier: {result.swap_policy_tier}")
+    print(f"  Swap Gate Reason: {result.swap_gate_reason}")
     print(f"{'='*60}")
     if result.reasons:
         print("Reasons:")

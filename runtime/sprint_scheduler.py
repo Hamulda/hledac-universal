@@ -165,6 +165,9 @@ class _PublicStage:
     BOOTSTRAP_ATTEMPTED = "BOOTSTRAP_ATTEMPTED"
     BOOTSTRAP_ZERO_SUCCESS = "BOOTSTRAP_ZERO_SUCCESS"
     BOOTSTRAP_ACCEPTED = "BOOTSTRAP_ACCEPTED"
+    # Sprint F221C: Bootstrap timeout stages — distinguish timeout during bootstrap from zero success
+    BOOTSTRAP_ATTEMPTED_TIMEOUT = "BOOTSTRAP_ATTEMPTED_TIMEOUT"
+    BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT = "BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT"
     # Normal discovery stages
     DISCOVERY_ATTEMPTED = "DISCOVERY_ATTEMPTED"
     DISCOVERY_ZERO_RESULTS = "DISCOVERY_ZERO_RESULTS"
@@ -250,16 +253,26 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
         bootstrap_enabled = getattr(pr, 'public_bootstrap_enabled', False)
         # public_stage_failure from PipelineRunResult if available
         psf = getattr(pr, 'public_stage_failure', None)
-        # Sprint F217C: Bootstrap-aware stage derivation
-        # When bootstrap was enabled, the discovery flow is:
-        # BOOTSTRAP_ATTEMPTED → discovery proceeds (with bootstrap URLs prepended)
-        # If bootstrap produced URLs but none succeeded → BOOTSTRAP_ZERO_SUCCESS
-        # If bootstrap produced URLs and at least one was accepted → BOOTSTRAP_ACCEPTED
+        # Sprint F221C: Bootstrap-aware stage derivation.
+        # BOOTSTRAP_ATTEMPTED_TIMEOUT: bootstrap was enabled, produced candidates (raw_count>0),
+        #   but the branch timed out before discovery could complete.
+        # BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT: bootstrap was enabled, produced NO candidates,
+        #   AND the branch timed out (bootstrap itself failed + timeout).
+        # BOOTSTRAP_ZERO_SUCCESS: bootstrap produced candidates but none yielded accepted findings
+        #   (discovery completed normally, no timeout).
+        # BOOTSTRAP_ACCEPTED: bootstrap produced candidates and at least one was accepted.
         if bootstrap_enabled and raw_count > 0:
+            # raw_count > 0 means bootstrap produced URL candidates
             if accepted_count > 0:
                 terminal_stage = _PublicStage.BOOTSTRAP_ACCEPTED
+            elif timeout:
+                # Branch timed out with bootstrap candidates pending — distinct from zero-success
+                terminal_stage = _PublicStage.BOOTSTRAP_ATTEMPTED_TIMEOUT
             else:
                 terminal_stage = _PublicStage.BOOTSTRAP_ZERO_SUCCESS
+        elif bootstrap_enabled and raw_count == 0 and timeout:
+            # Bootstrap enabled but produced no candidates AND timed out
+            terminal_stage = _PublicStage.BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT
         elif psf == "fetch_zero" and accepted_count == 0:
             terminal_stage = _PublicStage.FETCH_ZERO_SUCCESS
         else:
@@ -1682,6 +1695,7 @@ class SprintScheduler:
         self._tick_metrics_on_cycle_end()
 
         # E4: Register GC sprint callbacks (remove stale handle first to prevent doubles)
+        global _gc_sprint_callback_handle
         if _gc_sprint_callback_handle is not None:
             gc.callbacks.remove(_gc_sprint_callback_handle)
         _gc_sprint_stats.clear()
@@ -2444,6 +2458,40 @@ class SprintScheduler:
             if _ct_outcome is not None:
                 _observed_outcomes.append(_ct_outcome)
                 _seen_outcome_lanes.add("CT")
+            else:
+                # [F221B] CT was required but not attempted — emit explicit skipped outcome
+                # so CT always appears in source_family_outcomes as a terminal state.
+                # This handles the case where CT was disabled (hardware_critical, swap) or
+                # skipped silently; it must NOT disappear from terminal outcomes.
+                for _mlt in _mlt_required:
+                    if _mlt.lane == AcquisitionLane.CT and _mlt.required:
+                        # Derive skip reason from acquisition plan
+                        _skip_reason = "hardware_critical"
+                        if self._acquisition_plan is not None:
+                            for _plan in (self._acquisition_plan.plans or ()):
+                                if hasattr(_plan, "lane") and _plan.lane == AcquisitionLane.CT:
+                                    _reason = getattr(_plan, "reason", "") or ""
+                                    if "swap" in _reason or "hardware_critical" in _reason:
+                                        _skip_reason = _reason
+                                    elif not getattr(_plan, "enabled", True):
+                                        _skip_reason = _reason or "lane_disabled"
+                                    else:
+                                        _skip_reason = "ct_required_not_attempted"
+                                    break
+                        _observed_outcomes.append({
+                            "lane": "CT",
+                            "family": "CT",
+                            "attempted": False,
+                            "skipped": True,
+                            "terminal_state": "skipped",
+                            "skip_reason": _skip_reason,
+                            "raw_count": 0,
+                            "accepted_count": 0,
+                            "error": None,
+                            "timeout": False,
+                        })
+                        _seen_outcome_lanes.add("CT")
+                        break
             # Also include lane outcomes from acquisition_lane_outcomes, skipping
             # lanes already represented via _public_outcome or CT check above
             for _o in self._result.acquisition_lane_outcomes or ():
@@ -2769,6 +2817,25 @@ class SprintScheduler:
             _raw: dict | None = None
             if _lane == "FEED":
                 _raw = getattr(self, "_feed_verdicts", []) or None
+                # F221A: FEED accepted_count must come from result-level counts, not _feed_verdicts
+                # (verdict tuples carry signal/quality, not accepted_count).
+                # Net FEED = total - public - CT_log
+                if _raw is not None:
+                    _feed_accepted = (
+                        (self._result.accepted_findings or 0)
+                        - (self._result.public_accepted_findings or 0)
+                        - (self._result.ct_log_accepted_findings or 0)
+                    )
+                    _feed_accepted = max(0, _feed_accepted)
+                    if isinstance(_raw, list) and len(_raw) > 0:
+                        _first = _raw[0]
+                        if isinstance(_first, tuple):
+                            _raw = {
+                                "verdict": _first,
+                                "accepted_count": _feed_accepted,
+                                "raw_count": _first[1] if len(_first) > 1 else 0,
+                                "attempted": True,
+                            }
             elif self._lane_outcomes:
                 for _o in self._lane_outcomes:
                     if hasattr(_o, "lane") and _o.lane == _lane:
@@ -4419,6 +4486,9 @@ class SprintScheduler:
                     _bootstrap_enabled = (
                         getattr(self._config, "acquisition_profile", "") == "nonfeed_diagnostic"
                     )
+                    # Sprint F221C: Store bootstrap state before timeout context so exception handler
+                    # can access it to derive precise terminal stage (BOOTSTRAP_ATTEMPTED_TIMEOUT vs generic timeout).
+                    self._public_bootstrap_enabled_at_timeout = _bootstrap_enabled
                     await self._run_public_discovery_in_cycle(
                         query=query,
                         duckdb_store=duckdb_store,
@@ -4429,12 +4499,26 @@ class SprintScheduler:
             except _asyncio.TimeoutError:
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
                 self._result.public_branch_timed_out = True
-                self._result.public_error = "terminal:timeout"
+                # Sprint F221C: Derive precise terminal stage from bootstrap state
+                # _public_outcome may already be partially set by the pipeline running up to the timeout point.
+                # Capture bootstrap state at timeout for precise stage classification.
+                _existing_outcome = getattr(self, '_public_outcome', None) or {}
+                _existing_raw = _existing_outcome.get("raw_count", 0) or 0
+                _existing_accepted = _existing_outcome.get("accepted_count", 0) or 0
+                _bootstrap_was_enabled = getattr(self, '_public_bootstrap_enabled_at_timeout', _bootstrap_enabled)
+                # Derive precise stage for the error field (used by delta/sanity tools)
+                if _bootstrap_was_enabled and _existing_raw > 0:
+                    _precise_stage = _PublicStage.BOOTSTRAP_ATTEMPTED_TIMEOUT
+                elif _bootstrap_was_enabled and _existing_raw == 0:
+                    _precise_stage = _PublicStage.BOOTSTRAP_ZERO_CANDIDATES_TIMEOUT
+                else:
+                    _precise_stage = "terminal:timeout"
+                self._result.public_error = _precise_stage
                 # Sprint F216A: Emit PUBLIC timeout event
                 self._emit_source_family_event(
                     family="PUBLIC",
                     event="timeout",
-                    reason="terminal:timeout",
+                    reason=_precise_stage,
                     terminal_state="terminal",
                 )
                 # F214-E: Always emit PUBLIC outcome so Lane Execution Truth never loses PUBLIC
@@ -4443,10 +4527,10 @@ class SprintScheduler:
                     "attempted": True,
                     "skipped": False,
                     "skip_reason": None,
-                    "raw_count": self._result.public_discovered,
+                    "raw_count": _existing_raw,
                     "built_count": 0,
-                    "accepted_count": self._result.public_accepted_findings,
-                    "error": "terminal:timeout",
+                    "accepted_count": _existing_accepted,
+                    "error": _precise_stage,
                     "timeout": True,
                     "duration_s": branch_timeout,
                 }
@@ -4760,6 +4844,9 @@ class SprintScheduler:
 
         # Sprint F207H: Populate _public_outcome for source_family_outcomes consumption
         # Maps PipelineRunResult fields to the shape normalize_source_family_outcome expects
+        # Sprint F221C: Include public_bootstrap_enabled so timeout exception handler can determine
+        # precise bootstrap terminal stage at the point of timeout (not at exception time).
+        _pub_bootstrap_en = getattr(public_result, 'public_bootstrap_enabled', False)
         self._public_outcome = {
             "lane": "PUBLIC",
             "attempted": True,
@@ -4771,6 +4858,7 @@ class SprintScheduler:
             "error": getattr(public_result, 'error', None),
             "timeout": getattr(public_result, 'timed_out', False),
             "duration_s": getattr(public_result, 'elapsed_s', None),
+            "public_bootstrap_enabled": _pub_bootstrap_en,
         }
 
         log.debug(
@@ -7808,12 +7896,13 @@ class SprintScheduler:
                     _feed_accepted = max(0, _feed_accepted)
                     if isinstance(_raw, list) and len(_raw) > 0:
                         # Attach accepted_count to first verdict for normalize_source_family_outcome
-                        # Pass as a dict so normalize can read accepted_count
+                        # Pass as a dict so normalize can read accepted_count and raw_count
                         _first = _raw[0]
                         if isinstance(_first, tuple):
                             _raw = {
                                 "verdict": _first,
                                 "accepted_count": _feed_accepted,
+                                "raw_count": _first[1] if len(_first) > 1 else 0,
                                 "attempted": True,
                             }
             elif _lane == AcquisitionLane.PUBLIC:

@@ -64,6 +64,33 @@ UMA_STATE_WARN: str = "warn"
 UMA_STATE_CRITICAL: str = "critical"
 UMA_STATE_EMERGENCY: str = "emergency"
 
+# F220F: macOS swap tiered policy constants
+# These define the swap policy tiers used by prelive_decision_gate and cockpit.
+# The raw swap_detected signal (any swap > 0.05 GiB) lives in sample_uma_status().
+# The tiered policy applies these to determine READY_TO_RUN vs HARD_BLOCK.
+CLEAN_SWAP_MAX_GIB: float = 2.0       # swap <= 2.0 GiB → clean/READY_TO_RUN_NOW
+DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0  # 2.0 < swap <= 4.0 GiB → diagnostic/tainted
+HARD_BLOCK_SWAP_GIB: float = 4.0     # swap > 4.0 GiB → hard block/restart required
+
+
+def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
+    """
+    F220F: Determine swap policy tier and reason from swap usage.
+
+    Returns (tier, reason) where:
+        tier: "clean" | "diagnostic" | "hard_block"
+        reason: human-readable string describing why this tier was chosen
+
+    This is a pure function — no side effects, suitable for both
+    prelive decision gate and cockpit use.
+    """
+    if swap_gib <= CLEAN_SWAP_MAX_GIB:
+        return "clean", f"swap={swap_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
+    elif swap_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
+        return "diagnostic", f"swap={swap_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
+    else:
+        return "hard_block", f"swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required"
+
 # Sprint 8AK: Thread-safe hysteresis latch for io_only
 # Protected by a simple threading.Lock — not an async subsystem
 import threading as _threading

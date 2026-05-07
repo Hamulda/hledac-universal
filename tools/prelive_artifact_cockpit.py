@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pre-Live Artifact Cockpit — Sprint F220D
+Pre-Live Artifact Cockpit — Sprint F220D + F220F (swap gate calibration)
 
 Merges:
   - prelive decision gate verdict + UMA
@@ -35,6 +35,7 @@ from typing import Optional
 
 class Verdict(str, Enum):
     READY_TO_RUN_NOW = "READY_TO_RUN_NOW"
+    READY_DIAGNOSTIC_ONLY = "READY_DIAGNOSTIC_ONLY"
     READY_TO_RESTART_AND_RUN = "READY_TO_RESTART_AND_RUN"
     BLOCKED_BY_ARTIFACTS = "BLOCKED_BY_ARTIFACTS"
     BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
@@ -44,6 +45,7 @@ class Verdict(str, Enum):
 
 class NextAction(str, Enum):
     RUN_LIVE_NOW = "run_live_now"
+    RUN_WITH_HARDWARE_TAINT = "run_with_hardware_taint"
     RESTART_THEN_RUN_LIVE = "restart_then_run_live"
     RUN_MISSING_PROBE = "run_missing_probe"
     FIX_PROVIDER_SURFACE = "fix_provider_surface"
@@ -62,6 +64,10 @@ class UmaState:
     uma_state: str = "unknown"
     io_only: bool = False
     error: Optional[str] = None
+    # F220F: swap tiered policy telemetry
+    hardware_constrained: bool = False
+    swap_policy_tier: str = "unknown"
+    swap_gate_reason: str = ""
 
 
 @dataclass
@@ -86,6 +92,11 @@ class CockpitResult:
     provider_surface_ok: bool = True
     missing_required_probes: list[str] = field(default_factory=list)
     fallback_schema_blocked: bool = False
+
+    # F220F: swap tiered policy telemetry
+    hardware_constrained: bool = False
+    swap_policy_tier: str = "unknown"
+    swap_gate_reason: str = ""
 
     # Raw merge log for traceability
     merge_log: list[str] = field(default_factory=list)
@@ -115,21 +126,34 @@ class CockpitResult:
                 "uma_state": self.uma.uma_state,
                 "io_only": self.uma.io_only,
                 "error": self.uma.error,
+                "hardware_constrained": self.uma.hardware_constrained,
+                "swap_policy_tier": self.uma.swap_policy_tier,
+                "swap_gate_reason": self.uma.swap_gate_reason,
             },
             "provider_surface_ok": self.provider_surface_ok,
             "missing_required_probes": self.missing_required_probes,
             "fallback_schema_blocked": self.fallback_schema_blocked,
+            "hardware_constrained": self.hardware_constrained,
+            "swap_policy_tier": self.swap_policy_tier,
+            "swap_gate_reason": self.swap_gate_reason,
             "merge_log": self.merge_log,
         }
 
 
 # --------------------------------------------------------------------------- #
-# Memory thresholds (M1 8GB UMA safe)
+# Memory thresholds (M1 8GB UMA safe) — F220F tiered macOS swap policy
+# --------------------------------------------------------------------------- #
+# macOS uses swap/compression opportunistically even when RAM is not fully
+# exhausted. On M1 8GB, tiny swap values (0.05 GiB) are normal and should
+# NOT block clean runs. Tiered policy:
+#   - CLEAN_SWAP_MAX_GIB (2.0): swap <= 2.0 GiB → READY_TO_RUN_NOW
+#   - DIAGNOSTIC_SWAP_MAX_GIB (4.0): 2.0 < swap <= 4.0 GiB → READY_DIAGNOSTIC_ONLY
+#   - HARD_BLOCK_SWAP_GIB (4.0): swap > 4.0 GiB → READY_TO_RESTART_AND_RUN
 # --------------------------------------------------------------------------- #
 
-_MEMORY_CLEAN_SWAP_GIB: float = 0.5   # below this = clean swap
-_MEMORY_HIGH_SWAP_GIB: float = 2.0    # above this = restart needed
-_MEMORY_CRITICAL_SWAP_GIB: float = 4.0  # above this = blocked
+CLEAN_SWAP_MAX_GIB: float = 2.0    # below this = clean swap
+DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0  # above this = hard block
+HARD_BLOCK_SWAP_GIB: float = 4.0
 
 
 # --------------------------------------------------------------------------- #
@@ -276,11 +300,18 @@ def merge_cockpit(
     # ------------------------------------------------------------------------- #
 
     # A: Gate blocked by unknown / fallback schema
+    # F220F: Initialize swap tier telemetry defaults
+    hardware_constrained = False
+    swap_policy_tier = "unknown"
+    swap_gate_reason = ""
+
     if fallback_schema_blocked or gate_decision == "BLOCKED_BY_UNKNOWN":
         verdict = Verdict.BLOCKED_BY_UNKNOWN
         next_action = NextAction.FIX_CONTRACT_GATE
         next_action_detail = "fallback schema detected in prelive reports"
         live_allowed = False
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "fallback schema or unknown"
         log.append("verdict=BLOCKED_BY_UNKNOWN (fallback schema)")
 
     # B: Gate blocked by provider surface
@@ -289,6 +320,8 @@ def merge_cockpit(
         next_action = NextAction.FIX_PROVIDER_SURFACE
         next_action_detail = ""
         live_allowed = False
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "provider surface issue"
         log.append("verdict=BLOCKED_BY_PROVIDER_SURFACE")
 
     # C: Gate blocked by memory
@@ -297,6 +330,9 @@ def merge_cockpit(
         next_action = NextAction.RESTART_THEN_RUN_LIVE
         next_action_detail = "memory pressure requires restart before live"
         live_allowed = False
+        hardware_constrained = True
+        swap_policy_tier = "hard_block"
+        swap_gate_reason = f"blocked by memory gate: swap={uma.swap_used_gib:.2f}GiB"
         log.append("verdict=BLOCKED_BY_MEMORY")
 
     # D: Gate blocked by contract (non-provider-surface)
@@ -305,6 +341,8 @@ def merge_cockpit(
         next_action = NextAction.FIX_CONTRACT_GATE
         next_action_detail = ""
         live_allowed = False
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "contract gate failure"
         log.append("verdict=BLOCKED_BY_CONTRACT → BLOCKED_BY_ARTIFACTS")
 
     # E: Gate READY but missing/stale artifacts
@@ -313,22 +351,50 @@ def merge_cockpit(
         next_action = NextAction.RUN_MISSING_PROBE
         next_action_detail = ",".join(missing_probes) if missing_probes else ""
         live_allowed = False
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "missing/stale artifacts"
         log.append("verdict=BLOCKED_BY_ARTIFACTS")
 
-    # F: Gate READY, all artifacts ready, swap clean
-    elif gate_live_allowed and ready == total and uma.swap_used_gib < _MEMORY_HIGH_SWAP_GIB:
+    # F: Gate READY, all artifacts ready, swap clean (tier 1)
+    elif gate_live_allowed and ready == total and uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
         verdict = Verdict.READY_TO_RUN_NOW
         next_action = NextAction.RUN_LIVE_NOW
         next_action_detail = ""
         live_allowed = True
+        uma.hardware_constrained = False
+        uma.swap_policy_tier = "clean"
+        uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
+        hardware_constrained = False
+        swap_policy_tier = "clean"
+        swap_gate_reason = uma.swap_gate_reason
         log.append("verdict=READY_TO_RUN_NOW")
 
-    # G: Gate READY, all artifacts ready, but high swap → restart
-    elif gate_live_allowed and ready == total and uma.swap_used_gib >= _MEMORY_HIGH_SWAP_GIB:
+    # G: Gate READY, all artifacts ready, diagnostic tier (2.0 < swap <= 4.0) — F220F
+    elif gate_live_allowed and ready == total and uma.swap_used_gib > CLEAN_SWAP_MAX_GIB and uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
+        verdict = Verdict.READY_DIAGNOSTIC_ONLY
+        next_action = NextAction.RUN_WITH_HARDWARE_TAINT
+        next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
+        live_allowed = True  # allowed with --allow-high-swap
+        uma.hardware_constrained = True
+        uma.swap_policy_tier = "diagnostic"
+        uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
+        hardware_constrained = True
+        swap_policy_tier = "diagnostic"
+        swap_gate_reason = uma.swap_gate_reason
+        log.append(f"verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})")
+
+    # H: Gate READY, all artifacts ready, but high swap > 4.0 GiB → restart — F220F
+    elif gate_live_allowed and ready == total and uma.swap_used_gib > DIAGNOSTIC_SWAP_MAX_GIB:
         verdict = Verdict.READY_TO_RESTART_AND_RUN
         next_action = NextAction.RESTART_THEN_RUN_LIVE
-        next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB above threshold"
+        next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
         live_allowed = False
+        uma.hardware_constrained = True
+        uma.swap_policy_tier = "hard_block"
+        uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+        hardware_constrained = True
+        swap_policy_tier = "hard_block"
+        swap_gate_reason = uma.swap_gate_reason
         log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
 
     # H: Catch-all unknown
@@ -356,6 +422,9 @@ def merge_cockpit(
         provider_surface_ok=provider_surface_ok,
         missing_required_probes=missing_probes,
         fallback_schema_blocked=fallback_schema_blocked,
+        hardware_constrained=hardware_constrained,
+        swap_policy_tier=swap_policy_tier,
+        swap_gate_reason=swap_gate_reason,
         merge_log=log,
     )
 
@@ -367,7 +436,7 @@ def merge_cockpit(
 def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
     """Render cockpit result as markdown report."""
     icon = "✅" if result.live_allowed else "❌"
-    action_icon = "🚀" if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RESTART_THEN_RUN_LIVE) else "🔧"
+    action_icon = "🚀" if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RUN_WITH_HARDWARE_TAINT, NextAction.RESTART_THEN_RUN_LIVE) else "🔧"
 
     lines = [
         "# Pre-Live Artifact Cockpit Report",
@@ -426,6 +495,9 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
         f"- **Swap Detected:** {result.uma.swap_detected}",
         f"- **UMA State:** `{result.uma.uma_state}`",
         f"- **IO Only:** {result.uma.io_only}",
+        f"- **Hardware Constrained:** `{result.uma.hardware_constrained}`",
+        f"- **Swap Policy Tier:** `{result.uma.swap_policy_tier}`",
+        f"- **Swap Gate Reason:** `{result.uma.swap_gate_reason}`",
     ])
 
     if result.uma.error:
@@ -594,7 +666,8 @@ def main() -> int:
             print(f"  - {p}")
 
     uma_sw = result.uma.swap_used_gib
-    print(f"UMA: swap={uma_sw:.2f}GiB [{_MEMORY_CLEAN_SWAP_GIB}/{_MEMORY_HIGH_SWAP_GIB}/{_MEMORY_CRITICAL_SWAP_GIB}]")
+    print(f"UMA: swap={uma_sw:.2f}GiB [clean<={CLEAN_SWAP_MAX_GIB:.1f}GiB | diagnostic<={DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB | hard_block>{HARD_BLOCK_SWAP_GIB:.1f}GiB]")
+    print(f"Swap policy tier: {result.swap_policy_tier} | Hardware constrained: {result.hardware_constrained}")
 
     # Write JSON
     if args.output_json:

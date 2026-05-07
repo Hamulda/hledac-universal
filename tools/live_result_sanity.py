@@ -301,6 +301,45 @@ def parse_quality_with_fallback(raw: dict[str, Any], fallback: dict[str, Any]) -
     return parse_quality(raw)
 
 
+def _get_sfo_canonical(
+    b: BenchmarkSurface, v: ValidatorSurface
+) -> list[dict[str, Any]]:
+    """
+    F221E: Return canonical source_family_outcomes list.
+
+    Priority:
+    1. acquisition_report.source_family_outcomes (canonical)
+    2. acquisition_report.live_kpi.source_family_outcomes (legacy wrap)
+    3. live_kpi.source_family_outcomes (live_kpi direct)
+
+    Returns [] if none available.
+    """
+    # Benchmark acquisition_report first (canonical)
+    ar = b.acquisition_report
+    if ar:
+        sfo = ar.get("source_family_outcomes")
+        if isinstance(sfo, list):
+            return sfo
+        # acquisition_report may wrap live_kpi
+        lk = ar.get("live_kpi")
+        if isinstance(lk, dict) and isinstance(lk.get("source_family_outcomes"), list):
+            return lk["source_family_outcomes"]
+
+    # Validator acquisition_report
+    ar_v = v.acquisition_report
+    if ar_v:
+        sfo = ar_v.get("source_family_outcomes")
+        if isinstance(sfo, list):
+            return sfo
+
+    # Fallback: live_kpi source_family_outcomes
+    lk = (b.live_kpi or {}) or (v.live_kpi or {})
+    if isinstance(lk, dict) and isinstance(lk.get("source_family_outcomes"), list):
+        return lk["source_family_outcomes"]
+
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Sanity checks
 # ---------------------------------------------------------------------------
@@ -321,10 +360,16 @@ def _check_benchmark_fail_validator_pass(b: BenchmarkSurface, v: ValidatorSurfac
 def _check_benchmark_missing_source_family_outcomes(
     b: BenchmarkSurface, t: TraceSurface
 ) -> tuple[bool, str | None]:
-    bench_missing = b.live_kpi is None or b.live_kpi.get("source_family_outcomes") is None
+    # F221E: acquisition_report.source_family_outcomes is canonical — check it first
+    ar = b.acquisition_report
+    ar_has = ar is not None and isinstance(ar.get("source_family_outcomes"), list)
+    live_kpi = b.live_kpi or {}
+    lk_has = isinstance(live_kpi.get("source_family_outcomes"), list)
+    bench_missing = not ar_has and not lk_has
     trace_has = t.raw_internal is not None and (
         (t.raw_internal.get("live_kpi") or {}).get("source_family_outcomes")
         or (t.raw_internal.get("live_kpi_snapshot") or {}).get("source_family_outcomes")
+        or (t.raw_internal.get("acquisition_report") or {}).get("source_family_outcomes")
     )
     if bench_missing and trace_has:
         return False, "Benchmark missing source_family_outcomes but internal trace has them"
@@ -354,9 +399,42 @@ def _check_wallclock_budget(b: BenchmarkSurface) -> tuple[bool, str | None]:
 def _check_feed_only_accepted_nonfeed_attempted(
     b: BenchmarkSurface, v: ValidatorSurface
 ) -> tuple[bool, str | None]:
-    outcomes = v.source_family_outcomes or []
-    ct_attempted = any(o.get("family") == "ct" and o.get("attempted") for o in outcomes)
-    public_attempted = any(o.get("family") == "public" and o.get("attempted") for o in outcomes)
+    """
+    F221E: Uses acquisition_report.source_family_outcomes as canonical.
+    Falls back to live_kpi.source_family_outcomes.
+
+    CT attempted=True when source_family_outcomes says so OR when ct_provider_status
+    or ct_terminal_state indicates a terminal outcome (provider_failure/cooldown/timeout).
+    PUBLIC attempted=True when source_family_outcomes says so OR when public_terminal_stage
+    is set and not NOT_SCHEDULED.
+    """
+    outcomes = _get_sfo_canonical(b, v)
+
+    # Check canonical SFO for attempted signals
+    ct_attempted = any(
+        o.get("family", "").lower() == "ct" and o.get("attempted")
+        for o in outcomes
+    )
+    public_attempted = any(
+        o.get("family", "").lower() == "public" and o.get("attempted")
+        for o in outcomes
+    )
+
+    # F221E: Terminal signals can override an explicit attempted=False in SFO
+    # CT terminal signals
+    if not ct_attempted:
+        ar = b.acquisition_report
+        ct_provider_status = ar.get("ct_provider_status") if ar else None
+        ct_terminal_state = ar.get("ct_terminal_state") if ar else None
+        if ct_provider_status in ("provider_failure", "cooldown", "timeout") or ct_terminal_state in ("provider_failure", "cooldown", "timeout"):
+            ct_attempted = True
+
+    # PUBLIC terminal signals
+    if not public_attempted:
+        ar = b.acquisition_report
+        public_terminal_stage = ar.get("public_terminal_stage") if ar else None
+        if public_terminal_stage and public_terminal_stage != "NOT_SCHEDULED":
+            public_attempted = True
 
     branch_mix = b.branch_mix or {}
     feed_only = (
@@ -365,8 +443,13 @@ def _check_feed_only_accepted_nonfeed_attempted(
         and branch_mix.get("public_findings", 0) == 0
     )
     if feed_only and (ct_attempted or public_attempted):
+        reasons = []
+        if ct_attempted:
+            reasons.append("CT")
+        if public_attempted:
+            reasons.append("PUBLIC")
         return False, (
-            "Feed-only accepted branch but nonfeed source outcomes were attempted"
+            f"Feed-only accepted branch but nonfeed source outcomes were attempted: {', '.join(reasons)}"
         )
     return True, None
 
@@ -414,27 +497,75 @@ def _check_public_surface_present(
     b: BenchmarkSurface,
 ) -> tuple[bool, str | None]:
     """
-    F214R2: Check PUBLIC lane surface is present when public was attempted.
+    F221E: Check PUBLIC lane surface is present when public was attempted.
 
-    Fails if:
-    - public_fetch_attempted=True or public_branch_timed_out=True
-    - But PUBLIC is absent from lane_execution_counts.
+    F221E: Canonical surfaces — uses acquisition_report as authoritative:
+    1. acquisition_report.public_terminal_state (canonical, set when PUBLIC was scheduled)
+    2. acquisition_report.source_family_outcomes PUBLIC entry
+    3. live_kpi.public_fetch_attempted / runtime_truth.public_branch_timed_out (legacy fallback)
+
+    Fails if public was attempted (canonical signal) but PUBLIC is absent from
+    source_family_outcomes.
     """
     live_kpi = b.live_kpi or {}
     runtime_truth = b.runtime_truth or {}
 
-    public_attempted = (
+    # F221E: Primary — public_terminal_state from acquisition_report (canonical)
+    ar = b.acquisition_report or {}
+    public_terminal_stage = ar.get("public_terminal_stage")
+    if not public_terminal_stage:
+        public_terminal_stage = b.public_terminal_state or live_kpi.get("public_terminal_stage")
+
+    # F221E: Canonical attempted — public_terminal_stage not NOT_SCHEDULED means attempted
+    public_attempted_canonical = (
+        public_terminal_stage is not None
+        and public_terminal_stage != "NOT_SCHEDULED"
+    )
+
+    # Legacy fallback signals
+    public_attempted_legacy = (
         live_kpi.get("public_fetch_attempted")
         or runtime_truth.get("public_branch_timed_out")
         or False
     )
 
-    if not public_attempted:
+    if not public_attempted_canonical and not public_attempted_legacy:
         return True, None
 
-    # Check if PUBLIC exists in lane_execution_counts
-    lane_execution = live_kpi.get("lane_execution_counts", {}) or live_kpi.get("source_family_outcomes", [])
+    # F221E: Check acquisition_report.source_family_outcomes (canonical) first
+    ar_sfo = ar.get("source_family_outcomes") if ar else None
+    if isinstance(ar_sfo, list):
+        public_present = any(
+            isinstance(o, dict) and o.get("family", "").lower() == "public"
+            for o in ar_sfo
+        )
+        if public_present:
+            return True, None
+        # PUBLIC attempted (canonical stage) but no outcome entry — fail
+        if public_attempted_canonical:
+            return False, (
+                "public_terminal_stage indicates PUBLIC was attempted but PUBLIC is absent "
+                "from acquisition_report.source_family_outcomes"
+            )
+        # Legacy signal only — check live_kpi as fallback
+        if public_attempted_legacy:
+            lane_execution = live_kpi.get("lane_execution_counts", {}) or live_kpi.get("source_family_outcomes", [])
+            public_present = False
+            if isinstance(lane_execution, dict):
+                public_present = "public" in lane_execution or "PUBLIC" in lane_execution
+            elif isinstance(lane_execution, list):
+                public_present = any(
+                    isinstance(o, dict) and o.get("family", "").lower() == "public"
+                    for o in lane_execution
+                )
+            if not public_present:
+                return False, (
+                    "public_fetch_attempted=True but PUBLIC absent from lane_execution_counts"
+                )
+        return True, None
 
+    # No acquisition_report — use live_kpi as fallback
+    lane_execution = live_kpi.get("lane_execution_counts", {}) or live_kpi.get("source_family_outcomes", [])
     public_present = False
     if isinstance(lane_execution, dict):
         public_present = "public" in lane_execution or "PUBLIC" in lane_execution
@@ -444,9 +575,9 @@ def _check_public_surface_present(
                 public_present = True
                 break
 
-    if not public_present:
+    if not public_present and (public_attempted_canonical or public_attempted_legacy):
         return False, (
-            "public_fetch_attempted=True but PUBLIC absent from lane_execution_counts"
+            "PUBLIC lane was attempted but is absent from source_family_outcomes"
         )
 
     return True, None

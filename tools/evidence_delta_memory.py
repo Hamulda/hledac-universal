@@ -87,6 +87,12 @@ def _load_kpi(filepath: Path) -> dict:
     - Full measurement JSON (probe_f208g style): top-level with live_kpi key
     - Direct report JSON: top-level with findings/source info
     Returns empty dict on failure.
+
+    F221E: Also preserves acquisition_report fields needed for attempted derivation:
+    - acquisition_report (canonical source for source_family_outcomes)
+    - public_terminal_stage
+    - ct_provider_status
+    - ct_terminal_state
     """
     try:
         with open(filepath) as f:
@@ -95,9 +101,30 @@ def _load_kpi(filepath: Path) -> dict:
         # Style 1: probe_f208g live_active300 JSON
         if isinstance(data, dict) and "live_kpi" in data:
             result = dict(data["live_kpi"])
+            # F221E: Preserve source_family_outcomes from live_kpi (used by _get_ct_public_info)
+            # Note: result already has it since we copy the live_kpi dict; but ensure top-level
+            # source_family_outcomes is also available at result["source_family_outcomes"]
+            if "source_family_outcomes" in result:
+                result["source_family_outcomes"] = result["source_family_outcomes"]
             # F215C: Include lane_execution_counts for ct_raw detection
             if "lane_execution_counts" in data:
                 result["lane_execution_counts"] = data["lane_execution_counts"]
+            # F221E: Preserve acquisition_report fields (canonical surfaces)
+            if "acquisition_report" in data:
+                ar = data["acquisition_report"]
+                result["acquisition_report"] = ar
+                # public_terminal_stage and ct_provider_status are canonical in acquisition_report
+                if "public_terminal_stage" in ar:
+                    result["public_terminal_stage"] = ar["public_terminal_stage"]
+                if "ct_provider_status" in ar:
+                    result["ct_provider_status"] = ar["ct_provider_status"]
+            # Top-level canonical surfaces also win over live_kpi versions
+            if "public_terminal_stage" in data:
+                result["public_terminal_stage"] = data["public_terminal_stage"]
+            if "ct_provider_status" in data:
+                result["ct_provider_status"] = data["ct_provider_status"]
+            if "ct_terminal_state" in data:
+                result["ct_terminal_state"] = data["ct_terminal_state"]
             return result
 
         # Style 2: research_quality_score JSON — use live_artifact_result
@@ -188,8 +215,27 @@ def _get_branch_accepted(kpi: dict) -> dict:
 
 
 def _get_ct_public_info(kpi: dict) -> tuple[bool, bool]:
-    """Return (ct_attempted, public_attempted) from source_family_outcomes."""
-    sfo = kpi.get("source_family_outcomes", [])
+    """
+    Return (ct_attempted, public_attempted).
+
+    F221E: Canonical priority — reads acquisition_report.source_family_outcomes first.
+    Falls back to live_kpi source_family_outcomes.
+
+    PUBLIC attempted=True when source_family_outcomes says so OR when
+    public_terminal_stage is set and not NOT_SCHEDULED (timeout/error are terminal attempts).
+
+    CT attempted=True when source_family_outcomes says so OR when terminality signals
+    a terminal CT outcome (provider_failure/cooldown/timeout).
+    """
+    # Try acquisition_report first (canonical), then live_kpi level
+    ar = kpi.get("acquisition_report") or {}
+    ar_sfo = ar.get("source_family_outcomes") if ar else None
+    # Use acquisition_report SFO only if it's a non-empty list
+    if isinstance(ar_sfo, list) and len(ar_sfo) > 0:
+        sfo = ar_sfo
+    else:
+        sfo = kpi.get("source_family_outcomes", [])
+
     ct_att = False
     pub_att = False
     if isinstance(sfo, list):
@@ -200,6 +246,28 @@ def _get_ct_public_info(kpi: dict) -> tuple[bool, bool]:
                     ct_att = entry.get("attempted", False)
                 elif fam == "PUBLIC":
                     pub_att = entry.get("attempted", False)
+
+    # F221E: Fallback for PUBLIC — public_terminal_stage indicates terminal attempts
+    # that may not be reflected in source_family_outcomes[].attempted
+    if not pub_att:
+        public_terminal_stage = ar.get("public_terminal_stage") if ar else None
+        if not public_terminal_stage:
+            public_terminal_stage = kpi.get("public_terminal_stage")
+        if public_terminal_stage and public_terminal_stage != "NOT_SCHEDULED":
+            pub_att = True
+
+    # F221E: Fallback for CT — ct_provider_status/cooldown signals terminal CT attempts
+    if not ct_att:
+        ct_provider_status = ar.get("ct_provider_status") if ar else None
+        if not ct_provider_status:
+            ct_provider_status = kpi.get("ct_provider_status")
+        ct_terminal_state = ar.get("ct_terminal_state") if ar else None
+        if not ct_terminal_state:
+            ct_terminal_state = kpi.get("ct_terminal_state")
+        # provider_failure, cooldown, timeout are all terminal attempts
+        if ct_provider_status in ("provider_failure", "cooldown", "timeout") or ct_terminal_state in ("provider_failure", "cooldown", "timeout"):
+            ct_att = True
+
     return ct_att, pub_att
 
 

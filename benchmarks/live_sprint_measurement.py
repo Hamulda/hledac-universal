@@ -99,6 +99,14 @@ _MEMORY_GATE_OPERATOR_ACTION = (
 # Changed from 3.0 to 1.0 GiB: user observed 4.8 GiB swap during F214/F214R2 still produced
 # "completed" results that were hardware-constrained but not marked non-comparable.
 # 1.0 GiB provides clean headroom while still allowing tiny background swap.
+#
+# F220F: This is the ACTIVE PROFILE threshold for result comparability.
+# The prelive decision gate (prelive_decision_gate.py) uses tiered policy:
+#   - clean: swap <= 2.0 GiB → READY_TO_RUN_NOW
+#   - diagnostic: 2.0 < swap <= 4.0 GiB → READY_FOR_LIVE_HARDWARE_TAINTED
+#   - hard_block: swap > 4.0 GiB → BLOCKED_BY_MEMORY
+# For measurement quality, active300/600 enforces stricter 1.0 GiB threshold
+# to ensure comparable results to clean-swap baseline.
 _SWAP_GATE_THRESHOLD_GIB = 1.0
 _SWAP_GATE_OPERATOR_ACTION = (
     "restart to clear swap; or use --allow-high-swap to run anyway (results will be non-comparable)"
@@ -212,6 +220,10 @@ class LiveMeasurementResult:
 
     # F212D: Swap gate — high swap detected during preflight/live gate
     swap_gate_triggered: bool | None = None
+
+    # F220F: Swap tiered policy telemetry
+    swap_policy_tier: str | None = None  # "clean" | "diagnostic" | "hard_block"
+    swap_gate_reason: str | None = None
 
     # F215D: Comparable result — whether run is comparable to clean-swap baseline
     # False when hardware_constrained=True or swap_gate_triggered=True
@@ -400,6 +412,9 @@ class LiveMeasurementResult:
             "hardware_constrained": self.hardware_constrained,
             "swap_warning": self.swap_warning,
             "swap_gate_triggered": self.swap_gate_triggered,
+            # F220F: tiered swap policy telemetry
+            "swap_policy_tier": self.swap_policy_tier,
+            "swap_gate_reason": self.swap_gate_reason,
             # Output paths
             "resolved_output_json": self.resolved_output_json,
             "resolved_output_md": self.resolved_output_md,
@@ -2087,17 +2102,12 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
 
     # F214C: Stamp research quality score into live_kpi
     # score_research_quality expects a dict with runtime_truth / live_kpi fields
-    # F215E: Ensure hardware_constrained is set in kpi before scoring.
-    # If scoring happens before live_kpi.hardware_constrained is populated,
-    # pass a minimal live_kpi with hardware_constrained=True (worst-case assumption).
-    _scoring_kpi = dict(kpi)
-    if not _scoring_kpi.get("hardware_constrained"):
-        _scoring_kpi["hardware_constrained"] = True
+    # F215E: Use actual result.hardware_constrained for scoring (not forced True).
     _rq_data = {
         "mode": "live",
         "findings_count": result.findings_count,
         "runtime_truth": result.runtime_truth or {},
-        "live_kpi": _scoring_kpi,
+        "live_kpi": kpi,
         "uma_post_swap_gib": result.uma_post_swap_gib,
     }
     _rq = score_research_quality(_rq_data)
@@ -2160,9 +2170,13 @@ async def _run_preflight() -> LiveMeasurementResult:
             f"Resolve memory pressure and retry."
         )
         result.hardware_constrained = True
+        result.comparable_result = False
         result.memory_state_pre = result.uma_pre_state
         result.swap_warning = result.uma_pre_swap_gib is not None and result.uma_pre_swap_gib > 0
         result.swap_gate_triggered = True
+        # F220F: tiered swap telemetry
+        result.swap_policy_tier = "hard_block"
+        result.swap_gate_reason = f"memory gate abort: uma_state={result.uma_pre_state}, swap={result.uma_pre_swap_gib}GiB"
         result.recommended_next_profile = "none_until_memory_ok"
         result.recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
         result.run_quality_verdict = RunQualityVerdict.ABORTED_MEMORY_GATE.value
@@ -2175,6 +2189,16 @@ async def _run_preflight() -> LiveMeasurementResult:
         # smoke180 has no active runtime so swap doesn't distort wallclock comparability
         swap_gib = uma_pre.get("swap_gib", 0) or 0
         result.swap_gate_triggered = False
+        # F220F: tiered swap policy — determine tier
+        if swap_gib <= 2.0:
+            result.swap_policy_tier = "clean"
+            result.swap_gate_reason = f"swap={swap_gib:.2f}GiB <= 2.0GiB threshold"
+        elif swap_gib <= 4.0:
+            result.swap_policy_tier = "diagnostic"
+            result.swap_gate_reason = f"swap={swap_gib:.2f}GiB in (2.0GiB, 4.0GiB] — hardware taint"
+        else:
+            result.swap_policy_tier = "hard_block"
+            result.swap_gate_reason = f"swap={swap_gib:.2f}GiB > 4.0GiB — restart required"
         # F215D: any profile with swap >= 1.0 GiB → hardware_constrained, comparable_result=False
         # smoke180 allows higher swap (>3.0) but still marks comparable=false below
         if swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
@@ -2289,6 +2313,9 @@ async def _run_dry_run(
                 f"Use without --require-memory-ok or address memory pressure first."
             )
             result.swap_gate_triggered = True
+            # F220F: tiered swap telemetry
+            result.swap_policy_tier = "hard_block"
+            result.swap_gate_reason = f"memory gate abort: uma_state={result.uma_pre_state}"
             # Thread is_memory_gate_abort=True so verdict = ABORTED_MEMORY_GATE
             _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
             logging.error("[DRY-RUN] [MEMORY GATE] Aborted: %s", result.error)
@@ -2302,6 +2329,16 @@ async def _run_dry_run(
     # F215D: Swap gate — active profiles with high swap are hardware-constrained
     swap_gib = result.uma_pre_swap_gib or 0
     is_active_profile = profile in ("active300", "active600")
+    # F220F: tiered swap policy
+    if swap_gib <= 2.0:
+        result.swap_policy_tier = "clean"
+        result.swap_gate_reason = f"swap={swap_gib:.2f}GiB <= 2.0GiB threshold"
+    elif swap_gib <= 4.0:
+        result.swap_policy_tier = "diagnostic"
+        result.swap_gate_reason = f"swap={swap_gib:.2f}GiB in (2.0GiB, 4.0GiB]"
+    else:
+        result.swap_policy_tier = "hard_block"
+        result.swap_gate_reason = f"swap={swap_gib:.2f}GiB > 4.0GiB — restart required"
     if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
         result.swap_gate_triggered = True
         if not allow_high_swap:
@@ -2454,6 +2491,9 @@ async def _run_live_sprint(
             # Thread is_memory_gate_abort=True so verdict = ABORTED_MEMORY_GATE
             _stamp_run_quality_verdict(result, is_memory_gate_abort=True)
             result.swap_gate_triggered = True
+            # F220F: tiered swap telemetry
+            result.swap_policy_tier = "hard_block"
+            result.swap_gate_reason = f"memory gate abort: uma_state={result.uma_pre_state}"
             logging.error("[LIVE] [MEMORY GATE] Aborted: %s", result.error)
             # F2130: Runtime Authority — canonical path was checked but sprint never ran
             result.runtime_authority_path = "canonical_core_run_sprint"
@@ -2473,6 +2513,16 @@ async def _run_live_sprint(
     # smoke180 has no active runtime so swap doesn't distort comparability
     swap_gib = result.uma_pre_swap_gib or 0
     is_active_profile = profile in ("active300", "active600")
+    # F220F: tiered swap policy
+    if swap_gib <= 2.0:
+        result.swap_policy_tier = "clean"
+        result.swap_gate_reason = f"swap={swap_gib:.2f}GiB <= 2.0GiB threshold"
+    elif swap_gib <= 4.0:
+        result.swap_policy_tier = "diagnostic"
+        result.swap_gate_reason = f"swap={swap_gib:.2f}GiB in (2.0GiB, 4.0GiB]"
+    else:
+        result.swap_policy_tier = "hard_block"
+        result.swap_gate_reason = f"swap={swap_gib:.2f}GiB > 4.0GiB — restart required"
     if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
         result.swap_gate_triggered = True
         if not allow_high_swap:
@@ -2972,7 +3022,7 @@ def _render_md(result: LiveMeasurementResult) -> str:
             _score = _rq.get('total_quality_score', 0.0)
             _comp = _rq.get('components', {})
             _flags = _rq.get('diagnostic_flags', {})
-            _comp_flag = _rq.get('comparable', True)
+            _comp_flag = _rq.get('research_quality_comparable', True)
             lines.extend([
                 "",
                 "## Research Quality Score",
