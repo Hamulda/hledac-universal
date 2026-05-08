@@ -761,6 +761,27 @@ async def distil(
     except Exception:
         pass
 
+    # ANE pre-distillation: dedup + rerank on Neural Engine (parallel to CPU)
+    try:
+        import asyncio as _asyncio
+        from hledac.universal.brain.ane_embedder import (
+            semantic_dedup_findings,
+            rerank_findings_cosine,
+        )
+        # Dedup
+        if _asyncio.get_event_loop().is_running():
+            findings = await semantic_dedup_findings(findings, threshold=0.90)
+        else:
+            findings = _asyncio.run(semantic_dedup_findings(findings, threshold=0.90))
+        # Rerank by relevance if we have a query
+        _query_for_ane = getattr(findings[0], 'query', None) if findings else None
+        if _query_for_ane and len(findings) > 5:
+            findings = rerank_findings_cosine(findings, _query_for_ane, top_k=min(20, len(findings)))
+        logger.debug("[ANE:distil] %d findings after dedup+rerank", len(findings))
+    except Exception as _ane_err:
+        logger.debug("[ANE:distil] skipped: %s", _ane_err)
+    # fall through with original findings on any error
+
     # Fallback: serialize top findings as text
     return _findings_to_text(findings)
 

@@ -19,6 +19,9 @@ Profile logic:
 
 from dataclasses import dataclass, field
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -303,5 +306,33 @@ class SprintDiffEngine:
             except Exception:
                 # Fail-soft: skip malformed entries without aborting
                 continue
+
+        # ANE entity fuzzy merge — consolidate near-identical entity names (cosine >= 0.97)
+        try:
+            from hledac.universal.brain.ane_embedder import _coreml_embed, get_ane_embedder
+            import numpy as np
+            _embedder = get_ane_embedder()
+            if _embedder and _embedder.is_loaded and len(summary) > 1:
+                _keys   = list(summary.keys())
+                _vecs   = np.array([_coreml_embed(_embedder.model, k) for k in _keys])
+                _sim    = _vecs @ _vecs.T
+                _merged: dict = {}
+                _used:   set = set()
+                for i, k in enumerate(_keys):
+                    if i in _used:
+                        continue
+                    _merged[k] = summary[k]
+                    for j in range(i + 1, len(_keys)):
+                        if j not in _used and _sim[i, j] >= 0.97:
+                            # Merge j into i — combine counts
+                            _cur = _merged[k]
+                            _oth = summary[_keys[j]]
+                            if isinstance(_cur, (int, float)) and isinstance(_oth, (int, float)):
+                                _merged[k] = _cur + _oth
+                            _used.add(j)
+                summary = _merged
+                logger.debug("[ANE:diff] entity merge: %d → %d keys", len(_keys), len(summary))
+        except Exception as _ane_err:
+            logger.debug("[ANE:diff] entity merge skipped: %s", _ane_err)
 
         return summary

@@ -494,6 +494,18 @@ async def export_sprint(
         except Exception:
             pass
 
+    # ANE export dedup — remove near-duplicate findings from report (ANE parallel, fail-open)
+    try:
+        import asyncio as _asyncio
+        from hledac.universal.brain.ane_embedder import semantic_dedup_findings
+        if _asyncio.get_event_loop().is_running():
+            envelope_findings = await semantic_dedup_findings(envelope_findings, threshold=0.92)
+        else:
+            envelope_findings = _asyncio.run(semantic_dedup_findings(envelope_findings, threshold=0.92))
+        logger.debug("[ANE:export] %d findings after export dedup", len(envelope_findings))
+    except Exception as _ane_err:
+        logger.debug("[ANE:export] dedup skipped: %s", _ane_err)
+
     return {
         "report_json": str(report_path) if report_path else "",
         "seeds_json": str(seeds_path),
