@@ -2449,6 +2449,38 @@ class SprintScheduler:
             if self._public_outcome is not None:
                 _observed_outcomes.append(self._public_outcome)
                 _seen_outcome_lanes.add("PUBLIC")
+            else:
+                # [F222A] PUBLIC was required but _public_outcome is None — emit explicit
+                # skipped outcome so PUBLIC always appears in source_family_outcomes as
+                # a terminal state. This handles the case where PUBLIC branch was skipped
+                # due to remaining_time_too_low (terminal:remaining_too_low) but the
+                # skipped outcome wasn't captured in _public_outcome.
+                for _mlt in _mlt_required:
+                    if _mlt.lane == AcquisitionLane.PUBLIC and _mlt.required:
+                        _skip_reason = "public_branch_not_run"
+                        if self._acquisition_plan is not None:
+                            for _plan in (self._acquisition_plan.plans or ()):
+                                if hasattr(_plan, "lane") and _plan.lane == AcquisitionLane.PUBLIC:
+                                    _reason = getattr(_plan, "reason", "") or ""
+                                    if _reason:
+                                        _skip_reason = _reason
+                                    break
+                        _observed_outcomes.append({
+                            "lane": "PUBLIC",
+                            "family": "PUBLIC",
+                            "attempted": False,
+                            "skipped": True,
+                            "terminal_state": "skipped",
+                            "skip_reason": _skip_reason,
+                            "raw_count": 0,
+                            "built_count": 0,
+                            "accepted_count": 0,
+                            "error": None,
+                            "timeout": False,
+                            "duration_s": None,
+                        })
+                        _seen_outcome_lanes.add("PUBLIC")
+                        break
             # [F208K-A] CT terminal if:
             #  - ct_log_discovered > 0 or lane_ct_accepted_findings > 0 (findings produced), OR
             #  - any acquisition_lane_outcomes has lane="CT" with attempted=True

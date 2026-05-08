@@ -129,6 +129,52 @@ PROFILE_META: dict[str, dict] = {
 
 MIN_DURATION_S = 180
 
+# F222B: Namespace Reality Guard — diagnostic without heavy imports
+def get_invocation_reality() -> dict:
+    """
+    Return a hermetic diagnostic dict about the invocation namespace.
+    Does NOT import heavy MLX/model deps — only stdlib + already-imported locals.
+    """
+    import hledac as _hledac
+
+    _live_sprint_measurement_file = str(_P(__file__).resolve())
+
+    # core/__main__ resolution (already imported as core_main)
+    _core_main_file = str(_P(core_main.__file__).resolve()) if hasattr(core_main, "__file__") else "N/A"
+
+    # sprint_scheduler resolution — use sys.modules to avoid re-import
+    _ss_mod = sys.modules.get("hledac.universal.runtime.sprint_scheduler")
+    _sprint_scheduler_file = str(_P(_ss_mod.__file__).resolve()) if _ss_mod and hasattr(_ss_mod, "__file__") else "N/A"
+
+    # acquisition_strategy resolution
+    _as_mod = sys.modules.get("hledac.universal.runtime.acquisition_strategy")
+    _acquisition_strategy_file = str(_P(_as_mod.__file__).resolve()) if _as_mod and hasattr(_as_mod, "__file__") else "N/A"
+
+    # Profile names
+    _profile_names = list(PROFILE_DURATION.keys())
+
+    # nonfeed_diagnostic180 profile metadata
+    _nonfeed_meta = PROFILE_META.get("nonfeed_diagnostic180", {})
+    _nonfeed_present = "nonfeed_diagnostic180" in PROFILE_DURATION
+    _nonfeed_duration = PROFILE_DURATION.get("nonfeed_diagnostic180", 0)
+    _nonfeed_acquisition_profile = _nonfeed_meta.get("acquisition_profile", "nonfeed_diagnostic") if _nonfeed_meta else "N/A"
+
+    return {
+        "live_sprint_measurement_file": _live_sprint_measurement_file,
+        "core_main_file": _core_main_file,
+        "sprint_scheduler_file": _sprint_scheduler_file,
+        "acquisition_strategy_file": _acquisition_strategy_file,
+        "cwd": os.getcwd(),
+        "sys_path_head": sys.path[0] if sys.path else "",
+        "hledac_path_type": type(_hledac.__path__).__name__,
+        "hledac_path_entries": list(_hledac.__path__),
+        "profile_names": _profile_names,
+        "nonfeed_diagnostic180_present": _nonfeed_present,
+        "nonfeed_diagnostic180_duration": _nonfeed_duration,
+        "nonfeed_diagnostic180_acquisition_profile": _nonfeed_acquisition_profile,
+    }
+
+
 # Memory-gate operator action text
 _MEMORY_GATE_OPERATOR_ACTION = (
     "restart or close heavy apps; rerun active300 with --require-memory-ok"
@@ -2877,6 +2923,12 @@ Examples:
              "Never calls run_sprint. Useful for checking readiness after restart.",
     )
     parser.add_argument(
+        "--print-invocation-reality",
+        action="store_true",
+        help="F222B: Print namespace/path reality diagnostic and exit. "
+             "Never runs live sprint or instantiates SprintScheduler.",
+    )
+    parser.add_argument(
         "--output-json",
         type=str,
         default=None,
@@ -3380,6 +3432,12 @@ async def main() -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # F222B: Invocation reality — pure diagnostic, no live run, no SprintScheduler
+    if args.print_invocation_reality:
+        reality = get_invocation_reality()
+        print(json.dumps(reality, indent=2))
+        return 0
 
     # Preflight mode — no query required, never calls run_sprint
     if args.print_preflight_only:

@@ -37,6 +37,10 @@ class RootCause(str, Enum):
     QUALITY_GATE_FAIL = "QUALITY_GATE_FAIL"
     SURFACE_CONTRACT_DRIFT = "SURFACE_CONTRACT_DRIFT"
     BENCHMARK_NORMALIZATION_DRIFT = "BENCHMARK_NORMALIZATION_DRIFT"
+    TERMINALITY_UNSATISFIED = "TERMINALITY_UNSATISFIED"
+    CT_TERMINALITY_MISSING = "CT_TERMINALITY_MISSING"
+    PUBLIC_TERMINALITY_MISSING = "PUBLIC_TERMINALITY_MISSING"
+    TERMINALITY_SURFACE_DRIFT = "TERMINALITY_SURFACE_DRIFT"
     UNKNOWN = "UNKNOWN"
 
 
@@ -105,7 +109,7 @@ def _swap_warning(data: dict) -> bool:
 
 
 def _verdict(data: dict) -> str | None:
-    return _get(data, "run_quality_verdict")
+    return _get(data, "live_kpi", "run_quality_verdict") or _get(data, "run_quality_verdict")
 
 
 def _feed_dominance_score(data: dict) -> float | None:
@@ -260,6 +264,46 @@ def _acquisition_schema_version(data: dict) -> str | None:
     if ar:
         return ar.get("schema_version") or ar.get("acquisition_report_schema_version")
     return _get(data, "live_kpi", "acquisition_report_schema_version")
+
+
+def _terminality_report(data: dict) -> dict | None:
+    ar = _acquisition_report(data)
+    if isinstance(ar, dict):
+        tr = ar.get("terminality_report")
+        if isinstance(tr, dict):
+            return tr
+    return _get(data, "live_kpi", "terminality_report")
+
+
+def _terminality_required_lanes(data: dict) -> list[str]:
+    tr = _terminality_report(data)
+    if isinstance(tr, dict):
+        req = tr.get("required_lanes") or tr.get("required")
+        if isinstance(req, list):
+            return req
+    return []
+
+
+def _terminality_observed_lanes(data: dict) -> list[str]:
+    tr = _terminality_report(data)
+    if isinstance(tr, dict):
+        obs = tr.get("observed_lanes") or tr.get("observed")
+        if isinstance(obs, list):
+            return obs
+    return []
+
+
+def _callback_executed_count(data: dict) -> int:
+    cb = _get(data, "live_kpi", "windup_guard_observation", "callback_executed_count")
+    if cb is not None:
+        return int(cb)
+    # Also check acquisition_report top level
+    ar = _acquisition_report(data)
+    if isinstance(ar, dict):
+        wgo = ar.get("windup_guard_observation")
+        if isinstance(wgo, dict):
+            return int(wgo.get("callback_executed_count", 0))
+    return 0
 
 
 def _feed_share(data: dict) -> float:
@@ -469,12 +513,84 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
         )
 
     # -------------------------------------------------------------------------
-    # 7. BENCHMARK_NORMALIZATION_DRIFT — verdict indicates benchmark issue
+    # 7. TERMINALITY_UNSATISFIED — FAIL_TERMINALITY_UNSATISFIED verdict
     # -------------------------------------------------------------------------
     verdict = _verdict(data)
+    if verdict == "FAIL_TERMINALITY_UNSATISFIED":
+        req_lanes = _terminality_required_lanes(data)
+        obs_lanes = _terminality_observed_lanes(data)
+        ct_attempted = _ct_attempted(data)
+        ct_status = _ct_provider_status(data)
+        pub_fetched = _public_fetch_attempted(data)
+        cb_count = _callback_executed_count(data)
+
+        reasons = [f"verdict=FAIL_TERMINALITY_UNSATISFIED"]
+        if req_lanes:
+            reasons.append(f"required_lanes={req_lanes}")
+        if obs_lanes:
+            reasons.append(f"observed_lanes={obs_lanes}")
+
+        # Classify sub-type
+        needs_ct = "CT" in req_lanes
+        needs_public = "public" in req_lanes or "PUBLIC" in req_lanes
+
+        if needs_ct and not ct_attempted:
+            # CT required but not attempted → domain query has no CT outcome
+            sub_type = RootCause.CT_TERMINALITY_MISSING
+            confidence = 0.90
+            next_action = "fix_ct_domain_terminality_surface"
+            useful = True
+            rc_reasons = reasons + [f"CT required but not attempted — domain query lacks CT terminal outcome"]
+        elif needs_public and not pub_fetched:
+            sub_type = RootCause.PUBLIC_TERMINALITY_MISSING
+            confidence = 0.88
+            next_action = "fix_public_terminality_surface"
+            useful = True
+            rc_reasons = reasons + [f"PUBLIC required but public_fetch_attempted=False"]
+        elif obs_lanes and req_lanes:
+            # Surface drift: outcomes exist but verdict says unsatisfied
+            missing = set(req_lanes) - set(obs_lanes)
+            sub_type = RootCause.TERMINALITY_SURFACE_DRIFT
+            confidence = 0.85
+            next_action = "fix_live_terminality_reader"
+            useful = True
+            rc_reasons = reasons + [f"required but not observed: {list(missing)}"]
+        else:
+            sub_type = RootCause.TERMINALITY_UNSATISFIED
+            confidence = 0.80
+            next_action = "investigate terminality surface — required/observed lanes mismatch"
+            useful = True
+            rc_reasons = reasons + ["terminality surface unclear — requires inspection"]
+
+        return TriageResult(
+            root_cause_class=sub_type,
+            confidence=confidence,
+            reasons=rc_reasons,
+            next_best_action=next_action,
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=useful,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                "verdict": verdict,
+                "required_lanes": req_lanes,
+                "observed_lanes": obs_lanes,
+                "ct_attempted": ct_attempted,
+                "ct_provider_status": ct_status,
+                "public_fetch_attempted": pub_fetched,
+                "callback_executed_count": cb_count,
+            },
+            exact_followup_command=(
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
+                f'--query "{_query(data)}" --live'
+            ),
+        )
+
+    # -------------------------------------------------------------------------
+    # 8. BENCHMARK_NORMALIZATION_DRIFT — verdict indicates benchmark issue
+    # -------------------------------------------------------------------------
     benchmark_drift_keywords = {
         "FAIL_RUNTIME_ERROR", "FAIL_MEASUREMENT_ERROR", "ABORTED_MEMORY_GATE",
-        "FAIL_WALLCLOCK_BUDGET", "FAIL_TERMINALITY", "FAIL_MISSING_SOURCE",
+        "FAIL_WALLCLOCK_BUDGET", "FAIL_MISSING_SOURCE",
     }
     if verdict and any(kw in str(verdict) for kw in benchmark_drift_keywords):
         return TriageResult(
@@ -492,7 +608,7 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
         )
 
     # -------------------------------------------------------------------------
-    # 8. FEED_DOMINATED — feed share > 0.9 and nonfeed accepted = 0
+    # 9. FEED_DOMINATED — feed share > 0.9 and nonfeed accepted = 0
     # -------------------------------------------------------------------------
     nonfeed_acc = _nonfeed_accepted(data)
     feed_share = _feed_share(data)
