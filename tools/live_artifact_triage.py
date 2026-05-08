@@ -293,6 +293,35 @@ def _terminality_observed_lanes(data: dict) -> list[str]:
     return []
 
 
+def _terminality_satisfied_from_report(data: dict) -> bool | None:
+    """
+    F223B SSOT: Read terminality satisfied directly from acquisition_report.terminality.satisfied.
+
+    Priority:
+    1. acquisition_report.terminality.satisfied (canonical SSOT)
+    2. acquisition_report.terminality (boolean, backwards compat)
+    3. None if not available
+    """
+    ar = _acquisition_report(data)
+    if isinstance(ar, dict):
+        term = ar.get("terminality")
+        if isinstance(term, dict):
+            sat = term.get("satisfied")
+            if isinstance(sat, bool):
+                return sat
+        elif isinstance(term, bool):
+            return term
+    return None
+
+
+def _top_level_terminality_satisfied(data: dict) -> bool | None:
+    """Top-level acquisition_terminality_satisfied (set by core/__main__)."""
+    val = _get(data, "acquisition_terminality_satisfied")
+    if isinstance(val, bool):
+        return val
+    return _get(data, "live_kpi", "acquisition_terminality_satisfied")
+
+
 def _callback_executed_count(data: dict) -> int:
     cb = _get(data, "live_kpi", "windup_guard_observation", "callback_executed_count")
     if cb is not None:
@@ -514,15 +543,51 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
 
     # -------------------------------------------------------------------------
     # 7. TERMINALITY_UNSATISFIED — FAIL_TERMINALITY_UNSATISFIED verdict
+    # F223B: SSOT priority — check acquisition_report.terminality.satisfied FIRST.
+    # If benchmark says fail but acquisition says satisfied → surface drift.
     # -------------------------------------------------------------------------
     verdict = _verdict(data)
     if verdict == "FAIL_TERMINALITY_UNSATISFIED":
+        # F223B SSOT: check acquisition_report.terminality.satisfied as primary signal
+        ar_terminality_satisfied = _terminality_satisfied_from_report(data)
+        top_level_term_satisfied = _top_level_terminality_satisfied(data)
         req_lanes = _terminality_required_lanes(data)
         obs_lanes = _terminality_observed_lanes(data)
         ct_attempted = _ct_attempted(data)
         ct_status = _ct_provider_status(data)
         pub_fetched = _public_fetch_attempted(data)
         cb_count = _callback_executed_count(data)
+
+        # F223B: Surface drift — benchmark says unsatisfied but acquisition says satisfied
+        # Acquisition report is authoritative; benchmark verdict contradicts it.
+        if ar_terminality_satisfied is True or top_level_term_satisfied is True:
+            return TriageResult(
+                root_cause_class=RootCause.TERMINALITY_SURFACE_DRIFT,
+                confidence=0.90,
+                reasons=[
+                    f"verdict=FAIL_TERMINALITY_UNSATISFIED but acquisition_report.terminality.satisfied={ar_terminality_satisfied}",
+                    f"top-level acquisition_terminality_satisfied={top_level_term_satisfied}",
+                    "benchmark verdict contradicts acquisition terminality SSOT",
+                ],
+                next_best_action="fix_terminality_surface_drift — benchmark and acquisition report disagree on terminality",
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={
+                    "verdict": verdict,
+                    "ar_terminality_satisfied": ar_terminality_satisfied,
+                    "top_level_terminality_satisfied": top_level_term_satisfied,
+                    "required_lanes": req_lanes,
+                    "observed_lanes": obs_lanes,
+                    "ct_attempted": ct_attempted,
+                    "ct_provider_status": ct_status,
+                    "public_fetch_attempted": pub_fetched,
+                },
+                exact_followup_command=(
+                    f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
+                    f'--query "{_query(data)}" --live'
+                ),
+            )
 
         reasons = [f"verdict=FAIL_TERMINALITY_UNSATISFIED"]
         if req_lanes:

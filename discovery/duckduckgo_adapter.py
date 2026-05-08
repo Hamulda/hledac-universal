@@ -614,21 +614,13 @@ async def _ddgs_text_search(
 
     def _sync_search() -> list[dict]:
         # Lazy import: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
-        # Both provide DDGS.text() — uses asyncio.to_thread for async compat
         try:
-            from ddgs import DDGS
+            from ddgs import DDGS  # noqa: F401
         except ImportError:
             from duckduckgo_search import DDGS  # noqa: T1009
 
-        # timeout_s bounds the *entire* DDGS init + request lifecycle inside
-        # this thread.  Without it, httpx uses its default ~10s connect +
-        # indefinite read, meaning a hung network can outlive the asyncio
-        # timeout and leave a zombie thread occupying the pool.
-        # int() cast: DDGS timeout param is int|None in ddgs v9+
         backend: DDGS = DDGS(timeout=int(timeout_s))
         try:
-            # ddgs v9+: DDGS.text(query, max_results=...) — query is positional
-            # duckduckgo_search v8.x: DDGS.text(query, max_results=...) — same signature
             results = list(backend.text(query, max_results=max_results))
             return results
         finally:

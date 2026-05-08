@@ -219,10 +219,35 @@ def _compute_public_stage(outcome: dict | None, public_result: Any | None = None
     skipped = outcome.get("skipped", False)
 
     # Build stage_counters from PipelineRunResult if available
+    # Sprint F223C: Use public_result.discovered as discovered_urls — this is the
+    # canonical discovery count and is correct even when public_discovery_raw_count
+    # is 0 (e.g., bootstrap-only path, discovery_empty path with bootstrap candidates).
+    # public_discovery_raw_count is set to 0 on discovery_empty/uma_emergency failure paths
+    # but public_result.discovered correctly reflects what was discovered.
     if public_result is not None:
         pr = public_result
+        # Sprint F223C: Canonical discovered count from the pipeline result
+        _discovered_count = getattr(pr, 'discovered', 0) or 0
+        # Sprint F223C: Determine raw_count_source for diagnosability
+        # _pub_discovery_raw > 0 → discovery (public discovery hit count > 0)
+        # _bootstrap_cand > 0 and _discovered_count == _bootstrap_cand → bootstrap only
+        #   (all discovered URLs came from bootstrap, no discovery contribution)
+        # _bootstrap_cand > 0 and _discovered_count > _bootstrap_cand → mixed
+        #   (bootstrap candidates plus additional discovery hits, some may overlap)
+        # otherwise → unknown
+        _bootstrap_cand = getattr(pr, 'public_bootstrap_candidates_count', 0) or 0
+        _pub_discovery_raw = getattr(pr, 'public_discovery_raw_count', 0) or 0
+        if _pub_discovery_raw > 0:
+            _raw_count_source = "discovery"
+        elif _bootstrap_cand > 0 and _discovered_count == _bootstrap_cand:
+            _raw_count_source = "bootstrap"
+        elif _bootstrap_cand > 0 and _discovered_count > _bootstrap_cand:
+            _raw_count_source = "mixed"
+        else:
+            _raw_count_source = "unknown"
         stage_counters = {
-            "discovered_urls": getattr(pr, 'public_discovery_raw_count', 0) or 0,
+            "discovered_urls": _discovered_count,
+            "raw_count_source": _raw_count_source,
             "fetch_attempted": getattr(pr, 'public_fetch_attempted', 0) or 0,
             "fetch_success": getattr(pr, 'public_fetch_success', 0) or 0,
             "fetch_timeout": getattr(pr, 'public_skipped_timeout', 0) or 0,
@@ -617,6 +642,8 @@ class SprintSchedulerConfig:
     # Tier budgets in seconds — only enforced approximately via cycle limits
     # Sources NOT listed here fall to OTHER tier
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
+    # F223A: Explicit acquisition profile — overrides env var / profile-name inference
+    acquisition_profile: str | None = None
 
     def tier_of(self, source: str) -> SourceTier:
         return self.source_tier_map.get(source, SourceTier.OTHER)
@@ -848,6 +875,10 @@ class SprintSchedulerResult:
     windup_guard_last_phase: str = ""
     windup_guard_last_allowed: bool | None = None
     windup_guard_last_callback_not_executed_reason: str = ""
+    # Sprint F223-D: prewindup barrier async bridge telemetry
+    prewindup_guard_async_bridge_used: bool = False  # True when running loop detected
+    prewindup_guard_async_error: str = ""            # last async/bridge error
+    prewindup_guard_fail_closed: bool = False         # True when windup blocked by error
     # Sprint F207T-A: Return guard for mandatory nonfeed terminal state
     # Scheduler cannot return a valid result for domain query until PUBLIC and CT
     # have terminal state (attempted | skipped | error | timeout)
@@ -1787,6 +1818,8 @@ class SprintScheduler:
                 swap_detected=uma.swap_detected,
                 accepted_findings_so_far=self._result.accepted_findings,
                 branch_timeout_count=self._result.branch_timeout_count,
+                # F223A: Explicit acquisition profile override from config
+                acquisition_profile=self._config.acquisition_profile,
             )
             # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
@@ -4060,35 +4093,93 @@ class SprintScheduler:
         Returns True if windup is allowed (barrier satisfied or not required).
         Returns False if windup must be blocked (required lanes not terminal).
 
-        Uses asyncio.run() to execute the async barrier check from a sync context.
-        asyncio.run() creates its own event loop — safe here since the call happens
-        from a sync lambda inside an async loop, and no other async work depends
-        on the current loop during this call.
+        Safe sync bridge — uses run_until_complete on a new event loop when a loop
+        is already running (never uses asyncio.run() with a live loop — M1 crash vector).
+        Falls back to running-loop await when available.
+        Fail-closed: on loop/access error, blocks windup with explicit telemetry.
+
+        Telemetry:
+          - prewindup_guard_async_bridge_used: running-loop was detected
+          - prewindup_guard_async_error: exception during await
+          - prewindup_guard_fail_closed: windup blocked due to async error
 
         Raises:
-            Any exception is caught and logged — fail-soft returns True (allow windup).
+            CancelledError: propagated — do not silently swallow cancellation.
+            bool: always returned — fail-soft (True) or fail-closed (False).
         """
+        # F223-D: Safe sync bridge — no asyncio.run() when loop is running.
+        # asyncio.run() in a thread with live loop = M1 crash vector.
+        # asyncio.run() with exception before await = RuntimeWarning: never awaited.
+        _loop = None
         try:
-            result = asyncio.run(
-                self._ensure_pre_windup_lane_terminal_states(
-                    query, self._acquisition_plan, "ok"
-                ),
-            )
-            if result is None:
-                return True  # fail-soft: allow windup
-            satisfied = getattr(result, "satisfied", False)
-            required_lanes = getattr(result, "required_lanes", ())
-            if required_lanes and not satisfied:
-                self._result.windup_delayed_for_nonfeed = True
-                log.debug(
-                    "[F207R-A] Windup blocked by barrier: required lanes not terminal %s",
-                    required_lanes,
+            _loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass  # No running loop — asyncio.run() is safe here
+
+        if _loop is not None:
+            # Running loop detected — cannot use asyncio.run() (M1 crash vector).
+            # Use run_until_complete on a new loop created for this thread context.
+            self._result.prewindup_guard_async_bridge_used = True
+            try:
+                # run_until_complete on a fresh loop is safe for sync callback
+                # and avoids M1 crash vector of asyncio.run() inside running loop
+                _bg_loop = asyncio.new_event_loop()
+                try:
+                    result = _bg_loop.run_until_complete(
+                        asyncio.wait_for(
+                            self._ensure_pre_windup_lane_terminal_states(
+                                query, self._acquisition_plan, "ok"
+                            ),
+                            timeout=30.0,
+                        ),
+                    )
+                finally:
+                    _bg_loop.close()
+            except asyncio.CancelledError:
+                # F223-D: CancelledError is re-raised — propagate, don't silently allow
+                raise
+            except Exception as exc:
+                self._result.prewindup_guard_async_error = str(exc)
+                self._result.prewindup_guard_fail_closed = True
+                log.warning(
+                    "[F223-D] prewindup barrier async bridge error (blocking windup): %s",
+                    exc,
                 )
                 return False
-            return True
-        except Exception as exc:
-            log.debug("[F207R-A] Barrier check error (allowing windup): %s", exc)
-            return True  # fail-soft: allow windup on error
+        else:
+            # No running loop — asyncio.run() is safe (creates its own)
+            try:
+                result = asyncio.run(
+                    self._ensure_pre_windup_lane_terminal_states(
+                        query, self._acquisition_plan, "ok"
+                    ),
+                )
+            except Exception as exc:
+                # F223-D: Catch CancelledError and other exceptions — fail-closed
+                self._result.prewindup_guard_async_error = str(exc)
+                if isinstance(exc, asyncio.CancelledError):
+                    # Re-raise CancelledError — propagate cancellation, don't silently allow
+                    raise
+                # On other exceptions, fail-closed: block windup with explicit reason
+                self._result.prewindup_guard_fail_closed = True
+                log.warning(
+                    "[F223-D] prewindup barrier error (blocking windup): %s",
+                    exc,
+                )
+                return False
+
+        if result is None:
+            return True  # fail-soft: allow windup
+        satisfied = getattr(result, "satisfied", False)
+        required_lanes = getattr(result, "required_lanes", ())
+        if required_lanes and not satisfied:
+            self._result.windup_delayed_for_nonfeed = True
+            log.debug(
+                "[F207R-A] Windup blocked by barrier: required lanes not terminal %s",
+                required_lanes,
+            )
+            return False
+        return True
 
     async def _run_one_cycle(
         self,
@@ -8095,6 +8186,12 @@ class SprintScheduler:
                 prewindup_barrier=_pwb,
                 scheduler_exit=_se_dict,
                 windup_guard_observation=_wg_obs,
+                # F223A: Pass explicit acquisition_profile from config
+                acquisition_profile=(
+                    self._config.acquisition_profile
+                    if self._config.acquisition_profile is not None
+                    else "default"
+                ),
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only

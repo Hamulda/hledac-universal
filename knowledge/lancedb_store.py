@@ -184,6 +184,9 @@ class LanceDBIdentityStore:
         # Sprint 76: Compiled similarity
         self._compiled_similarity = None
 
+        # AREA H: LanceDB FTS capability detection (initialized in _initialize)
+        self._lancedb_has_fts = False
+
         # Sprint 77: Embedder and MRL
         self._embedder = None
         self._embedder_type: Optional[str] = None
@@ -1034,11 +1037,14 @@ class LanceDBIdentityStore:
             # Create FTS index only if not already present
             try:
                 existing_indices = getattr(self._table, 'list_indices', lambda: [])()
-                if not any(getattr(idx, 'name', '') == 'aliases_fts' for idx in existing_indices):
+                # LanceDB auto-generates index name as {column}_idx, not {column}_fts
+                if not any(getattr(idx, 'name', '') == 'aliases_idx' for idx in existing_indices):
                     self._table.create_fts_index("aliases", replace=False)
+                self._lancedb_has_fts = True
+                logger.info("[LANCEDB:H] FTS index available — hybrid search enabled")
             except Exception as e:
-                if "already exists" not in str(e).lower():
-                    logger.debug(f"FTS index creation skipped: {e}")
+                self._lancedb_has_fts = False
+                logger.debug("[LANCEDB:H] FTS index not available: %s", e)
 
             logger.info(f"LanceDB identity store initialized at {self.uri}")
 
@@ -1124,8 +1130,11 @@ class LanceDBIdentityStore:
             loop = asyncio.get_running_loop()
 
             def _search():
-                if text_hint:
-                    # Hybrid search: vector + text
+                # AREA H: Detect FTS capability at query time
+                # Local LanceDB 0.2.x - text clause silently ignored on hybrid
+                # LanceDB Cloud/Enterprise - full BM25+vector hybrid supported
+                if text_hint and self._lancedb_has_fts:
+                    # True hybrid: vector + BM25 text
                     return (
                         self._table.search(query_type="hybrid")
                         .vector(embedding)
@@ -1133,8 +1142,19 @@ class LanceDBIdentityStore:
                         .limit(limit)
                         .to_pandas()
                     )
+                elif text_hint and not self._lancedb_has_fts:
+                    # AREA H: FTS not available locally — pure vector only
+                    logger.debug("[LANCEDB:H] text_hint=%r ignored — FTS not supported in local LanceDB", str(text_hint)[:50])
+                    return (
+                        self._table.search(
+                            embedding,
+                            vector_column_name="embedding"
+                        )
+                        .limit(limit)
+                        .to_pandas()
+                    )
                 else:
-                    # Pure vector search
+                    # No text hint — pure vector (existing path)
                     return (
                         self._table.search(
                             embedding,

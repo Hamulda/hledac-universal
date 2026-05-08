@@ -920,13 +920,32 @@ def _build_product_value_summary(
     # 1. Základní scorecard facts
     # Sprint F192F §1: use module-level _pvs_num / _pvs_n helpers
     # (previously local _num / _n closures — now consolidated at module scope)
-    accepted = _pvs_n(scorecard, "accepted_findings", 0) or _pvs_n(scorecard, "accepted_findings_count", 0)
+    # [F223D] runtime_accepted_findings is the authoritative full-truth total at windup
+    # time (all lanes + ct_log_stored). Use it as the primary accepted value so PVS
+    # is never contradictory with runtime_truth.accepted_findings.
+    # Fall back to scorecard accepted_findings for scorecard-only / legacy test builds.
+    runtime_accepted_findings = _pvs_n(scorecard, "runtime_accepted_findings", 0)
+    accepted = runtime_accepted_findings
+    if accepted == 0:
+        accepted = _pvs_n(scorecard, "accepted_findings", 0)
+        if accepted > 0:
+            runtime_accepted_findings = accepted
     findings_per_minute = _pvs_n(scorecard, "findings_per_minute", 0.0)
     ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
     peak_rss_mb = scorecard.get("peak_rss_mb", None)
     if peak_rss_mb is not None and not isinstance(peak_rss_mb, (int, float)):
         peak_rss_mb = None
     phase_timings = scorecard.get("phase_duration_seconds", {}) or {}
+    actual_duration = phase_timings.get("WINDUP", 0.0) or phase_timings.get("TEARDOWN", 0.0)
+
+    # [F223D] runtime_findings_per_minute: computed from all-lanes runtime total.
+    # Only meaningful when runtime_accepted_findings > 0. For scorecard-only / legacy
+    # test builds (accepted=0 from runtime field), leave as 0.0 — original
+    # scorecard findings_per_minute is preserved as-is for those builds.
+    if runtime_accepted_findings > 0 and actual_duration > 0:
+        runtime_findings_per_minute = round(runtime_accepted_findings / (actual_duration / 60.0), 2)
+    else:
+        runtime_findings_per_minute = 0.0
 
     # 2. Dedup status — Sprint 8AV extended ingest outcome counters
     dedup_status: dict[str, Any] | None = None
@@ -1003,9 +1022,19 @@ def _build_product_value_summary(
     summary: dict[str, Any] = {
         "sprint_id": sprint_id,
         # FACTS — raw data from scorecard/store
-        "accepted": accepted,
+        # [F223D] Renamed+aliased: accepted was ambiguous (FEED-lane-only in scorecard).
+        # runtime_accepted_findings is the authoritative full-truth total at windup
+        # (all lanes + ct_log_stored). accepted is kept as alias for backward compat.
+        "runtime_accepted_findings": runtime_accepted_findings,
+        "accepted": runtime_accepted_findings,
         "reject_breakdown": reject_breakdown,
         "total_rejected": total_rejected,
+        # [F223D] runtime_findings_per_minute is computed from runtime_accepted_findings
+        # and actual WINDUP/TEARDOWN phase duration — matches runtime truth rate.
+        # findings_per_minute reflects the scorecard field which may be 0.0 when scorecard
+        # only captured FEED-lane findings; runtime_findings_per_minute is the trustworthy
+        # per-minute rate based on all lanes.
+        "runtime_findings_per_minute": runtime_findings_per_minute,
         "findings_per_minute": findings_per_minute,
         "ioc_density": ioc_density,
         "peak_rss_mb": peak_rss_mb,

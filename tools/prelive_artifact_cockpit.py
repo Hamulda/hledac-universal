@@ -156,6 +156,33 @@ CLEAN_SWAP_MAX_GIB: float = 2.0    # below this = clean swap
 DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0  # above this = hard block
 HARD_BLOCK_SWAP_GIB: float = 4.0
 
+# F223H: Repo-root constants
+_EXPECTED_REPO_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac"
+_UNIVERSAL_ROOT = f"{_EXPECTED_REPO_ROOT}/hledac/universal"
+
+
+def _get_cwd_guard_state() -> dict:
+    """Hermetic CWD diagnostic — no live run, no network, no MLX."""
+    import os as _os
+    from pathlib import Path as _P
+
+    _cwd = _os.getcwd()
+    _resolved = str(_P(_cwd).resolve())
+    _universal = _UNIVERSAL_ROOT
+    _is_universal_root = _resolved == _universal or _resolved.startswith(f"{_universal}/")
+    _cwd_warning = (
+        f"WARNING: CWD={_cwd} is outside expected universal root ({_universal}). "
+        f"Artifact scans may glob wrong directory."
+    ) if not _is_universal_root else ""
+
+    return {
+        "cwd": _cwd,
+        "resolved_cwd": _resolved,
+        "universal_root": _universal,
+        "cwd_is_universal_root": _is_universal_root,
+        "cwd_warning": _cwd_warning,
+    }
+
 
 # --------------------------------------------------------------------------- #
 # JSON load helpers
@@ -672,12 +699,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print merge log and details.",
     )
+    # F223H: Optional repo-root override for CWD guard
+    parser.add_argument(
+        "--repo-root", "-R",
+        type=Path,
+        default=None,
+        help="Override expected universal root for CWD guard. "
+             "Defaults to internal detection based on CWD.",
+    )
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    # F223H: CWD guard
+    cwd_state = _get_cwd_guard_state()
+    if cwd_state["cwd_warning"]:
+        print(f"CWD GUARD: {cwd_state['cwd_warning']}", file=sys.stderr)
+        print("Aborting artifact scan due to wrong CWD.", file=sys.stderr)
+        return 1
 
     # Validate inputs exist
     if not args.decision_json.exists():

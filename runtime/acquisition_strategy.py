@@ -696,7 +696,8 @@ def build_acquisition_report(
     scheduler_exit: dict | None = None,
     windup_guard_observation: dict | None = None,
     # F216B: Nonfeed diagnostic profile telemetry
-    acquisition_profile: str = "default",
+    # F223A: default None so we can detect "not passed" vs explicitly "default"
+    acquisition_profile: str | None = None,
     feed_cap_reason: str | None = None,
     nonfeed_priority_enabled: bool = False,
     nonfeed_profile_expected_lanes: list[str] | None = None,
@@ -844,6 +845,17 @@ def build_acquisition_report(
                 "pivot_errors": list(getattr(nd, "pivot_errors", ()) or ()),
             }
 
+    # F223A: Normalize None to "default" for canonical report schema
+    _effective_profile = acquisition_profile if acquisition_profile is not None else "default"
+
+    # F216B: Fall back to env var only when profile is the string "default"
+    # (env fallback is the legacy path for CLI-driven runs)
+    import os as _os
+    if _effective_profile == "default":
+        _env_profile = _os.environ.get("HLEDAC_ACQUISITION_PROFILE")
+        if _env_profile:
+            _effective_profile = _env_profile
+
     return {
         "schema_version": ACQUISITION_REPORT_SCHEMA_VERSION,
         "plan": plan_dicts,
@@ -855,7 +867,7 @@ def build_acquisition_report(
         "scheduler_exit": scheduler_exit,
         "windup_guard_observation": windup_guard_observation,
         # F216B: Nonfeed diagnostic profile telemetry
-        "acquisition_profile": acquisition_profile,
+        "acquisition_profile": _effective_profile,
         "feed_cap_reason": feed_cap_reason,
         "nonfeed_priority_enabled": nonfeed_priority_enabled,
         "nonfeed_profile_expected_lanes": nonfeed_profile_expected_lanes or [],

@@ -1,6 +1,10 @@
 """
 ANE-akcelerovaný embedder pro ModernBERT a FlashRank.
 Offline konverze z MLX do CoreML, fallback na MLX.
+
+Reranker: rerank_findings_crossencoder() používá flashrank CrossEncoder.
+LanceDBIdentityStore má vlastní _get_flashrank_ranker() pro search path.
+Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector store search.
 """
 
 import asyncio
@@ -259,3 +263,84 @@ def rerank_findings_cosine(
             key=lambda x: x.get("confidence", 0.5),
             reverse=True
         )[:top_k]
+
+
+# ============================================================================
+# AREA A: flashrank CrossEncoder reranker
+# Replaces cosine-similarity ceiling with proper cross-encoder scoring.
+# flashrank uses ms-marco-MiniLM-L-12-v2 ONNX (~22MB), ~2ms/query, zero UMA spike.
+# Falls back to cosine similarity if flashrank unavailable.
+# ============================================================================
+
+_flashrank_reranker = None
+_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # 22MB ONNX
+
+
+def _get_flashrank_reranker():
+    """Lazy-load flashrank CrossEncoder ranker."""
+    global _flashrank_reranker
+    if _flashrank_reranker is None:
+        try:
+            from flashrank import Ranker
+            _flashrank_reranker = Ranker(model_name=_FLASHRANK_MODEL, cache_dir="/tmp/flashrank_cache")
+            logger.info("[RERANK:A] flashrank CrossEncoder loaded: %s", _FLASHRANK_MODEL)
+        except ImportError:
+            logger.warning("[RERANK:A] flashrank not available — falling back to cosine similarity")
+        except Exception as e:
+            logger.warning("[RERANK:A] flashrank load failed: %s", e)
+            _flashrank_reranker = None
+    return _flashrank_reranker
+
+
+def rerank_findings_crossencoder(
+    query: str,
+    findings: list[dict],
+    top_k: int = 20,
+) -> list[dict]:
+    """
+    Cross-encoder reranker using flashrank ms-marco-MiniLM-L-12-v2.
+
+    Superior to cosine similarity for cross-document relevance scoring.
+    Falls back to rerank_findings_cosine if flashrank unavailable.
+
+    Args:
+        query: Search query string.
+        findings: List of Finding dicts with .get('content')/.get('text')/.get('snippet') attributes.
+        top_k: Number of top results to return.
+
+    Returns:
+        Reranked list of findings, top_k items.
+    """
+    ranker = _get_flashrank_reranker()
+    if ranker is None:
+        logger.debug("[RERANK:A] Using cosine fallback")
+        return rerank_findings_cosine(findings, query, top_k)
+
+    try:
+        from flashrank import RerankRequest
+
+        # Build passages — detect attribute name dynamically
+        passages = []
+        for i, f in enumerate(findings[:200]):  # cap at 200 for RAM
+            text = (
+                f.get("content")
+                or f.get("text")
+                or f.get("snippet")
+                or f.get("title", "")
+                or str(f)
+            )[:2048]  # cap at 2048 chars
+            passages.append({"id": i, "text": text})
+
+        request = RerankRequest(query=query[:512], passages=passages)
+        results = ranker.rerank(request)
+
+        # Map back to original findings by id
+        id_to_finding = {r["id"]: findings[r["id"]] for r in results[:top_k] if r["id"] < len(findings)}
+        reranked = [id_to_finding[r["id"]] for r in results[:top_k] if r["id"] in id_to_finding]
+
+        logger.debug("[RERANK:A] CrossEncoder reranked %d→%d findings", len(findings), len(reranked))
+        return reranked
+
+    except Exception as e:
+        logger.warning("[RERANK:A] CrossEncoder failed (%s) — cosine fallback", e)
+        return rerank_findings_cosine(findings, query, top_k)

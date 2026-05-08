@@ -176,6 +176,11 @@ def _scheduler_result_acquisition_payload(
     _sfo_list: list[dict] = []
 
     # Feed family — always present if scheduler ran
+    # [F223D] Use full result.accepted_findings (all lanes + ct_log_stored accumulated
+    # by windup time) as runtime_accepted_findings so PVS uses the true runtime total.
+    # The normalized accepted_count for FEED scorecard remains result.accepted_findings
+    # at this windup entry point (nonfeed lanes in separate counters, ct_log_stored
+    # added after this function returns at line 908).
     _feed_raw = result.accepted_findings
     if _feed_raw > 0 or result.total_pattern_hits > 0:
         _sfo_list.append(
@@ -736,6 +741,7 @@ async def run_sprint(
     deep_probe_enabled: bool = False,
     ui_mode: bool = False,
     windup_lead_s: float | None = None,
+    acquisition_profile: str | None = None,  # F223A: explicit profile override
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -798,6 +804,8 @@ async def run_sprint(
         aggressive_mode=aggressive_mode,
         # Sprint F195B: 8s branch budget in aggressive mode
         branch_timeout_budget_s=8.0 if aggressive_mode else 0.0,
+        # F223A: Explicit acquisition profile override
+        acquisition_profile=acquisition_profile,
     )
 
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
@@ -1537,6 +1545,12 @@ async def run_sprint(
                         ph: round(_phase_times.get(ph, 0) - _phase_times.get("BOOT", 0), 2)
                         for ph in phases if ph in _phase_times
                     },
+                    # [F223D] runtime_accepted_findings — full truth from all lanes at windup time.
+                    # This is the authoritative runtime total and is used by product_value_summary
+                    # to populate runtime_accepted_findings. The normalized accepted_findings
+                    # in source_family_outcomes reflects per-lane breakdown; this field provides
+                    # the ground-truth total so PVS is never contradictory with runtime_truth.
+                    "runtime_accepted_findings": result.accepted_findings,
                     # Sprint F202B: Identity stitching sidecar counters
                     "identity_candidates_found": result.identity_candidates_found,
                     "identity_findings_produced": result.identity_findings_produced,

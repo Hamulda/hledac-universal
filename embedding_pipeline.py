@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from typing import AsyncIterator, List
+from typing import AsyncIterator, Dict, List
 
 import numpy as np
 import psutil
@@ -289,6 +289,35 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.n
     if not texts:
         return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
 
+    # AREA J: xxhash dedup — avoid embedding identical texts twice
+    original_to_unique: List[int] = []
+    texts_to_embed: List[str] = texts
+    dedup_happened = False
+    try:
+        import xxhash
+        seen: Dict[str, int] = {}
+        unique_list: List[str] = []
+        original_to_unique = []
+
+        for text in texts:
+            h = xxhash.xxh64(text.encode("utf-8", errors="replace")).hexdigest()
+            if h not in seen:
+                seen[h] = len(unique_list)
+                unique_list.append(text)
+            original_to_unique.append(seen[h])
+
+        if len(unique_list) < len(texts):
+            dedup_happened = True
+            dedup_ratio = (len(texts) - len(unique_list)) / len(texts)
+            logger.debug(
+                "[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)",
+                len(texts), len(unique_list), dedup_ratio * 100
+            )
+            texts_to_embed = unique_list
+    except ImportError:
+        logger.debug("[EMBED:J] xxhash not available — skipping dedup")
+        original_to_unique = list(range(len(texts)))
+
     # Memory guard check
     if not _check_memory_guard():
         logger.warning("[EMBED] Skipping embedding generation due to memory pressure")
@@ -299,7 +328,7 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.n
     try:
         # Use encode with truncate_dim for MRL 256d output
         embeddings = embedder.encode(
-            texts,
+            texts_to_embed,
             batch_size=batch_size,
             normalize=True,
             truncate_dim=_EMBEDDING_DIM,
@@ -317,6 +346,14 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.n
             embeddings = np.hstack([embeddings, pad])
 
         logger.debug(f"[EMBED] Generated embeddings shape: {embeddings.shape}")
+
+        # AREA J: Remap results back to original order (duplicate texts share embeddings)
+        if dedup_happened:
+            full_embeddings = np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+            for orig_idx, unique_idx in enumerate(original_to_unique):
+                full_embeddings[orig_idx] = embeddings[unique_idx]
+            embeddings = full_embeddings
+
         return embeddings
 
     except Exception as e:

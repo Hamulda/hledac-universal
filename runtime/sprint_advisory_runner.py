@@ -404,8 +404,17 @@ class SprintAdvisoryRunner:
             # Get governor for RAM check
             governor = self._governor
 
-            # Get sprint_id
-            sprint_id = getattr(self._scheduler, "sprint_id", None) or "unknown"
+            # Get sprint_id — distinguish None (never set) from "" (set but empty)
+            # Only default to "unknown" when sprint_id was genuinely never set
+            scheduler_sprint_id = getattr(self._scheduler, "sprint_id", None)
+            if scheduler_sprint_id is not None and scheduler_sprint_id != "":
+                sprint_id = scheduler_sprint_id
+            elif scheduler_sprint_id == "":
+                # sprint_id was explicitly set to empty string — use "unknown" for display
+                sprint_id = "unknown"
+            else:
+                # sprint_id was never set (None) — genuine unknown
+                sprint_id = "unknown"
 
             # F205J: Use canonical target_id — prefer query, fall back to sprint_id
             query = getattr(self._scheduler, "query", None) or ""
@@ -414,6 +423,11 @@ class SprintAdvisoryRunner:
                 target_id = sprint_id
 
             # Build the brief (pass duckdb_store for target memory read)
+            # F223F: pass store_findings_count=None for now — the canonical count
+            # can be wired via duckdb_store.async_get_accepted_findings_count(target_id)
+            # when duckdb_store has that method (not yet added to avoid schema migration).
+            # With None, build_sprint_brief uses runtime len(findings) in headline,
+            # which is already correct (sprint findings = runtime findings).
             brief = await workbench.build_sprint_brief(
                 sprint_id=sprint_id,
                 target_id=target_id,
@@ -421,6 +435,7 @@ class SprintAdvisoryRunner:
                 graph_signal=graph_signal,
                 governor=governor,
                 duckdb_store=duckdb_store,
+                store_findings_count=None,
             )
             self._scheduler._analyst_brief = brief
             log.debug(f"[F204E] Analyst brief generated: {brief.headline}")

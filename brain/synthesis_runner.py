@@ -273,6 +273,20 @@ OSINT_JSON_SCHEMA: str = _json.dumps({
 })
 
 
+# Sprint 8VF: flashrank singleton — loaded once, reused across sprint cycles
+_FLASHRANK_RANKER = None
+
+def _get_flashrank_ranker():
+    global _FLASHRANK_RANKER
+    if _FLASHRANK_RANKER is None:
+        from flashrank import Ranker
+        _FLASHRANK_RANKER = Ranker(
+            model_name="ms-marco-MiniLM-L-12-v2",
+            cache_dir="/tmp",
+        )
+    return _FLASHRANK_RANKER
+
+
 # ---------------------------------------------------------------------------
 # SynthesisRunner
 # ---------------------------------------------------------------------------
@@ -520,8 +534,22 @@ class SynthesisRunner:
         except Exception as e:
             logger.debug(f"Sprint 8VA RAG retrieve skipped: {e}")
 
-        # Sprint 8VA B.2 + C.2: Sort findings first (needed for both RAG and GraphRAG)
-        top = sorted(findings, key=lambda f: f.get("confidence", 0.0), reverse=True)[:max_findings]
+        # Sprint 8VF AREA-A: flashrank ms-marco cross-encoder rerank before LLM synthesis.
+        # Replaces confidence-sort ceiling. Cap input at 200 (flashrank RAM limit).
+        # Singleton loader — model loaded once per process, ~22MB ONNX.
+        try:
+            from flashrank import RerankRequest
+            _ranker = _get_flashrank_ranker()
+            passages = [
+                {"id": i, "text": f"{f.get('title', '')} {f.get('snippet', f.get('text', ''))}"}
+                for i, f in enumerate(findings[:200])
+            ]
+            rerank_request = RerankRequest(query=query, passages=passages)
+            results = _ranker.rerank(rerank_request)
+            ranked_idxs = [r["id"] for r in results[:max_findings]]
+            top = [findings[i] for i in ranked_idxs]
+        except Exception:
+            top = sorted(findings, key=lambda f: f.get("confidence", 0.0), reverse=True)[:max_findings]
 
         # Sprint 8VA C.2: GraphRAG — IOC relationship context (WINDUP phase)
         graph_context = ""

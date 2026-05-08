@@ -27,7 +27,7 @@ except ImportError:
     psutil = None  # type: ignore[assignment]
     _PSUTIL_AVAILABLE = False
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -129,7 +129,7 @@ class MetricsRegistry:
             # Normalize to shared grammar keys only; merge run_id from __init__.
             self._correlation = {k: correlation.get(k) for k in _GRAMMAR_KEYS}
             self._correlation["run_id"] = run_id
-        self._last_flush = datetime.utcnow()
+        self._last_flush = datetime.now(timezone.utc)
 
         # Counters (integers)
         self._counters: Dict[str, int] = {}
@@ -258,7 +258,7 @@ class MetricsRegistry:
         # Post-close flush guard — force=True bypasses for close() semantics
         if getattr(self, '_closed', False) and not force:
             return
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Check time-based flush (skip if not forced and thresholds not met)
         if not force:

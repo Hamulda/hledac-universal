@@ -824,12 +824,13 @@ class AnalystWorkbench:
         graph_signal: dict[str, Any],
         governor: Any = None,
         duckdb_store: Any = None,
+        store_findings_count: int | None = None,
     ) -> AnalystBrief:
         """
         F204E: Build a model-free analyst brief at sprint teardown.
 
         Generates a summary of sprint results: what changed, strongest evidence,
-        next best pivots, and open questions. Uses extractive analysis only —
+        next best pivots, and open questions. Uses extractive analysis only --
         no model loading required.
 
         RAM guard: if governor is critical/emergency, generates minimal brief
@@ -838,6 +839,11 @@ class AnalystWorkbench:
         F205J: If duckdb_store is available, reads cross-sprint target memory
         via get_target_memory_summary(target_id) and incorporates it into
         headline, key_findings, and open_questions.
+
+        F223F: store_findings_count, when provided, distinguishes runtime findings
+        (from the current sprint) from store findings (canonical total accepted).
+        The headline uses runtime findings as "sprint findings"; store findings
+        are surfaced separately in key_findings when they differ from runtime.
 
         Bounds:
           - MAX_BRIEF_FINDINGS = 20
@@ -848,13 +854,14 @@ class AnalystWorkbench:
         Args:
             sprint_id: Sprint identifier
             target_id: Research target (query or canonical target_id)
-            findings: List of findings from the sprint
+            findings: List of findings from the current sprint run (runtime findings)
             graph_signal: Graph signal dict from _get_graph_signal()
             governor: Optional M1ResourceGovernor for RAM check
             duckdb_store: Optional DuckDBShadowStore for target memory read
-
-        Returns:
-            AnalystBrief with all fields populated or minimal fallback
+            store_findings_count: Optional canonical store count of total accepted
+                findings for this target/sprint. When provided and different from
+                len(findings), the headline uses runtime findings and store findings
+                are noted in key_findings when they differ.
         """
         import time as _time
 
@@ -973,23 +980,41 @@ class AnalystWorkbench:
                         f"Graph communities: ~{community_count} detected communities"
                     )
 
-            key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
-
-            # Build headline from finding counts + memory context
-            finding_count = len(findings)
+            # F223F: Build headline from finding counts + memory context
+            # runtime_findings = len(findings) from current sprint run
+            # store_findings_count = total accepted from store (canonical)
+            # Headline uses runtime findings; store findings noted separately
+            runtime_finding_count = len(findings)
             graph_nodes = graph_signal.get("graph_nodes", 0) if graph_signal else 0
             graph_edges = graph_signal.get("graph_edges", 0) if graph_signal else 0
             if target_memory:
                 mem_sprints = target_memory.get("sprint_count", 0)
                 headline = (
                     f"Sprint {sprint_id} (target {target_id}, {mem_sprints} prior sprints): "
-                    f"{finding_count} findings, {graph_nodes} nodes, {graph_edges} edges"
+                    f"{runtime_finding_count} findings, {graph_nodes} nodes, {graph_edges} edges"
                 )
             else:
                 headline = (
-                    f"Sprint {sprint_id}: {finding_count} findings, "
+                    f"Sprint {sprint_id}: {runtime_finding_count} findings, "
                     f"{graph_nodes} graph nodes, {graph_edges} edges"
                 )
+
+            # F223F: If store_findings_count is provided and differs from runtime,
+            # surface the divergence in key_findings (not headline -- headline
+            # always shows current sprint runtime)
+            if store_findings_count is not None and store_findings_count != runtime_finding_count:
+                if runtime_finding_count == 0:
+                    key_findings_list.append(
+                        f"Canonical store: {store_findings_count} prior accepted findings "
+                        f"(0 this sprint -- possible quality gate change or target exhaustion)"
+                    )
+                else:
+                    key_findings_list.append(
+                        f"Canonical store: {store_findings_count} total accepted findings "
+                        f"(runtime: {runtime_finding_count} this sprint)"
+                    )
+
+            key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
 
             # Extract evidence chain IDs from findings (first MAX_BRIEF_CHAINS)
             chain_ids: list[str] = []
@@ -1007,11 +1032,11 @@ class AnalystWorkbench:
             open_questions = list(self._derive_open_questions(findings, graph_signal))
             if open_drift_q and len(open_questions) < 5:
                 open_questions.append(open_drift_q)
-            if not target_memory and finding_count > 0:
+            if not target_memory and runtime_finding_count > 0:
                 open_questions.append("No prior target memory — consider establishing baseline")
 
             # Confidence based on finding density and memory
-            confidence = 0.7 if finding_count > 10 else 0.5 if finding_count > 0 else 0.3
+            confidence = 0.7 if runtime_finding_count > 10 else 0.5 if runtime_finding_count > 0 else 0.3
             if target_memory:
                 confidence = min(0.9, confidence + 0.1)  # Memory boost
 

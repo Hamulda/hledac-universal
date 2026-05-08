@@ -68,6 +68,60 @@ class OneButtonVerdict(str, Enum):
 CLEAN_SWAP_MAX_GIB: float = 2.0
 DIAGNOSTIC_SWAP_MAX_GIB: float = 4.0
 
+# F223H: Repo-root constants
+_EXPECTED_REPO_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac"
+_UNIVERSAL_ROOT = f"{_EXPECTED_REPO_ROOT}/hledac/universal"
+
+
+def _get_repo_root_reality() -> dict:
+    """Hermetic CWD diagnostic — no live run, no network, no MLX."""
+    import os as _os
+    from pathlib import Path as _P
+
+    _cwd = _os.getcwd()
+    _resolved = str(_P(_cwd).resolve())
+    _universal = _UNIVERSAL_ROOT
+    _is_universal_root = _resolved == _universal or _resolved.startswith(f"{_universal}/")
+    _universal_exists = _P(_universal).exists()
+    _tests_probe_exists = _P(f"{_universal}/tests/probe_f223h_cwd_invocation_guard").exists()
+    _cwd_warning = (
+        f"WARNING: CWD={_cwd} is outside expected universal root ({_universal}). "
+        f"Artifact scans may glob wrong directory. Use --repo-root {_UNIVERSAL_ROOT} "
+        f"or run from {_UNIVERSAL_ROOT}."
+    ) if not _is_universal_root else ""
+
+    return {
+        "cwd": _cwd,
+        "resolved_cwd": _resolved,
+        "expected_repo_root": _EXPECTED_REPO_ROOT,
+        "universal_root": _universal,
+        "cwd_is_universal_root": _is_universal_root,
+        "universal_root_exists": _universal_exists,
+        "tests_probe_dir_exists": _tests_probe_exists,
+        "cwd_warning": _cwd_warning,
+    }
+
+
+def _check_cwd_guard(repo_root: Path) -> str:
+    """Check CWD vs repo-root. Returns warning string or empty if OK."""
+    reality = _get_repo_root_reality()
+    if reality["cwd_warning"]:
+        return reality["cwd_warning"]
+    # Additional check: repo_root param must match universal root
+    _resolved_repo = str(repo_root.resolve())
+    _repo_path = Path(_resolved_repo)
+    if _resolved_repo != reality["universal_root"] and not repo_root.name == "hledac":
+        # Accept sub-dirs of universal root too
+        try:
+            _repo_path.relative_to(reality["universal_root"])
+        except ValueError:
+            return (
+                f"WARNING: --repo-root {_resolved_repo} is not inside "
+                f"expected universal root ({reality['universal_root']}). "
+                f"Artifact scans may be incorrect."
+            )
+    return ""
+
 
 # --------------------------------------------------------------------------- #
 # F221 required probes and their artifact filenames
@@ -633,6 +687,13 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     if not repo_root.exists():
         print(f"ERROR: repo root does not exist: {repo_root}", file=sys.stderr)
+        return 1
+
+    # F223H: CWD guard — warn if running from wrong directory
+    cwd_warning = _check_cwd_guard(repo_root)
+    if cwd_warning:
+        print(f"CWD GUARD: {cwd_warning}", file=sys.stderr)
+        print("Aborting artifact scan due to wrong CWD.", file=sys.stderr)
         return 1
 
     result = run_one_button_gate(

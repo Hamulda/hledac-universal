@@ -47,35 +47,47 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
-# F221: Fix namespace package collision. The editable install creates a namespace
-# package at hledac/universal/hledac/ that shadows the project root hledac/.
-# The benchmark harness MUST run from hledac/universal/ (shell cwd reset).
+# F223C: Fix namespace package collision for direct script execution.
 #
-# Solution: use RELATIVE paths. When CWD = hledac/universal/:
-#   '..' = parent = hledac/ (project root with hledac/__init__.py and universal/ subdir)
-#   '.' = CWD = hledac/universal/ (has core/, tools/, etc.)
-# Add '..' to hledac.__path__ so hledac.universal resolves via ../universal/.
+# The editable install creates a _NamespacePath __path_hook__ that intercepts
+# package lookups BEFORE sys.path is consulted. The hook is registered as a
+# meta_path finder and path_hook.
+#
+# Problem: the editable install's _EditableNamespaceFinder._path_hook intercepts
+# 'hledac' lookups and returns the editable site-packages path instead of the
+# project root. This causes hledac.__path__ to be [_NamespacePath(...)] pointing
+# to site-packages rather than the project root.
+#
+# Solution: Pre-create a hledac stub module in sys.modules with __path__ pointing
+# to the project root. This must be done BEFORE any import of hledac or its
+# subpackages. We do NOT add _project_root to sys.path because that causes
+# 'tools' to resolve at the project-root tools/ (wrong) instead of the
+# universal/tools/ (correct).
 from pathlib import Path as _P
 
-_measured_file = _P(__file__).resolve()
-_universal = str(_measured_file.parent)  # hledac/universal/benchmarks
+_project_root = str(_P(__file__).resolve().parent.parent.parent)  # 3 levels: benchmarks/ → universal/ → hledac/ (project root)
 
-# CWD is hledac/universal/. _project_root = '..' (parent) = hledac/ directory.
-# Using relative path ensures it resolves relative to CWD, not as an absolute path.
-# When running from hledac/ parent dir, '..' still resolves correctly.
-_project_root = str(_measured_file.parent.parent)  # hledac/universal/ → project root
+import sys as _sys
 
-# Build sys.path: project root (relative), universal dir, then filtered original.
-# Do NOT include '' (CWD) or benchmarks dir as they cause namespace shadowing.
-_clean_path = [_project_root, _universal]
-for _p in sys.path:
-    if _p and "__editable__" not in _p and "hledac_universal" not in _p and ".pth" not in _p:
-        _clean_path.append(_p)
-sys.path[:] = _clean_path
+# F223C: Add universal dir to sys.path BEFORE hledac stub creation so that
+# _universal is defined when we reference it in __path__
+_universal = str(_P(__file__).resolve().parent.parent)  # benchmarks/ → universal/ → hledac/universal/
+if _universal not in _sys.path:
+    _sys.path.insert(0, _universal)
 
-# Extend hledac namespace __path__ so 'hledac.universal' finds ../universal/.
-import hledac as _hledac
-_hledac.__path__.append(_project_root)
+# F223C: Pre-emptively inject a stub hledac module into sys.modules BEFORE the
+# standard import machinery resolves hledac via the editable install's namespace
+# package hook. This ensures hledac.__path__ points to both project root and
+# universal dir so that:
+#   - hledac.universal.core imports resolve (via project_root/hledac/universal/)
+#   - tools.research_quality_score imports resolve (via universal/tools/)
+import types as _types
+_hledac_stub = _types.ModuleType('hledac')
+_hledac_stub.__path__ = [_project_root, _universal]  # Both locations!
+_hledac_stub.__file__ = f'{_project_root}/hledac/__init__.py'
+_hledac_stub.__package__ = 'hledac'
+_hledac_stub.__spec__ = None
+_sys.modules['hledac'] = _hledac_stub
 
 # Now import via standard mechanism
 from hledac.universal.core import __main__ as core_main
@@ -112,6 +124,7 @@ PROFILE_META: dict[str, dict] = {
         "expected_windup_lead_s": 0,     # diagnostic: immediate entry, no windup phase
         "expected_active_window_s": 180,  # full 180s is active runtime for domain queries
         "active_runtime_expected": True,  # diagnostic profiles produce active runtime
+        "acquisition_profile": "nonfeed_diagnostic",  # F223A: maps to nonfeed_diagnostic acquisition profile
     },
     "active300": {
         "planned_duration_s": 300,
@@ -159,6 +172,9 @@ def get_invocation_reality() -> dict:
     _nonfeed_duration = PROFILE_DURATION.get("nonfeed_diagnostic180", 0)
     _nonfeed_acquisition_profile = _nonfeed_meta.get("acquisition_profile", "nonfeed_diagnostic") if _nonfeed_meta else "N/A"
 
+    # F223H: Repo-root reality — detect wrong CWD before artifact scans
+    _repo_root_reality = get_repo_root_reality()
+
     return {
         "live_sprint_measurement_file": _live_sprint_measurement_file,
         "core_main_file": _core_main_file,
@@ -172,6 +188,67 @@ def get_invocation_reality() -> dict:
         "nonfeed_diagnostic180_present": _nonfeed_present,
         "nonfeed_diagnostic180_duration": _nonfeed_duration,
         "nonfeed_diagnostic180_acquisition_profile": _nonfeed_acquisition_profile,
+        # F223H: Repo-root reality
+        "cwd_is_repo_parent": _repo_root_reality["cwd_is_repo_parent"],
+        "cwd_is_universal_root": _repo_root_reality["cwd_is_universal_root"],
+        "artifact_scan_root": _repo_root_reality["resolved_repo_root"],
+        "cwd_warning": _repo_root_reality["cwd_warning"],
+    }
+
+
+# F223H: Repo-root reality guard
+_EXPECTED_REPO_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac"
+_UNIVERSAL_ROOT = f"{_EXPECTED_REPO_ROOT}/hledac/universal"
+
+
+def get_repo_root_reality() -> dict:
+    """
+    Return a hermetic diagnostic dict about the current working directory
+    vs. the expected repo-root reality. Detects when operator tools are
+    running from a temp/context sandbox CWD instead of actual repo root.
+
+    No live run. No network. No MLX. No model load.
+    """
+    _cwd = os.getcwd()
+    _resolved = str(_P(_cwd).resolve())
+
+    # Expected canonical roots
+    _expected = _EXPECTED_REPO_ROOT
+    _universal = _UNIVERSAL_ROOT
+
+    # Check positions
+    _is_repo_parent = _resolved == _expected or _resolved.startswith(f"{_expected}/")
+    _is_universal_root = _resolved == _universal or _resolved.startswith(f"{_universal}/")
+
+    # Check existence of key directories
+    _universal_exists = _P(_universal).exists()
+    _tests_probe_exists = _P(f"{_universal}/tests/probe_f223h_cwd_invocation_guard").exists()
+
+    # Artifact scan root is always the universal root for probe artifact scans
+    _artifact_scan_root = _universal
+
+    # Warning only when cwd is outside the repo tree
+    _cwd_warning = ""
+    if not _is_repo_parent:
+        _cwd_warning = (
+            f"WARNING: CWD={_cwd} is outside expected repo root "
+            f"({_expected}). Artifact scans may glob wrong directory. "
+            f"Use --repo-root {_universal} or run from {_universal}."
+        )
+
+    return {
+        "cwd": _cwd,
+        "resolved_cwd": _resolved,
+        "resolved_repo_root": _artifact_scan_root,
+        "expected_repo_root": _expected,
+        "universal_root": _universal,
+        "is_actual_repo_root": _is_universal_root,
+        "cwd_is_repo_parent": _is_repo_parent,
+        "cwd_is_universal_root": _is_universal_root,
+        "universal_root_exists": _universal_exists,
+        "tests_probe_dir_exists": _tests_probe_exists,
+        "artifact_scan_root": _artifact_scan_root,
+        "cwd_warning": _cwd_warning,
     }
 
 
@@ -329,6 +406,8 @@ class LiveMeasurementResult:
 
     # F216B: Acquisition profile telemetry
     acquisition_profile: str | None = None  # "default" | "nonfeed_diagnostic"
+    nonfeed_priority_enabled: bool = False  # F223A: from acquisition_report.nonfeed_priority_enabled
+    nonfeed_profile_expected_lanes: tuple[str, ...] = ()  # F223A: from acquisition_report.nonfeed_profile_expected_lanes
 
     # Windup guard observation telemetry (F207S)
     windup_guard_observation: dict | None = None
@@ -2784,6 +2863,12 @@ async def _run_live_sprint(
                 result.nonfeed_provider_failures = parsed.get("nonfeed_provider_failures")
                 result.nonfeed_memory_skips = parsed.get("nonfeed_memory_skips")
                 result.nonfeed_mission_exit_reason = parsed.get("nonfeed_mission_exit_reason")
+                # F223A: Propagate actual acquisition_profile from canonical acquisition_report
+                # (runtime already has the correct value; env var was just initialization hedge)
+                if result.acquisition_report and isinstance(result.acquisition_report, dict):
+                    _ap_from_report = result.acquisition_report.get("acquisition_profile")
+                    if _ap_from_report:
+                        result.acquisition_profile = _ap_from_report
                 # F208H: Read full canonical acquisition_report from sprint JSON
                 # for validator self-containment (not just the sanitized subset)
                 try:
@@ -2792,6 +2877,14 @@ async def _run_live_sprint(
                     result.acquisition_report = _ar_data.get("acquisition_report")
                 except Exception:
                     result.acquisition_report = None
+
+        # F223A: Propagate actual nonfeed fields from canonical acquisition_report
+                if result.acquisition_report and isinstance(result.acquisition_report, dict):
+                    result.nonfeed_priority_enabled = bool(
+                        result.acquisition_report.get("nonfeed_priority_enabled", False)
+                    )
+                    _lanes = result.acquisition_report.get("nonfeed_profile_expected_lanes", [])
+                    result.nonfeed_profile_expected_lanes = tuple(_lanes) if _lanes else ()
 
         logging.info(
             "[LIVE] Completed measurement_id=%s findings=%s cycles=%s duration=%.1fs",
