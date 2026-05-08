@@ -756,6 +756,11 @@ class SprintSchedulerResult:
     ct_candidates_accumulated: int = 0
     ct_candidates_stored: int = 0
     ct_storage_rejected: int = 0
+    # Sprint F226C: CT bridge acceptance diagnostics
+    ct_candidate_count: int = 0  # domains that passed structural checks
+    ct_valid_domain_count: int = 0  # domains that passed private/reserved filtering
+    ct_bridge_build_success_count: int = 0  # CanonicalFinding candidates successfully built
+    ct_bridge_quality_rejected_count: int = 0  # rejected at storage quality gate
     # Sprint F216G: Quality Rejection Ledger — canonical ingest quality gate rejections
     # Bounded ledger: max 200 entries (source_family, reason, finding_id, url_sample)
     quality_rejection_ledger: tuple = ()  # tuple[QualityRejectionRecord, ...]
@@ -1824,10 +1829,13 @@ class SprintScheduler:
             # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
             # F216F: Generate pivot candidates from query and fill telemetry
+            # F226A: Pass mission_intent for mission-aware scoring
             if self._result.nonfeed_plan_debug is not None:
                 try:
-                    _pivot_candidates = generate_pivot_candidates_from_query(query)
                     _nd = self._result.nonfeed_plan_debug
+                    _pivot_candidates = generate_pivot_candidates_from_query(
+                        query, mission_intent=_nd.mission_intent
+                    )
                     _nd.pivot_candidates_count = len(_pivot_candidates)
                     _nd.pivot_candidate_types = tuple(set(p.pivot_type for p in _pivot_candidates))
                     _nd.pivot_scheduled_lanes = ()
@@ -3143,6 +3151,12 @@ class SprintScheduler:
                     self._result.ct_candidates_accumulated = _bridge_candidates
                     self._result.ct_candidates_stored = accepted
                     self._result.ct_storage_rejected = max(0, _bridge_candidates - accepted)
+                    # Sprint F226C: CT bridge acceptance diagnostics
+                    if isinstance(_ct_telemetry, dict):
+                        self._result.ct_candidate_count = _ct_telemetry.get("ct_bridge_candidate_count", 0)
+                        self._result.ct_valid_domain_count = _ct_telemetry.get("ct_bridge_valid_domain_count", 0)
+                        self._result.ct_bridge_build_success_count = _ct_telemetry.get("ct_bridge_build_success_count", 0)
+                        self._result.ct_bridge_quality_rejected_count = _ct_telemetry.get("ct_bridge_quality_rejected_count", 0)
                     # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
                     _ct_quarantine_count = _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0
                     _ct_quarantine_entries = _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []
@@ -3822,6 +3836,12 @@ class SprintScheduler:
                 self._result.ct_candidates_accumulated = 0  # prelude does not accumulate
                 self._result.ct_candidates_stored = 0  # prelude does not store
                 self._result.ct_storage_rejected = 0
+                # Sprint F226C: CT bridge acceptance diagnostics for prelude
+                if isinstance(_ct_telemetry_prelude, dict):
+                    self._result.ct_candidate_count = _ct_telemetry_prelude.get("ct_bridge_candidate_count", 0)
+                    self._result.ct_valid_domain_count = _ct_telemetry_prelude.get("ct_bridge_valid_domain_count", 0)
+                    self._result.ct_bridge_build_success_count = _ct_telemetry_prelude.get("ct_bridge_build_success_count", 0)
+                    self._result.ct_bridge_quality_rejected_count = _ct_telemetry_prelude.get("ct_bridge_quality_rejected_count", 0)
                 # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
                 _ct_quarantine_count = _ct_telemetry_prelude.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry_prelude, dict) else 0
                 _ct_quarantine_entries = _ct_telemetry_prelude.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry_prelude, dict) else []
@@ -9464,6 +9484,11 @@ class SprintScheduler:
                     "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
                     "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
                     "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
+                    # Sprint F226C: CT bridge acceptance diagnostics
+                    "ct_bridge_candidate_count": getattr(self._result, 'ct_candidate_count', 0),
+                    "ct_bridge_valid_domain_count": getattr(self._result, 'ct_valid_domain_count', 0),
+                    "ct_bridge_build_success_count": getattr(self._result, 'ct_bridge_build_success_count', 0),
+                    "ct_bridge_quality_rejected_count": getattr(self._result, 'ct_bridge_quality_rejected_count', 0),
                     # Sprint F216G: Quality gate rejection summaries by category
                     "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),
                     "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),
@@ -9644,6 +9669,11 @@ class SprintScheduler:
                     "ct_candidates_accumulated": getattr(self._result, 'ct_candidates_accumulated', 0),
                     "ct_candidates_stored": getattr(self._result, 'ct_candidates_stored', 0),
                     "ct_storage_rejected": getattr(self._result, 'ct_storage_rejected', 0),
+                    # Sprint F226C: CT bridge acceptance diagnostics
+                    "ct_bridge_candidate_count": getattr(self._result, 'ct_candidate_count', 0),
+                    "ct_bridge_valid_domain_count": getattr(self._result, 'ct_valid_domain_count', 0),
+                    "ct_bridge_build_success_count": getattr(self._result, 'ct_bridge_build_success_count', 0),
+                    "ct_bridge_quality_rejected_count": getattr(self._result, 'ct_bridge_quality_rejected_count', 0),
                 }
         except Exception:
             result["lane_verdict"] = None

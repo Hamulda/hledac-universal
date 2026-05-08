@@ -52,6 +52,9 @@ MAX_METADATA_PREPEND_CHARS: int = 500
 _SOURCE_TYPE: str = "live_public_pipeline"
 """source_type value for all findings produced by this pipeline."""
 
+_PUBLIC_SOURCE_TYPE: str = "public"
+"""source_type value for public-surface findings from bootstrap/content-only pages (F226B)."""
+
 _REPORT_SOURCE_TYPE: str = "report"
 """source_type value for generated OSINT reports."""
 
@@ -347,6 +350,8 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     # F208G-A: PUBLIC Yield Taxonomy — canonical terminal classification per URL
     # None = still processing | "accepted" | "skipped_*" | "rejected_*"
     terminal_reason: str | None = None
+    # F226B: PUBLIC acceptance uplift — per-page duplicate signal for public_surface findings
+    public_surface_dup: bool = False
 
 
 class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
@@ -487,6 +492,11 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_rejected_low_information: int = 0  # page quality too low (SKIP_WEAK)
     public_rejected_duplicate: int = 0  # per-page dedup exhausted
     public_rejected_storage_rejected: int = 0  # DuckDB storage rejected findings
+    # F226B: PUBLIC acceptance uplift diagnostics
+    public_build_success_count: int = 0  # public_surface findings built (pattern-miss pages)
+    public_build_failure_count: int = 0  # public_surface build attempts that returned empty
+    public_duplicate_count: int = 0  # public_surface findings rejected as duplicate
+    public_acceptance_ratio: float = 0.0  # build_success / max(build_success+build_failure, 1)
     # Bounded URL samples (max 5 each)
     public_skipped_url_sample: tuple[str, ...] = ()  # skipped URL samples
     public_rejected_url_samples: tuple[str, ...] = ()  # rejected URL samples
@@ -893,6 +903,90 @@ def _get_patterns_configured_count() -> int:
 # -----------------------------------------------------------------------------
 # Per-page finding extraction
 # -----------------------------------------------------------------------------
+
+
+async def _build_public_finding(
+    *,
+    query: str,
+    url: str,
+    page_text: str,
+    hit_title: str,
+    hit_snippet: str,
+    discovery_score: float | None,
+    discovery_reason: str | None,
+) -> tuple:
+    """
+    F226B: Build a public-surface CanonicalFinding from a non-pattern-maching page.
+
+    Called when a page fetches successfully, extracts text, but has zero pattern
+    matches AND is NOT skipped by quality gate (SKIP_WEAK) — i.e. a "content-only" page
+    that provides public surface evidence.
+
+    Also called for bootstrap pages (robots.txt, security.txt, sitemap.xml) that
+    have meaningful content even without pattern matches.
+
+    Does NOT bypass quality gate — SKIP_WEAK pages still return empty tuple.
+
+    Returns:
+        Tuple of (CanonicalFinding,) or () if page provides no actionable signal.
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    if not page_text or not page_text.strip():
+        return ()
+
+    # Bounded payload from title + snippet + first chars of body
+    payload_parts: list[str] = []
+    if hit_title:
+        payload_parts.append(f"title: {hit_title[:200]}")
+    if hit_snippet:
+        payload_parts.append(f"snippet: {hit_snippet[:300]}")
+    # Include first 500 chars of body as surface evidence
+    body_preview = page_text[:500].strip()
+    if body_preview:
+        payload_parts.append(f"body: {body_preview}")
+    if not payload_parts:
+        return ()
+
+    payload_text = "\n".join(payload_parts)
+    # Hard cap
+    if len(payload_text) > 2000:
+        payload_text = payload_text[:2000]
+
+    # Provenance tags
+    provenance_parts = [
+        "source_family:public",
+        f"url:{url[:300]}",
+        "label:public_surface",
+    ]
+    if discovery_score is not None:
+        provenance_parts.append(f"score:{discovery_score:.2f}")
+    if discovery_reason:
+        provenance_parts.append(f"reason:{discovery_reason[:100]}")
+    provenance: tuple[str, ...] = tuple(provenance_parts)
+
+    # Deterministic finding_id using same scheme as pattern findings
+    finding_id = _make_finding_id(
+        query=query,
+        url=url,
+        label="public_surface",
+        pattern="content_only",
+        value=payload_text[:100],
+    )
+
+    try:
+        finding = CanonicalFinding(
+            finding_id=finding_id,
+            query=query[:500],
+            source_type=_PUBLIC_SOURCE_TYPE,
+            confidence=0.55,  # Lower than pattern-matched (0.8) — corroborating signal
+            ts=time.time(),
+            provenance=provenance,
+            payload_text=payload_text,
+        )
+        return (finding,)
+    except Exception:
+        return ()
 
 
 async def _extract_live_public_findings_from_page(
@@ -1323,9 +1417,98 @@ async def _fetch_and_process_page(
                 error=None,
                 extracted_text_len=len(extracted_text),
             )
-            # F208G-A: js_renderer_skip_reason takes precedence as terminal_reason
-            # when no content patterns matched (browser_unavailable, xml_or_feed_url are
-            # operational skips that explain why no pattern match occurred)
+            # F226B: Try public-surface finding from content-only page (bootstrap, security.txt, etc.)
+            # Only attempt when page was successfully fetched with extractable text.
+            # SKIP_WEAK pages (quality_reason.startswith("SKIP_WEAK")) are excluded — quality gate already decided.
+            _public_findings: list = []
+            if (
+                extracted_text
+                and quality_reason is not None
+                and not quality_reason.startswith("SKIP_WEAK")
+            ):
+                try:
+                    _pub_tuple = await _build_public_finding(
+                        query=query,
+                        url=hit_url,
+                        page_text=extracted_text,
+                        hit_title=hit_title or "",
+                        hit_snippet=hit_snippet or "",
+                        discovery_score=discovery_score,
+                        discovery_reason=discovery_reason,
+                    )
+                    if _pub_tuple:
+                        _public_findings.append(_pub_tuple[0])
+                except Exception:
+                    _public_findings = []
+
+            # F226B: If public_surface finding was built, store it (bypassing pattern match requirement)
+            _pub_accepted = 0
+            _pub_stored = 0
+            if _public_findings and store is not None:
+                try:
+                    _pub_results = await store.async_ingest_findings_batch(_public_findings)
+                    for _sr in _pub_results:
+                        if isinstance(_sr, dict):
+                            if _sr.get("accepted"):
+                                _pub_accepted += 1
+                            if _sr.get("lmdb_success"):
+                                _pub_stored += 1
+                        else:
+                            if getattr(_sr, "accepted", False):
+                                _pub_accepted += 1
+                            if getattr(_sr, "lmdb_success", False):
+                                _pub_stored += 1
+                except Exception:
+                    pass  # fail-soft
+
+            # F226B: Track public finding build outcomes and detect duplicates
+            if _pub_accepted > 0:
+                _pub_build_success_count += 1
+            elif _public_findings or (extracted_text and quality_reason is not None and not quality_reason.startswith("SKIP_WEAK")):
+                # Check if the finding was rejected as duplicate (stored but not accepted)
+                if _public_findings and _pub_stored > 0 and _pub_accepted == 0:
+                    # Duplicate: finding_id already existed in storage from this run
+                    _pub_duplicate_count += 1
+                    _pub_dup_found = True
+                else:
+                    _pub_dup_found = False
+                _pub_build_failure_count += 1
+            else:
+                _pub_dup_found = False
+
+            # F226B: If public finding was accepted, report it; otherwise fall through to rejection
+            if _pub_accepted > 0:
+                usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
+                    fetched=True, matched_patterns=0, stored_findings=_pub_stored,
+                    quality_reason=quality_reason, discovery_signal=has_signal,
+                    discovery_score=discovery_score,
+                    error=None,
+                    extracted_text_len=len(extracted_text),
+                )
+                ppr = PipelinePageResult(
+                    url=hit_url, fetched=True, matched_patterns=0,
+                    accepted_findings=_pub_accepted, stored_findings=_pub_stored,
+                    quality_reason=quality_reason,
+                    discovery_score=discovery_score,
+                    discovery_reason=discovery_reason,
+                    discovery_signal=has_signal,
+                    usable_signal=usable_signal,
+                    value_tier=value_tier,
+                    resolution_reason=resolution_reason,
+                    discovery_false_positive=discovery_false_positive,
+                    waste_category=waste_category,
+                    structural_quality=structural_quality,
+                    failure_stage=fetched_failure_stage,
+                    redirected=fetched_redirected,
+                    redirect_target=fetched_redirect_target,
+                    js_renderer_skipped_reason=fetched_js_skip_reason,
+                    rejection_reason=None,  # accepted via public_surface
+                    terminal_reason=None,  # accepted
+                    public_surface_dup=_pub_dup_found,  # F226B: duplicate signal if finding_id already existed
+                )
+                return ppr
+
+            # Fall through to standard rejection when no public finding was produced
             _tr_skipped: str | None = None
             if fetched_js_skip_reason == "browser_unavailable":
                 _tr_skipped = "skipped_browser_unavailable"
@@ -2392,6 +2575,10 @@ async def async_run_live_public_pipeline(
             public_rejected_low_information=0,
             public_rejected_duplicate=0,
             public_rejected_storage_rejected=0,
+            public_build_success_count=0,
+            public_build_failure_count=0,
+            public_duplicate_count=0,
+            public_acceptance_ratio=0.0,
             public_skipped_url_sample=(),
             public_rejected_url_samples=(),
         )
@@ -2425,6 +2612,11 @@ async def async_run_live_public_pipeline(
     _pub_bootstrap_fetch_success: int = 0
     _pub_bootstrap_accepted_findings: int = 0
     _pub_bootstrap_errors: int = 0
+
+    # F226B: PUBLIC acceptance uplift telemetry (initialized before try block)
+    _pub_build_success_count: int = 0
+    _pub_build_failure_count: int = 0
+    _pub_duplicate_count: int = 0
 
     # Sprint F217C: Deterministic bootstrap — generate before discovery attempt
     # Only runs when bootstrap is enabled; bootstrap URLs are prepended to duckduckgo hits.
@@ -2552,6 +2744,10 @@ async def async_run_live_public_pipeline(
             public_rejected_low_information=0,
             public_rejected_duplicate=0,
             public_rejected_storage_rejected=0,
+            public_build_success_count=0,
+            public_build_failure_count=0,
+            public_duplicate_count=0,
+            public_acceptance_ratio=0.0,
             public_skipped_url_sample=(),
             public_rejected_url_samples=(),
         )
@@ -2917,6 +3113,19 @@ async def async_run_live_public_pipeline(
     public_rejected_low_information = _tr_counter.get("rejected_low_information", 0)
     public_rejected_duplicate = _tr_counter.get("rejected_duplicate", 0)
     public_rejected_storage_rejected = _tr_counter.get("rejected_storage_rejected", 0)
+
+    # F226B: PUBLIC acceptance uplift — public_surface finding build outcomes
+    # _pub_duplicate_count: public_surface findings already seen in same run (deduped at per-page level)
+    _pub_dup_total = sum(
+        1 for p in all_page_results
+        if getattr(p, "public_surface_dup", False)
+    )
+    _pub_duplicate_count = _pub_dup_total
+    # public_build_failure_count already accumulated during page processing for zero-match pages
+    # that passed quality gate but produced no actionable finding
+    public_build_success_count = _pub_build_success_count
+    public_build_failure_count = _pub_build_failure_count
+    public_acceptance_ratio = _pub_build_success_count / max(_pub_build_success_count + _pub_build_failure_count, 1)
 
     # Bounded URL samples
     public_skipped_url_sample = tuple(_skipped_samples)
@@ -3715,6 +3924,11 @@ async def async_run_live_public_pipeline(
         public_acceptance_reject_reasons=public_acceptance_reject_reasons,
         public_accepted_url_sample=public_accepted_url_sample,
         public_rejected_url_sample=public_rejected_url_sample,
+        # F226B: PUBLIC acceptance uplift diagnostics
+        public_build_success_count=public_build_success_count,
+        public_build_failure_count=public_build_failure_count,
+        public_duplicate_count=public_duplicate_count,
+        public_acceptance_ratio=public_acceptance_ratio,
         # F208G-A: PUBLIC Yield Taxonomy — run-level terminal classification
         public_terminal_classified_count=public_terminal_classified_count,
         public_unclassified_count=public_unclassified_count,

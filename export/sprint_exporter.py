@@ -369,9 +369,13 @@ async def export_sprint(
     # Fallback: SPRINT_STORE_ROOT.parent/"reports" if report_path is None (write failed)
     # Sprint F150L: also pass branch_value + sprint_trend for enriched seeds
     # Sprint F207H: pass export_mode to gate hypothesis_engine (numpy/mlx)
+    # Sprint F226D: pass capability_synthesis + analyst_brief to shape next seeds
     branch_value = _get_branch_value(eh)
     sprint_trend = await _get_sprint_trend(store, last_n=3)
-    seeds_path = _generate_next_sprint_seeds(top_nodes, _sprint_id, report_path, pvs, branch_value, sprint_trend, export_mode=export_mode)
+    seeds_path = _generate_next_sprint_seeds(
+        top_nodes, _sprint_id, report_path, pvs, branch_value, sprint_trend,
+        export_mode=export_mode, capability_synthesis=capability_synthesis, analyst_brief=eh.analyst_brief,
+    )
 
     # Sprint F150K: build sprint_summary for human use
     try:
@@ -547,9 +551,12 @@ def _generate_next_sprint_seeds(
     branch_value: dict[str, Any] | None = None,
     sprint_trend: list[dict] | None = None,
     export_mode: str = "slim",
+    capability_synthesis: dict[str, Any] | None = None,
+    analyst_brief: dict[str, Any] | None = None,
 ) -> pathlib.Path:
     """
     Sprint F150J: Enhanced seed derivation driven by product_value_summary.
+    Sprint F226D: Enhanced with capability_synthesis + analyst_brief for active seed shaping.
 
     4 seed categories derived from pvs:
       1. ioc_followup — top graph nodes (existing _type_aware_seeds logic)
@@ -640,6 +647,19 @@ def _generate_next_sprint_seeds(
         if sprint_trend:
             trend_seeds = _derive_trend_seeds(sprint_trend)
             seeds.extend(trend_seeds)
+
+        # 9. Sprint F226D: capability_synthesis-driven seeds — use synthesis signals
+        if capability_synthesis:
+            cap_seeds = _derive_capability_seeds(capability_synthesis)
+            seeds.extend(cap_seeds)
+
+        # 10. Sprint F226D: analyst_brief-driven seeds — pivot recommendations, gaps
+        if analyst_brief:
+            brief_seeds = _derive_analyst_brief_seeds(analyst_brief)
+            seeds.extend(brief_seeds)
+
+        # Sprint F226D: dedup before cap — same (task_type, value, reason) collapses
+        seeds = _dedup_seeds(seeds)
 
         # Bounded output — keep total seed count manageable
         MAX_SEEDS = 15
@@ -820,6 +840,196 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
             })
 
     return seeds[:2]  # Hard cap: max 2 low-signal recommendations
+
+
+# ---------------------------------------------------------------------------
+# Sprint F226D §1: capability_synthesis-driven seeds
+# ---------------------------------------------------------------------------
+
+def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """
+    Sprint F226D: Derive seeds from capability_synthesis signals.
+
+    Reads:
+      - feed_noise_summary → nonfeed seed if feed_noisy_no_nonfeed_signal
+      - source_diversity_summary → source diversity seed if weak
+      - corroboration_summary → corroboration seed if weak/none
+      - useful_evidence_present → quality seed if False
+      - next_investigation_action → investigation seed
+
+    All seeds have seed_source="capability_synthesis" for traceability.
+    Bounded: max 4 capability-derived seeds.
+    Fail-soft: returns [] for None input.
+    """
+    if not capability_synthesis:
+        return []
+
+    seeds: list[dict[str, Any]] = []
+
+    feed_noise = capability_synthesis.get("feed_noise_summary", "unknown")
+    source_diversity = capability_synthesis.get("source_diversity_summary", "unknown_source")
+    corroboration = capability_synthesis.get("corroboration_summary", "none")
+    evidence_present = capability_synthesis.get("useful_evidence_present", False)
+    next_action = capability_synthesis.get("next_investigation_action", "")
+    next_engineering = capability_synthesis.get("next_engineering_action", "")
+
+    # 1. Feed noise → nonfeed evidence seed
+    if feed_noise in ("feed_noisy_no_nonfeed_signal", "feed_dominant"):
+        seeds.append({
+            "task_type": "source_revisit",
+            "suggested_action": "boost_nonfeed_lanes",
+            "priority": 0.82,
+            "reason": f"feed_noise={feed_noise}",
+            "seed_source": "capability_synthesis",
+            "expected_value": "nonfeed_signal_balance",
+        })
+
+    # 2. Weak source diversity → PUBLIC/CT/Wayback seed
+    if source_diversity in ("single_source_feed_only", "single_source_niche", "unknown_source"):
+        seeds.append({
+            "task_type": "query_suggestion",
+            "suggested_action": "expand_public_sources",
+            "priority": 0.75,
+            "reason": f"source_diversity={source_diversity}",
+            "seed_source": "capability_synthesis",
+            "expected_value": "multi_source_diversity",
+        })
+
+    # 3. Weak corroboration → corroboration seed
+    if corroboration in ("none", "noisy"):
+        seeds.append({
+            "task_type": "corroboration_seed",
+            "suggested_action": "seek_corroboration",
+            "priority": 0.72,
+            "reason": f"corroboration={corroboration}",
+            "seed_source": "capability_synthesis",
+            "expected_value": "cross_source_confirmation",
+        })
+
+    # 4. Weak evidence quality → quality improvement seed
+    if not evidence_present:
+        seeds.append({
+            "task_type": "quality_seed",
+            "suggested_action": "improve_evidence_quality",
+            "priority": 0.70,
+            "reason": "useful_evidence_present=false",
+            "seed_source": "capability_synthesis",
+            "expected_value": "actionable_findings",
+        })
+
+    # 5. Next investigation action → top-priority investigation seed
+    if next_action and isinstance(next_action, str) and len(next_action) > 3:
+        seeds.append({
+            "task_type": "investigation_seed",
+            "suggested_action": next_action,
+            "priority": 0.88,
+            "reason": f"next_investigation_action={next_action[:60]}",
+            "seed_source": "capability_synthesis",
+            "expected_value": "targeted_discovery",
+        })
+
+    # 6. Engineering action as lower-priority engineering seed
+    if next_engineering and isinstance(next_engineering, str) and len(next_engineering) > 3:
+        seeds.append({
+            "task_type": "engineering_seed",
+            "suggested_action": next_engineering,
+            "priority": 0.55,
+            "reason": f"next_engineering_action={next_engineering[:60]}",
+            "seed_source": "capability_synthesis",
+            "expected_value": "system_improvement",
+        })
+
+    return seeds[:4]  # Hard cap: max 4 capability-derived seeds
+
+
+# ---------------------------------------------------------------------------
+# Sprint F226D §2: analyst_brief-driven seeds
+# ---------------------------------------------------------------------------
+
+def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """
+    Sprint F226D: Derive seeds from analyst_brief fields.
+
+    Reads:
+      - pivot_recommendations → pivot seeds (max 2)
+      - evidence_gaps → gap-filling seeds (max 1)
+      - risk_hypotheses → risk-investigation seeds (max 1)
+
+    All seeds have seed_source="analyst_brief".
+    Bounded: max 4 analyst-brief-derived seeds total.
+    Fail-soft: returns [] for None input.
+    """
+    if not analyst_brief:
+        return []
+    seeds: list[dict[str, Any]] = []
+
+    pivots = analyst_brief.get("pivot_recommendations") or []
+    if isinstance(pivots, (list, tuple)):
+        for p in pivots[:2]:
+            if isinstance(p, str) and len(p) > 3:
+                seeds.append({
+                    "task_type": "pivot_seed",
+                    "suggested_action": p,
+                    "priority": 0.78,
+                    "reason": f"pivot_recommendation={p[:60]}",
+                    "seed_source": "analyst_brief",
+                    "expected_value": "pivot_discovery",
+                })
+
+    gaps = analyst_brief.get("evidence_gaps") or []
+    if isinstance(gaps, (list, tuple)) and gaps:
+        gap = gaps[0]
+        if isinstance(gap, str) and len(gap) > 3:
+            seeds.append({
+                "task_type": "gap_fill_seed",
+                "suggested_action": f"address_gap: {gap[:80]}",
+                "priority": 0.68,
+                "reason": f"evidence_gap={gap[:60]}",
+                "seed_source": "analyst_brief",
+                "expected_value": "evidence_completeness",
+            })
+
+    risks = analyst_brief.get("risk_hypotheses") or []
+    if isinstance(risks, (list, tuple)) and risks:
+        risk = risks[0]
+        if isinstance(risk, str) and len(risk) > 3:
+            seeds.append({
+                "task_type": "risk_investigation_seed",
+                "suggested_action": f"investigate_risk: {risk[:80]}",
+                "priority": 0.65,
+                "reason": f"risk_hypothesis={risk[:60]}",
+                "seed_source": "analyst_brief",
+                "expected_value": "risk_mitigation",
+            })
+
+    return seeds[:4]  # Hard cap: max 4 analyst-brief seeds
+
+
+# ---------------------------------------------------------------------------
+# Sprint F226D §3: seed deduplication
+# ---------------------------------------------------------------------------
+
+def _dedup_seeds(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Sprint F226D: Deduplicate seeds by (seed_source, task_type, suggested_action).
+
+    seed_source is included in the key so capability_synthesis and analyst_brief
+    seeds cannot dedup each other even with identical task_type+action.
+    Preserves first-seen order (insertion order) among duplicates.
+    Returns a new list; does not mutate input.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    deduped: list[dict[str, Any]] = []
+    for s in seeds:
+        key = (
+            s.get("seed_source", ""),
+            s.get("task_type", ""),
+            s.get("suggested_action", ""),
+        )
+        if key not in seen:
+            seen.add(key)
+            deduped.append(s)
+    return deduped
 
 
 def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node") -> list[dict[str, Any]]:
@@ -2277,6 +2487,18 @@ def _build_capability_synthesis(
             next_engineering_action = "maintain_current_capability_and_increment"
     else:
         next_engineering_action = "maintain_current_capability_and_increment"
+
+    # ── 7b. F226E: Target memory feedback — feed dominance correction ────────
+    if analyst_brief and isinstance(analyst_brief, dict):
+        tmf = analyst_brief.get("target_memory_feedback", {}) or {}
+        if tmf.get("repeated_feed_dominance"):
+            next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
+        elif tmf.get("prior_nonfeed_weakness"):
+            nea = tmf.get("suggested_next_profile", "")
+            if nea == "PUBLIC":
+                next_engineering_action = "bootstrap_public_bridge_before_scale"
+            elif nea == "CT":
+                next_engineering_action = "bootstrap_ct_provider_before_scale"
 
     # ── 8. Next investigation action (for analyst) ─────────────────────────
     if analyst_brief and isinstance(analyst_brief, dict):

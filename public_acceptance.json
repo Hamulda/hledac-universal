@@ -1,0 +1,38 @@
+{
+  "sprint": "F226B",
+  "date": "2026-05-08",
+  "status": "COMPLETE",
+  "title": "PUBLIC Evidence Acceptance Uplift",
+  "goal": "Improve PUBLIC lane conversion from safe public candidates into accepted CanonicalFinding evidence using existing parser/quality paths",
+  "constraints": [
+    "No new crawler",
+    "No stealth changes",
+    "No browser changes",
+    "No storage schema changes"
+  ],
+  "files_modified": [
+    "pipeline/live_public_pipeline.py"
+  ],
+  "new_functions": [
+    {
+      "name": "_build_public_finding",
+      "location": "pipeline/live_public_pipeline.py:~908",
+      "purpose": "Build CanonicalFinding from content-only pages with zero pattern matches",
+      "returns": "tuple[CanonicalFinding] or ()"
+    }
+  ],
+  "new_fields": {
+    "PipelinePageResult": ["public_surface_dup"],
+    "PipelineRunResult": ["public_build_success_count", "public_build_failure_count", "public_duplicate_count", "public_acceptance_ratio"]
+  },
+  "key_constants": {
+    "_PUBLIC_SOURCE_TYPE": "public",
+    "_PUBLIC_FINDING_CONFIDENCE": 0.55,
+    "_PAYLOAD_TEXT_MAX": 2000
+  },
+  "quality_gate": "SKIP_WEAK pages do NOT produce public findings — condition: not quality_reason.startswith('SKIP_WEAK')",
+  "tests": {
+    "probe_f226b_public_acceptance": "12 passed"
+  },
+  "verification": "python -m pytest tests/probe_f226b_public_acceptance/ -v"
+}

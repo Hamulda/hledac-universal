@@ -282,6 +282,11 @@ class NonfeedPlanDebug:
     mission_required_lanes: tuple[str, ...] = ()
     mission_optional_lanes: tuple[str, ...] = ()
     mission_reason: str = ""
+    # F226A: Mission runtime wiring — operational telemetry
+    mission_runtime_applied: bool = False
+    mission_lane_priority: tuple[str, ...] = ()
+    mission_pivot_boost_applied: bool = False
+    mission_feed_cap_reason: str | None = None
 
 
 @dataclass
@@ -858,6 +863,11 @@ def build_acquisition_report(
                 "mission_required_lanes": list(getattr(nd, "mission_required_lanes", ()) or ()),
                 "mission_optional_lanes": list(getattr(nd, "mission_optional_lanes", ()) or ()),
                 "mission_reason": getattr(nd, "mission_reason", ""),
+                # F226A: Mission runtime wiring
+                "mission_runtime_applied": getattr(nd, "mission_runtime_applied", False),
+                "mission_lane_priority": list(getattr(nd, "mission_lane_priority", ()) or ()),
+                "mission_pivot_boost_applied": getattr(nd, "mission_pivot_boost_applied", False),
+                "mission_feed_cap_reason": getattr(nd, "mission_feed_cap_reason", None),
             }
 
     # F223A: Normalize None to "default" for canonical report schema
@@ -2063,7 +2073,7 @@ def _build_plan_impl(
         nonfeed_profile_expected_lanes=(
             (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR)
             if is_nonfeed_diagnostic
-            else ()
+            else _required_lanes if _intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else ()
         ),
         # F216F: Pivot executor telemetry — initialized here, filled by scheduler
         pivot_executor_enabled=False,
@@ -2078,6 +2088,11 @@ def _build_plan_impl(
         mission_required_lanes=_required_lanes,
         mission_optional_lanes=_optional_lanes,
         mission_reason=_intent_reason,
+        # F226A: Mission runtime wiring — operational telemetry
+        mission_runtime_applied=_intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON),
+        mission_lane_priority=_required_lanes,
+        mission_pivot_boost_applied=_intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON),
+        mission_feed_cap_reason=None,  # FEED capping driven by nonfeed_diagnostic (F216B), not by mission intent
     )
 
     return AcquisitionStrategySnapshot(

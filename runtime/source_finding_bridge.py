@@ -98,6 +98,8 @@ MAX_CT_QUARANTINE_SAMPLES: int = 10
 _URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 _URL_TRAILING_SLASH_RE = re.compile(r"/+$")
 _WILDCARD_RE = re.compile(r"^\*\.")
+_TRAILING_DOT_RE = re.compile(r"\.$")
+_IP_LIKE_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 
 
 def _strip_url_scheme(url: str) -> str:
@@ -171,8 +173,61 @@ _PRIVATE_HOSTNAMES: frozenset[str] = frozenset({
     "localhost",
     "invalid",
     "test",
-    "example",
 })
+
+_PRIVATE_IP_PREFIXES: tuple[str, ...] = (
+    "10.",
+    "172.16.",
+    "172.17.",
+    "172.18.",
+    "172.19.",
+    "172.20.",
+    "172.21.",
+    "172.22.",
+    "172.23.",
+    "172.24.",
+    "172.25.",
+    "172.26.",
+    "172.27.",
+    "172.28.",
+    "172.29.",
+    "172.30.",
+    "172.31.",
+    "192.168.",
+    "127.",
+    "0.",
+    "255.",
+    "169.254.",
+    "::1",
+    "fe80:",
+    "fc00:",
+    "fd00:",
+)
+
+
+def _is_ip_like(value: str) -> bool:
+    """Return True if value looks like an IP address (v4 or v6)."""
+    if _IP_LIKE_RE.match(value):
+        return True
+    if ":" in value:
+        return True
+    return False
+
+
+def _normalize_domain(domain: str) -> str:
+    """
+    Normalize a domain extracted from CT data.
+
+    Applies in order:
+      1. Strip wildcard prefix *.
+      2. Strip trailing dot
+      3. Lowercase
+    """
+    d = domain
+    d = _WILDCARD_RE.sub("", d)
+    d = _TRAILING_DOT_RE.sub("", d)
+    d = d.lower()
+    return d
 
 
 def _extract_domain_from_ct_hit(url: str, title: str) -> Optional[str]:
@@ -183,15 +238,16 @@ def _extract_domain_from_ct_hit(url: str, title: str) -> Optional[str]:
     Title format: "CT: subdomain.example.com"
 
     Returns None if no domain-like string is found.
+    Normalization: strips wildcard prefix, trailing dot, lowercases.
     """
     stripped = _strip_url_scheme(url).strip()
     if stripped:
-        return stripped.lower()
+        return _normalize_domain(stripped)
 
     if title.startswith("CT: "):
         domain = title[4:].strip().rstrip("/")
         if domain:
-            return domain.lower()
+            return _normalize_domain(domain)
 
     return None
 
@@ -214,11 +270,15 @@ def _extract_domains_from_ct_name_value(name_value: str) -> list[tuple[str, bool
     """
     Extract all concrete (non-wildcard) domains from a multiline CT name_value.
 
-    Returns list of (domain, was_wildcard) tuples for each line.
+    Returns list of (normalized_domain, was_wildcard) tuples for each line.
     Wildcard-only lines are returned with was_wildcard=True; concrete domains
     are returned with was_wildcard=False.
 
     F213A: enables per-line wildcard rejection while preserving concrete siblings.
+    F226C: normalize concrete domains (strip *, lower, strip trailing dot) so
+    they can be compared against URL-derived candidates. Wildcard lines keep
+    their original (un-normalized) form so _quarantined_wildcards keys match
+    pre-normalization URL candidates.
     """
     if not name_value:
         return []
@@ -228,13 +288,24 @@ def _extract_domains_from_ct_name_value(name_value: str) -> list[tuple[str, bool
         if not line:
             continue
         is_wildcard = _is_wildcard_domain(line)
-        results.append((line.lower(), is_wildcard))
+        if is_wildcard:
+            # Wildcard lines stay in original form (pre-normalization) so
+            # _quarantined_wildcards set matches URL-derived candidates
+            results.append((line, True))
+        else:
+            # Concrete domains: normalize to match URL-extracted candidates
+            results.append((_normalize_domain(line), False))
     return results
 
 
 def _is_private_hostname(domain: str) -> bool:
-    """Check if domain matches a reserved/private hostname."""
-    return domain in _PRIVATE_HOSTNAMES
+    """Check if domain matches a reserved/private hostname or is IP-like."""
+    domain_lower = domain.lower()
+    if domain_lower in _PRIVATE_HOSTNAMES:
+        return True
+    if _is_ip_like(domain_lower):
+        return True
+    return False
 
 
 def _classify_domain_shape(domain: str, url: str, ct_name_value: str) -> str:
@@ -508,8 +579,10 @@ def ct_results_to_findings(
         # Fallback: use common_name if no domains found yet
         if not candidate_domains and ct_common_name:
             cn = ct_common_name.strip()
-            if cn and not _is_wildcard_domain(cn):
-                candidate_domains.append(cn.lower())
+            if cn:
+                normalized_cn = _normalize_domain(cn)
+                if normalized_cn and not _is_wildcard_domain(cn):
+                    candidate_domains.append(normalized_cn)
 
         # Always initialize ts from retrieved_ts (used in both branches)
         ts = retrieved_ts if retrieved_ts > 0 else time.time()
@@ -570,6 +643,15 @@ def ct_results_to_findings(
             if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
                 ct_quarantine_entries.append(entry)
             _quarantined_wildcards.add(_wc.lower())
+
+        # F226C: For each name_value wildcard (original form: *.example.com),
+        # also add its stripped form (example.com) to _quarantined_wildcards.
+        # This handles the case where URL gives sub.example.com and
+        # name_value has *.sub.example.com — the URL candidate must be skipped.
+        for _wc in name_value_wildcards:
+            _stripped = _WILDCARD_RE.sub("", _wc)
+            if _stripped:
+                _quarantined_wildcards.add(_stripped.lower())
 
         for domain in candidate_domains:
             ct_extracted_domains += 1
@@ -693,6 +775,12 @@ def ct_results_to_findings(
         "ct_candidates_built": len(findings),
         "ct_candidates_stored": 0,  # filled by caller via record_storage_results()
         "ct_storage_rejected": 0,  # filled by caller via record_storage_results()
+        # F226C: CT bridge acceptance diagnostics
+        "ct_bridge_candidate_count": ct_candidate_domains,
+        "ct_bridge_valid_domain_count": ct_candidate_domains,
+        "ct_bridge_quarantine_count": len(ct_quarantine_entries),
+        "ct_bridge_build_success_count": len(findings),
+        "ct_bridge_quality_rejected_count": 0,  # filled after storage ingest
         "ct_rejected_wildcard": ct_rejected_wildcard,
         "ct_rejected_invalid": ct_rejected_invalid,
         "ct_rejected_duplicate": ct_rejected_duplicate,
@@ -723,6 +811,8 @@ def record_ct_storage_results(
     Call this from sprint_scheduler after async_ingest_findings_batch returns.
 
     Returns updated telemetry dict (same object, mutated in place).
+
+    F226C: Also propagates ct_bridge_quality_rejected_count.
     """
     stored = 0
     rejected = 0
@@ -742,6 +832,10 @@ def record_ct_storage_results(
 
     telemetry["ct_candidates_stored"] = stored
     telemetry["ct_storage_rejected"] = rejected
+    # F226C: quality_rejected = candidates_built - stored (rejected at storage quality gate)
+    telemetry["ct_bridge_quality_rejected_count"] = max(
+        0, telemetry.get("ct_candidates_built", 0) - stored
+    )
     # accepted_candidates reflects what the bridge built (candidates), not stored
     # The caller should use ct_candidates_stored for actual stored count
     return telemetry

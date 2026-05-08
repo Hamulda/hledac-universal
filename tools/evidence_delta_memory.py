@@ -8,6 +8,9 @@ Reads two benchmark/report JSON files and computes what changed between them:
 - verdict: DELTA_NO_PRIOR / DELTA_FEED_ONLY_REPEAT / DELTA_NEW_NONFEED_EVIDENCE /
            DELTA_MEANINGFUL_RESEARCH_PROGRESS
 
+Sprint F226F: Adds compare_capability_artifacts() for cross-run OSINT capability comparison.
+Does NOT run live measurement. Consumes existing JSON artifacts only.
+
 NO live execution. NO DB writes. NO MLX load. Read-only comparison.
 """
 
@@ -78,6 +81,363 @@ class EvidenceDelta:
     # Raw counts from current run
     families_current: list[str] = field(default_factory=list)
     families_previous: list[str] = field(default_factory=list)
+
+
+# ── F226F: Capability Delta ────────────────────────────────────────────────────
+
+
+class CapabilityDeltaVerdict(str, Enum):
+    IMPROVED = "IMPROVED"
+    REGRESSED = "REGRESSED"
+    MIXED = "MIXED"
+    NOT_COMPARABLE_HARDWARE_TAINTED = "NOT_COMPARABLE_HARDWARE_TAINTED"
+    NO_PRIOR = "NO_PRIOR"
+
+
+@dataclass
+class CapabilityDelta:
+    capability_delta_verdict: CapabilityDeltaVerdict
+    improved_dimensions: list[str] = field(default_factory=list)
+    regressed_dimensions: list[str] = field(default_factory=list)
+    neutral_dimensions: list[str] = field(default_factory=list)
+    operator_summary: str = ""
+
+    # Raw comparison fields
+    verdict_improvement: bool = False
+    nonfeed_count_up: bool = False
+    public_count_up: bool = False
+    ct_count_up: bool = False
+    source_diversity_up: bool = False
+    corroboration_up: bool = False
+    feed_dominance_down: bool = False
+    capability_confidence_up: bool = False
+    next_seeds_quality_up: bool = False
+    next_seeds_count_up: bool = False
+    hardware_tainted_current: bool = False
+    hardware_tainted_previous: bool = False
+
+
+def _load_full_report(filepath: Path | None) -> dict:
+    """Load full report JSON, returns empty dict on failure."""
+    if filepath is None:
+        return {}
+    try:
+        with open(filepath) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _extract_capability_fields(report: dict) -> dict:
+    """Extract capability-relevant fields from a report JSON.
+
+    Handles two structures:
+    - live_sprint_measurement output (full report with runtime_truth, acquisition_report, etc.)
+    - research_quality_score output (live_artifact_result)
+
+    Returns a flat dict with capability-relevant fields for comparison.
+    """
+    fields = {
+        "total_findings": 0,
+        "feed_findings": 0,
+        "nonfeed_findings": 0,
+        "ct_findings": 0,
+        "public_findings": 0,
+        "passive_findings": 0,
+        "source_diversity_score": 0.0,
+        "corroboration_score": 0.0,
+        "feed_dominance_score": 0.0,
+        "capability_confidence": 0.0,
+        "capability_verdict": "unknown",
+        "next_seeds_quality": 0,
+        "next_seeds_count": 0,
+        "hardware_constrained": False,
+        "is_meaningful": None,
+        "terminality_satisfied": False,
+    }
+
+    # Style 1: live_sprint_measurement JSON (full report)
+    if "runtime_truth" in report:
+        rt = report.get("runtime_truth", {})
+        branch_mix = rt.get("branch_mix", {}) if isinstance(rt, dict) else {}
+        if isinstance(branch_mix, dict):
+            fields["feed_findings"] = branch_mix.get("feed", branch_mix.get("feed_findings", 0))
+            fields["ct_findings"] = branch_mix.get("ct_findings", 0)
+            fields["public_findings"] = branch_mix.get("public_findings", 0)
+        fields["is_meaningful"] = rt.get("is_meaningful")
+        fields["total_findings"] = sum([
+            branch_mix.get("feed", 0) if isinstance(branch_mix, dict) else 0,
+            branch_mix.get("ct_findings", 0) if isinstance(branch_mix, dict) else 0,
+            branch_mix.get("public_findings", 0) if isinstance(branch_mix, dict) else 0,
+        ])
+
+    # Extract from live_kpi (canonical for branch mix)
+    live_kpi = report.get("live_kpi", {})
+    if live_kpi:
+        branch_mix = live_kpi.get("branch_mix", {})
+        if isinstance(branch_mix, dict):
+            fields["feed_findings"] = branch_mix.get("feed_findings", fields["feed_findings"])
+            fields["ct_findings"] = branch_mix.get("ct_findings", fields["ct_findings"])
+            fields["public_findings"] = branch_mix.get("public_findings", fields["public_findings"])
+        rq = live_kpi.get("research_quality", {})
+        if isinstance(rq, dict):
+            fields["source_diversity_score"] = rq.get("source_diversity", 0.0)
+            fields["corroboration_score"] = rq.get("corroboration", 0.0)
+            fields["capability_confidence"] = rq.get("confidence", 0.0)
+        fields["hardware_constrained"] = live_kpi.get("hardware_constrained", False)
+
+    # Style 2: research_quality_score JSON (live_artifact_result)
+    if "live_artifact_result" in report:
+        lar = report.get("live_artifact_result", {})
+        fields["total_findings"] = lar.get("total_findings", 0)
+        fields["feed_findings"] = lar.get("feed_findings", 0)
+        fields["ct_findings"] = lar.get("ct_findings", 0)
+        fields["public_findings"] = lar.get("public_findings", 0)
+        fields["passive_findings"] = lar.get("passive_findings", 0)
+
+    # Nonfeed = CT + PUBLIC
+    fields["nonfeed_findings"] = fields["ct_findings"] + fields["public_findings"]
+
+    # Total findings fallback
+    if fields["total_findings"] == 0:
+        fields["total_findings"] = (
+            fields["feed_findings"] + fields["ct_findings"] +
+            fields["public_findings"] + fields["passive_findings"]
+        )
+
+    # Feed dominance
+    total = fields["total_findings"]
+    if total > 0:
+        fields["feed_dominance_score"] = fields["feed_findings"] / total
+    else:
+        fields["feed_dominance_score"] = 1.0
+
+    # Terminality from acquisition_report
+    acq = report.get("acquisition_report", {})
+    if isinstance(acq, dict):
+        term = acq.get("terminality", {})
+        if isinstance(term, dict):
+            fields["terminality_satisfied"] = bool(term.get("satisfied", False))
+
+    # capability_synthesis from report root (sprint_exporter output)
+    cap = report.get("capability_synthesis", {})
+    if isinstance(cap, dict):
+        fields["capability_verdict"] = cap.get("capability_verdict", "unknown")
+        fields["capability_confidence"] = cap.get("confidence", fields["capability_confidence"])
+
+    # Next seeds from report
+    next_seeds = report.get("next_sprint_seeds", {})
+    if isinstance(next_seeds, dict):
+        fields["next_seeds_count"] = len(next_seeds.get("seeds", []))
+        fields["next_seeds_quality"] = next_seeds.get("quality_score", 0)
+
+    return fields
+
+
+def compare_capability_artifacts(previous_json: Path | None, current_json: Path) -> CapabilityDelta:
+    """Compare two live measurement JSON artifacts and determine if OSINT capability improved.
+
+    F226F: Deterministic capability comparator that answers:
+      "Did OSINT capability improve?"
+
+    Does NOT run live measurement. Consumes existing JSON artifacts only.
+    No benchmark import. No scheduler import. No network/model call.
+
+    Args:
+        previous_json: Path to previous run JSON (None for first run)
+        current_json: Path to current run JSON
+
+    Returns:
+        CapabilityDelta with verdict and dimension breakdowns
+    """
+    prev_data = _load_full_report(previous_json)
+    curr_data = _load_full_report(current_json)
+
+    prev_fields = _extract_capability_fields(prev_data)
+    curr_fields = _extract_capability_fields(curr_data)
+
+    improved_dims: list[str] = []
+    regressed_dims: list[str] = []
+    neutral_dims: list[str] = []
+
+    # Verdict comparison (capability_synthesis verdict improvement)
+    verdict_order = {
+        "invalid_capability": 0,
+        "incomparable_capability": 1,
+        "smoke_capability": 2,
+        "useful_capability": 3,
+    }
+    prev_verdict_rank = verdict_order.get(prev_fields["capability_verdict"], 0)
+    curr_verdict_rank = verdict_order.get(curr_fields["capability_verdict"], 0)
+    if curr_verdict_rank > prev_verdict_rank and curr_fields["capability_verdict"] != "unknown":
+        improved_dims.append("verdict")
+    elif curr_verdict_rank < prev_verdict_rank:
+        regressed_dims.append("verdict")
+    else:
+        neutral_dims.append("verdict")
+
+    # Nonfeed count — improvement from zero counts as improvement
+    prev_nonfeed = prev_fields["nonfeed_findings"]
+    curr_nonfeed = curr_fields["nonfeed_findings"]
+    if curr_nonfeed > prev_nonfeed:
+        improved_dims.append("nonfeed_count")
+    elif curr_nonfeed < prev_nonfeed:
+        regressed_dims.append("nonfeed_count")
+    else:
+        neutral_dims.append("nonfeed_count")
+
+    # Public count — improvement from zero counts as improvement
+    prev_pub = prev_fields["public_findings"]
+    curr_pub = curr_fields["public_findings"]
+    if curr_pub > prev_pub:
+        improved_dims.append("public_count")
+    elif curr_pub < prev_pub:
+        regressed_dims.append("public_count")
+    else:
+        neutral_dims.append("public_count")
+
+    # CT count — improvement from zero counts as improvement
+    prev_ct = prev_fields["ct_findings"]
+    curr_ct = curr_fields["ct_findings"]
+    if curr_ct > prev_ct:
+        improved_dims.append("ct_count")
+    elif curr_ct < prev_ct:
+        regressed_dims.append("ct_count")
+    else:
+        neutral_dims.append("ct_count")
+
+    # Source diversity
+    prev_sd = prev_fields["source_diversity_score"]
+    curr_sd = curr_fields["source_diversity_score"]
+    if curr_sd > prev_sd:
+        improved_dims.append("source_diversity")
+    elif curr_sd < prev_sd:
+        regressed_dims.append("source_diversity")
+    else:
+        neutral_dims.append("source_diversity")
+
+    # Corroboration
+    prev_corr = prev_fields["corroboration_score"]
+    curr_corr = curr_fields["corroboration_score"]
+    if curr_corr > prev_corr:
+        improved_dims.append("corroboration")
+    elif curr_corr < prev_corr:
+        regressed_dims.append("corroboration")
+    else:
+        neutral_dims.append("corroboration")
+
+    # Feed dominance (lower is better — less feed-dominated is improvement)
+    prev_fd = prev_fields["feed_dominance_score"]
+    curr_fd = curr_fields["feed_dominance_score"]
+    if curr_fd < prev_fd:
+        improved_dims.append("feed_dominance")
+    elif curr_fd > prev_fd:
+        regressed_dims.append("feed_dominance")
+    else:
+        neutral_dims.append("feed_dominance")
+
+    # Capability confidence
+    prev_cc = prev_fields["capability_confidence"]
+    curr_cc = curr_fields["capability_confidence"]
+    if curr_cc > prev_cc:
+        improved_dims.append("capability_confidence")
+    elif curr_cc < prev_cc:
+        regressed_dims.append("capability_confidence")
+    else:
+        neutral_dims.append("capability_confidence")
+
+    # Next seeds quality
+    prev_ns = prev_fields["next_seeds_quality"]
+    curr_ns = curr_fields["next_seeds_quality"]
+    if curr_ns > prev_ns:
+        improved_dims.append("next_seeds_quality")
+    elif curr_ns < prev_ns:
+        regressed_dims.append("next_seeds_quality")
+    else:
+        neutral_dims.append("next_seeds_quality")
+
+    # Next seeds count
+    prev_nsc = prev_fields["next_seeds_count"]
+    curr_nsc = curr_fields["next_seeds_count"]
+    if curr_nsc > prev_nsc:
+        improved_dims.append("next_seeds_count")
+    elif curr_nsc < prev_nsc:
+        regressed_dims.append("next_seeds_count")
+    else:
+        neutral_dims.append("next_seeds_count")
+
+    # Hardware taint detection
+    hw_tainted_curr = curr_fields["hardware_constrained"]
+    hw_tainted_prev = prev_fields["hardware_constrained"]
+
+    # Compute boolean flags for return value
+    verdict_improved_flag = curr_verdict_rank > prev_verdict_rank and curr_fields["capability_verdict"] != "unknown"
+    nonfeed_up_flag = curr_nonfeed > prev_nonfeed
+    pub_up_flag = curr_pub > prev_pub
+    ct_up_flag = curr_ct > prev_ct
+
+    # Determine verdict
+    if previous_json is None:
+        verdict = CapabilityDeltaVerdict.NO_PRIOR
+        operator_summary = "No prior run available for comparison."
+    elif hw_tainted_curr:
+        verdict = CapabilityDeltaVerdict.NOT_COMPARABLE_HARDWARE_TAINTED
+        operator_summary = "Current run hardware-constrained. Results not comparable."
+    elif not improved_dims and not regressed_dims:
+        verdict = CapabilityDeltaVerdict.MIXED
+        operator_summary = "Mixed signals — some dimensions improved, some regressed."
+    elif len(improved_dims) > len(regressed_dims):
+        verdict = CapabilityDeltaVerdict.IMPROVED
+        operator_summary = f"Capability improved in: {', '.join(improved_dims)}"
+    elif len(regressed_dims) > len(improved_dims):
+        verdict = CapabilityDeltaVerdict.REGRESSED
+        operator_summary = f"Capability regressed in: {', '.join(regressed_dims)}"
+    else:
+        verdict = CapabilityDeltaVerdict.MIXED
+        operator_summary = f"Tied: {len(improved_dims)} improved, {len(regressed_dims)} regressed. Manual review recommended."
+
+    return CapabilityDelta(
+        capability_delta_verdict=verdict,
+        improved_dimensions=improved_dims,
+        regressed_dimensions=regressed_dims,
+        neutral_dimensions=neutral_dims,
+        operator_summary=operator_summary,
+        verdict_improvement=verdict_improved_flag,
+        nonfeed_count_up=nonfeed_up_flag,
+        public_count_up=pub_up_flag,
+        ct_count_up=ct_up_flag,
+        source_diversity_up=curr_sd > prev_sd,
+        corroboration_up=curr_corr > prev_corr,
+        feed_dominance_down=curr_fd < prev_fd,
+        capability_confidence_up=curr_cc > prev_cc,
+        next_seeds_quality_up=curr_ns > prev_ns,
+        next_seeds_count_up=curr_nsc > prev_nsc,
+        hardware_tainted_current=hw_tainted_curr,
+        hardware_tainted_previous=hw_tainted_prev,
+    )
+
+
+def capability_delta_to_dict(delta: CapabilityDelta) -> dict:
+    """Serialize CapabilityDelta to a JSON-serializable dict."""
+    return {
+        "capability_delta_verdict": delta.capability_delta_verdict.value,
+        "improved_dimensions": delta.improved_dimensions,
+        "regressed_dimensions": delta.regressed_dimensions,
+        "neutral_dimensions": delta.neutral_dimensions,
+        "operator_summary": delta.operator_summary,
+        "verdict_improvement": delta.verdict_improvement,
+        "nonfeed_count_up": delta.nonfeed_count_up,
+        "public_count_up": delta.public_count_up,
+        "ct_count_up": delta.ct_count_up,
+        "source_diversity_up": delta.source_diversity_up,
+        "corroboration_up": delta.corroboration_up,
+        "feed_dominance_down": delta.feed_dominance_down,
+        "capability_confidence_up": delta.capability_confidence_up,
+        "next_seeds_quality_up": delta.next_seeds_quality_up,
+        "next_seeds_count_up": delta.next_seeds_count_up,
+        "hardware_tainted_current": delta.hardware_tainted_current,
+        "hardware_tainted_previous": delta.hardware_tainted_previous,
+    }
 
 
 def _load_kpi(filepath: Path) -> dict:

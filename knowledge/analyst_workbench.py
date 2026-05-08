@@ -103,6 +103,7 @@ class AnalystBrief:
     F225B: Added source_family_summary, evidence_gaps, risk_hypotheses,
            feed_cluster_summary, pivot_recommendations fields.
     F225C: Added corroboration_summary field.
+    F226E: Added target_memory_feedback field.
 
     A model-free summary of sprint results: what changed, strongest evidence,
     next best pivots, and open questions.
@@ -141,6 +142,8 @@ class AnalystBrief:
     risk_hypotheses: tuple[str, ...] = field(default_factory=lambda: ())
     feed_cluster_summary: tuple[str, ...] = field(default_factory=lambda: ())
     pivot_recommendations: tuple[str, ...] = field(default_factory=lambda: ())
+    # F226E: Derived target memory feedback (repeated_feed_dominance, prior_nonfeed_weakness, etc.)
+    target_memory_feedback: dict[str, Any] = field(default_factory=lambda: {})
 @dataclass(frozen=True, slots=True)
 class EvidencePointer:
     """
@@ -845,6 +848,103 @@ class AnalystWorkbench:
             return None
 
     # -------------------------------------------------------------------------
+    # F226E: Target memory feedback — repeated feed dominance detection
+    # -------------------------------------------------------------------------
+
+    def _derive_target_memory_feedback(
+        self, target_memory: dict[str, Any], findings: list[Any]
+    ) -> dict[str, Any]:
+        """
+        F226E: Derive next-run advice from target memory history.
+
+        Computed from existing surfaces only (target_memory + findings).
+        NO new DB API, NO network, NO model.
+
+        Returns:
+            dict with keys:
+              - repeated_feed_dominance: bool
+              - prior_nonfeed_weakness: bool
+              - prior_public_accepted_count: int
+              - prior_ct_accepted_count: int
+              - suggested_next_profile: str
+              - suggested_feed_cap_reason: str
+              - suggested_nonfeed_lanes: str
+        """
+        try:
+            mem_sprints = target_memory.get("sprint_count", 0) or 0
+            mem_findings = target_memory.get("cumulative_finding_count", 0) or 0
+            if mem_sprints < 2:
+                return {}
+
+            # Count current sprint feed ratio from findings
+            current_feed = sum(
+                1 for f in findings
+                if "feed" in (getattr(f, "source_type", None) or "").lower()
+            )
+            current_total = max(len(findings), 1)
+            current_feed_ratio = current_feed / current_total
+
+            # Detect repeated feed dominance: current is feed-heavy AND prior runs also feed-heavy
+            # We use entity_facets / exposure_facets as proxy — feed-heavy runs have many feed entities
+            entity_facets = target_memory.get("entity_facets", {})
+            exposure_facets = target_memory.get("exposure_facets", {})
+            # Prior feed dominance inferred from high entity count + low nonfeed evidence
+            prior_feed_heavy = (
+                len(entity_facets) > 5
+                and len(exposure_facets) == 0
+                and mem_findings > 10
+                and current_feed_ratio >= 0.8
+            )
+            repeated_feed_dominance = bool(prior_feed_heavy and mem_sprints >= 2)
+
+            # Prior nonfeed weakness: no public or CT findings in prior sprints
+            pivot_facets = target_memory.get("pivot_facets", {})
+            prior_public = sum(1 for k in pivot_facets if "public" in str(k).lower())
+            prior_ct = sum(1 for k in pivot_facets if "ct" in str(k).lower())
+            prior_nonfeed_weakness = bool(
+                (prior_public == 0 or prior_ct == 0) and mem_sprints >= 2
+            )
+
+            # Prior accepted counts (approximated from entity_facets count as proxy)
+            prior_public_accepted = max(0, prior_public)
+            prior_ct_accepted = max(0, prior_ct)
+
+            # Suggested next profile and lanes
+            if repeated_feed_dominance:
+                suggested_next_profile = "nonfeed_diagnostic180"
+                suggested_nonfeed_lanes = "PUBLIC,CT"
+                suggested_feed_cap_reason = "break_feed_cycle"
+            elif prior_nonfeed_weakness:
+                if prior_public == 0 and prior_ct > 0:
+                    suggested_next_profile = "PUBLIC"
+                    suggested_nonfeed_lanes = "PUBLIC"
+                    suggested_feed_cap_reason = "bootstrap_public_bridge"
+                elif prior_ct == 0 and prior_public > 0:
+                    suggested_next_profile = "CT"
+                    suggested_nonfeed_lanes = "CT"
+                    suggested_feed_cap_reason = "bootstrap_ct_provider"
+                else:
+                    suggested_next_profile = "nonfeed"
+                    suggested_nonfeed_lanes = "PUBLIC,CT"
+                    suggested_feed_cap_reason = "balance_lanes"
+            else:
+                suggested_next_profile = ""
+                suggested_nonfeed_lanes = ""
+                suggested_feed_cap_reason = ""
+
+            return {
+                "repeated_feed_dominance": repeated_feed_dominance,
+                "prior_nonfeed_weakness": prior_nonfeed_weakness,
+                "prior_public_accepted_count": prior_public_accepted,
+                "prior_ct_accepted_count": prior_ct_accepted,
+                "suggested_next_profile": suggested_next_profile,
+                "suggested_feed_cap_reason": suggested_feed_cap_reason,
+                "suggested_nonfeed_lanes": suggested_nonfeed_lanes,
+            }
+        except Exception:
+            return {}
+
+    # -------------------------------------------------------------------------
     # F204E: Sprint Brief Generation
     # -------------------------------------------------------------------------
 
@@ -1096,6 +1196,19 @@ class AnalystWorkbench:
             # F225B: Pivot recommendations (always computed, bounded to MAX_PIVOT_RECOMMENDATIONS)
             pivot_recommendations = self._build_pivot_recommendations(findings, graph_signal)
 
+            # F226E: Derive target memory feedback (always, even if no memory)
+            tmf: dict[str, Any] = {}
+            if target_memory:
+                tmf = self._derive_target_memory_feedback(target_memory, findings)
+                if tmf.get("repeated_feed_dominance"):
+                    gaps = list(evidence_gaps)
+                    gaps.append(f"F226E: Repeated feed-dominant sprint — consider non-feed diagnostic: {tmf.get('suggested_nonfeed_lanes', 'CT/PUBLIC')}")
+                    evidence_gaps = tuple(gaps[:5])
+                if tmf.get("prior_nonfeed_weakness"):
+                    pivots = list(pivot_recommendations)
+                    pivots.append(f"F226E: Prior {tmf.get('suggested_next_profile', 'nonfeed')} weakness — bootstrap {tmf.get('suggested_feed_cap_reason', 'PUBLIC')} lane")
+                    pivot_recommendations = tuple(pivots[:5])
+
             return AnalystBrief(
                 sprint_id=sprint_id,
                 target_id=target_id,
@@ -1112,6 +1225,7 @@ class AnalystWorkbench:
                 risk_hypotheses=risk_hypotheses,
                 feed_cluster_summary=feed_cluster_summary,
                 pivot_recommendations=pivot_recommendations,
+                target_memory_feedback=tmf,
             )
         except Exception:
             # Fallback: minimal brief on any error
