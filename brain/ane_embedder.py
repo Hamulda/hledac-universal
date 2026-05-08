@@ -10,21 +10,78 @@ Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector 
 import asyncio
 import logging
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Union
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 try:
-    import coremltools as ct
+    import CoreML as _CoreML
+    import Foundation as _Foundation
     ANE_AVAILABLE = True
 except ImportError:
     ANE_AVAILABLE = False
-    ct = None
+    _CoreML = None
+    _Foundation = None
 
 MODELS_DIR = Path.home() / ".hledac" / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Sprint 8VF-ANE: pyobjc CoreML inference helpers
+_HF_TOKENIZER = None
+
+def _get_hf_tokenizer():
+    global _HF_TOKENIZER
+    if _HF_TOKENIZER is None:
+        from transformers import AutoTokenizer
+        _HF_TOKENIZER = AutoTokenizer.from_pretrained(
+            "sentence-transformers/all-MiniLM-L6-v2", use_fast=True
+        )
+    return _HF_TOKENIZER
+
+def _make_ml_array(data_list: list, length: int = 64):
+    arr, err = _CoreML.MLMultiArray.alloc().initWithShape_dataType_error_(
+        [1, length], _CoreML.MLMultiArrayDataTypeInt32, None
+    )
+    if err:
+        raise RuntimeError(f"MLMultiArray init failed: {err}")
+    ns_vals = [_Foundation.NSNumber.numberWithInt_(v) for v in data_list]
+    ns_arr  = _Foundation.NSArray.arrayWithArray_(ns_vals)
+    for i in range(length):
+        arr.setObject_atIndexedSubscript_(ns_arr[i], i)
+    return arr
+
+def _coreml_embed(model, text: str) -> "np.ndarray":
+    tok = _get_hf_tokenizer()
+    tokens = tok(
+        text[:256],
+        return_tensors="np",
+        padding="max_length",
+        max_length=64,
+        truncation=True,
+    )
+    input_ids = tokens["input_ids"].astype(np.int32).flatten().tolist()
+    attn_mask  = tokens["attention_mask"].astype(np.int32).flatten().tolist()
+    feat_dict = {
+        "input_ids":      _make_ml_array(input_ids),
+        "attention_mask": _make_ml_array(attn_mask),
+    }
+    provider, err = _CoreML.MLDictionaryFeatureProvider.alloc().initWithDictionary_error_(
+        feat_dict, None
+    )
+    if err:
+        raise RuntimeError(f"Feature provider failed: {err}")
+    result, err = model.predictionFromFeatures_error_(provider, None)
+    if err:
+        raise RuntimeError(f"Inference failed: {err}")
+    vec_raw = result.featureValueForName_("var_570").multiArrayValue()
+    vec = np.array(
+        [float(vec_raw.objectAtIndexedSubscript_(i)) for i in range(384)],
+        dtype=np.float32,
+    )
+    norm = np.linalg.norm(vec)
+    return vec / norm if norm > 0 else vec
 
 
 class ANEEmbedder:
@@ -53,44 +110,54 @@ class ANEEmbedder:
             logger.info(f"ANE model {self.model_name} not found, skipping (fallback to MLX)")
             return
         try:
-            self.model = ct.models.MLModel(str(self.coreml_path))
+            url = _CoreML.NSURL.fileURLWithPath_(str(self.coreml_path))
+            model, err = _CoreML.MLModel.modelWithContentsOfURL_error_(url, None)
+            if err:
+                raise RuntimeError(f"CoreML load failed: {err}")
+            self.model = model
             self._loaded = True
             logger.info(f"ANEEmbedder loaded for {self.model_name}")
         except Exception as e:
             logger.warning(f"ANE embedder failed to load: {e}, using MLX fallback")
 
-    async def convert_to_ane(self):
-        """
-        Offline konverze – lze zavolat z CLI nebo při prvním startu.
-        V produkci by zde byl kód pro konverzi MLX modelu do CoreML.
-        """
+    async def convert_to_ane(self) -> bool:
+        """Check for pre-compiled .mlmodelc — no conversion needed."""
         if not ANE_AVAILABLE:
-            logger.warning("CoreML not available, cannot convert")
+            logger.warning("[ANE] CoreML (pyobjc) not available")
             return False
-        if self.coreml_path.exists():
-            logger.info(f"ANE model already exists at {self.coreml_path}")
+        compiled_path = MODELS_DIR / "AllMiniLML6V2.mlmodelc"
+        if compiled_path.exists():
+            self.coreml_path = compiled_path
+            logger.info("[ANE] Pre-compiled model found: %s", compiled_path)
             return True
-        # Placeholder pro skutečnou konverzi
-        logger.info(f"Converting {self.model_name} to CoreML...")
-        await asyncio.sleep(2)  # simulace
-        # Vytvoříme prázdný soubor jako placeholder
-        self.coreml_path.touch()
-        self._loaded = True
-        logger.info(f"Conversion successful, model saved to {self.coreml_path}")
-        return True
+        raw_path = MODELS_DIR / "AllMiniLML6V2.mlmodel"
+        if raw_path.exists():
+            logger.info("[ANE] Compiling %s ...", raw_path)
+            loop = asyncio.get_running_loop()
+            def _compile():
+                url = _CoreML.NSURL.fileURLWithPath_(str(raw_path))
+                compiled_url, err = _CoreML.MLModel.compileModelAtURL_error_(url, None)
+                if err:
+                    raise RuntimeError(f"Compile failed: {err}")
+                import shutil
+                compiled_str = str(compiled_url).replace("file://", "")
+                shutil.copytree(compiled_str, str(compiled_path), dirs_exist_ok=True)
+                return compiled_path
+            self.coreml_path = await loop.run_in_executor(None, _compile)
+            logger.info("[ANE] Compiled to %s", self.coreml_path)
+            return True
+        logger.warning("[ANE] No model found at %s or %s", compiled_path, raw_path)
+        return False
 
     async def embed(self, texts: Union[str, List[str]]) -> np.ndarray:
-        """
-        Vrací embeddingy. Pokud není CoreML model načten, vyvolá NotImplementedError,
-        což signalizuje, že je třeba použít fallback.
-        """
         if not self._loaded or self.model is None:
             raise NotImplementedError("ANE embedder not loaded, use fallback")
         if isinstance(texts, str):
             texts = [texts]
-        # Zde by byla skutečná inference na ANE
-        # Prozatím vyhodíme chybu, aby bylo jasné, že je potřeba implementovat
-        raise NotImplementedError("Real CoreML inference not implemented yet")
+        loop = asyncio.get_running_loop()
+        def _run():
+            return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
+        return await loop.run_in_executor(None, _run)
 
     async def warmup(self) -> None:
         """
@@ -179,9 +246,7 @@ async def semantic_dedup_findings(
         vecs = []
         for t in texts:
             try:
-                # Adapt input/output keys to actual CoreML model
-                pred = embedder.model.predict({"input": t[:512]})
-                vec  = list(pred.values())[0].flatten()
+                vec = _coreml_embed(embedder.model, t)
                 vecs.append(vec)
             except Exception:
                 vecs.append(np.zeros(384, dtype=np.float32))
@@ -237,8 +302,7 @@ def rerank_findings_cosine(
         import numpy as np
 
         def _embed(text: str) -> np.ndarray:
-            pred = embedder.model.predict({"input": text[:512]})
-            return list(pred.values())[0].flatten()
+            return _coreml_embed(embedder.model, text)
 
         q_vec = _embed(query[:512])
         q_norm = np.linalg.norm(q_vec) + 1e-9

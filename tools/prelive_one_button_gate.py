@@ -137,6 +137,26 @@ _F221_REQUIRED_PROBES = [
     ("probe_f221g_nonfeed_diag_ready", "nonfeed_diag_ready.json"),
 ]
 
+# --------------------------------------------------------------------------- #
+# F223 post-F223 required artifacts (Sprint F224E)
+# --------------------------------------------------------------------------- #
+
+# Required: all must be present and valid
+_F223_REQUIRED_PROBES = [
+    ("probe_f223a_nonfeed_profile_propagation", "nonfeed_profile_propagation.json"),
+    ("probe_f223b_terminality_verdict_ssot", "terminality_verdict_ssot.json"),
+    ("probe_f223c_public_counter_truth", "public_counter_truth.json"),
+    ("probe_f223d_product_value_reality", "product_value_reality.json"),
+    ("probe_f223h_cwd_invocation_guard", "cwd_invocation_guard.json"),
+]
+
+# Optional: advisory only, do not block
+_F223_OPTIONAL_PROBES = [
+    ("probe_f223e_async_resource_hygiene", "async_resource_hygiene.json"),
+    ("probe_f223f_analyst_brief_reality", "analyst_brief_reality.json"),
+    ("probe_f223g_persistent_dedup_audit", "persistent_dedup_audit.json"),
+]
+
 
 # --------------------------------------------------------------------------- #
 # UMA sampling (read-only, no live sprint)
@@ -212,6 +232,63 @@ def _check_all_f221_artifacts(repo_root: Path) -> tuple[list[F221ArtifactResult]
             missing.append(result)
 
     return results, missing
+
+
+# --------------------------------------------------------------------------- #
+# F223 artifact check helpers (Sprint F224E)
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class F223ArtifactResult:
+    probe_dir: str
+    filename: str
+    found: bool
+    valid: bool = False
+    parse_error: Optional[str] = None
+
+
+def _check_f223_artifact(repo_root: Path, probe_dir: str, filename: str) -> F223ArtifactResult:
+    """Check a single F223 probe artifact exists and is parseable JSON."""
+    full_path = repo_root / probe_dir / filename
+    result = F223ArtifactResult(probe_dir=probe_dir, filename=filename, found=False)
+
+    if not full_path.exists():
+        return result
+
+    result.found = True
+    try:
+        with open(full_path, "r", encoding="utf-8") as fh:
+            json.load(fh)
+        result.valid = True
+    except json.JSONDecodeError as exc:
+        result.parse_error = f"JSON decode error: {exc}"
+    except Exception as exc:
+        result.parse_error = str(exc)
+
+    return result
+
+
+def _check_all_f223_artifacts(repo_root: Path) -> tuple[list[F223ArtifactResult], list[F223ArtifactResult], list[F223ArtifactResult]]:
+    """
+    Check all F223 artifacts. Returns (required_results, required_missing, optional_results).
+    Required missing blocks RUN_NOW / RESTART_THEN_RUN.
+    """
+    required_results: list[F223ArtifactResult] = []
+    required_missing: list[F223ArtifactResult] = []
+    optional_results: list[F223ArtifactResult] = []
+
+    for probe_dir, filename in _F223_REQUIRED_PROBES:
+        result = _check_f223_artifact(repo_root, probe_dir, filename)
+        required_results.append(result)
+        if not result.valid:
+            required_missing.append(result)
+
+    for probe_dir, filename in _F223_OPTIONAL_PROBES:
+        result = _check_f223_artifact(repo_root, probe_dir, filename)
+        optional_results.append(result)
+        # optional never blocks
+
+    return required_results, required_missing, optional_results
 
 
 # --------------------------------------------------------------------------- #
@@ -332,11 +409,15 @@ class OneButtonResult:
     f221_artifacts: dict = field(default_factory=dict)
     missing_f221: list[str] = field(default_factory=list)
     missing_cross_sprint: list[str] = field(default_factory=list)
+    # F223 artifacts (Sprint F224E)
+    f223_artifacts: dict = field(default_factory=dict)
+    missing_f223_required: list[str] = field(default_factory=list)
+    f223_optional_status: dict = field(default_factory=dict)
     provider_surface_ok: bool = True
     fallback_schema_blocked: bool = False
     swap_policy_tier: str = "unknown"
     swap_gate_reason: str = ""
-    suggested_command: str = ""
+    live_command: dict = field(default_factory=dict)  # {command, expected_assertions}
     triage_verdict: Optional[str] = None
     triage_another_live_useful: Optional[bool] = None
 
@@ -350,11 +431,14 @@ class OneButtonResult:
             "f221_artifacts": self.f221_artifacts,
             "missing_f221": self.missing_f221,
             "missing_cross_sprint": self.missing_cross_sprint,
+            "f223_artifacts": self.f223_artifacts,
+            "missing_f223_required": self.missing_f223_required,
+            "f223_optional_status": self.f223_optional_status,
             "provider_surface_ok": self.provider_surface_ok,
             "fallback_schema_blocked": self.fallback_schema_blocked,
             "swap_policy_tier": self.swap_policy_tier,
             "swap_gate_reason": self.swap_gate_reason,
-            "suggested_command": self.suggested_command,
+            "live_command": self.live_command,
             "triage_verdict": self.triage_verdict,
             "triage_another_live_useful": self.triage_another_live_useful,
         }
@@ -406,6 +490,43 @@ def run_one_button_gate(
     _, cross_missing = _check_cross_sprint_artifacts(repo_root)
     missing_cross_sprint = [f"{r.probe_dir}/{r.filename}" for r in cross_missing]
 
+    # 3b. Check F223 post-F223 artifacts (Sprint F224E)
+    f223_results, f223_required_missing, f223_optional = _check_all_f223_artifacts(repo_root)
+    missing_f223_required = [f"{r.probe_dir}/{r.filename}" for r in f223_required_missing]
+
+    f223_artifacts = {
+        "required_total": len(f223_results),
+        "required_valid": sum(1 for r in f223_results if r.valid),
+        "required_missing": len(f223_required_missing),
+        "optional_total": len(f223_optional),
+        "optional_valid": sum(1 for r in f223_optional if r.valid),
+        "required_details": [
+            {
+                "probe_dir": r.probe_dir,
+                "filename": r.filename,
+                "found": r.found,
+                "valid": r.valid,
+                "parse_error": r.parse_error,
+            }
+            for r in f223_results
+        ],
+        "optional_details": [
+            {
+                "probe_dir": r.probe_dir,
+                "filename": r.filename,
+                "found": r.found,
+                "valid": r.valid,
+                "parse_error": r.parse_error,
+            }
+            for r in f223_optional
+        ],
+    }
+
+    f223_optional_status = {
+        "total": len(f223_optional),
+        "valid": sum(1 for r in f223_optional if r.valid),
+    }
+
     # 4. Load decision gate if provided
     decision_data = _load_decision_gate(decision_gate_path)
 
@@ -429,15 +550,38 @@ def run_one_button_gate(
         swap_policy_tier = "hard_block"
         swap_gate_reason = f"swap={swap_gib:.3f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB}GiB"
 
-    # 8. Build suggested command
+    # 8. Build live command dict (Sprint F224E)
     encoded_query = query.replace('"', '\\"')
-    suggested_command = (
-        f"rtk proxy python benchmarks/live_sprint_measurement.py "
-        f"--profile {profile} "
-        f'--query "{encoded_query}" '
-        f"--live "
-        f"--require-memory-ok"
-    )
+
+    live_command = {
+        "command": (
+            f"cd /Users/vojtechhamada/PycharmProjects/Hledac && "
+            f"rtk proxy python -m hledac.universal.benchmarks.live_sprint_measurement "
+            f"--profile {profile} "
+            f'--query "{encoded_query}" '
+            f"--live "
+            f"--require-memory-ok "
+            f"--output-json <path> "
+            f"--output-md <path>"
+        ),
+        "expected_assertions": {
+            "acquisition_profile": profile,
+            "nonfeed_priority_enabled": True,
+            "terminality_satisfied_cannot_produce_FAIL_TERMINALITY_UNSATISFIED": True,
+            "FAIL_NONFEED_EVIDENCE_MISSING_when_nonfeed_evidence_missing": True,
+            "runtime_accepted_findings_divergence_explicit": True,
+            "public_stage_counters_raw_count_source_present": True,
+        },
+        "abort_if": {
+            "swap_above_hard_block": f"swap > {DIAGNOSTIC_SWAP_MAX_GIB}GiB",
+            "missing_f223_required_artifacts": "any F223 required artifact missing",
+            "uma_state_critical_or_emergency": "uma_state in (critical, emergency)",
+            "provider_surface_not_ok": "provider_surface_ok == False",
+            "fallback_schema_blocked": "fallback_schema_blocked == True",
+        },
+        "profile": profile,
+        "query": query,
+    }
 
     # 9. Decision tree
     # Rule 1: Missing F221 artifacts → DO_NOT_RUN_FIX_ARTIFACTS
@@ -447,6 +591,12 @@ def run_one_button_gate(
         reasons.append(f"Missing required F221 probe artifacts: {', '.join(missing_f221)}")
         if missing_cross_sprint:
             reasons.append(f"Also missing cross-sprint artifacts: {', '.join(missing_cross_sprint)}")
+
+    # Rule 1b: Missing F223 required artifacts → DO_NOT_RUN_FIX_ARTIFACTS (Sprint F224E)
+    elif missing_f223_required:
+        verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
+        live_allowed = False
+        reasons.append(f"Missing required F223 post-F223 probe artifacts: {', '.join(missing_f223_required)}")
 
     # Rule 2: Fallback schema → DO_NOT_RUN_CONTRACT
     elif fallback_blocked:
@@ -498,11 +648,14 @@ def run_one_button_gate(
         f221_artifacts=f221_artifacts,
         missing_f221=missing_f221,
         missing_cross_sprint=missing_cross_sprint,
+        f223_artifacts=f223_artifacts,
+        missing_f223_required=missing_f223_required,
+        f223_optional_status=f223_optional_status,
         provider_surface_ok=provider_surface_ok,
         fallback_schema_blocked=fallback_blocked,
         swap_policy_tier=swap_policy_tier,
         swap_gate_reason=swap_gate_reason,
-        suggested_command=suggested_command,
+        live_command=live_command,
         triage_verdict=triage_verdict,
         triage_another_live_useful=triage_another_live_useful,
     )
@@ -593,6 +746,45 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
                 f"{'✅' if d['found'] else '❌'} | {'✅' if d['valid'] else '❌'} |"
             )
 
+    # F223 post-F223 artifact status (Sprint F224E)
+    f223a = result.f223_artifacts
+    lines.extend(["", "---", "", "## F223 Post-F223 Artifact Status (Sprint F224E)", ""])
+    if f223a:
+        lines.extend([
+            f"| Required Total | {f223a.get('required_total', 0)} |",
+            f"| Required Valid | {f223a.get('required_valid', 0)} |",
+            f"| Required Missing | {f223a.get('required_missing', 0)} |",
+            f"| Optional Total | {f223a.get('optional_total', 0)} |",
+            f"| Optional Valid | {f223a.get('optional_valid', 0)} |",
+        ])
+
+    if result.missing_f223_required:
+        lines.append("")
+        lines.append("**Missing F223 Required Artifacts:**")
+        for m in result.missing_f223_required:
+            lines.append(f"- `{m}`")
+
+    if f223a and f223a.get("required_details"):
+        lines.extend(["", "### F223 Required Artifact Details", ""])
+        lines.append("| Probe | Artifact | Found | Valid |")
+        lines.append("|------|----------|-------|-------|")
+        for d in f223a["required_details"]:
+            lines.append(
+                f"| {d['probe_dir']} | {d['filename']} | "
+                f"{'✅' if d['found'] else '❌'} | {'✅' if d['valid'] else '❌'} |"
+            )
+
+    if f223a and f223a.get("optional_details"):
+        lines.extend(["", "### F223 Optional Artifact Details", ""])
+        lines.append(f"(_Optional — advisory only, does not block_)")
+        lines.append("| Probe | Artifact | Found | Valid |")
+        lines.append("|------|----------|-------|-------|")
+        for d in f223a["optional_details"]:
+            lines.append(
+                f"| {d['probe_dir']} | {d['filename']} | "
+                f"{'✅' if d['found'] else '❌'} | {'✅' if d['valid'] else '❌'} |"
+            )
+
     lines.extend(["", "---", "", "## Provider Surface", ""])
     ps_icon = "✅" if result.provider_surface_ok else "❌"
     lines.append(f"- **OK:** {ps_icon} `{result.provider_surface_ok}`")
@@ -603,8 +795,26 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
         lines.append(f"- **Triage Verdict:** `{result.triage_verdict}`")
         lines.append(f"- **Another Live Useful:** `{result.triage_another_live_useful}`")
 
-    lines.extend(["", "---", "", "## Suggested Command", ""])
-    lines.append(f"```bash\n{result.suggested_command}\n```")
+    lines.extend(["", "---", "", "## Live Command (Sprint F224E)", ""])
+
+    lc = result.live_command
+    if lc:
+        lines.append("### Exact Command")
+        lines.append(f"```bash\n{lc.get('command', '')}\n```")
+
+        lines.append("")
+        lines.append("### Expected Post-F223 Assertions")
+        assertions = lc.get("expected_assertions", {})
+        for key, val in assertions.items():
+            lines.append(f"- `{key}` → `{val}`")
+
+        lines.append("")
+        lines.append("### Abort Conditions")
+        abort_if = lc.get("abort_if", {})
+        for reason, desc in abort_if.items():
+            lines.append(f"- **{reason}:** {desc}")
+    else:
+        lines.append("_No live command generated (gate did not pass)._")
 
     lines.extend([
         "",
@@ -731,11 +941,27 @@ def main() -> int:
         print(f"Missing F221 artifacts ({len(result.missing_f221)}):")
         for m in result.missing_f221:
             print(f"  - {m}")
+    if result.missing_f223_required:
+        print(f"Missing F223 required artifacts ({len(result.missing_f223_required)}):")
+        for m in result.missing_f223_required:
+            print(f"  - {m}")
     uma_sw = result.uma.get("swap_used_gib", 0)
     print(f"UMA: swap={uma_sw:.3f}GiB")
     print()
-    print(f"Suggested command:")
-    print(f"  {result.suggested_command}")
+    lc = result.live_command
+    if lc:
+        print(f"Live command:")
+        print(f"  {lc.get('command', '')}")
+        print()
+        print("Expected assertions:")
+        for key, val in lc.get("expected_assertions", {}).items():
+            print(f"  {key} → {val}")
+        print()
+        print("Abort conditions:")
+        for reason, desc in lc.get("abort_if", {}).items():
+            print(f"  {reason}: {desc}")
+    else:
+        print("No live command generated (gate did not pass).")
 
     # Write JSON
     if args.output_json:

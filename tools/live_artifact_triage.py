@@ -41,6 +41,7 @@ class RootCause(str, Enum):
     CT_TERMINALITY_MISSING = "CT_TERMINALITY_MISSING"
     PUBLIC_TERMINALITY_MISSING = "PUBLIC_TERMINALITY_MISSING"
     TERMINALITY_SURFACE_DRIFT = "TERMINALITY_SURFACE_DRIFT"
+    NONFEED_EVIDENCE_MISSING = "NONFEED_EVIDENCE_MISSING"
     UNKNOWN = "UNKNOWN"
 
 
@@ -669,6 +670,31 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
             extracted_metrics={"run_quality_verdict": verdict},
             exact_followup_command=(
                 "python benchmarks/live_sprint_measurement.py --print-preflight-only"
+            ),
+        )
+
+    # -------------------------------------------------------------------------
+    # 8. NONFEED_EVIDENCE_MISSING — FAIL_NONFEED_EVIDENCE_MISSING verdict
+    # F224C: Terminality was likely satisfied but nonfeed evidence was insufficient.
+    # Distinct from TERMINALITY_UNSATISFIED (which means terminality itself failed).
+    # NOT memory blocked, NOT windup bug, NOT benchmark drift.
+    # -------------------------------------------------------------------------
+    if verdict == "FAIL_NONFEED_EVIDENCE_MISSING":
+        return TriageResult(
+            root_cause_class=RootCause.NONFEED_EVIDENCE_MISSING,
+            confidence=0.90,
+            reasons=[
+                "verdict=FAIL_NONFEED_EVIDENCE_MISSING — terminality likely satisfied",
+                "nonfeed lanes ran or were terminal but accepted evidence was insufficient",
+            ],
+            next_best_action="retry_nonfeed_diagnostic180 or inspect PUBLIC/CT evidence blockers",
+            recommended_sprint_family=SprintFamily.F217,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={"run_quality_verdict": verdict},
+            exact_followup_command=(
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
+                f'--query "{_query(data)}" --live'
             ),
         )
 

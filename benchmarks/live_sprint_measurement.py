@@ -93,9 +93,9 @@ _sys.modules['hledac'] = _hledac_stub
 from hledac.universal.core import __main__ as core_main
 from hledac.universal.paths import get_sprint_json_report_path
 
+# NOW LAZY: moved to lazy-import inside _stamp_live_kpi()
 # F214C: research_quality integration (no network, no MLX — pure scoring)
-from tools.research_quality_score import score_research_quality
-
+# F224B: Removed top-level import. Heavy modules deferred to call site only.
 # -----------------------------------------------------------------------------
 # Profile definitions
 # ---------------------------------------------------------------------------
@@ -833,7 +833,9 @@ def _derive_run_quality_verdict(
             elif acquisition_terminality_checked is not True:
                 verdict = RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED
             # 4c: acquisition_terminality_satisfied must be True AND missing_lanes must be empty
-            elif acquisition_terminality_satisfied is not True or (
+            # F224A: fixed — missing_lanes alone must NOT override satisfied=True;
+            # non-empty missing_lanes is a diagnostic signal only, not a verdict override.
+            elif acquisition_terminality_satisfied is not True and (
                 acquisition_terminality_missing_lanes is not None
                 and acquisition_terminality_missing_lanes != ()
             ):
@@ -2263,6 +2265,10 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         planned_duration_s=getattr(result, "planned_duration_s", None),
     )
     result.live_kpi = kpi
+
+    # F224B: Lazy import — only load research_quality_score when live_kpi is stamped.
+    # This keeps --print-invocation-reality free of this heavy-ish module.
+    from tools.research_quality_score import score_research_quality
 
     # F214C: Stamp research quality score into live_kpi
     # score_research_quality expects a dict with runtime_truth / live_kpi fields

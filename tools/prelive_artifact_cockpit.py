@@ -21,12 +21,175 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import textwrap
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+
+# --------------------------------------------------------------------------- #
+# Sprint ID Collision Detection — F224D
+# --------------------------------------------------------------------------- #
+
+# Pattern: F + 3+ digits + optional letter suffix
+_SPRINT_ID_RE = re.compile(r"^F(\d{3,})[A-Z]?(?:_[A-Z_]+)?$")
+
+
+@dataclass
+class SprintIdCollision:
+    sprint_id: str
+    aliases: list[str] = field(default_factory=list)
+    probe_dirs: list[str] = field(default_factory=list)
+    report_paths: list[str] = field(default_factory=list)
+    json_paths: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SprintCollisionReport:
+    has_collisions: bool = False
+    collisions: list[SprintIdCollision] = field(default_factory=list)
+    total_probes_scanned: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+
+def _canonical_base(sprint_id: str) -> tuple[str, str]:
+    """Return (base, qualifier) for disambiguation.
+
+    base=F223D, qualifier='' for plain F223D
+    base=F223D, qualifier='_PRODUCT_VALUE' for F223D_PRODUCT_VALUE
+    """
+    m = _SPRINT_ID_RE.match(sprint_id)
+    if not m:
+        return sprint_id, ""
+    digits = m.group(1)
+    suffix = sprint_id[len(f"F{digits}"):]
+    base = f"F{digits}"
+    qualifier = suffix if suffix else ""
+    return base, qualifier
+
+
+def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
+    """Scan probe_f* directories for sprint ID collisions.
+
+    Detects:
+    - Multiple probe dirs with the same sprint ID (e.g. F223D product_value + F223D prewindup)
+    - Ambiguous aliases that could confuse operator reports
+
+    Returns SprintCollisionReport with collision list and warnings.
+    """
+    universal_root = repo_root / "hledac" / "universal"
+    probe_root = universal_root if universal_root.exists() else repo_root
+
+    by_base: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+
+    probe_dirs_found = []
+
+    try:
+        for item in sorted(probe_root.iterdir()):
+            if not item.is_dir():
+                continue
+            name = item.name
+            if not name.startswith("probe_f"):
+                continue
+            probe_dirs_found.append(name)
+
+            report_path = None
+            json_path = None
+            sprint_id = name
+
+            json_files = list(item.glob("*.json"))
+
+            if json_files:
+                json_path = json_files[0]
+                try:
+                    with open(json_path, encoding="utf-8") as f:
+                        data = json.load(f)
+                        sprint_id = data.get("sprint_id", name)
+                except Exception:
+                    pass
+
+            md_files = list(item.glob("REPORT_*.md"))
+            if md_files:
+                report_path = md_files[0]
+
+            base, qualifier = _canonical_base(sprint_id)
+            by_base[base][qualifier if qualifier else ""].append({
+                "probe_dir": name,
+                "sprint_id": sprint_id,
+                "report_path": str(report_path) if report_path else "",
+                "json_path": str(json_path) if json_path else "",
+            })
+
+    except Exception as exc:
+        return SprintCollisionReport(warnings=[f"scan_probe_artifacts failed: {exc}"])
+
+    collisions = []
+    for base, qualifiers in sorted(by_base.items()):
+        entries_by_qual = {q: v for q, v in qualifiers.items() if q}
+        if len(entries_by_qual) > 1:
+            all_entries = []
+            all_aliases = []
+            for q, entries in entries_by_qual.items():
+                for e in entries:
+                    all_aliases.append(f"{base}{q}")
+                    all_entries.append(e)
+
+            collisions.append(SprintIdCollision(
+                sprint_id=base,
+                aliases=list(dict.fromkeys(all_aliases)),
+                probe_dirs=[e["probe_dir"] for e in all_entries],
+                report_paths=[e["report_path"] for e in all_entries],
+                json_paths=[e["json_path"] for e in all_entries],
+            ))
+
+    return SprintCollisionReport(
+        has_collisions=len(collisions) > 0,
+        collisions=collisions,
+        total_probes_scanned=len(probe_dirs_found),
+    )
+
+
+def render_collision_warning(report: SprintCollisionReport) -> list[str]:
+    """Render collision warnings as markdown lines."""
+    if not report.has_collisions:
+        return []
+
+    lines = ["", "## Sprint ID Collision Warning", ""]
+    lines.append(f"⚠️ **Detected {len(report.collisions)} sprint ID collision(s)** across {report.total_probes_scanned} probes scanned.")
+    lines.append("")
+
+    for coll in report.collisions:
+        lines.append(f"### Collision: `{coll.sprint_id}`")
+        lines.append(f"**Aliases:** {', '.join(f'`{a}`' for a in coll.aliases)}")
+        lines.append("")
+        lines.append("| Probe Directory | Report | JSON |")
+        lines.append("|----------------|--------|-----|")
+        for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths):
+            lines.append(f"| `{probe_dir}` | {report_p or 'N/A'} | {json_p or 'N/A'} |")
+        lines.append("")
+        lines.append(f"**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.")
+
+    return lines
+
+
+@dataclass
+class SprintIdCollisionWarning:
+    has_collisions: bool = False
+    collision_count: int = 0
+    total_probes_scanned: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "has_collisions": self.has_collisions,
+            "collision_count": self.collision_count,
+            "total_probes_scanned": self.total_probes_scanned,
+            "warnings": self.warnings,
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -102,6 +265,9 @@ class CockpitResult:
     # Raw merge log for traceability
     merge_log: list[str] = field(default_factory=list)
 
+    # F224D: sprint ID collision telemetry
+    sprint_collision: Optional[SprintIdCollisionWarning] = None
+
     def to_dict(self) -> dict:
         return {
             "verdict": self.verdict.value,
@@ -138,6 +304,7 @@ class CockpitResult:
             "swap_policy_tier": self.swap_policy_tier,
             "swap_gate_reason": self.swap_gate_reason,
             "merge_log": self.merge_log,
+            "sprint_collision": self.sprint_collision.to_dict() if self.sprint_collision else None,
         }
 
 
@@ -587,6 +754,24 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
         f"- **OK:** {result.provider_surface_ok}",
     ])
 
+    # F224D: Sprint ID collision warning
+    if result.sprint_collision and result.sprint_collision.has_collisions:
+        lines.extend([
+            "",
+            "## ⚠️ Sprint ID Collision Warning",
+            "",
+            f"**{result.sprint_collision.collision_count} collision(s)** detected across {result.sprint_collision.total_probes_scanned} probes.",
+        ])
+        for w in result.sprint_collision.warnings:
+            lines.append(f"- {w}")
+        lines.extend([
+            "",
+            "**Impact:** Operator reports may show ambiguous sprint ID labels. "
+            "Live run is NOT blocked — required artifacts are unambiguous when paths are explicit.",
+            "",
+            "**Resolution:** Use full alias (e.g. `F223D_PRODUCT_VALUE`) in queries to disambiguate.",
+        ])
+
     lines.extend([
         "",
         "## Next Actions",
@@ -734,8 +919,21 @@ def main() -> int:
     artifact_data = load_artifact_pack(args.artifact_pack_json)
     readiness_data = load_readiness(args.readiness_json)
 
+    # F224D: Scan for sprint ID collisions
+    repo_root = args.repo_root or Path.cwd()
+    collision_report = scan_probe_artifacts(repo_root)
+
     # Merge
     result = merge_cockpit(decision_data, artifact_data, readiness_data)
+
+    # F224D: Attach collision warning (does not block live)
+    if collision_report.has_collisions:
+        result.sprint_collision = SprintIdCollisionWarning(
+            has_collisions=True,
+            collision_count=len(collision_report.collisions),
+            total_probes_scanned=collision_report.total_probes_scanned,
+            warnings=[f"Sprint ID collision detected: {c.sprint_id}" for c in collision_report.collisions],
+        )
 
     # Verbose merge log
     if args.verbose:

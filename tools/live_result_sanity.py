@@ -180,6 +180,12 @@ _TERMINALITY_UNSATISFIED_VERDICTS = frozenset({
     "FAIL_SCHEDULER_EXIT_MISSING",
 })
 
+# F224C: NONFEED_EVIDENCE_MISSING is NOT a terminality failure — it's a research quality failure
+# Terminality was satisfied but nonfeed evidence was insufficient
+_NONFEED_EVIDENCE_MISSING_VERDICTS = frozenset({
+    "FAIL_NONFEED_EVIDENCE_MISSING",
+})
+
 _TRACE_STALE_VERDICTS = frozenset({
     "TRACE_TERMINALITY_STALE_BEFORE_NONFEED",
     "TRACE_TERMINALITY_STALE_SNAPSHOT",
@@ -450,6 +456,27 @@ def _check_feed_only_accepted_nonfeed_attempted(
             reasons.append("PUBLIC")
         return False, (
             f"Feed-only accepted branch but nonfeed source outcomes were attempted: {', '.join(reasons)}"
+        )
+    return True, None
+
+
+# F224C: Check for FAIL_NONFEED_EVIDENCE_MISSING verdict
+# This is a research quality failure (insufficient nonfeed evidence), NOT a terminality failure.
+# Sanity must fail it with the correct reason — nonfeed evidence missing.
+def _check_nonfeed_evidence_missing(
+    b: BenchmarkSurface,
+) -> tuple[bool, str | None]:
+    """
+    F224C: FAIL_NONFEED_EVIDENCE_MISSING means terminality was satisfied but nonfeed
+    evidence was insufficient. This is a research quality failure, not terminality.
+
+    Fails sanity if:
+    - run_quality_verdict is FAIL_NONFEED_EVIDENCE_MISSING
+    """
+    if b.run_quality_verdict in _NONFEED_EVIDENCE_MISSING_VERDICTS:
+        return False, (
+            f"Nonfeed evidence missing: run_quality_verdict={b.run_quality_verdict} — "
+            "terminality satisfied but nonfeed evidence insufficient"
         )
     return True, None
 
@@ -745,6 +772,13 @@ def sanity_check(
 
     ok, msg = _check_feed_only_accepted_nonfeed_attempted(b, v)
     checks["feed_only_nonfeed_attempted"] = ok
+    if not ok:
+        assert msg is not None
+        result.disagreements.append(msg)
+
+    # F224C: FAIL_NONFEED_EVIDENCE_MISSING is a research quality failure (nonfeed evidence insufficient)
+    ok, msg = _check_nonfeed_evidence_missing(b)
+    checks["nonfeed_evidence_missing"] = ok
     if not ok:
         assert msg is not None
         result.disagreements.append(msg)
