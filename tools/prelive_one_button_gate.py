@@ -23,7 +23,7 @@ No live execution. No network. No MLX load. No SprintScheduler.
 Usage:
     python tools/prelive_one_button_gate.py \\
         --repo-root . \\
-        --profile nonfeed_diagnostic \\
+        --profile nonfeed_diagnostic180 \\
         --query "mozilla.org certificate transparency subdomains april 2026" \\
         --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\
         --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md
@@ -31,7 +31,7 @@ Usage:
     # With optional last-live triage:
     python tools/prelive_one_button_gate.py \\
         --repo-root . \\
-        --profile nonfeed_diagnostic \\
+        --profile nonfeed_diagnostic180 \\
         --query "..." \\
         --last-live-triage probe_f219g_live_artifact_triage/triage.json \\
         --output-json ...
@@ -80,7 +80,7 @@ _F221_REQUIRED_PROBES = [
     ("probe_f221d_quality_surface_consistency", "quality_surface_consistency.json"),
     ("probe_f221e_delta_sanity_alignment", "delta_sanity_alignment.json"),
     ("probe_f221f_ae_integration_guard", "ae_integration_guard.json"),
-    ("probe_f221g_nonfeed_candidate_ledger", "nonfeed_candidate_ledger.json"),
+    ("probe_f221g_nonfeed_diag_ready", "nonfeed_diag_ready.json"),
 ]
 
 
@@ -561,7 +561,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
         "```bash",
         "python tools/prelive_one_button_gate.py \\",
         "  --repo-root . \\",
-        "  --profile nonfeed_diagnostic \\",
+        "  --profile nonfeed_diagnostic180 \\",
         '  --query "mozilla.org certificate transparency subdomains april 2026" \\',
         "  --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\",
         "  --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md",
@@ -570,7 +570,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
         "With optional last-live triage:",
         "```bash",
         "python tools/prelive_one_button_gate.py \\",
-        "  --repo-root . --profile nonfeed_diagnostic \\",
+        "  --repo-root . --profile nonfeed_diagnostic180 \\",
         '  --query "..." \\',
         "  --last-live-triage probe_f219g_live_artifact_triage/triage.json \\",
         "  --decision-gate-json probe_f219f_prelive_decision_gate/prelive_decision.json \\",
@@ -594,14 +594,14 @@ def _build_parser() -> argparse.ArgumentParser:
               # Standard run (reads artifacts from standard probe_* locations):
               python tools/prelive_one_button_gate.py \\
                 --repo-root . \\
-                --profile nonfeed_diagnostic \\
+                --profile nonfeed_diagnostic180 \\
                 --query "mozilla.org certificate transparency subdomains april 2026" \\
                 --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\
                 --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md
 
               # With decision gate and last-live triage:
               python tools/prelive_one_button_gate.py \\
-                --repo-root . --profile nonfeed_diagnostic \\
+                --repo-root . --profile nonfeed_diagnostic180 \\
                 --query "..." \\
                 --decision-gate-json probe_f219f_prelive_decision_gate/prelive_decision.json \\
                 --last-live-triage probe_f219g_live_artifact_triage/triage.json \\
@@ -609,7 +609,7 @@ def _build_parser() -> argparse.ArgumentParser:
         """),
     )
     p.add_argument("--repo-root", type=Path, default=Path("."))
-    p.add_argument("--profile", default="nonfeed_diagnostic")
+    p.add_argument("--profile", default="nonfeed_diagnostic180")
     p.add_argument("--query", required=True)
     p.add_argument(
         "--decision-gate-json", type=Path, default=None,

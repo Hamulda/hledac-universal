@@ -47,7 +47,39 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# F221: Fix namespace package collision. The editable install creates a namespace
+# package at hledac/universal/hledac/ that shadows the project root hledac/.
+# The benchmark harness MUST run from hledac/universal/ (shell cwd reset).
+#
+# Solution: use RELATIVE paths. When CWD = hledac/universal/:
+#   '..' = parent = hledac/ (project root with hledac/__init__.py and universal/ subdir)
+#   '.' = CWD = hledac/universal/ (has core/, tools/, etc.)
+# Add '..' to hledac.__path__ so hledac.universal resolves via ../universal/.
+from pathlib import Path as _P
+
+_measured_file = _P(__file__).resolve()
+_universal = str(_measured_file.parent)  # hledac/universal/benchmarks
+
+# CWD is hledac/universal/. _project_root = '..' (parent) = hledac/ directory.
+# Using relative path ensures it resolves relative to CWD, not as an absolute path.
+# When running from hledac/ parent dir, '..' still resolves correctly.
+_project_root = str(_measured_file.parent.parent)  # hledac/universal/ → project root
+
+# Build sys.path: project root (relative), universal dir, then filtered original.
+# Do NOT include '' (CWD) or benchmarks dir as they cause namespace shadowing.
+_clean_path = [_project_root, _universal]
+for _p in sys.path:
+    if _p and "__editable__" not in _p and "hledac_universal" not in _p and ".pth" not in _p:
+        _clean_path.append(_p)
+sys.path[:] = _clean_path
+
+# Extend hledac namespace __path__ so 'hledac.universal' finds ../universal/.
+import hledac as _hledac
+_hledac.__path__.append(_project_root)
+
+# Now import via standard mechanism
+from hledac.universal.core import __main__ as core_main
+from hledac.universal.paths import get_sprint_json_report_path
 
 # F214C: research_quality integration (no network, no MLX — pure scoring)
 from tools.research_quality_score import score_research_quality
@@ -2579,10 +2611,6 @@ async def _run_live_sprint(
             )
 
 
-    # Import canonical sprint entry — outside try so we can restore in finally
-    from hledac.universal.core import __main__ as core_main
-    from hledac.universal.paths import get_sprint_json_report_path
-
     # harness_sprint_id already generated at function start
     result.sprint_id = harness_sprint_id
 
@@ -2618,6 +2646,9 @@ async def _run_live_sprint(
         )
 
         # Run canonical sprint
+        # F221: Pass windup_lead_s from profile metadata so diagnostic profiles
+        # (nonfeed_diagnostic180) enter active immediately instead of 180s windup delay
+        _windup_lead_s = PROFILE_META.get(profile, {}).get("expected_windup_lead_s")
         await core_main.run_sprint(
             query=query,
             duration_s=float(duration_s),
@@ -2625,6 +2656,7 @@ async def _run_live_sprint(
             aggressive_mode=aggressive_mode,
             deep_probe_enabled=deep_probe,
             ui_mode=False,
+            windup_lead_s=_windup_lead_s,
         )
 
         end_time_iso = _now_iso()

@@ -441,7 +441,9 @@ def sample_uma_status() -> UMAStatus:
     state = evaluate_uma_state(system_used_gib)
 
     # F166F: swap_detected computed BEFORE latch so it can propagate into the decision
-    swap_detected = swap_used_gib > 0.05
+    # F221: Raised from 0.05 to 1.5 GiB — macOS M1 8GB baseline uses 1.0-1.2 GiB swap at rest;
+    # 1.5 GiB absorbs normal UMA variance while preserving genuine pressure signal (>2x baseline).
+    swap_detected = swap_used_gib > 1.5
 
     # Sprint 8AK: Shared hysteresis latch — thread-safe, prevents state thrashing
     # F166F: swap_detected accelerates io_only entry to WARN threshold (6.0 GiB)

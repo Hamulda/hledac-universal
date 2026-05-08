@@ -735,6 +735,7 @@ async def run_sprint(
     aggressive_mode: bool = False,
     deep_probe_enabled: bool = False,
     ui_mode: bool = False,
+    windup_lead_s: float | None = None,
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -787,8 +788,11 @@ async def run_sprint(
     await store.async_initialize()
 
     # Scheduler config
+    # F221: windup_lead_s param allows profile to override default 180s windup
+    _windup_lead_s = windup_lead_s if windup_lead_s is not None else 180.0
     config = SprintSchedulerConfig(
         sprint_duration_s=duration_s,
+        windup_lead_s=_windup_lead_s,
         export_enabled=True,
         export_dir=export_dir,
         aggressive_mode=aggressive_mode,
