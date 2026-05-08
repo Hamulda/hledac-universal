@@ -436,7 +436,7 @@ def render_diagnostic_markdown_to_path(
     Render report to markdown and write to ``path``.
 
     If ``path`` is None, uses ``GHOST_EXPORT_DIR`` env var or
-    ``paths.RAMDISK_ROOT / "runs"`` as the output directory.
+    ``RUNS_ROOT`` (runtime/runs/) as the output directory.
     Filename is deterministic based on ``diagnostic_run_id`` / ``run_id``
     or ``started_ts``, falling back to ``ghost_diagnostic.md``.
 
@@ -449,13 +449,9 @@ def render_diagnostic_markdown_to_path(
         if export_dir_env:
             base = Path(export_dir_env)
         else:
-            # Use paths.RAMDISK_ROOT / "runs" as truth surface
-            try:
-                from hledac.universal.paths import RAMDISK_ROOT
-                base = RAMDISK_ROOT / "runs"
-            except Exception:
-                import tempfile
-                base = Path(tempfile.gettempdir()) / "ghost_exports"
+            from hledac.universal.paths import RUNS_ROOT
+            base = RUNS_ROOT
+            base.mkdir(parents=True, exist_ok=True)
     else:
         base = Path(path).parent
 

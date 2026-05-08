@@ -956,9 +956,8 @@ def render_cti_stix_bundle_to_path(
     Render CTI findings as a STIX bundle and write to ``path``.
 
     If ``path`` is None:
-      1. ``GHOST_EXPORT_DIR`` env var
-      2. ``paths.RAMDISK_ROOT / "cti"``
-      3. ``/tmp/ghost_cti_exports``
+      1. ``GHOST_EXPORT_DIR`` env var (override, backward compatible)
+      2. ``CTI_EXPORT_DIR`` (~/.local/share/hledac/cti via XDG)
 
     Filename is deterministic: ``ghost_cti_{sprint_id}_{timestamp}.stix.json``.
 
@@ -979,8 +978,7 @@ def render_cti_stix_bundle_to_path(
             base = Path(export_dir_env)
         else:
             from hledac.universal.paths import CTI_EXPORT_DIR
-            base = CTI_EXPORT_DIR
-            base.mkdir(parents=True, exist_ok=True)
+            base = CTI_EXPORT_DIR  # already mkdir'd at paths.py import time
     else:
         base = Path(path).parent
 
@@ -1144,9 +1142,8 @@ def render_stix_bundle_to_path(
     Render report as STIX bundle and write to ``path``.
 
     If ``path`` is None:
-      1. ``GHOST_EXPORT_DIR`` env var
-      2. ``paths.RAMDISK_ROOT / "runs"`` (SSOT)
-      3. ``/tmp/ghost_exports``
+      1. ``GHOST_EXPORT_DIR`` env var (override, backward compatible)
+      2. ``RUNS_ROOT`` (runtime/runs/)
 
     Filename is deterministic: ``ghost_diagnostic_{run_id}.stix.json``
     falling back to ``ghost_diagnostic_{timestamp}.stix.json``.
@@ -1160,12 +1157,9 @@ def render_stix_bundle_to_path(
         if export_dir_env:
             base = Path(export_dir_env)
         else:
-            try:
-                from hledac.universal.paths import RAMDISK_ROOT
-                base = RAMDISK_ROOT / "runs"
-            except Exception:
-                import tempfile
-                base = Path(tempfile.gettempdir()) / "ghost_exports"
+            from hledac.universal.paths import RUNS_ROOT
+            base = RUNS_ROOT
+            base.mkdir(parents=True, exist_ok=True)
     else:
         base = Path(path).parent
 

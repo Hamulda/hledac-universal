@@ -348,9 +348,8 @@ def render_jsonld_to_path(
     Render report as JSON-LD and write to ``path``.
 
     If ``path`` is None:
-      1. ``GHOST_EXPORT_DIR`` env var
-      2. ``paths.RAMDISK_ROOT / "runs"`` (SSOT)
-      3. ``/tmp/ghost_exports``
+      1. ``GHOST_EXPORT_DIR`` env var (override, backward compatible)
+      2. ``RUNS_ROOT`` (runtime/runs/)
 
     Filename is deterministic: ``ghost_diagnostic_{run_id}.jsonld``
     falling back to ``ghost_diagnostic_{timestamp}.jsonld``.
@@ -364,12 +363,9 @@ def render_jsonld_to_path(
         if export_dir_env:
             base = Path(export_dir_env)
         else:
-            try:
-                from hledac.universal.paths import RAMDISK_ROOT
-                base = RAMDISK_ROOT / "runs"
-            except Exception:
-                import tempfile
-                base = Path(tempfile.gettempdir()) / "ghost_exports"
+            from hledac.universal.paths import RUNS_ROOT
+            base = RUNS_ROOT
+            base.mkdir(parents=True, exist_ok=True)
     else:
         base = Path(path).parent
 

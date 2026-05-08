@@ -16,11 +16,11 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I7]  _check_gathered(results) re-raises BaseException (not Exception)
 - [I8]  _check_gathered(results) routes Exception to error_results
 - [I9]  asyncio.timeout() is the standard timeout pattern (not wait_for)
-- [I10] TCPConnector limits: limit=25, limit_per_host=5, ttl_dns_cache=300
+- [I10] TCPConnector limits: limit=25, limit_per_host=get_default_limit(), ttl_dns_cache=300
 - [I11] connector_owner=True on ClientSession
 - [I12] uvloop.install() is fail-soft (diagnostic on failure)
 
-# FUTURE(8AC): napojit concurrency matrix na connector limits — až bude ConcurrencyMatrix k dispozici
+# FUTURE(8AC): napojit concurrency matrix na connector limits — DomainConcurrencyBandit (network/domain_concurrency.py)
 # FUTURE(8AD): per-transport sessions — implementovat až bude potřeba (SourceTransportMap je k dispozici)
 # FUTURE(8AE): SourceTransportMap integration — již částečně integrováno v FetchCoordinator; rozšířit až bude potřeba
 """
@@ -30,9 +30,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional
 
 import aiohttp
+
+from .domain_concurrency import (  # noqa: F401  # pragma: no cover
+    ARM_VALUES,
+    DomainConcurrencyBandit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,86 @@ _uvloop_enabled: bool = False
 _last_error: Optional[str] = None
 _last_close_error: Optional[str] = None
 
+# =============================================================================
+# Domain Concurrency Bandit State — Sprint 8AC
+# Per-domain adaptive concurrency via Gradient Bandit
+# =============================================================================
+_domain_bandits: Dict[str, DomainConcurrencyBandit] = {}
+_bandit_overrides: Dict[str, int] = {}  # host → explicit limit override
+
+
+def get_domain_limit(host: str) -> int:
+    """
+    Get the adaptive concurrency limit for a host.
+
+    Lazy-initializes a DomainConcurrencyBandit per host on first call.
+    If an explicit override is set (via set_override), that value is returned.
+
+    Args:
+        host: the hostname (e.g. "example.com")
+
+    Returns:
+        int: concurrency limit in [1, 8] range
+    """
+    if host in _bandit_overrides:
+        return _bandit_overrides[host]
+    if host not in _domain_bandits:
+        _domain_bandits[host] = DomainConcurrencyBandit()
+    return _domain_bandits[host].current_limit
+
+
+def record_domain_outcome(
+    host: str, latency_ms: float, status_code: int, got_captcha: bool = False
+) -> None:
+    """
+    Record an HTTP outcome for a host and update its bandit.
+
+    Args:
+        host: the hostname
+        latency_ms: response latency in milliseconds
+        status_code: HTTP status code
+        got_captcha: whether CAPTCHA was detected
+    """
+    if host in _bandit_overrides:
+        return  # override active — don't learn from outcomes
+    if host not in _domain_bandits:
+        _domain_bandits[host] = DomainConcurrencyBandit()
+    bandit = _domain_bandits[host]
+    # Look up which arm was active based on current_limit
+    arm_idx = ARM_VALUES.index(bandit.current_limit)
+    bandit.record_outcome(arm_idx, latency_ms, status_code, got_captcha)
+
+
+def set_override(host: str, limit: int) -> None:
+    """
+    Set an explicit concurrency limit override for a host.
+
+    When set, get_domain_limit() returns this value and the bandit
+    stops learning for this host (record_domain_outcome is a no-op).
+
+    Args:
+        host: the hostname
+        limit: concurrency limit (must be in ARM_VALUES)
+    """
+    if limit not in ARM_VALUES:
+        raise ValueError(f"limit must be one of {ARM_VALUES}, got {limit}")
+    _bandit_overrides[host] = limit
+
+
+def clear_override(host: str) -> None:
+    """Remove the explicit override for a host, reverting to bandit control."""
+    _bandit_overrides.pop(host, None)
+
+
+def get_default_limit() -> int:
+    """
+    Return the default per-host concurrency limit for new sessions.
+
+    Returns the highest arm value (most conservative setting) as the session-level
+    default. Individual hosts may run lower based on their bandit learning.
+    """
+    return ARM_VALUES[-1]  # 8 — highest/conservative default
+
 
 async def async_get_aiohttp_session() -> aiohttp.ClientSession:
     """
@@ -118,7 +203,7 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
         if _session_instance is None or _session_instance.closed:
             connector = aiohttp.TCPConnector(
                 limit=25,               # total connection pool size
-                limit_per_host=5,      # per-host connection limit
+                limit_per_host=get_default_limit(),  # per-host limit (conservative default 8)
                 ttl_dns_cache=300,     # DNS cache TTL in seconds
                 use_dns_cache=True,    # aiohttp 3.9+ requires explicit opt-in
             )
@@ -330,7 +415,7 @@ def _reset_session_runtime_for_tests() -> None:
     After reset, the next await of async_get_aiohttp_session() creates a fresh
     session with pristine connector state.
     """
-    global _session_instance, _session_closed, _last_error, _last_close_error
+    global _session_instance, _session_closed, _last_error, _last_close_error, _domain_bandits, _bandit_overrides
 
     # First ensure any existing session is properly closed
     if _session_instance is not None:
@@ -346,3 +431,5 @@ def _reset_session_runtime_for_tests() -> None:
     _session_closed = False
     _last_error = None
     _last_close_error = None
+    _domain_bandits.clear()
+    _bandit_overrides.clear()

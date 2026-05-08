@@ -256,7 +256,36 @@ def open_lmdb(path: pathlib.Path, *, map_size: Optional[int] = None, **kw) -> An
 
 
 # ---------------------------------------------------------------------------
-# Runtime Path Constants
+# Project-Local Runtime Paths (Sprint F208A)
+# All runtime data lives under hledac/universal/runtime/
+# GHOST_EXPORT_DIR env var overrides CTI_EXPORT_DIR (downstream compat)
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT: Path = Path(__file__).parent  # hledac/universal/
+
+RUNTIME_BASE: Path = _PROJECT_ROOT / "runtime"
+
+# CTI and diagnostic export paths
+CTI_EXPORT_DIR: Path = RUNTIME_BASE / "cti"
+RUNS_ROOT: Path = RUNTIME_BASE / "runs"  # diagnostic/markdown/stix bundle runs
+
+# State and cache paths
+RUNTIME_STATE: Path = RUNTIME_BASE / "state"
+EMBEDDING_CACHE: Path = RUNTIME_BASE / "embeddings"
+BENCHMARK_CACHE: Path = RUNTIME_BASE / "benchmarks"
+
+# Backward-compat alias (RAMDISK_ROOT was the old CTI export root)
+RAMDISK_ROOT: Path = CTI_EXPORT_DIR
+
+# Initialize runtime directories at import time
+for _dir in (CTI_EXPORT_DIR, RUNS_ROOT, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
+    _dir.mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Runtime Path Constants (legacy paths, still used by other subsystems)
+# These use RAMDISK_ROOT which is now CTI_EXPORT_DIR (project-local)
+# Kept for backward compat with existing code that references DB_ROOT, LMDB_ROOT, etc.
 # ---------------------------------------------------------------------------
 
 DB_ROOT: Path = RAMDISK_ROOT / "db"
@@ -267,7 +296,6 @@ KEYS_ROOT: Path = RAMDISK_ROOT / "keys"
 TOR_ROOT: Path = RAMDISK_ROOT / "tor"
 NYM_ROOT: Path = RAMDISK_ROOT / "nym"
 I2P_ROOT: Path = RAMDISK_ROOT / "i2p"
-RUNS_ROOT: Path = RAMDISK_ROOT / "runs"
 SOCKETS_ROOT: Path = RAMDISK_ROOT / "sockets"
 
 # Sprint 8VD: Arrow/Parquet sprint store root
@@ -381,39 +409,30 @@ for _dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT, I2P_ROOT]:
 
 
 # ---------------------------------------------------------------------------
-# XDG Base Directory Specification (Sprint F208A)
+# Project-Local Runtime Paths (Sprint F208A)
+# All runtime data lives under hledac/universal/runtime/
+# GHOST_EXPORT_DIR env var overrides CTI_EXPORT_DIR (downstream compat)
 # ---------------------------------------------------------------------------
 
-def _xdg_data_home() -> Path:
-    """${XDG_DATA_HOME:-~/.local/share}/hledac"""
-    raw = os.environ.get("XDG_DATA_HOME", "")
-    base = Path(raw).expanduser() if raw else Path.home() / ".local" / "share"
-    return base / "hledac"
+_PROJECT_ROOT: Path = Path(__file__).parent  # hledac/universal/
 
+RUNTIME_BASE: Path = _PROJECT_ROOT / "runtime"
 
-def _xdg_state_home() -> Path:
-    """${XDG_STATE_HOME:-~/.local/state}/hledac"""
-    raw = os.environ.get("XDG_STATE_HOME", "")
-    base = Path(raw).expanduser() if raw else Path.home() / ".local" / "state"
-    return base / "hledac"
+# CTI and diagnostic export paths
+CTI_EXPORT_DIR: Path = RUNTIME_BASE / "cti"
+RUNS_ROOT: Path = RUNTIME_BASE / "runs"  # diagnostic/markdown/stix bundle runs
 
+# State and cache paths
+RUNTIME_STATE: Path = RUNTIME_BASE / "state"
+EMBEDDING_CACHE: Path = RUNTIME_BASE / "embeddings"
+BENCHMARK_CACHE: Path = RUNTIME_BASE / "benchmarks"
 
-def _xdg_cache_home() -> Path:
-    """${XDG_CACHE_HOME:-~/.cache}/hledac"""
-    raw = os.environ.get("XDG_CACHE_HOME", "")
-    base = Path(raw).expanduser() if raw else Path.home() / ".cache"
-    return base / "hledac"
+# Backward-compat alias (RAMDISK_ROOT was the old CTI export root)
+RAMDISK_ROOT: Path = CTI_EXPORT_DIR
 
-
-CTI_EXPORT_DIR: Path = _xdg_data_home() / "cti"
-RUNTIME_STATE: Path = _xdg_state_home() / "runtime"
-EMBEDDING_CACHE: Path = _xdg_cache_home() / "embeddings"
-BENCHMARK_CACHE: Path = _xdg_cache_home() / "benchmarks"
-
-
-# Initialize XDG directories at import time
-for _xdg_dir in (CTI_EXPORT_DIR, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
-    _xdg_dir.mkdir(parents=True, exist_ok=True)
+# Initialize runtime directories at import time
+for _dir in (CTI_EXPORT_DIR, RUNS_ROOT, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
+    _dir.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------

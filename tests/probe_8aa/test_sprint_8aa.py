@@ -227,7 +227,7 @@ class TestConnectorLimits:
     def test_connector_kwarg_values_match_invariant(self):
         """[G7][G8][G9][G10] Our connector call uses correct values.
 
-        We verify the values are 25/5/300 by inspecting the source of
+        We verify the values are 25/get_default_limit()/300 by inspecting the source of
         async_get_aiohttp_session where the TCPConnector is constructed.
         """
         import inspect
@@ -236,7 +236,7 @@ class TestConnectorLimits:
 
         # Verify the exact values appear in the source
         assert "limit=25" in src, "limit=25 must be in connector call"
-        assert "limit_per_host=5" in src, "limit_per_host=5 must be in connector call"
+        assert "get_default_limit()" in src, "get_default_limit() must be in connector call"
         assert "ttl_dns_cache=300" in src, "ttl_dns_cache=300 must be in connector call"
 
 
