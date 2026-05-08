@@ -113,6 +113,22 @@ class AcquisitionProfile:
     NONFEED_DIAGNOSTIC = "nonfeed_diagnostic"
 
 
+# F227D: Per-mission FEED cap thresholds — mission_intent → max_feed_accepted_before_nonfeed
+# cve_recon: feeds are high-value, preserve budget (high threshold = no aggressive cap)
+# wallet_recon: cap unless feed is the only safe lane
+# domain/infra/person: cap earlier once feed evidence accumulates and nonfeed unresolved
+# unknown/org_recon: 0 = use default budget (preserve current behavior)
+_MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {
+    "cve_recon": 100,     # Feeds high-value for CVE — do not aggressively cap
+    "wallet_recon": 15,   # Cap unless feed is the only safe lane available
+    "domain_recon": 20,   # Cap after 20 feed finds if nonfeed still unresolved
+    "infra_recon": 20,    # Cap after 20 feed finds if nonfeed still unresolved
+    "person_recon": 20,   # Cap after 20 feed finds if nonfeed still unresolved
+    "unknown": 0,          # 0 = use default budget (preserve current behavior)
+    "org_recon": 0,        # org_recon uses safe lanes only — no mission cap
+}
+
+
 @dataclass(frozen=True)
 class FeedDominanceBudget:
     """F216E: Canonical feed dominance budget policy.
@@ -120,6 +136,11 @@ class FeedDominanceBudget:
     Limits how many feed findings can be accepted before nonfeed lanes
     are given priority. Activated for non-default profiles when mandatory
     nonfeed lanes are unresolved.
+
+    F227D: Added mission_intent context to adjust cap thresholds.
+    Missions like domain_recon/person_recon/infra_recon cap FEED earlier
+    once feed evidence accumulates and nonfeed is unresolved, while
+    cve_recon preserves feed lanes because feeds are high-value for CVE ops.
 
     Invariants:
       - max_feed_accepted_before_nonfeed_terminal >= max_feed_per_source
@@ -144,49 +165,73 @@ class FeedDominanceBudget:
         feed_accepted_so_far: int,
         nonfeed_accepted_so_far: int,
         feed_per_source: dict[str, int],
+        mission_intent: str | None = None,
+        nonfeed_unresolved: bool = True,
     ) -> tuple[bool, str]:
         """Check if feeding should be capped.
 
+        F227D: Added mission_intent and nonfeed_unresolved parameters.
+        When mission_runtime is active and nonfeed lanes are unresolved,
+        mission-aware thresholds override the base budget thresholds.
+
         Returns (should_cap, reason) where reason is empty when cap not active.
         """
-        if not self.is_active():
+        if not self.is_active() and not self._mission_cap_active(mission_intent):
             return False, ""
 
-        # Cap 1: global feed accepted before nonfeed terminal
-        if (
-            self.max_feed_accepted_before_nonfeed_terminal > 0
-            and nonfeed_accepted_so_far == 0
-            and feed_accepted_so_far >= self.max_feed_accepted_before_nonfeed_terminal
-        ):
-            return True, (
-                f"feed_cap_active:global:{feed_accepted_so_far}"
-                f">={self.max_feed_accepted_before_nonfeed_terminal}"
-            )
+        # F227D: Mission-aware cap — use per-intent threshold when nonfeed unresolved
+        if self._mission_cap_active(mission_intent) and nonfeed_unresolved:
+            mission_cap = _MISSION_FEED_CAP_THRESHOLDS.get(mission_intent, 0)
+            if mission_cap > 0 and feed_accepted_so_far >= mission_cap:
+                return True, (
+                    f"feed_cap_active:mission:{mission_intent}:{feed_accepted_so_far}"
+                    f">={mission_cap}"
+                )
 
-        # Cap 3: per-source cap
-        if self.max_feed_per_source > 0:
-            for source, count in feed_per_source.items():
-                if count >= self.max_feed_per_source:
-                    return True, (
-                        f"feed_cap_active:per_source:{source}:{count}"
-                        f">={self.max_feed_per_source}"
-                    )
+        # Base budget caps — only evaluated when budget is active
+        if self.is_active():
+            # Cap 1: global feed accepted before nonfeed terminal
+            if (
+                self.max_feed_accepted_before_nonfeed_terminal > 0
+                and nonfeed_unresolved
+                and feed_accepted_so_far >= self.max_feed_accepted_before_nonfeed_terminal
+            ):
+                return True, (
+                    f"feed_cap_active:global:{feed_accepted_so_far}"
+                    f">={self.max_feed_accepted_before_nonfeed_terminal}"
+                )
 
-        # Cap 2: feed share of total (only meaningful when nonfeed unresolved)
-        if (
-            self.max_feed_share_before_nonfeed_terminal > 0.0
-            and nonfeed_accepted_so_far == 0
-        ):
-            total = feed_accepted_so_far + nonfeed_accepted_so_far
-            if total > 0:
-                share = feed_accepted_so_far / total
-                if share >= self.max_feed_share_before_nonfeed_terminal:
-                    return True, (
-                        f"feed_cap_active:share:{share:.2f}"
-                        f">={self.max_feed_share_before_nonfeed_terminal}"
-                    )
+            # Cap 3: per-source cap
+            if self.max_feed_per_source > 0:
+                for source, count in feed_per_source.items():
+                    if count >= self.max_feed_per_source:
+                        return True, (
+                            f"feed_cap_active:per_source:{source}:{count}"
+                            f">={self.max_feed_per_source}"
+                        )
+
+            # Cap 2: feed share of total (only meaningful when nonfeed unresolved)
+            if (
+                self.max_feed_share_before_nonfeed_terminal > 0.0
+                and nonfeed_unresolved
+            ):
+                total = feed_accepted_so_far + nonfeed_accepted_so_far
+                if total > 0:
+                    share = feed_accepted_so_far / total
+                    if share >= self.max_feed_share_before_nonfeed_terminal:
+                        return True, (
+                            f"feed_cap_active:share:{share:.2f}"
+                            f">={self.max_feed_share_before_nonfeed_terminal}"
+                        )
 
         return False, ""
+
+    def _mission_cap_active(self, mission_intent: str | None) -> bool:
+        """F227D: Return True when mission-aware cap should be evaluated."""
+        if mission_intent is None:
+            return False
+        threshold = _MISSION_FEED_CAP_THRESHOLDS.get(mission_intent, 0)
+        return threshold > 0
 
 
 def _load_feed_budget_from_env() -> FeedDominanceBudget:
@@ -252,6 +297,7 @@ class NonfeedPlanDebug:
 
     Records what the acquisition planner decided and why,
     so live KPI can diagnose nonfeed_attempted=0 root cause.
+    F227D: Mutable so scheduler can annotate cap reason during sprint execution.
     """
 
     domain_detected: bool = False
@@ -287,6 +333,9 @@ class NonfeedPlanDebug:
     mission_lane_priority: tuple[str, ...] = ()
     mission_pivot_boost_applied: bool = False
     mission_feed_cap_reason: str | None = None
+    # F227D: Mission-aware feed cap telemetry — annotated by scheduler during execution
+    feed_cap_applied_by_mission: bool = False
+    feed_cap_mission_intent: str | None = None
 
 
 @dataclass
@@ -867,7 +916,10 @@ def build_acquisition_report(
                 "mission_runtime_applied": getattr(nd, "mission_runtime_applied", False),
                 "mission_lane_priority": list(getattr(nd, "mission_lane_priority", ()) or ()),
                 "mission_pivot_boost_applied": getattr(nd, "mission_pivot_boost_applied", False),
+                # F227D: Mission-aware feed cap telemetry
                 "mission_feed_cap_reason": getattr(nd, "mission_feed_cap_reason", None),
+                "feed_cap_applied_by_mission": getattr(nd, "feed_cap_applied_by_mission", False),
+                "feed_cap_mission_intent": getattr(nd, "feed_cap_mission_intent", None),
             }
 
     # F223A: Normalize None to "default" for canonical report schema

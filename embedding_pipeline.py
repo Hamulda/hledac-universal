@@ -268,7 +268,7 @@ def _release_embedder() -> None:
         logger.debug(f"[EMBED] Failed to unload embedder: {e}")
 
 
-def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.ndarray:
+def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:
     """
     Generate embeddings for a list of texts using ModernBERT via MLX.
 
@@ -278,6 +278,8 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.n
     Args:
         texts: List of text strings to embed.
         batch_size: Batch size for processing (default 16).
+        keep_loaded: If True, retain model in memory after batch (for callers
+            using embedding_session). If False (default), unload after batch.
 
     Returns:
         numpy ndarray dtype=float32, shape=(len(texts), 256).
@@ -362,7 +364,9 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.n
 
     finally:
         # Release embedder after batch processing to free memory
-        _release_embedder()
+        # Keep loaded if caller is using embedding_session context manager
+        if not keep_loaded:
+            _release_embedder()
 
 
 def embed_query(text: str) -> np.ndarray:
@@ -448,7 +452,7 @@ def embed_document(text: str) -> np.ndarray:
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 
-async def generate_embeddings_async(texts: List[str], batch_size: int = _BATCH_SIZE) -> np.ndarray:
+async def generate_embeddings_async(texts: List[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:
     """
     Async wrapper for generate_embeddings.
 
@@ -457,13 +461,15 @@ async def generate_embeddings_async(texts: List[str], batch_size: int = _BATCH_S
     Args:
         texts: List of text strings to embed.
         batch_size: Batch size for processing.
+        keep_loaded: Forwarded to generate_embeddings — if True, retain model
+            in memory after batch (for callers using embedding_session).
 
     Returns:
         numpy ndarray dtype=float32, shape=(len(texts), 256).
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        None, generate_embeddings, texts, batch_size
+        None, generate_embeddings, texts, batch_size, keep_loaded
     )
 
 
@@ -497,6 +503,47 @@ _embed_max_rss_gb: float = 5.5
 import threading
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# F207L: Reentrant embedding session with refcounting — avoids cold start
+# ---------------------------------------------------------------------------
+_embed_refcount: int = 0
+_embed_refcount_lock = threading.Lock()
+
+
+class embedding_session:
+    """
+    Reentrant async context manager for embedding lifecycle with refcounting.
+
+    On enter: increments refcount, loads model if refcount==1.
+    On exit:  decrements refcount, unloads model if refcount==0.
+
+    Allows nested calls (e.g. loop inside loop) without double-load/unload.
+    Thread-safe via threading.Lock (load_embedding_model is called from
+    run_in_executor threads, not from async context).
+
+    Usage:
+        async with embedding_session():
+            embeddings = await generate_embeddings_async(texts)
+    """
+
+    async def __aenter__(self) -> None:
+        with _embed_refcount_lock:
+            global _embed_refcount
+            _embed_refcount += 1
+            if _embed_refcount == 1:
+                # First entry — load model via executor to avoid blocking
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, load_embedding_model)
+
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
+        with _embed_refcount_lock:
+            global _embed_refcount
+            _embed_refcount -= 1
+            if _embed_refcount <= 0:
+                _embed_refcount = 0
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, unload_embedding_model)
 
 
 def is_embedding_context_active() -> bool:

@@ -101,3 +101,12 @@ probe_*/
 .claude-flow/
 .claude_consciousness.m8
 .temporal_store/
+
+# Runtime artifacts — generated at runtime, do not track
+ghost_cti_*.stix.json
+repowise_dead_code.json
+public_acceptance.json
+public_yield_taxonomy.json
+:memory:/
+benchmark_results/
+embedding_cache/

@@ -1680,7 +1680,7 @@ async def _fetch_and_process_page(
                     if accepted_texts:
                         model_manager = get_model_manager()
                         async with model_manager.embedding_lifecycle():
-                            embeddings = await generate_embeddings_async(accepted_texts)
+                            embeddings = await generate_embeddings_async(accepted_texts, keep_loaded=True)
                         if embeddings is not None and len(embeddings) > 0:
                             import numpy as np
                             vec_array = np.asarray(embeddings, dtype=np.float32)
@@ -1708,7 +1708,7 @@ async def _fetch_and_process_page(
                     # P16: Wrap with embedding_lifecycle() for proper M1 memory management
                     model_manager = get_model_manager()
                     async with model_manager.embedding_lifecycle():
-                        embeddings = await generate_embeddings_async([extracted_text])
+                        embeddings = await generate_embeddings_async([extracted_text], keep_loaded=True)
                     if embeddings is not None and len(embeddings) > 0:
                         # Use URL-based ID for vector lookup
                         finding_id_for_vec = _make_finding_id(

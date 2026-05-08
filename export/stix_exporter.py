@@ -978,12 +978,9 @@ def render_cti_stix_bundle_to_path(
         if export_dir_env:
             base = Path(export_dir_env)
         else:
-            try:
-                from hledac.universal.paths import RAMDISK_ROOT
-                base = RAMDISK_ROOT / "cti"
-            except Exception:
-                import tempfile
-                base = Path(tempfile.gettempdir()) / "ghost_cti_exports"
+            from hledac.universal.paths import CTI_EXPORT_DIR
+            base = CTI_EXPORT_DIR
+            base.mkdir(parents=True, exist_ok=True)
     else:
         base = Path(path).parent
 

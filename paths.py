@@ -41,6 +41,11 @@ __all__ = [
     # for new code; these are kept for the AO.initialize() bootstrap path)
     "cleanup_stale_lmdb_locks",
     "cleanup_stale_sockets",
+    # XDG Base Directory Specification (Sprint F208A)
+    "CTI_EXPORT_DIR",
+    "RUNTIME_STATE",
+    "EMBEDDING_CACHE",
+    "BENCHMARK_CACHE",
 ]
 
 # Sprint 8VG A.3: Warn if 'None' file exists on disk
@@ -373,6 +378,42 @@ for _dir in [DB_ROOT, LMDB_ROOT, SPRINT_LMDB_ROOT, EVIDENCE_ROOT, RUNS_ROOT, SOC
 # Initialize security-sensitive directories with 0o700
 for _dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT, I2P_ROOT]:
     _ensure_dir(_dir, mode=0o700)
+
+
+# ---------------------------------------------------------------------------
+# XDG Base Directory Specification (Sprint F208A)
+# ---------------------------------------------------------------------------
+
+def _xdg_data_home() -> Path:
+    """${XDG_DATA_HOME:-~/.local/share}/hledac"""
+    raw = os.environ.get("XDG_DATA_HOME", "")
+    base = Path(raw).expanduser() if raw else Path.home() / ".local" / "share"
+    return base / "hledac"
+
+
+def _xdg_state_home() -> Path:
+    """${XDG_STATE_HOME:-~/.local/state}/hledac"""
+    raw = os.environ.get("XDG_STATE_HOME", "")
+    base = Path(raw).expanduser() if raw else Path.home() / ".local" / "state"
+    return base / "hledac"
+
+
+def _xdg_cache_home() -> Path:
+    """${XDG_CACHE_HOME:-~/.cache}/hledac"""
+    raw = os.environ.get("XDG_CACHE_HOME", "")
+    base = Path(raw).expanduser() if raw else Path.home() / ".cache"
+    return base / "hledac"
+
+
+CTI_EXPORT_DIR: Path = _xdg_data_home() / "cti"
+RUNTIME_STATE: Path = _xdg_state_home() / "runtime"
+EMBEDDING_CACHE: Path = _xdg_cache_home() / "embeddings"
+BENCHMARK_CACHE: Path = _xdg_cache_home() / "benchmarks"
+
+
+# Initialize XDG directories at import time
+for _xdg_dir in (CTI_EXPORT_DIR, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
+    _xdg_dir.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------

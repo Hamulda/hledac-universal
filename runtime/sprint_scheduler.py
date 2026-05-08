@@ -7005,23 +7005,55 @@ class SprintScheduler:
         work: "_FeedWorkItem",
         nonfeed_terminal: bool,
     ) -> tuple[bool, str]:
-        """F216E: Determine if a feed source should be fetched given current budget state.
+        """F216E+F227D: Determine if a feed source should be fetched given current budget state.
+
+        F227D: Added mission_intent and nonfeed_unresolved to support mission-aware cap.
 
         Returns (should_fetch, reason):
           - (True, "")       — source should run normally
           - (False, reason)  — source should be skipped due to budget cap
-
-        Rules:
-          - If budget is not active, always fetch.
-          - If nonfeed lanes ARE terminal, budget does not apply — always fetch.
-          - If budget triggered globally, skip all.
-          - If per-source cap would be exceeded, skip that source.
         """
         budget = None
+        mission_intent = None
         if self._acquisition_plan is not None:
             budget = getattr(self._acquisition_plan, "feed_dominance_budget", None)
+            mission_intent = getattr(self._acquisition_plan, "mission_intent", None)
 
-        if budget is None or not budget.is_active():
+        # F227D: Evaluate mission-aware cap even when base budget is not active
+        # (mission caps are evaluated via budget.cap_feeding with mission_intent)
+        nonfeed_unresolved = not nonfeed_terminal
+
+        if budget is None:
+            return True, ""
+
+        # F227D: Check mission-aware cap first (active for domain/infra/person/wallet missions)
+        if mission_intent is not None and nonfeed_unresolved:
+            mission_cap_reason = budget.cap_feeding(
+                feed_accepted_so_far=self._result.accepted_findings,
+                nonfeed_accepted_so_far=(
+                    self._result.lane_ct_accepted_findings
+                    + self._result.lane_wayback_accepted_findings
+                    + self._result.lane_pdns_accepted_findings
+                    + self._result.lane_blockchain_accepted_findings
+                ),
+                feed_per_source=self._feed_accepted_per_source,
+                mission_intent=mission_intent,
+                nonfeed_unresolved=nonfeed_unresolved,
+            )
+            if mission_cap_reason[0]:
+                # F227D: Record cap reason for telemetry
+                if mission_cap_reason[1].startswith("feed_cap_active:mission:"):
+                    self._result.feed_budget_reason = mission_cap_reason[1]
+                    # F227D: Annotate nonfeed_plan_debug with mission cap telemetry
+                    if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
+                        nd = self._acquisition_plan.nonfeed_plan_debug
+                        nd.mission_feed_cap_reason = mission_cap_reason[1]
+                        nd.feed_cap_applied_by_mission = True
+                        nd.feed_cap_mission_intent = mission_intent
+                return False, mission_cap_reason[1]
+
+        # Fall through to base budget check only when base budget is active
+        if not budget.is_active():
             return True, ""
 
         if nonfeed_terminal:
@@ -7039,6 +7071,7 @@ class SprintScheduler:
                 + self._result.lane_blockchain_accepted_findings
             ),
             feed_per_source=self._feed_accepted_per_source,
+            nonfeed_unresolved=nonfeed_unresolved,
         )
         if budget_reason[0]:
             return False, budget_reason[1]
