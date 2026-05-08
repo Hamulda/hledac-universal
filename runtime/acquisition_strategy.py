@@ -1246,9 +1246,11 @@ class NonfeedMissionController:
     __slots__ = ()
 
     @staticmethod
-    def is_mission_profile(acquisition_profile: str) -> bool:
-        """Return True when the profile is nonfeed_diagnostic."""
-        return acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
+    def is_mission_profile(acquisition_profile: str | None) -> bool:
+        """Return True when the profile is any nonfeed_diagnostic variant."""
+        if acquisition_profile is None:
+            return False
+        return acquisition_profile.startswith("nonfeed_diagnostic")
 
     @staticmethod
     def get_required_families() -> tuple[str, ...]:

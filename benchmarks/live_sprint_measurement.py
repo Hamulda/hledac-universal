@@ -1465,7 +1465,7 @@ def _derive_live_kpi(
                 _skipped = bool(_entry.get("skipped"))
                 _error = _entry.get("error")
                 _raw = _entry.get("raw_count") or _entry.get("built_count") or 0
-                _accepted = _entry.get("accepted_findings", 0) or _entry.get("accepted", 0)
+                _accepted = _entry.get("accepted_count") or _entry.get("accepted_findings", 0) or _entry.get("accepted", 0)
                 # terminal_state: COMPLETED, SKIPPED, NEVER_ATTEMPTED, ERROR
                 if not _attempted:
                     _terminal_state = "NEVER_ATTEMPTED"

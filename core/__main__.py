@@ -398,6 +398,28 @@ def _scheduler_result_acquisition_payload(
             # F216E: Feed dominance budget telemetry (from _plan if available)
             feed_dominance_budget=getattr(_plan, "feed_dominance_budget", None) if _plan else None,
         )
+        # F224: Ensure acquisition_prelude is surfaced in acquisition_report
+        # build_acquisition_report does not yet have acquisition_prelude params,
+        # so we inject from result attributes after the call.
+        _acq_report["acquisition_prelude_checked"] = getattr(result, "acquisition_prelude_checked", False)
+        _acq_report["acquisition_prelude_ran"] = getattr(result, "acquisition_prelude_ran", False)
+        _acq_report["acquisition_prelude_required_lanes"] = list(
+            getattr(result, "acquisition_prelude_required_lanes", ()) or ()
+        )
+        _acq_report["acquisition_prelude_terminal_lanes"] = list(
+            getattr(result, "acquisition_prelude_terminal_lanes", ()) or ()
+        )
+        _acq_report["acquisition_prelude_missing_lanes"] = list(
+            getattr(result, "acquisition_prelude_missing_lanes", ()) or ()
+        )
+        _acq_report["acquisition_prelude_skipped_lanes"] = dict(
+            getattr(result, "acquisition_prelude_skipped_lanes", {}) or {}
+        )
+        _acq_report["acquisition_prelude_errors"] = dict(
+            getattr(result, "acquisition_prelude_errors", {}) or {}
+        )
+        _acq_report["acquisition_prelude_duration_s"] = getattr(result, "acquisition_prelude_duration_s", 0.0)
+        _acq_report["acquisition_prelude_reason"] = getattr(result, "acquisition_prelude_reason", "")
     except Exception:
         # Fallback: emit explicit fallback acquisition_report
         # F219A: Even the fallback includes all schema fields (no silent truncation)
