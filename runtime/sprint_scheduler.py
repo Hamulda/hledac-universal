@@ -8359,6 +8359,10 @@ class SprintScheduler:
     def inject_policy_manager(self, policy_manager: Any) -> None:
         """Inject SprintPolicyManager reference (opt-in RL layer)."""
         self._policy_manager = policy_manager
+        # Bidirectional wiring: allow policy manager to delegate quality feedback
+        # adaptation back to this scheduler's _adapt_source_weights_from_feedback
+        if hasattr(policy_manager, "inject_scheduler"):
+            policy_manager.inject_scheduler(self)
 
     def inject_prefetch_oracle(self, oracle: Any) -> None:
         """

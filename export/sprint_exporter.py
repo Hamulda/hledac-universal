@@ -339,6 +339,11 @@ async def export_sprint(
         logger.warning(f"[EXPORT] JSON write failed: {e}")
         report_path = None
 
+    # Sprint F225F: capability_synthesis — did this run improve actual OSINT capability?
+    # _get_acquisition_truth is pure (no side effects), safe to call again here.
+    acquisition_report = _get_acquisition_truth(eh).get("acquisition_report")
+    capability_synthesis = _build_capability_synthesis(pvs, eh.analyst_brief, runtime_truth, acquisition_report, research_depth)
+
     # 2. Seed tasky pro příští sprint — top_nodes z ExportHandoff (typed)
     # Post-8VZ: __main__._print_scorecard_report() sources top_nodes directly from
     # store.get_top_seed_nodes() and passes them to ExportHandoff(...) constructor.
@@ -529,6 +534,8 @@ async def export_sprint(
         "kill_chain_findings": kill_chain_findings,
         # Sprint F203D: top-5 evidence chains
         "evidence_chains": evidence_chains,
+        # Sprint F225F: capability synthesis
+        "capability_synthesis": capability_synthesis,
     }
 
 
@@ -2132,6 +2139,169 @@ def _compute_research_depth(
             "active_branches": active_branches,
             "pivot_recommended": pivot_recommended,
         },
+    }
+
+
+def _build_capability_synthesis(
+    pvs: dict[str, Any] | None,
+    analyst_brief: dict[str, Any] | None,
+    runtime_truth: dict[str, Any] | None,
+    acquisition_report: dict[str, Any] | None,
+    research_depth: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Sprint F225F: capability_synthesis — did this run improve actual OSINT capability?
+
+    Answers:
+      - Did this run produce useful OSINT capability?
+      - What improved?
+      - What is still weak?
+      - What is the next high-value engineering action?
+
+    DERIVED ONLY — reads from existing canonical surfaces, NO new store reads,
+    NO network, NO MLX load. Fail-soft: returns "unknown" verdicts when data
+    is missing (smoke runs, legacy sprints).
+
+    Inputs:
+      pvs: product_value_summary from export_sprint
+      analyst_brief: eh.analyst_brief (target brief with memory/sprint context)
+      runtime_truth: canonical runtime truth (is_meaningful, primary_signal_source)
+      acquisition_report: from acq_truth["acquisition_report"]
+      research_depth: from _compute_research_depth()
+    """
+    # ── 1. Baseline capability verdict ─────────────────────────────────────
+    # Terminality is prerequisite for any capability claim
+    terminality_satisfied = False
+    if acquisition_report and isinstance(acquisition_report, dict):
+        term = acquisition_report.get("terminality")
+        if isinstance(term, dict):
+            terminality_satisfied = bool(term.get("satisfied", False))
+
+    is_meaningful = runtime_truth.get("is_meaningful", None) if runtime_truth else None
+
+    if not terminality_satisfied:
+        verdict = "invalid_capability"
+        confidence = 0.95
+    elif is_meaningful is False:
+        verdict = "smoke_capability"
+        confidence = 0.85
+    else:
+        verdict = "useful_capability"
+        confidence = 0.75
+
+    # ── 2. Evidence quality signals ─────────────────────────────────────────
+    accepted = pvs.get("accepted", 0) if pvs else 0
+    nonfeed_accepted = 0
+    if pvs:
+        # nonfeed signals in pvs — look for ct_findings/public_findings in branch_mix
+        branch_mix = (runtime_truth.get("branch_mix", {}) if runtime_truth else {})
+        ct_findings = branch_mix.get("ct_findings", 0) if isinstance(branch_mix, dict) else 0
+        public_findings = branch_mix.get("public_findings", 0) if isinstance(branch_mix, dict) else 0
+        nonfeed_accepted = ct_findings + public_findings
+
+    useful_evidence = accepted > 0 and nonfeed_accepted > 0
+    feed_heavy = (pvs.get("feed_share", 1.0) >= 0.9) if pvs else False
+    hardware_constrained = bool(pvs.get("peak_rss_mb", 0) > 7000) if pvs else False
+
+    if hardware_constrained and accepted > 0:
+        verdict = "incomparable_capability"
+        confidence = 0.60
+
+    # ── 3. Source diversity summary ─────────────────────────────────────────
+    source_types: list[str] = []
+    if research_depth and isinstance(research_depth, dict):
+        ds = research_depth.get("depth_signals", {})
+        if isinstance(ds, dict):
+            source_types = ds.get("unique_source_types", [])
+
+    if len(source_types) >= 3:
+        source_diversity_summary = "multi_source_diverse"
+    elif len(source_types) == 2:
+        source_diversity_summary = "dual_source_mixed"
+    elif len(source_types) == 1:
+        source_diversity_summary = "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"
+    else:
+        source_diversity_summary = "unknown_source"
+
+    # ── 4. Corroboration summary ─────────────────────────────────────────────
+    corroboration = "none"
+    if research_depth and isinstance(research_depth, dict):
+        ds = research_depth.get("depth_signals", {})
+        if isinstance(ds, dict):
+            if ds.get("corroborated"):
+                corroboration = "corroborated"
+            elif ds.get("noisy_signal"):
+                corroboration = "noisy"
+            elif ds.get("campaign_hints", 0) > 0:
+                corroboration = "campaign_hint"
+
+    # ── 5. Feed noise summary ─────────────────────────────────────────────────
+    if pvs:
+        sig_class = pvs.get("_signal_quality_classification", "unknown")
+        dedup_eff = pvs.get("dedup_effective", False)
+        if sig_class == "depleted":
+            feed_noise_summary = "depleted_feed_exhausted"
+        elif feed_heavy and not useful_evidence:
+            feed_noise_summary = "feed_noisy_no_nonfeed_signal"
+        elif dedup_eff and sig_class in ("high_density", "medium_density"):
+            feed_noise_summary = "feed_clean_dedup_effective"
+        elif feed_heavy:
+            feed_noise_summary = "feed_dominant"
+        else:
+            feed_noise_summary = "balanced_or_nonfeed"
+    else:
+        feed_noise_summary = "unknown"
+
+    # ── 6. Non-feed value present ────────────────────────────────────────────
+    nonfeed_value = nonfeed_accepted > 0 or (len(source_types) > 1 and len(source_types) <= 3)
+    nonfeed_value_present = bool(nonfeed_value)
+
+    # ── 7. Next engineering action (deterministic, no ML) ───────────────────
+    if verdict == "invalid_capability":
+        next_engineering_action = "fix_terminality_before_capacity_expansion"
+    elif hardware_constrained:
+        next_engineering_action = "address_m1_memory_pressure_before_scale"
+    elif not terminality_satisfied:
+        next_engineering_action = "resolve_terminality_gaps_first"
+    elif feed_heavy and not useful_evidence:
+        next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
+    elif corroboration == "noisy":
+        next_engineering_action = "investigate_signal_noise_source"
+    elif research_depth and isinstance(research_depth, dict):
+        rd_score = research_depth.get("score", 0) if isinstance(research_depth, dict) else 0
+        if rd_score < 30:
+            next_engineering_action = "pivot_deeper_sources_or_new_query_strategy"
+        elif rd_score < 60:
+            next_engineering_action = "improve_source_diversity_and_corrobortion"
+        else:
+            next_engineering_action = "maintain_current_capability_and_increment"
+    else:
+        next_engineering_action = "maintain_current_capability_and_increment"
+
+    # ── 8. Next investigation action (for analyst) ─────────────────────────
+    if analyst_brief and isinstance(analyst_brief, dict):
+        target_memory = analyst_brief.get("target_memory_summary", "")
+        if isinstance(target_memory, str) and target_memory:
+            next_investigation_action = f"follow_up_on_target_memory_{target_memory[:40]}"
+        else:
+            next_investigation_action = "review_fresh_findings_and_query_adjustments"
+    elif accepted > 10:
+        next_investigation_action = "analyze_top_findings_for_operational_actionability"
+    elif accepted > 0:
+        next_investigation_action = "assess_accepted_findings_for_false_positive_rate"
+    else:
+        next_investigation_action = "diagnose_acquisition_or_query_effectiveness"
+
+    return {
+        "capability_verdict": verdict,
+        "useful_evidence_present": useful_evidence,
+        "nonfeed_value_present": nonfeed_value_present,
+        "source_diversity_summary": source_diversity_summary,
+        "corroboration_summary": corroboration,
+        "feed_noise_summary": feed_noise_summary,
+        "next_engineering_action": next_engineering_action,
+        "next_investigation_action": next_investigation_action,
+        "confidence": confidence,
     }
 
 

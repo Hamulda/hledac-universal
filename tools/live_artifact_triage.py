@@ -941,6 +941,11 @@ def main() -> None:
 
     result = triage_live_artifact(data, allow_high_swap=args.allow_high_swap)
 
+    # Sprint F225F: attach capability_synthesis to extracted_metrics if present in artifact
+    cs = data.get("capability_synthesis") if isinstance(data, dict) else None
+    if cs:
+        result.extracted_metrics["capability_synthesis"] = cs
+
     # Serialise enums to strings
     output = {
         "root_cause_class": result.root_cause_class.value,

@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
 
 __all__ = [
     "ChainStep",
@@ -34,7 +34,31 @@ __all__ = [
     "MAX_CHAIN_JSON_BYTES",
     "serialize_chain",
     "deserialize_chain",
+    # F225C: Corroboration helpers
+    "summarize_chain_support",
+    "source_family_from_step_or_finding",
+    "corroboration_level",
+    "SOURCE_FAMILY_FEED",
+    "SOURCE_FAMILY_CT",
+    "SOURCE_FAMILY_PUBLIC",
+    "SOURCE_FAMILY_DEEP",
+    "SOURCE_FAMILY_DOC",
+    "CORROBORATION_NONE",
+    "CORROBORATION_SINGLE",
+    "CORROBORATION_MULTI",
 ]
+
+# F225C: Source family constants
+SOURCE_FAMILY_FEED = "feed"
+SOURCE_FAMILY_CT = "ct"
+SOURCE_FAMILY_PUBLIC = "public"
+SOURCE_FAMILY_DEEP = "deep"
+SOURCE_FAMILY_DOC = "document"
+
+# F225C: Corroboration levels
+CORROBORATION_NONE = "none"
+CORROBORATION_SINGLE = "single_source"
+CORROBORATION_MULTI = "multi_source"
 
 logger = logging.getLogger(__name__)
 
@@ -537,3 +561,186 @@ def deserialize_chain(payload_text: str | None) -> EvidenceChain | None:
     except Exception:
         logger.warning("[EVIDENCE_CHAIN] deserialize failed for payload_text")
         return None
+
+
+# ============================================================================
+# F225C: Cross-source corroboration helpers
+# ============================================================================
+
+def source_family_from_step_or_finding(
+    step_or_finding: ChainStep | dict | str | None,
+) -> str:
+    """
+    F225C: Derive the source family from a ChainStep, finding dict, or source_type string.
+
+    Source families:
+      - feed:  CT feed sources (ct_log, certificate_transparency)
+      - ct:    certificate transparency (alias for feed in some contexts)
+      - public: public sources (public_wiki, public WHOIS, etc.)
+      - deep:  deep probe sources (deep_probe, s3, ipfs)
+      - document: document/triage sources (document, evidence_triage, multimodal)
+
+    Returns "unknown" for unparseable input (fail-soft).
+    """
+    if step_or_finding is None:
+        return "unknown"
+
+    # String path: direct source_type
+    if isinstance(step_or_finding, str):
+        source = step_or_finding.lower()
+    else:
+        # ChainStep or finding dict
+        if isinstance(step_or_finding, ChainStep):
+            # Derive from step_type
+            step_type = step_or_finding.step_type.lower()
+            source = step_type
+        else:
+            source = str(step_or_finding.get("source_type", "")).lower()
+
+    if not source or source == "unknown":
+        return "unknown"
+
+    # Map step_type / source_type → source family
+    if source in ("ct_log", "certificate_transparency", "certstream", "feed"):
+        return SOURCE_FAMILY_FEED
+    if source in ("ct",):
+        return SOURCE_FAMILY_CT
+    if source in ("public", "public_wiki", "public_whois", "dns_public", "pagerisk"):
+        return SOURCE_FAMILY_PUBLIC
+    if source in ("deep_probe", "s3", "ipfs", "deep"):
+        return SOURCE_FAMILY_DEEP
+    if source in ("document", "evidence_triage", "multimodal", "pdf", "image"):
+        return SOURCE_FAMILY_DOC
+    if source in ("leak_sentinel", "pastebin", "github"):
+        # Leaks are feed-adjacent but treated as own family for corroboration
+        return SOURCE_FAMILY_FEED
+
+    return "unknown"
+
+
+def corroboration_level(source_families: list[str]) -> str:
+    """
+    F225C: Determine corroboration level from a list of source families.
+
+    Rules:
+      - FEED + PUBLIC → multi_source
+      - FEED + CT     → multi_source
+      - multiple feed sources only → single_source (duplicates don't multi-source)
+      - CT-only or PUBLIC-only or DEEP-only or DOC-only → single_source
+      - no support    → none
+
+    Distinguishes single-source duplicates from genuine multi-source corroboration.
+    """
+    if not source_families:
+        return CORROBORATION_NONE
+
+    unique = set(source_families)
+    unique.discard("unknown")
+
+    if not unique:
+        return CORROBORATION_NONE
+
+    # Multi-source: two or more distinct families
+    # Special cases first (FEED+CT and FEED+PUBLIC)
+    if SOURCE_FAMILY_FEED in unique and SOURCE_FAMILY_PUBLIC in unique:
+        return CORROBORATION_MULTI
+    if unique == {SOURCE_FAMILY_FEED, SOURCE_FAMILY_CT}:
+        return CORROBORATION_MULTI
+    if SOURCE_FAMILY_FEED in unique and SOURCE_FAMILY_CT in unique:
+        return CORROBORATION_MULTI
+
+    # Any other two-or-more distinct families → multi
+    if len(unique) > 1:
+        return CORROBORATION_MULTI
+
+    # Single family → single_source
+    return CORROBORATION_SINGLE
+
+
+def summarize_chain_support(
+    chains_or_findings: Sequence[EvidenceChain | dict | None] | None,
+) -> dict:
+    """
+    F225C: Produce a deterministic corroboration summary from chains or findings.
+
+    Accepts:
+      - List[EvidenceChain]  (serialized chains from evidence_chain registry)
+      - List[dict]           (finding dicts with source_type)
+      - List[None]           (fail-soft, returns empty)
+
+    Returns dict:
+      {
+        "corroboration_level": str,      # none | single_source | multi_source
+        "source_families": list[str],    # unique families present
+        "family_counts": dict[str, int], # count per family
+        "corroboration_summary": list[str],  # human-readable lines (max 10)
+      }
+
+    Fail-soft: returns "none" corroboration for any parsing error.
+    Bounds: corroboration_summary max 10 lines.
+    """
+    if not chains_or_findings:
+        return {
+            "corroboration_level": CORROBORATION_NONE,
+            "source_families": [],
+            "family_counts": {},
+            "corroboration_summary": [],
+        }
+
+    families: list[str] = []
+    summary_lines: list[str] = []
+
+    for item in chains_or_findings:
+        if item is None:
+            continue
+
+        if isinstance(item, EvidenceChain):
+            # Walk chain steps to collect families
+            for step in item.steps:
+                fam = source_family_from_step_or_finding(step)
+                if fam != "unknown":
+                    families.append(fam)
+            if item.conclusion:
+                summary_lines.append(f"chain:{item.conclusion[:80]}")
+        elif isinstance(item, dict):
+            fam = source_family_from_step_or_finding(item)
+            if fam != "unknown":
+                families.append(fam)
+            query = item.get("query", "") or ""
+            if query:
+                summary_lines.append(f"finding:{query[:80]}")
+        else:
+            # String or other — treat as source_type
+            fam = source_family_from_step_or_finding(str(item))
+            if fam != "unknown":
+                families.append(fam)
+
+    # Deduplicate with counts
+    family_counts: dict[str, int] = {}
+    for fam in families:
+        family_counts[fam] = family_counts.get(fam, 0) + 1
+
+    unique_families = list(dict.fromkeys(families))  # preserve order, remove dups
+    level = corroboration_level(families)
+
+    # Build human-readable summary
+    if not unique_families:
+        summary_lines = ["No corroborating sources identified"]
+    else:
+        lines: list[str] = []
+        for fam, cnt in sorted(family_counts.items(), key=lambda x: -x[1]):
+            lines.append(f"{fam}: {cnt} source(s)")
+        if level == CORROBORATION_MULTI:
+            lines.append("Multi-source corroboration: YES")
+        elif level == CORROBORATION_SINGLE:
+            lines.append("Multi-source corroboration: NO (single source family)")
+        else:
+            lines.append("No corroboration")
+        summary_lines = lines[:10]  # bound
+
+    return {
+        "corroboration_level": level,
+        "source_families": unique_families,
+        "family_counts": family_counts,
+        "corroboration_summary": summary_lines,
+    }

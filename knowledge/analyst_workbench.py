@@ -42,7 +42,10 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from knowledge.evidence_chain import EvidenceChain
 
 __all__ = [
     "AnalystWorkbench",
@@ -52,6 +55,7 @@ __all__ = [
     "RelatedEntity",
     "create_analyst_workbench",
     "get_evidence_chain",
+    "MAX_CORROBORATION_SUMMARY",
 ]
 
 # ============================================================================
@@ -74,6 +78,18 @@ MAX_BRIEF_NEXT_ACTIONS: int = 10  # Max next actions in brief
 # Sprint F206G: Graph analytics bounds
 MAX_GRAPH_ANALYTICS_BRIEF_FINDINGS: int = 2  # Max graph analytics findings in brief
 
+# Sprint F225C: Corroboration summary bound
+MAX_CORROBORATION_SUMMARY: int = 10  # Max lines in corroboration_summary
+
+# Sprint F225E: Feed cluster summary bounds
+MAX_FEED_CLUSTERS: int = 20  # Max clusters in feed_cluster_summary
+MAX_SAMPLE_IDS_PER_CLUSTER: int = 5  # Max sample finding IDs per cluster
+MAX_TEXT_PER_CLUSTER: int = 200  # Max text length per cluster line
+
+# Sprint F225B: Extended brief bounds
+MAX_RISK_HYPOTHESES: int = 5  # Max risk_hypotheses entries
+MAX_PIVOT_RECOMMENDATIONS: int = 5  # Max pivot_recommendations entries
+
 
 # ============================================================================
 # Result DTOs
@@ -84,6 +100,9 @@ MAX_GRAPH_ANALYTICS_BRIEF_FINDINGS: int = 2  # Max graph analytics findings in b
 class AnalystBrief:
     """
     Sprint F204E: Analyst brief produced at sprint teardown.
+    F225B: Added source_family_summary, evidence_gaps, risk_hypotheses,
+           feed_cluster_summary, pivot_recommendations fields.
+    F225C: Added corroboration_summary field.
 
     A model-free summary of sprint results: what changed, strongest evidence,
     next best pivots, and open questions.
@@ -98,6 +117,12 @@ class AnalystBrief:
         open_questions: Tuple of open question strings
         confidence: Confidence score [0.0, 1.0]
         generated_ts: Unix timestamp of generation
+        corroboration_summary: F225C cross-source corroboration strings
+        source_family_summary: F225B source family presence summary
+        evidence_gaps: F225B evidence gap strings
+        risk_hypotheses: F225B bounded risk hypotheses (max 5)
+        feed_cluster_summary: F225B feed/public/CT cluster presence
+        pivot_recommendations: F225B pivot recommendations (max 5)
     """
 
     sprint_id: str
@@ -109,6 +134,13 @@ class AnalystBrief:
     open_questions: tuple[str, ...]
     confidence: float
     generated_ts: float
+    corroboration_summary: tuple[str, ...] = field(default_factory=lambda: ())
+    # F225B: extended target-centric fields
+    source_family_summary: tuple[str, ...] = field(default_factory=lambda: ())
+    evidence_gaps: tuple[str, ...] = field(default_factory=lambda: ())
+    risk_hypotheses: tuple[str, ...] = field(default_factory=lambda: ())
+    feed_cluster_summary: tuple[str, ...] = field(default_factory=lambda: ())
+    pivot_recommendations: tuple[str, ...] = field(default_factory=lambda: ())
 @dataclass(frozen=True, slots=True)
 class EvidencePointer:
     """
@@ -1040,6 +1072,30 @@ class AnalystWorkbench:
             if target_memory:
                 confidence = min(0.9, confidence + 0.1)  # Memory boost
 
+            # F225C: Corroboration summary
+            corroboration_summary = self._build_corroboration_summary(findings)
+
+            # F225B: Source family summary (always computed)
+            source_family_summary = self._build_source_family_summary(findings)
+
+            # F225B: Evidence gaps (always computed)
+            evidence_gaps = self._build_evidence_gaps(findings, source_family_summary)
+
+            # F225B: Risk hypotheses (always computed, bounded to MAX_RISK_HYPOTHESES)
+            risk_hypotheses = self._build_risk_hypotheses(findings, source_family_summary)
+
+            # F225E: Feed cluster summary (only when feed-heavy — conditional gate preserved)
+            feed_cluster_summary: tuple[str, ...] = ()
+            feed_ratio = sum(
+                1 for f in findings
+                if "feed" in (getattr(f, "source_type", None) or "").lower()
+            ) / max(len(findings), 1)
+            if feed_ratio >= 0.3 and len(findings) > 5:
+                feed_cluster_summary = self.summarize_feed_clusters(findings)
+
+            # F225B: Pivot recommendations (always computed, bounded to MAX_PIVOT_RECOMMENDATIONS)
+            pivot_recommendations = self._build_pivot_recommendations(findings, graph_signal)
+
             return AnalystBrief(
                 sprint_id=sprint_id,
                 target_id=target_id,
@@ -1050,6 +1106,12 @@ class AnalystWorkbench:
                 open_questions=tuple(open_questions[:5]),
                 confidence=confidence,
                 generated_ts=ts,
+                corroboration_summary=corroboration_summary,
+                source_family_summary=source_family_summary,
+                evidence_gaps=evidence_gaps,
+                risk_hypotheses=risk_hypotheses,
+                feed_cluster_summary=feed_cluster_summary,
+                pivot_recommendations=pivot_recommendations,
             )
         except Exception:
             # Fallback: minimal brief on any error
@@ -1063,6 +1125,12 @@ class AnalystWorkbench:
                 open_questions=("Why did brief generation fail?",),
                 confidence=0.1,
                 generated_ts=ts,
+                corroboration_summary=("Corroboration unavailable due to brief generation failure",),
+                source_family_summary=(),
+                evidence_gaps=("Brief generation failed — evidence gaps unavailable",),
+                risk_hypotheses=(),
+                feed_cluster_summary=(),
+                pivot_recommendations=(),
             )
 
     def _extract_key_findings(self, findings: list[Any]) -> list[str]:
@@ -1207,6 +1275,447 @@ class AnalystWorkbench:
                 questions.append(q)
 
         return tuple(questions[:5])  # Max 5 open questions
+
+    # -------------------------------------------------------------------------
+    # F225C: Corroboration summary
+    # -------------------------------------------------------------------------
+
+    def _build_corroboration_summary(self, findings: list[Any]) -> tuple[str, ...]:
+        """
+        F225C: Build corroboration summary from findings source families.
+
+        Uses summarize_chain_support if chains are available via the evidence_chain
+        module global registry, otherwise falls back to findings source_type.
+
+        Bounds: max MAX_CORROBORATION_SUMMARY lines.
+        Fail-soft: returns ("Corroboration unavailable",) on any error.
+        """
+        try:
+            from knowledge.evidence_chain import (
+                get_all_chains,
+                summarize_chain_support,
+            )
+
+            chains = get_all_chains()
+            if chains:
+                support = summarize_chain_support(chains)
+            else:
+                # Fallback: use findings source_type
+                finding_dicts = []
+                for f in findings[:50]:
+                    finding_dicts.append(
+                        {
+                            "source_type": getattr(f, "source_type", None)
+                            or f.get("source_type", "unknown"),
+                            "query": getattr(f, "query", None) or f.get("query", ""),
+                        }
+                    )
+                support = summarize_chain_support(finding_dicts)
+
+            summary_lines = support.get("corroboration_summary", [])
+            level = support.get("corroboration_level", "none")
+            if level == "none" and not summary_lines:
+                return ("No corroborating sources identified",)
+            return tuple(summary_lines[:MAX_CORROBORATION_SUMMARY])
+        except Exception:
+            return ("Corroboration unavailable",)
+
+    # -------------------------------------------------------------------------
+    # F225E: Feed cluster summary
+    # -------------------------------------------------------------------------
+
+    def summarize_feed_clusters(
+        self, findings: list[Any], max_clusters: int = MAX_FEED_CLUSTERS
+    ) -> tuple[str, ...]:
+        """
+        F225E: Deterministic feed cluster summary from findings.
+
+        Clusters findings by shared IOC/entity tokens or by source_type+domain
+        fallback. Feed-heavy runs show compact clusters instead of raw volume.
+
+        Bounds:
+          - max_clusters: max number of clusters (default MAX_FEED_CLUSTERS=20)
+          - max sample IDs per cluster: MAX_SAMPLE_IDS_PER_CLUSTER=5
+          - max text per cluster line: MAX_TEXT_PER_CLUSTER=200 chars
+
+        No model, no embeddings, no network calls.
+        Fail-soft: returns ("Feed clustering unavailable",) on any error.
+        """
+        try:
+            if not findings:
+                return ()
+
+            # Separate feed vs non-feed findings
+            feed_findings: list[Any] = []
+            nonfeed_findings: list[Any] = []
+
+            for f in findings:
+                src = getattr(f, "source_type", None) or (f.get("source_type") if isinstance(f, dict) else None) or "unknown"
+                src_lower = src.lower()
+                if "feed" in src_lower or "public_feed" in src_lower or "ct_log" not in src_lower and "passive" not in src_lower:
+                    # Heuristic: if not clearly CT/passive, treat as feed
+                    if src_lower not in ("ct_log", "passive_dns", "document", "deep_probe"):
+                        feed_findings.append(f)
+                    else:
+                        nonfeed_findings.append(f)
+                else:
+                    nonfeed_findings.append(f)
+
+            clusters: list[tuple[str, list[str]]] = []  # (cluster_key, finding_ids)
+
+            # Helper: extract IOC tokens from a finding
+            def _extract_tokens(f: Any) -> set[str]:
+                tokens: set[str] = set()
+                # Try IOC fields
+                for field_name in ("ioc_value", "domain", "ipv4", "email", "query", "title"):
+                    val = getattr(f, field_name, None) or (f.get(field_name) if isinstance(f, dict) else None)
+                    if val and isinstance(val, str):
+                        # Normalize: lowercase, strip, split on non-alnum
+                        for tok in re.split(r"[^a-zA-Z0-9]+", val.lower()):
+                            if len(tok) > 2:
+                                tokens.add(tok)
+                # Try payload_text snippets (first 100 chars)
+                payload = getattr(f, "payload_text", None) or (f.get("payload_text") if isinstance(f, dict) else None)
+                if payload and isinstance(payload, str):
+                    for tok in payload.lower().split()[:20]:
+                        tok = tok.strip(".,;:'\"()[]{}")
+                        if len(tok) > 4:
+                            tokens.add(tok)
+                return tokens
+
+            # Helper: cluster key from finding
+            def _cluster_key(f: Any) -> str:
+                src = getattr(f, "source_type", None) or (f.get("source_type") if isinstance(f, dict) else None) or "unknown"
+                # Try domain from URL-like fields
+                domain = getattr(f, "domain", None) or (f.get("domain") if isinstance(f, dict) else None)
+                if not domain:
+                    url = getattr(f, "url", None) or (f.get("url") if isinstance(f, dict) else None)
+                    if url and isinstance(url, str):
+                        # Extract domain from URL
+                        m = re.search(r"://([^/]+)", url)
+                        if m:
+                            domain = m.group(1).lower()
+                if domain:
+                    # Normalize: remove TLD suffix attempt
+                    domain = re.sub(r"\.(com|org|net|io|co|ru|cn|info|xyz|tk|ml|ga|cf|gq|pw)$", "", domain)
+                    return f"{src}|{domain}"
+                return f"{src}|unknown"
+
+            # Group feed findings by cluster key
+            key_to_fids: dict[str, list[str]] = {}
+            key_to_tokens: dict[str, set[str]] = {}
+            key_to_texts: dict[str, list[str]] = {}
+
+            for f in feed_findings:
+                fid = getattr(f, "finding_id", None) or (f.get("finding_id") if isinstance(f, dict) else None) or f"fid_{id(f)}"
+                key = _cluster_key(f)
+                if key not in key_to_fids:
+                    key_to_fids[key] = []
+                    key_to_tokens[key] = set()
+                    key_to_texts[key] = []
+                key_to_fids[key].append(fid)
+                key_to_tokens[key].update(_extract_tokens(f))
+                # Collect text for summarization
+                title = getattr(f, "title", None) or (f.get("title") if isinstance(f, dict) else None) or ""
+                query = getattr(f, "query", None) or (f.get("query") if isinstance(f, dict) else None) or ""
+                snippet = title or query
+                if snippet and len(key_to_texts[key]) < 3:
+                    key_to_texts[key].append(snippet[:100])
+
+            # Build clusters with shared token overlap OR same key
+            # Sort by cluster size (descending)
+            def _cluster_sort(item: tuple[str, list[str]]) -> tuple[int, str]:
+                return (-len(item[1]), item[0])
+
+            sorted_keys = sorted(key_to_fids.items(), key=_cluster_sort)
+
+            result_lines: list[str] = []
+            clusters_used = 0
+
+            for key, fids in sorted_keys:
+                if clusters_used >= max_clusters:
+                    break
+                tokens = key_to_tokens.get(key, set())
+                texts = key_to_texts.get(key, [])
+                sample_ids = fids[:MAX_SAMPLE_IDS_PER_CLUSTER]
+                count = len(fids)
+
+                # Build cluster description
+                if tokens:
+                    top_tokens = sorted(tokens, key=len, reverse=True)[:5]
+                    token_str = ", ".join(t for t in top_tokens if len(t) > 3)
+                else:
+                    token_str = "no tokens"
+
+                sample_str = ", ".join(sample_ids[:3])  # First 3 as sample
+                line = f"[{key}] {count} findings | tokens: {token_str[:MAX_TEXT_PER_CLUSTER-50]} | samples: {sample_str}"
+                if len(line) > MAX_TEXT_PER_CLUSTER:
+                    line = line[:MAX_TEXT_PER_CLUSTER-3] + "..."
+
+                result_lines.append(line)
+                clusters_used += 1
+
+            # If feed is dominant, add header
+            feed_ratio = len(feed_findings) / max(len(findings), 1)
+            if feed_ratio >= 0.5 and result_lines:
+                result_lines.insert(0, f"Feed clusters ({len(feed_findings)} feed findings, {clusters_used} clusters)")
+
+            if not result_lines:
+                if nonfeed_findings:
+                    return (f"Non-feed findings: {len(nonfeed_findings)}",)
+                return ()
+
+            return tuple(result_lines[:MAX_FEED_CLUSTERS])
+
+        except Exception:
+            return ("Feed clustering unavailable",)
+
+    # -------------------------------------------------------------------------
+    # F225B: Source family summary
+    # -------------------------------------------------------------------------
+
+    def _build_source_family_summary(self, findings: list[Any]) -> tuple[str, ...]:
+        """
+        F225B: Count source families from findings and summarize presence.
+
+        Counts source_type/provenance families, identifies feed-only gap,
+        non-feed evidence, and CT/PUBLIC/PASSIVE_DNS support.
+
+        No model required.
+        """
+        if not findings:
+            return ()
+
+        families: dict[str, int] = {}
+        for f in findings[:100]:
+            src = getattr(f, "source_type", None) or f.get("source_type", "unknown")
+            families[src] = families.get(src, 0) + 1
+
+        lines: list[str] = []
+        for src, count in sorted(families.items(), key=lambda x: x[1], reverse=True):
+            lines.append(f"{src}: {count} findings")
+
+        # Check for CT support
+        ct_sources = [s for s in families if "ct" in s.lower() or "certificate" in s.lower()]
+        if ct_sources:
+            lines.append(f"CT/certificate support: {', '.join(ct_sources)}")
+
+        # Check for PUBLIC support
+        public_sources = [s for s in families if "public" in s.lower()]
+        if public_sources:
+            lines.append(f"PUBLIC support: {', '.join(public_sources)}")
+
+        # Check for PASSIVE_DNS support
+        pdns_sources = [s for s in families if "dns" in s.lower() or "passive" in s.lower()]
+        if pdns_sources:
+            lines.append(f"PASSIVE_DNS support: {', '.join(pdns_sources)}")
+
+        # Check for feed-only gap (only feed-like sources, no public/CT)
+        non_feed = [s for s in families if not any(x in s.lower() for x in ["ct", "public", "dns", "passive"])]
+        if non_feed and len(families) == 1 and "feed" in list(families.keys())[0].lower():
+            lines.append("FEED-ONLY: no public/CT/DNS corroboration detected")
+        elif families and len(families) > 1:
+            lines.append(f"Cross-source diversity: {len(families)} distinct source families")
+
+        return tuple(lines[:10])  # bounded
+
+    # -------------------------------------------------------------------------
+    # F225B: Evidence gaps
+    # -------------------------------------------------------------------------
+
+    def _build_evidence_gaps(self, findings: list[Any], source_families: tuple[str, ...]) -> tuple[str, ...]:
+        """
+        F225B: Identify evidence gaps from findings and source family summary.
+
+        Checks for: feed-only (no public/CT corroboration), no high-confidence,
+        no multi-IOC type, missing graph connectivity.
+        """
+        gaps: list[str] = []
+        seen: set[str] = set()
+
+        if not findings:
+            gaps.append("No findings produced — possible quality gate or target exhaustion")
+            return tuple(gaps)
+
+        # Feed-only gap check
+        feed_only = any("FEED-ONLY" in s for s in source_families)
+        if feed_only:
+            gaps.append("Feed-only findings — no public/CT corroboration available")
+
+        # No high-confidence gap
+        high_conf = sum(1 for f in findings[:50] if (getattr(f, "confidence", 0.0) or f.get("confidence", 0.0)) >= 0.7)
+        if high_conf == 0 and len(findings) > 3:
+            gaps.append("No high-confidence findings (≥0.7) — evidence weak")
+
+        # IOC type diversity gap
+        ioc_types = set()
+        for f in findings[:50]:
+            it = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            if it:
+                ioc_types.add(it)
+        if len(ioc_types) == 1 and len(findings) > 5:
+            gaps.append(f"Single IOC type ({list(ioc_types)[0]}) — narrow evidence surface")
+
+        # Graph connectivity gap
+        if len(findings) > 5:
+            has_graph_conn = any(
+                f.get("graph_connected") or getattr(f, "graph_connected", False)
+                for f in findings[:20]
+            )
+            if not has_graph_conn:
+                gaps.append("No graph-connected findings — entities isolated")
+
+        return tuple(gaps[:5])  # bounded
+
+    # -------------------------------------------------------------------------
+    # F225B: Risk hypotheses
+    # -------------------------------------------------------------------------
+
+    def _build_risk_hypotheses(self, findings: list[Any], source_families: tuple[str, ...]) -> tuple[str, ...]:
+        """
+        F225B: Build bounded deterministic risk hypotheses based on findings.
+
+        Max 5 hypotheses based on: source diversity, IOC density,
+        non-feed absence, CT/public presence.
+        """
+        hypotheses: list[str] = []
+        seen: set[str] = set()
+
+        if not findings:
+            return ()
+
+        # Source diversity assessment
+        families: dict[str, int] = {}
+        for f in findings[:100]:
+            src = getattr(f, "source_type", None) or f.get("source_type", "unknown")
+            families[src] = families.get(src, 0) + 1
+
+        if len(families) == 1:
+            hypotheses.append("Single-source dependency — one source failure collapses all coverage")
+            seen.add("single_source")
+
+        # High IOC density but single source
+        total_iocs = sum(1 for f in findings if getattr(f, "ioc_value", None) or f.get("ioc_value"))
+        if total_iocs > 10 and len(families) == 1:
+            hypotheses.append(f"High IOC density ({total_iocs}) but single-source — possible false correlation")
+            seen.add("high_density_single")
+
+        # Public absence
+        has_public = any("public" in s.lower() for s in families)
+        if not has_public and len(findings) > 3:
+            hypotheses.append("No public source findings — feed-dependent, limited external corroboration")
+            seen.add("no_public")
+
+        # CT presence
+        has_ct = any("ct" in s.lower() or "certificate" in s.lower() for s in families)
+        if has_ct:
+            ct_count = sum(c for s, c in families.items() if "ct" in s.lower() or "certificate" in s.lower())
+            if ct_count > 5:
+                hypotheses.append(f"CT certificate findings ({ct_count}) suggest domain infrastructure recon")
+
+        # Feed cluster
+        feed_count = sum(c for s, c in families.items() if "feed" in s.lower())
+        if feed_count > 10 and not has_public:
+            hypotheses.append(f"Feed-heavy cluster ({feed_count}) — confirm public/CT overlap to avoid tunnel vision")
+
+        return tuple(hypotheses[:MAX_RISK_HYPOTHESES])
+
+    # -------------------------------------------------------------------------
+    # F225B: Feed cluster summary
+    # -------------------------------------------------------------------------
+
+    def _build_feed_cluster_summary(self, findings: list[Any]) -> tuple[str, ...]:
+        """
+        F225B: Summarize feed/public/CT cluster distribution from findings.
+        """
+        if not findings:
+            return ()
+
+        feed_count = 0
+        public_count = 0
+        ct_count = 0
+        other_count = 0
+
+        for f in findings[:100]:
+            src = getattr(f, "source_type", None) or f.get("source_type", "unknown")
+            src_lower = src.lower()
+            if "feed" in src_lower:
+                feed_count += 1
+            elif "public" in src_lower:
+                public_count += 1
+            elif "ct" in src_lower or "certificate" in src_lower:
+                ct_count += 1
+            else:
+                other_count += 1
+
+        lines: list[str] = []
+        if feed_count:
+            lines.append(f"feed: {feed_count} findings")
+        if public_count:
+            lines.append(f"public: {public_count} findings")
+        if ct_count:
+            lines.append(f"ct: {ct_count} findings")
+        if other_count:
+            lines.append(f"other: {other_count} findings")
+
+        return tuple(lines[:5])
+
+    # -------------------------------------------------------------------------
+    # F225B: Pivot recommendations
+    # -------------------------------------------------------------------------
+
+    def _build_pivot_recommendations(self, findings: list[Any], graph_signal: dict[str, Any]) -> tuple[str, ...]:
+        """
+        F225B: Build bounded pivot recommendations from findings and graph signal.
+
+        Max 5 recommendations. Uses findings IOC values/types and graph entity data.
+        No new planner — summarizes existing pivots if present.
+        """
+        pivots: list[str] = []
+        seen: set[str] = set()
+
+        # From high-confidence IOC values
+        for f in findings[:30]:
+            conf = getattr(f, "confidence", 0.0) or f.get("confidence", 0.0)
+            if float(conf) < 0.6:
+                continue
+            ioc_val = getattr(f, "ioc_value", None) or f.get("ioc_value", "")
+            ioc_type = getattr(f, "ioc_type", None) or f.get("ioc_type", "")
+            if not ioc_val or not ioc_type:
+                continue
+            if ioc_type in ("domain", "ipv4", "email"):
+                pivot = f"Explore {ioc_type}:{ioc_val} for infrastructure expansion"
+                if pivot not in seen:
+                    seen.add(pivot)
+                    pivots.append(pivot)
+
+        # From graph signal if available
+        if graph_signal:
+            top_nodes = graph_signal.get("top_nodes", [])
+            for node in top_nodes[:3]:
+                val = node.get("value", "")
+                it = node.get("ioc_type", "")
+                if val and it and len(pivots) < MAX_PIVOT_RECOMMENDATIONS:
+                    pivot = f"Graph pivot on {it}:{val}"
+                    if pivot not in seen:
+                        seen.add(pivot)
+                        pivots.append(pivot)
+
+        # From findings envelope pivot data if present
+        for f in findings[:20]:
+            env = f.get("envelope") if isinstance(f, dict) else None
+            if env is None:
+                continue
+            suggested_pivots = getattr(env, "suggested_pivots", None) or (env.get("suggested_pivots") if isinstance(env, dict) else None)
+            if suggested_pivots and isinstance(suggested_pivots, (list, tuple)):
+                for sp in suggested_pivots[:3]:
+                    if sp and len(pivots) < MAX_PIVOT_RECOMMENDATIONS:
+                        pivot_str = str(sp)
+                        if pivot_str not in seen:
+                            seen.add(pivot_str)
+                            pivots.append(pivot_str)
+
+        return tuple(pivots[:MAX_PIVOT_RECOMMENDATIONS])
 
 
 # ============================================================================

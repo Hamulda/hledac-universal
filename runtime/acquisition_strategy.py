@@ -84,6 +84,9 @@ __all__ = [
     "NON_TERMINAL_STATES",
     "NonfeedMissionController",
     "NonfeedMissionSnapshot",
+    "MissionIntent",
+    "MissionTargetKind",
+    "infer_mission_intent",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -273,6 +276,12 @@ class NonfeedPlanDebug:
     pivot_scheduled_lanes: tuple[str, ...] = ()
     pivot_skip_reason: str | None = None
     pivot_errors: tuple[str, ...] = ()
+    # F225A: Mission intent telemetry — additive, does NOT change lane logic
+    mission_intent: str = "unknown"
+    mission_target_kind: str = "unknown"
+    mission_required_lanes: tuple[str, ...] = ()
+    mission_optional_lanes: tuple[str, ...] = ()
+    mission_reason: str = ""
 
 
 @dataclass
@@ -843,6 +852,12 @@ def build_acquisition_report(
                 "pivot_scheduled_lanes": list(getattr(nd, "pivot_scheduled_lanes", ()) or ()),
                 "pivot_skip_reason": getattr(nd, "pivot_skip_reason", None),
                 "pivot_errors": list(getattr(nd, "pivot_errors", ()) or ()),
+                # F225A: Mission intent telemetry
+                "mission_intent": getattr(nd, "mission_intent", "unknown"),
+                "mission_target_kind": getattr(nd, "mission_target_kind", "unknown"),
+                "mission_required_lanes": list(getattr(nd, "mission_required_lanes", ()) or ()),
+                "mission_optional_lanes": list(getattr(nd, "mission_optional_lanes", ()) or ()),
+                "mission_reason": getattr(nd, "mission_reason", ""),
             }
 
     # F223A: Normalize None to "default" for canonical report schema
@@ -1544,6 +1559,133 @@ _CRYPTO_HASH_RE = re.compile(
     r"\b[0-9a-fA-F]{16}\b"    # Short hash
 )
 
+# CVE pattern
+_CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
+
+
+# ── F225A: Mission Intent ───────────────────────────────────────────────────
+
+
+class MissionIntent:
+    """F225A: Lightweight mission intent classification.
+
+    Additive telemetry — does NOT change lane enable/disable logic.
+    Does NOT bypass UMA/hardware safety, enable stealth/browser,
+    or increase network aggressiveness.
+    """
+
+    DOMAIN_RECON: str = "domain_recon"
+    ORG_RECON: str = "org_recon"
+    PERSON_RECON: str = "person_recon"
+    WALLET_RECON: str = "wallet_recon"
+    CVE_RECON: str = "cve_recon"
+    INFRA_RECON: str = "infra_recon"
+    UNKNOWN: str = "unknown"
+
+
+class MissionTargetKind:
+    """F225A: Target kind derived from query analysis."""
+
+    DOMAIN: str = "domain"
+    URL: str = "url"
+    EMAIL: str = "email"
+    WALLET: str = "wallet"
+    CVE: str = "cve"
+    IP: str = "ip"
+    ORG: str = "org"
+    UNKNOWN: str = "unknown"
+
+
+# Safe lanes — always allowed for unknown/org_recon intent
+_SAFE_LANES: tuple[str, ...] = (
+    AcquisitionLane.PUBLIC,
+    AcquisitionLane.CT,
+    AcquisitionLane.PIVOT_EXECUTOR,
+)
+_SAFE_OPTIONAL: tuple[str, ...] = (
+    AcquisitionLane.WAYBACK,
+    AcquisitionLane.PASSIVE_DNS,
+)
+
+
+def infer_mission_intent(query: str) -> str:
+    """F225A: Infer mission intent from query string.
+
+    Rules:
+      - CVE-* pattern          → cve_recon
+      - crypto wallet/hash     → wallet_recon
+      - email-like indicator   → person_recon
+      - domain/IP/URL         → domain_recon / infra_recon
+      - otherwise             → unknown (safe lanes only)
+
+    Returns a string constant from MissionIntent.
+    No network I/O, no model load. Deterministic.
+    """
+    if _CVE_RE.search(query):
+        return MissionIntent.CVE_RECON
+    if _has_crypto_indicator(query):
+        return MissionIntent.WALLET_RECON
+    # IP address → infra_recon (before domain check)
+    if re.match(r"\d{1,3}(?:\.\d{1,3}){3}$", query.strip()):
+        return MissionIntent.INFRA_RECON
+    # Email-like: check before domain (emails contain domain-looking substrings)
+    if re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", query):
+        return MissionIntent.PERSON_RECON
+    # Bare URL (protocol scheme) → infra_recon, before domain/IP check
+    if _URL_RE.search(query):
+        return MissionIntent.INFRA_RECON
+    if _has_domain_or_ip(query):
+        return MissionIntent.DOMAIN_RECON
+    return MissionIntent.UNKNOWN
+
+
+def _mission_target_kind(intent: str) -> str:
+    """F225A: Derive target kind from mission intent."""
+    mapping = {
+        MissionIntent.DOMAIN_RECON: MissionTargetKind.DOMAIN,
+        MissionIntent.ORG_RECON: MissionTargetKind.ORG,
+        MissionIntent.PERSON_RECON: MissionTargetKind.EMAIL,
+        MissionIntent.WALLET_RECON: MissionTargetKind.WALLET,
+        MissionIntent.CVE_RECON: MissionTargetKind.CVE,
+        MissionIntent.INFRA_RECON: MissionTargetKind.IP,
+    }
+    return mapping.get(intent, MissionTargetKind.UNKNOWN)
+
+
+def _mission_lanes(intent: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """F225A: Derive required and optional lanes from mission intent.
+
+    Returns (required_lanes, optional_lanes).
+    Lane priority/reason adjustments only — all safety gates preserved.
+    """
+    if intent == MissionIntent.WALLET_RECON:
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.BLOCKCHAIN, AcquisitionLane.CT),
+        )
+    if intent == MissionIntent.CVE_RECON:
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS),
+        )
+    if intent == MissionIntent.DOMAIN_RECON:
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS),
+        )
+    if intent == MissionIntent.INFRA_RECON:
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.PASSIVE_DNS, AcquisitionLane.WAYBACK),
+        )
+    if intent == MissionIntent.PERSON_RECON:
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.CT, AcquisitionLane.PASSIVE_DNS),
+        )
+    # unknown / org_recon — safe lanes only
+    return (_SAFE_LANES, _SAFE_OPTIONAL)
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1883,6 +2025,12 @@ def _build_plan_impl(
     _scheduled_nonfeed = []
     _hardware_skipped = []
 
+    # F225A: Mission intent inference — additive telemetry, does NOT change lane logic
+    _intent = infer_mission_intent(query)
+    _target_kind = _mission_target_kind(_intent)
+    _required_lanes, _optional_lanes = _mission_lanes(_intent)
+    _intent_reason = f"intent:{_intent}"
+
     for _plan in plans:
         if _plan.lane not in _NONFEED_LANES:
             continue
@@ -1924,6 +2072,12 @@ def _build_plan_impl(
         pivot_scheduled_lanes=(),
         pivot_skip_reason=None,
         pivot_errors=(),
+        # F225A: Mission intent telemetry
+        mission_intent=_intent,
+        mission_target_kind=_target_kind,
+        mission_required_lanes=_required_lanes,
+        mission_optional_lanes=_optional_lanes,
+        mission_reason=_intent_reason,
     )
 
     return AcquisitionStrategySnapshot(

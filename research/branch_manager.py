@@ -3,6 +3,7 @@ BranchManager – rozhodování o odbočkách s ANE a spiking prioritou.
 Rozhoduje o vytvoření nových větví (úloh) na základě nálezů.
 """
 
+import asyncio
 import time
 import logging
 from pathlib import Path
@@ -35,6 +36,7 @@ class BranchManager:
         self.rel_engine = rel_engine
         self.claim_index = claim_index
         self.seen_entities: set = set()
+        self._entity_cache: Dict[str, Any] = {}  # entity → exploration results
 
         # ANE model
         self.ane_model = None
@@ -199,13 +201,55 @@ class BranchManager:
             heappush(queue, task)
 
     async def _explore_entity(self, entity: str):
-        """
-        Placeholder pro exploraci entity.
-        TODO: Implementovat skutečnou exploraci.
-        """
-        logger.debug(f"Exploring entity: {entity}")
-        # Zde by byla implementace dalšího výzkumu
-        pass
+        """Explore an entity using available search/graph backends."""
+        try:
+            results = await asyncio.wait_for(self._do_explore_entity(entity), timeout=30.0)
+            if results:
+                self._entity_cache[entity] = results
+                logger.debug(f"Explored entity {entity}: {len(results)} results cached")
+        except asyncio.TimeoutError:
+            logger.debug(f"Entity exploration timed out: {entity}")
+        except Exception as e:
+            logger.debug(f"Entity exploration failed for {entity}: {e}")
+
+    async def _do_explore_entity(self, entity: str) -> List[Dict[str, Any]]:
+        """Core exploration logic with backends."""
+        results: List[Dict[str, Any]] = []
+
+        # Try LocalSearchSeam via knowledge.search_index
+        try:
+            from hledac.universal.knowledge.search_index import LocalSearchSeam
+            seam = LocalSearchSeam()
+            search_result = seam.search(entity, top_k=5)
+            for doc in search_result.results:
+                results.append({
+                    "source": "local_search",
+                    "url": doc.url,
+                    "title": doc.title,
+                    "score": doc.score,
+                })
+            if results:
+                return results
+        except Exception:
+            pass
+
+        # Fallback: try graph_service.find_entity_history
+        try:
+            from hledac.universal.knowledge import graph_service
+            history = graph_service.find_entity_history(entity, max_hops=2)
+            for item in history:
+                results.append({
+                    "source": "graph_history",
+                    "entity": item.get("entity"),
+                    "relation": item.get("relation"),
+                    "neighbors": item.get("neighbors", []),
+                })
+            if results:
+                return results
+        except Exception:
+            pass
+
+        return results
 
     def get_seen_entities(self) -> set:
         """Vrátí množinu již viděných entit."""

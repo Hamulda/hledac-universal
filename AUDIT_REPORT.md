@@ -78,9 +78,9 @@ class LocalSearchSeam:    """TODO: rekonstruovat z bytecode"""    pass
 ### 10. `network/session_runtime.py`, řádky 23-25
 **Typ**: Architektonické TODO komentáře
 ```python
-TODO(budget/8AC): napojit concurrency matrix na connector limits
-TODO(transport/8AD): per-transport sessions pokud bude potřeba
-TODO(integration/8AE): SourceTransportMap integration
+# FUTURE(8AC): napojit concurrency matrix na connector limits — až bude ConcurrencyMatrix k dispozici
+# FUTURE(8AD): per-transport sessions — implementovat až bude potřeba (SourceTransportMap je k dispozici)
+# FUTURE(8AE): SourceTransportMap integration — již částečně integrováno v FetchCoordinator; rozšířit až bude potřeba
 ```
 **Kontext**: TCPConnector limit=25, limit_per_host=5, ttl_dns_cache=300 je implementováno. TODO označují FUTURE integrace.
 

@@ -40,6 +40,10 @@ __all__ = [
     "MAX_PIVOTS",
     "MAX_PIVOT_CANDIDATES",
     "generate_pivot_candidates_from_query",
+    "score_pivot_for_mission",
+    "estimate_pivot_cost",
+    "explain_pivot_score",
+    "apply_scoring_metadata",
 ]
 
 # Optional import for F203G feedback — no hard dependency
@@ -93,6 +97,10 @@ class Pivot:
     expected_value: float = field(compare=False, default=0.5)
     source_hint: str = field(compare=False, default="")
     evidence_pointers: tuple[str, ...] = field(compare=False, default_factory=tuple)
+    # F225D: Optional scoring metadata (backward-compatible — all have defaults)
+    score_reason: str = field(compare=False, default="")
+    estimated_cost: float = field(compare=False, default=0.5)
+    mission_boost: float = field(compare=False, default=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +305,7 @@ def _score_pivot_leak(
 
 
 def _score_pivot_archive(
-    domain: str,
+    _domain: str,
     confidence: float,
 ) -> float:
     """Score an archive pivot."""
@@ -307,7 +315,7 @@ def _score_pivot_archive(
 
 def _score_pivot_graph(
     ioc_value: str,
-    ioc_type: str,
+    _ioc_type: str,
     confidence: float,
     graph_stats: dict,
 ) -> float:
@@ -325,6 +333,164 @@ def _score_pivot_graph(
         score += 0.15
 
     return min(1.0, max(0.0, score))
+
+
+# ---------------------------------------------------------------------------
+# F225D: Mission-aware & evidence-aware scoring helpers
+# ---------------------------------------------------------------------------
+
+_MISSION_BOOST_RULES: list[tuple[tuple[str, ...], str, float]] = [
+    # (pivot_types), mission_prefix, boost multiplier
+    (("domain", "archive", "graph"), "domain_recon", 1.25),
+    (("domain", "archive", "graph"), "infra_recon", 1.20),
+    (("graph",), "wallet_recon", 1.30),
+    (("graph",), "cve_recon", 1.15),
+    (("archive", "domain", "graph"), "cve_recon", 1.10),
+    (("leak", "identity"), "person_recon", 1.25),
+]
+
+
+def _pivot_type_for_ioc(ioc_type: str) -> str:
+    """Map IOC type to primary pivot type."""
+    if ioc_type in ("md5", "sha1", "sha256", "hash"):
+        return "graph"
+    if ioc_type == "email":
+        return "leak"
+    return "domain"
+
+
+def score_pivot_for_mission(pivot: Pivot, mission_intent: Optional[str]) -> float:
+    """
+    F225D: Apply mission-aware boost to a pivot.
+
+    domain_recon  → boosts domain/archive/graph pivots
+    wallet_recon  → boosts graph (hash) pivots
+    cve_recon     → boosts public/feed/archive pivots
+    infra_recon   → boosts IP/domain/graph pivots
+    person_recon  → boosts leak/identity pivots
+    unknown       → no boost
+
+    Returns multiplier in [0.5, 1.5].
+    """
+    if not mission_intent:
+        return 1.0
+
+    boost = 1.0
+    for pivot_types, mission_prefix, multiplier in _MISSION_BOOST_RULES:
+        if mission_intent.startswith(mission_prefix) and pivot.pivot_type in pivot_types:
+            boost = max(boost, multiplier)
+            break
+
+    # Fallback: unknown mission gets no boost
+    return max(0.5, min(1.5, boost))
+
+
+def estimate_pivot_cost(pivot: Pivot) -> float:
+    """
+    F225D: Estimate relative cost/effort to execute a pivot.
+
+    Returns cost tier:
+      0.3 = trivial (archive, passive graph)
+      0.5 = moderate (domain WHOIS, passive DNS)
+      0.7 = expensive (live crawl, active scan)
+      1.0 = very expensive (model-backed inference)
+    """
+    if pivot.pivot_type == "archive":
+        return 0.3
+    if pivot.pivot_type == "leak":
+        return 0.4
+    if pivot.pivot_type == "identity":
+        return 0.5
+    if pivot.pivot_type == "domain":
+        return 0.5
+    if pivot.pivot_type == "graph":
+        # Hash pivots are cheap, IP domain is moderate
+        if pivot.ioc_type in ("md5", "sha1", "sha256", "hash"):
+            return 0.4
+        return 0.6
+    return 0.5
+
+
+def explain_pivot_score(pivot: Pivot, mission_intent: Optional[str]) -> str:
+    """
+    F225D: Human-readable score explanation for debugging/audit.
+
+    Returns a one-line string describing the score components.
+    """
+    parts = []
+    parts.append(f"base={pivot.expected_value:.2f}")
+    if pivot.score_reason:
+        parts.append(f"reason={pivot.score_reason}")
+    if mission_intent and mission_intent != "unknown":
+        parts.append(f"mission={mission_intent}")
+        parts.append(f"boost={pivot.mission_boost:.2f}")
+    if pivot.estimated_cost:
+        parts.append(f"cost={pivot.estimated_cost:.1f}")
+    if pivot.evidence_pointers:
+        parts.append(f"evidence={len(pivot.evidence_pointers)}")
+    if not pivot.source_hint:
+        parts.append("no_source=-0.1")
+    return " | ".join(parts)
+
+
+def apply_scoring_metadata(
+    pivot: Pivot,
+    mission_intent: Optional[str] = None,
+    base_score: Optional[float] = None,
+) -> Pivot:
+    """
+    F225D: Apply full scoring metadata to a pivot.
+
+    Mutates score_reason, estimated_cost, mission_boost via replacement
+    (frozen dataclass — returns new instance with updated fields).
+
+    Caps final expected_value to [0.0, 1.0].
+    """
+    score = base_score if base_score is not None else pivot.expected_value
+
+    # Evidence boost: having evidence_pointers is a positive signal
+    evidence_boost = 0.0
+    if pivot.evidence_pointers:
+        evidence_boost = 0.05 * min(len(pivot.evidence_pointers), 3)  # max +0.15
+
+    # No source_hint penalty
+    source_penalty = -0.1 if not pivot.source_hint else 0.0
+
+    # Mission boost
+    mission_mult = score_pivot_for_mission(pivot, mission_intent)
+
+    # Cost factor (cheaper pivots get slight bump)
+    cost_factor = 1.0 + (0.5 - estimate_pivot_cost(pivot)) * 0.2
+
+    # Final score
+    final_score = (score + evidence_boost + source_penalty) * mission_mult * cost_factor
+    final_score = max(0.0, min(1.0, final_score))
+
+    reason_parts = []
+    if evidence_boost > 0:
+        reason_parts.append(f"+evidence({evidence_boost:.2f})")
+    if source_penalty < 0:
+        reason_parts.append(f"no_source({source_penalty:.2f})")
+    if mission_mult != 1.0:
+        reason_parts.append(f"mission({mission_mult:.2f})")
+    if cost_factor != 1.0:
+        reason_parts.append(f"cost_factor({cost_factor:.2f})")
+    score_reason_str = "; ".join(reason_parts) if reason_parts else "base"
+
+    return Pivot(
+        priority=pivot.priority,
+        pivot_id=pivot.pivot_id,
+        pivot_type=pivot.pivot_type,
+        ioc_value=pivot.ioc_value,
+        ioc_type=pivot.ioc_type,
+        reason=pivot.reason,
+        expected_value=round(final_score, 3),
+        source_hint=pivot.source_hint,
+        evidence_pointers=pivot.evidence_pointers,
+        score_reason=score_reason_str,
+        estimated_cost=estimate_pivot_cost(pivot),
+        mission_boost=round(mission_mult, 3),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +899,7 @@ def _extract_root_domain(domain: str) -> str:
 def generate_pivot_candidates_from_query(
     query: str,
     max_candidates: int = MAX_PIVOT_CANDIDATES,
+    mission_intent: Optional[str] = None,
 ) -> list[Pivot]:
     """
     [F216F] Generate bounded pivot candidates from a query string.
@@ -740,6 +907,9 @@ def generate_pivot_candidates_from_query(
     This is the FIRST-CLASS pivot executor entry point: given only a query
     (no findings needed), generate diagnostic pivot candidates that can be
     used even when no lane accepts the query.
+
+    F225D: Added mission_intent parameter for mission-aware scoring.
+    When provided, applies mission_boost and score_reason to each pivot.
 
     Generation rules (NO network, NO brute-force):
     - domain: root domain, www prefix variant, archive pivot
@@ -752,6 +922,8 @@ def generate_pivot_candidates_from_query(
     Args:
         query: The input query string
         max_candidates: Maximum number of candidates (default MAX_PIVOT_CANDIDATES=25)
+        mission_intent: Optional mission intent string (e.g. "domain_recon", "wallet_recon")
+                      for mission-aware scoring. None = no boost.
 
     Returns:
         List of Pivot objects, sorted by priority (highest first).
@@ -967,6 +1139,12 @@ def generate_pivot_candidates_from_query(
     # Enforce bound
     if len(candidates) > max_candidates:
         candidates = candidates[:max_candidates]
+
+    # F225D: Apply mission-aware scoring metadata if mission_intent provided
+    if mission_intent and candidates:
+        candidates = [apply_scoring_metadata(p, mission_intent) for p in candidates]
+        # Re-sort after scoring (mission boost may reorder)
+        candidates.sort(key=lambda p: p.expected_value, reverse=True)
 
     return candidates
 

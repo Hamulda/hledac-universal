@@ -130,23 +130,76 @@ class TaskPrioritizerWrapper:
     def extract_features(self, task_metadata: Dict):
         """
         Extrahuje 10-dim feature vector z task metadata.
-        TODO: implementovat podle skutečných metadat.
+        Všechny features normalizovány do [0.0, 1.0] range.
         """
         if not MLX_AVAILABLE:
             return None
 
-        # Základní feature vector - placeholder implementace
+        # Feature bounds for normalization (min, max)
+        # Numeric features: scale from [min, max] -> [0.0, 1.0]
+        # Out-of-bounds values clamped to 0.0 or 1.0
+
+        # Feature 0: priority [0.0, 1.0] — already normalized
+        priority = max(0.0, min(1.0, task_metadata.get('priority', 0.5)))
+
+        # Feature 1: estimated_duration [0.1, 120.0] seconds -> [0.0, 1.0]
+        estimated_duration_raw = task_metadata.get('estimated_duration', 1.0)
+        estimated_duration = max(0.0, min(1.0, (estimated_duration_raw - 0.1) / 119.9))
+
+        # Feature 2: complexity [0.0, 1.0] — already normalized
+        complexity = max(0.0, min(1.0, task_metadata.get('complexity', 0.5)))
+
+        # Feature 3: source_type — ordinal encoding
+        # Maps source types to numeric values based on typical reliability/reward
+        source_type_map = {
+            'feed': 0.1,
+            'cert': 0.3,
+            'dns': 0.2,
+            'scrape': 0.4,
+            'archive': 0.5,
+            'api': 0.6,
+            'ct': 0.7,
+            'pubsub': 0.8,
+            'leak': 0.9,
+            'breach': 0.85,
+        }
+        source_type_raw = task_metadata.get('source_type', 'feed')
+        if isinstance(source_type_raw, str):
+            source_type = source_type_map.get(source_type_raw.lower(), 0.5)
+        else:
+            source_type = float(source_type_raw) if source_type_raw else 0.5
+
+        # Feature 4: entity_count [0, 1000] -> [0.0, 1.0]
+        entity_count_raw = task_metadata.get('entity_count', 0)
+        entity_count = max(0.0, min(1.0, entity_count_raw / 1000.0))
+
+        # Feature 5: novelty [0.0, 1.0] — already normalized
+        novelty = max(0.0, min(1.0, task_metadata.get('novelty', 0.5)))
+
+        # Feature 6: contradiction_score [0.0, 1.0] — already normalized
+        contradiction_score = max(0.0, min(1.0, task_metadata.get('contradiction_score', 0.0)))
+
+        # Feature 7: centrality [0.0, 1.0] — already normalized
+        centrality = max(0.0, min(1.0, task_metadata.get('centrality', 0.0)))
+
+        # Feature 8: historical_gain [0.0, 1.0] — already normalized
+        historical_gain = max(0.0, min(1.0, task_metadata.get('historical_gain', 0.5)))
+
+        # Feature 9: historical_duration [0.1, 120.0] -> [0.0, 1.0]
+        historical_duration_raw = task_metadata.get('historical_duration', 1.0)
+        historical_duration = max(0.0, min(1.0, (historical_duration_raw - 0.1) / 119.9))
+
         features = [
-            task_metadata.get('priority', 0.5),
-            task_metadata.get('estimated_duration', 1.0),
-            task_metadata.get('complexity', 0.5),
-            task_metadata.get('source_type', 0.0),
-            task_metadata.get('entity_count', 0.0),
-            task_metadata.get('novelty', 0.5),
-            task_metadata.get('contradiction_score', 0.0),
-            task_metadata.get('centrality', 0.0),
-            task_metadata.get('historical_gain', 0.5),
-            task_metadata.get('historical_duration', 1.0),
+            priority,
+            estimated_duration,
+            complexity,
+            source_type,
+            entity_count,
+            novelty,
+            contradiction_score,
+            centrality,
+            historical_gain,
+            historical_duration,
         ]
 
         return mx.array(features, dtype=mx.float32)

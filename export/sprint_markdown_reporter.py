@@ -359,6 +359,60 @@ def _render_analyst_brief_section(analyst_brief: dict) -> str:
             lines.append(f"- {q}")
         lines.append("")
 
+    # F225B: Source family summary
+    source_family_summary = analyst_brief.get("source_family_summary", []) or []
+    if source_family_summary:
+        lines.append("### Source Families")
+        lines.append("")
+        for s in source_family_summary[:10]:
+            lines.append(f"- {s}")
+        lines.append("")
+
+    # F225B: Corroboration summary
+    corroboration_summary = analyst_brief.get("corroboration_summary", []) or []
+    if corroboration_summary:
+        lines.append("### Corroboration")
+        lines.append("")
+        for c in corroboration_summary[:10]:
+            lines.append(f"- {c}")
+        lines.append("")
+
+    # F225B: Evidence gaps
+    evidence_gaps = analyst_brief.get("evidence_gaps", []) or []
+    if evidence_gaps:
+        lines.append("### Evidence Gaps")
+        lines.append("")
+        for g in evidence_gaps[:5]:
+            lines.append(f"- {g}")
+        lines.append("")
+
+    # F225B: Risk hypotheses
+    risk_hypotheses = analyst_brief.get("risk_hypotheses", []) or []
+    if risk_hypotheses:
+        lines.append("### Risk Hypotheses")
+        lines.append("")
+        for r in risk_hypotheses[:5]:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    # F225B: Feed cluster summary
+    feed_cluster_summary = analyst_brief.get("feed_cluster_summary", []) or []
+    if feed_cluster_summary:
+        lines.append("### Feed Cluster")
+        lines.append("")
+        for fc in feed_cluster_summary[:5]:
+            lines.append(f"- {fc}")
+        lines.append("")
+
+    # F225B: Pivot recommendations
+    pivot_recommendations = analyst_brief.get("pivot_recommendations", []) or []
+    if pivot_recommendations:
+        lines.append("### Pivot Recommendations")
+        lines.append("")
+        for p in pivot_recommendations[:5]:
+            lines.append(f"- {p}")
+        lines.append("")
+
     return "\n".join(lines)
 
 

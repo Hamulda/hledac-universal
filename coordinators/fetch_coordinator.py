@@ -266,7 +266,7 @@ class LightpandaManager:
 
     def __init__(self):
         self._proc = None
-        self._endpoint = "ws://127.0.0.1:9222"
+        self._endpoint = os.environ.get("CDP_ENDPOINT", "ws://127.0.0.1:9222")  # Configurable via CDP_ENDPOINT env variable
         from hledac.universal.paths import DB_ROOT
         self._bin_path = DB_ROOT / 'bin' / 'lightpanda'
 

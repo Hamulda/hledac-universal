@@ -185,7 +185,7 @@ class PrivacyConfig:
     
     # Tor
     enable_tor: bool = False
-    tor_proxy: str = "socks5://127.0.0.1:9050"
+    tor_proxy: str = os.environ.get("TOR_PROXY_URL", "socks5://127.0.0.1:9050")  # Configurable via TOR_PROXY_URL env variable
     
     # DNS
     enable_dns_encryption: bool = True

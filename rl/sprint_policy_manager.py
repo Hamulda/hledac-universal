@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
@@ -196,18 +197,77 @@ class SprintPolicyManager:
 
         Called by SprintScheduler when quality decisions are available from the store
         (e.g., after async_ingest_findings_batch returns FindingQualityDecision list).
-        Currently a no-op stub — source-type-level quality signal is derived from
-        accepted_findings ratio and applied in SprintScheduler._adapt_source_weights_from_feedback().
 
-        The real reward loop:
-          1. SprintScheduler._process_result() → accumulates fetched/accepted per feed_url
-          2. SprintScheduler._adapt_source_weights_from_feedback() → adapts weight by ratio
-          3. SprintPolicyManager.update() → updates RL state with final sprint result
-
-        This stub exists so that future per-source reward injection (from FindingQualityDecision
-        list) can be wired here without changing the public API.
+        For each decision:
+          - Extract source family (source_type) and accepted flag
+          - Accumulate accepted/total per source_type in _pending_feedback (bounded 200 source_types)
+          - If _scheduler is available (via inject_scheduler), merge accumulated feedback
+            into scheduler._source_quality_feedback for processing by the scheduler's
+            own _adapt_source_weights_from_feedback at teardown
+          - Fail-soft: catch all exceptions and log at DEBUG level
         """
-        pass  # Stub: source weight adaptation lives in SprintScheduler._adapt_source_weights_from_feedback
+        if not self._enabled:
+            return
+
+        # Initialise bounded pending feedback store (survives across calls within a sprint)
+        if not hasattr(self, "_pending_feedback"):
+            self._pending_feedback: dict[str, dict[str, int]] = defaultdict(
+                lambda: {"fetched": 0, "accepted": 0}
+            )
+
+        accepted_count = 0
+        total_count = 0
+
+        for decision in decisions:
+            # Handle both FindingQualityDecision (msgspec.Struct) and dict (ActivationResult)
+            if isinstance(decision, dict):
+                accepted = bool(decision.get("accepted", False))
+                source_family = str(decision.get("source_family", feed_url))
+            else:
+                # msgspec.Struct — attribute access
+                accepted = getattr(decision, "accepted", False)
+                source_family = str(getattr(decision, "source_family", feed_url))
+
+            total_count += 1
+            if accepted:
+                accepted_count += 1
+
+            # Bounded accumulation — max 200 source_types tracked
+            if len(self._pending_feedback) < 200:
+                fb = self._pending_feedback.setdefault(
+                    source_family, {"fetched": 0, "accepted": 0}
+                )
+                fb["fetched"] = fb.get("fetched", 0) + 1
+                if accepted:
+                    fb["accepted"] = fb.get("accepted", 0) + 1
+
+        log.debug(
+            f"[SprintPolicyManager] update_with_quality_decisions: "
+            f"feed_url={feed_url!r}, total={total_count}, accepted={accepted_count}"
+        )
+
+        # Attempt delegation to SprintScheduler._adapt_source_weights_from_feedback
+        # if self._scheduler is injected (via inject_scheduler helper below)
+        sources_count = len(self._pending_feedback)
+        if hasattr(self, "_scheduler") and self._scheduler is not None and sources_count > 0:
+            try:
+                # Merge pending feedback into scheduler's _source_quality_feedback
+                for source_type, fb in self._pending_feedback.items():
+                    sched_fb = self._scheduler._source_quality_feedback.setdefault(
+                        source_type, {"fetched": 0, "accepted": 0}
+                    )
+                    sched_fb["fetched"] += fb["fetched"]
+                    sched_fb["accepted"] += fb["accepted"]
+                self._pending_feedback.clear()
+                log.debug(
+                    f"[SprintPolicyManager] delegated {sources_count} sources to "
+                    f"_adapt_source_weights_from_feedback"
+                )
+            except Exception as e:
+                log.debug(
+                    f"[SprintPolicyManager] delegation to "
+                    f"_adapt_source_weights_from_feedback failed: {e}"
+                )
 
     def should_explore(self) -> bool:
         """
@@ -273,6 +333,18 @@ class SprintPolicyManager:
     def recent_rewards(self) -> list[float]:
         """Copy of recent reward list."""
         return list(self._state.sprint_rewards)
+
+    # ── Scheduler linkage ──────────────────────────────────────────────────────
+
+    def inject_scheduler(self, scheduler: Any) -> None:
+        """
+        Inject SprintScheduler reference so update_with_quality_decisions can
+        delegate weight adaptation to scheduler._adapt_source_weights_from_feedback.
+
+        Call this from SprintScheduler.inject_policy_manager() alongside the
+        policy manager injection so both references are available.
+        """
+        self._scheduler = scheduler
 
     # ── Reset ────────────────────────────────────────────────────────────────
 

@@ -20,9 +20,9 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I11] connector_owner=True on ClientSession
 - [I12] uvloop.install() is fail-soft (diagnostic on failure)
 
-TODO(budget/8AC): napojit concurrency matrix na connector limits
-TODO(transport/8AD): per-transport sessions pokud bude potřeba
-TODO(integration/8AE): SourceTransportMap integration
+# FUTURE(8AC): napojit concurrency matrix na connector limits — až bude ConcurrencyMatrix k dispozici
+# FUTURE(8AD): per-transport sessions — implementovat až bude potřeba (SourceTransportMap je k dispozici)
+# FUTURE(8AE): SourceTransportMap integration — již částečně integrováno v FetchCoordinator; rozšířit až bude potřeba
 """
 
 from __future__ import annotations
