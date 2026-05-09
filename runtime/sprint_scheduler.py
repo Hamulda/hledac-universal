@@ -609,6 +609,8 @@ class CTLossStage(Enum):
     UNKNOWN_LOSS = "unknown_loss"  # raw > 0 but cannot determine which loss stage
     # F217D: Provider failure — live provider failed and no stale cache available
     PROVIDER_FAILURE = "provider_failure"
+    # F230C: Stale cache used — provider failed but stale cache was served as fallback
+    STALE_CACHE_USED = "stale_cache_used"
 
 
 # ---------------------------------------------------------------------------
@@ -970,6 +972,14 @@ class SprintSchedulerResult:
     feed_budget_per_source: dict[str, int] = field(default_factory=dict)  # per-source counts at cap trigger
     top_feed_source_counts: tuple[tuple[str, int], ...] = ()  # top-N (source, count) pairs at cap trigger
     max_per_source_applied: str = ""                   # Source URL that hit per-source cap first
+    # Sprint F230D: Nonfeed budget telemetry — for nonfeed_diagnostic profile
+    nonfeed_budget_active: bool = False                # True when nonfeed budget policy is active
+    nonfeed_budget_expected_lanes: tuple[str, ...] = ()  # Expected nonfeed lanes from nonfeed_plan_debug
+    nonfeed_budget_terminal_lanes: tuple[str, ...] = ()  # Nonfeed lanes that reached terminal state
+    nonfeed_budget_unresolved_lanes: tuple[str, ...] = ()  # Nonfeed lanes still unresolved
+    feed_suppressed_by_nonfeed_budget: int = 0         # Feed findings suppressed by nonfeed budget
+    feed_suppression_count: int = 0                    # Number of feed sources suppressed by nonfeed budget
+    feed_suppression_reason: str = ""                  # Reason for nonfeed budget suppression
     # Sprint F214OPT-D: Arrow batch hard cap telemetry
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
@@ -3157,10 +3167,16 @@ class SprintScheduler:
                         and hasattr(duckdb_store, "async_ingest_findings_batch")
                     )
                     # F217D: Check for stale cache before provider-failure derivation
-                    # Stale cache sets ct_cache_used=True and raw_count > 0 — diagnostic only
+                    # F230C: Distinguish PROVIDER_FAILURE (no cache, raw=0) from
+                    # STALE_CACHE_USED (cache was used as fallback, raw=0 or raw>0)
                     _ct_cache_used = getattr(ct_outcome, "ct_cache_used", False)
-                    if not _ct_cache_used and _ct_results_raw == 0:
-                        # F217D: raw=0 and no stale cache used — explicit provider failure
+                    if _ct_cache_used:
+                        # F230C: Cache was used as provider fallback — stale cache is the
+                        # terminal outcome regardless of raw count
+                        _ct_loss_stage = CTLossStage.STALE_CACHE_USED.value
+                        self._result.ct_bridge_invoked = False
+                    elif _ct_results_raw == 0:
+                        # F217D: raw=0 and no stale cache — explicit provider failure
                         _ct_loss_stage = CTLossStage.PROVIDER_FAILURE.value
                         self._result.ct_bridge_invoked = False
                     elif (
@@ -7165,6 +7181,7 @@ class SprintScheduler:
         """F216E+F227D: Determine if a feed source should be fetched given current budget state.
 
         F227D: Added mission_intent and nonfeed_unresolved to support mission-aware cap.
+        F230D: Added acquisition_profile for nonfeed_diagnostic profile cap.
 
         Returns (should_fetch, reason):
           - (True, "")       — source should run normally
@@ -7172,9 +7189,13 @@ class SprintScheduler:
         """
         budget = None
         mission_intent = None
+        acquisition_profile = None
         if self._acquisition_plan is not None:
             budget = getattr(self._acquisition_plan, "feed_dominance_budget", None)
             mission_intent = getattr(self._acquisition_plan, "mission_intent", None)
+            nd = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
+            if nd is not None:
+                acquisition_profile = getattr(nd, "acquisition_profile", None)
 
         # F227D: Evaluate mission-aware cap even when base budget is not active
         # (mission caps are evaluated via budget.cap_feeding with mission_intent)
@@ -7184,6 +7205,7 @@ class SprintScheduler:
             return True, ""
 
         # F227D: Check mission-aware cap first (active for domain/infra/person/wallet missions)
+        # F230D: Also check nonfeed_diagnostic profile cap here
         if mission_intent is not None and nonfeed_unresolved:
             mission_cap_reason = budget.cap_feeding(
                 feed_accepted_so_far=self._result.accepted_findings,
@@ -7196,6 +7218,7 @@ class SprintScheduler:
                 feed_per_source=self._feed_accepted_per_source,
                 mission_intent=mission_intent,
                 nonfeed_unresolved=nonfeed_unresolved,
+                acquisition_profile=acquisition_profile,
             )
             if mission_cap_reason[0]:
                 # F227D: Record cap reason for telemetry
@@ -7208,6 +7231,29 @@ class SprintScheduler:
                         nd.feed_cap_applied_by_mission = True
                         nd.feed_cap_mission_intent = mission_intent
                 return False, mission_cap_reason[1]
+
+        # F230D: nonfeed_diagnostic profile cap — evaluated when profile is active
+        if acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC and nonfeed_unresolved:
+            profile_cap_reason = budget.cap_feeding(
+                feed_accepted_so_far=self._result.accepted_findings,
+                nonfeed_accepted_so_far=(
+                    self._result.lane_ct_accepted_findings
+                    + self._result.lane_wayback_accepted_findings
+                    + self._result.lane_pdns_accepted_findings
+                    + self._result.lane_blockchain_accepted_findings
+                ),
+                feed_per_source=self._feed_accepted_per_source,
+                mission_intent=None,
+                nonfeed_unresolved=nonfeed_unresolved,
+                acquisition_profile=acquisition_profile,
+            )
+            if profile_cap_reason[0]:
+                self._result.feed_budget_reason = profile_cap_reason[1]
+                if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
+                    nd = self._acquisition_plan.nonfeed_plan_debug
+                    nd.feed_cap_reason = profile_cap_reason[1]
+                    nd.feed_cap_applied_by_mission = True
+                return False, profile_cap_reason[1]
 
         # Fall through to base budget check only when base budget is active
         if not budget.is_active():
@@ -7229,6 +7275,7 @@ class SprintScheduler:
             ),
             feed_per_source=self._feed_accepted_per_source,
             nonfeed_unresolved=nonfeed_unresolved,
+            acquisition_profile=acquisition_profile,
         )
         if budget_reason[0]:
             return False, budget_reason[1]
@@ -7244,7 +7291,7 @@ class SprintScheduler:
     ) -> None:
         """F216E: Record feed result into budget telemetry.
 
-        Called from _process_result after each feed source completes.
+        F230D: Also records nonfeed_budget telemetry when nonfeed_diagnostic profile active.
         """
         if accepted_count > 0:
             self._feed_accepted_per_source[feed_url] = (
@@ -7253,6 +7300,11 @@ class SprintScheduler:
 
         if suppressed:
             self._result.feed_suppressed_by_budget += accepted_count
+            # F230D: Track nonfeed budget suppression separately
+            if "nonfeed_profile" in reason:
+                self._result.feed_suppressed_by_nonfeed_budget += accepted_count
+                self._result.feed_suppression_count += 1
+                self._result.feed_suppression_reason = reason
 
         if not self._feed_budget_triggered and reason:
             self._feed_budget_triggered = True
@@ -7275,6 +7327,25 @@ class SprintScheduler:
                     if cnt >= budget.max_feed_per_source:
                         self._result.max_per_source_applied = src
                         break
+
+            # F230D: Also activate nonfeed budget telemetry if reason contains nonfeed_profile
+            if "nonfeed_profile" in reason:
+                self._result.nonfeed_budget_active = True
+                nd = getattr(self._acquisition_plan, "nonfeed_plan_debug", None) if self._acquisition_plan else None
+                if nd is not None:
+                    self._result.nonfeed_budget_expected_lanes = getattr(nd, "nonfeed_profile_expected_lanes", ())
+                    # Compute terminal vs unresolved lanes
+                    _expected = list(self._result.nonfeed_budget_expected_lanes)
+                    _terminal = []
+                    _unresolved = []
+                    for lane in _expected:
+                        _count = getattr(self._result, f"lane_{lane.lower()}_accepted_findings", 0)
+                        if _count > 0:
+                            _terminal.append(lane)
+                        else:
+                            _unresolved.append(lane)
+                    self._result.nonfeed_budget_terminal_lanes = tuple(_terminal)
+                    self._result.nonfeed_budget_unresolved_lanes = tuple(_unresolved)
 
     # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
 

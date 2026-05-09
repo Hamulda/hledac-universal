@@ -58,6 +58,7 @@ class OneButtonVerdict(str, Enum):
     DO_NOT_RUN_FIX_ARTIFACTS = "DO_NOT_RUN_FIX_ARTIFACTS"
     DO_NOT_RUN_PROVIDER_SURFACE = "DO_NOT_RUN_PROVIDER_SURFACE"
     DO_NOT_RUN_CONTRACT = "DO_NOT_RUN_CONTRACT"
+    DO_NOT_RUN_MEMORY_HARD_BLOCK = "DO_NOT_RUN_MEMORY_HARD_BLOCK"
     DO_NOT_RUN_UNKNOWN = "DO_NOT_RUN_UNKNOWN"
 
 
@@ -679,6 +680,12 @@ def run_one_button_gate(
         "expected_assertions": {
             "benchmark_profile": profile,
             "acquisition_profile": _get_acquisition_profile_for_benchmark(profile),
+            "run_quality_verdict": "PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING",
+            "hardware_constrained": False,
+            "capability_synthesis": "not None",
+            "next_sprint_seeds_generated": "true or explicit skip_reason",
+            "public_terminal_stage_not_discovery_timeout": "when bootstrap candidates exist",
+            "CT_raw_gt_0_accepted_eq_0_no_loss": False,
             "nonfeed_priority_enabled": True,
             "terminality_satisfied_cannot_produce_FAIL_TERMINALITY_UNSATISFIED": True,
             "FAIL_NONFEED_EVIDENCE_MISSING_when_nonfeed_evidence_missing": True,
@@ -686,11 +693,13 @@ def run_one_button_gate(
             "public_stage_counters_raw_count_source_present": True,
         },
         "abort_if": {
-            "swap_above_hard_block": f"swap > {DIAGNOSTIC_SWAP_MAX_GIB}GiB",
+            "swap_above_2G": f"swap > {CLEAN_SWAP_MAX_GIB}GiB",
+            "missing_f229_artifacts": "any F229 structural check fails",
             "missing_f223_required_artifacts": "any F223 required artifact missing",
+            "fallback_acquisition_schema": "fallback_schema detected in prelive reports",
+            "capability_synthesis_missing_in_exporter_self_test": "capability_synthesis not in _generate_next_sprint_seeds",
+            "public_ct_provider_surface_missing": "provider surface not OK",
             "uma_state_critical_or_emergency": "uma_state in (critical, emergency)",
-            "provider_surface_not_ok": "provider_surface_ok == False",
-            "fallback_schema_blocked": "fallback_schema_blocked == True",
         },
         "profile": profile,
         "query": query,
@@ -731,14 +740,21 @@ def run_one_button_gate(
         swap_policy_tier = "hard_block"
         swap_gate_reason = f"uma_state={uma_state}"
 
-    # Rule 5: Swap elevated (diagnostic or hard_block) but artifacts ready → RESTART_THEN_RUN
-    elif swap_policy_tier in ("diagnostic", "hard_block"):
+    # Rule 5: Swap > DIAGNOSTIC_SWAP_MAX_GIB → DO_NOT_RUN_MEMORY_HARD_BLOCK
+    elif swap_gib > DIAGNOSTIC_SWAP_MAX_GIB:
+        verdict = OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK
+        live_allowed = False
+        reasons.append(f"Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run")
+        warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
+
+    # Rule 6: Diagnostic-tier swap (2.0 < swap <= 4.0 GiB) → RESTART_THEN_RUN
+    elif swap_policy_tier == "diagnostic":
         verdict = OneButtonVerdict.RESTART_THEN_RUN
         live_allowed = False
         reasons.append(f"Swap elevated ({swap_gate_reason}) — restart recommended before live run")
         warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
 
-    # Rule 6: All clear → RUN_NOW
+    # Rule 7: All clear → RUN_NOW
     else:
         verdict = OneButtonVerdict.RUN_NOW
         live_allowed = True
@@ -786,6 +802,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
         OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS: "❌",
         OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE: "❌",
         OneButtonVerdict.DO_NOT_RUN_CONTRACT: "❌",
+        OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: "🚫",
         OneButtonVerdict.DO_NOT_RUN_UNKNOWN: "⚠️",
     }
     icon = icon_map.get(result.verdict, "?")
@@ -1195,6 +1212,12 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
     profile_assertions = {
         "benchmark_profile": expected_profile,
         "acquisition_profile": expected_acquisition,
+        "run_quality_verdict": "PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING",
+        "hardware_constrained": False,
+        "capability_synthesis": "not None",
+        "next_sprint_seeds": "not None",
+        "public_terminal_stage_not_discovery_timeout": True,
+        "CT_raw_gt_0_accepted_eq_0_no_loss": False,
         "nonfeed_priority_enabled": True,
         "terminality_satisfied": True,
         "FAIL_NONFEED_EVIDENCE_MISSING": True,
@@ -1467,6 +1490,7 @@ def main() -> int:
         OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS: "❌",
         OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE: "❌",
         OneButtonVerdict.DO_NOT_RUN_CONTRACT: "❌",
+        OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: "🚫",
         OneButtonVerdict.DO_NOT_RUN_UNKNOWN: "⚠️",
     }
     icon = icon_map.get(result.verdict, "?")

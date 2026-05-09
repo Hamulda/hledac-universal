@@ -104,3 +104,4 @@ probe_*/
 
 # Runtime data — generated at runtime, lives under project dir
 runtime/
+*.tgz

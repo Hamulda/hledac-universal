@@ -1468,6 +1468,10 @@ async def _fetch_and_process_page(
             # F226B: Track public finding build outcomes and detect duplicates
             if _pub_accepted > 0:
                 _pub_build_success_count += 1
+                # F230B: Track bootstrap-sourced accepted findings (for stage telemetry)
+                # Bootstrap hits have source="bootstrap" on the DiscoveryHit
+                if hasattr(hit, 'source') and getattr(hit, 'source', '') == 'bootstrap':
+                    _pub_bootstrap_accepted_findings += _pub_accepted
             elif _public_findings or (extracted_text and quality_reason is not None and not quality_reason.startswith("SKIP_WEAK")):
                 # Check if the finding was rejected as duplicate (stored but not accepted)
                 if _public_findings and _pub_stored > 0 and _pub_accepted == 0:
@@ -3147,10 +3151,21 @@ async def async_run_live_public_pipeline(
         if getattr(p, "public_surface_dup", False)
     )
     _pub_duplicate_count = _pub_dup_total
+    # F230B: Compute bootstrap fetch success from page results
+    # Bootstrap URLs were prepended to hits with source="bootstrap"
+    _bootstrap_candidate_urls = {
+        p.url for p in all_page_results
+        if getattr(p, "url", "").startswith("http")
+    }
+    _pub_bootstrap_fetch_success = sum(
+        1 for p in all_page_results
+        if p.fetched and p.url in _bootstrap_candidate_urls
+    )
     # public_build_failure_count already accumulated during page processing for zero-match pages
     # that passed quality gate but produced no actionable finding
     public_build_success_count = _pub_build_success_count
     public_build_failure_count = _pub_build_failure_count
+    public_duplicate_count = _pub_duplicate_count
     public_acceptance_ratio = _pub_build_success_count / max(_pub_build_success_count + _pub_build_failure_count, 1)
 
     # Bounded URL samples

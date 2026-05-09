@@ -176,6 +176,19 @@ _MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {
     "org_recon": 0,        # org_recon uses safe lanes only — no mission cap
 }
 
+# F230D: Per-intent FEED cap thresholds for nonfeed_diagnostic profile.
+# Limits how many feed findings can be accepted before nonfeed lanes are terminal.
+# Active only when acquisition_profile=nonfeed_diagnostic and nonfeed lanes unresolved.
+_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
+    "cve_recon": 100,     # CVE feeds are high-value — high threshold
+    "wallet_recon": 15,   # Wallet ops need fast signal — lower threshold
+    "domain_recon": 20,   # Domain recon — balanced threshold
+    "infra_recon": 20,    # Infra recon — balanced threshold
+    "person_recon": 20,   # Person recon — balanced threshold
+    "unknown": 0,         # 0 = no cap for unknown intent
+    "org_recon": 0,       # Org recon — safe lanes only
+}
+
 
 @dataclass(frozen=True)
 class FeedDominanceBudget:
@@ -215,6 +228,7 @@ class FeedDominanceBudget:
         feed_per_source: dict[str, int],
         mission_intent: str | None = None,
         nonfeed_unresolved: bool = True,
+        acquisition_profile: str | None = None,
     ) -> tuple[bool, str]:
         """Check if feeding should be capped.
 
@@ -222,10 +236,28 @@ class FeedDominanceBudget:
         When mission_runtime is active and nonfeed lanes are unresolved,
         mission-aware thresholds override the base budget thresholds.
 
+        F230D: Added acquisition_profile parameter for nonfeed_diagnostic profile
+        per-intent feed cap thresholds.
+
         Returns (should_cap, reason) where reason is empty when cap not active.
         """
-        if not self.is_active() and not self._mission_cap_active(mission_intent):
+        if (
+            not self.is_active()
+            and not self._mission_cap_active(mission_intent)
+            and not self._nonfeed_profile_cap_active(acquisition_profile)
+        ):
             return False, ""
+
+        # F230D: nonfeed_diagnostic profile cap — use per-intent threshold when active
+        if self._nonfeed_profile_cap_active(acquisition_profile) and nonfeed_unresolved:
+            # Infer intent from query indicator if not explicitly set via mission_intent
+            _effective_intent = mission_intent if mission_intent else "unknown"
+            profile_cap = _NONFEED_PROFILE_FEED_CAP_THRESHOLDS.get(_effective_intent, 0)
+            if profile_cap > 0 and feed_accepted_so_far >= profile_cap:
+                return True, (
+                    f"feed_cap_active:nonfeed_profile:{_effective_intent}:{feed_accepted_so_far}"
+                    f">={profile_cap}"
+                )
 
         # F227D: Mission-aware cap — use per-intent threshold when nonfeed unresolved
         if self._mission_cap_active(mission_intent) and nonfeed_unresolved:
@@ -280,6 +312,10 @@ class FeedDominanceBudget:
             return False
         threshold = _MISSION_FEED_CAP_THRESHOLDS.get(mission_intent, 0)
         return threshold > 0
+
+    def _nonfeed_profile_cap_active(self, acquisition_profile: str | None) -> bool:
+        """F230D: Return True when nonfeed_diagnostic profile cap should be evaluated."""
+        return acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
 
 
 def _load_feed_budget_from_env() -> FeedDominanceBudget:

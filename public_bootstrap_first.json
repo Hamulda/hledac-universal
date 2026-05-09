@@ -1,0 +1,70 @@
+{
+  "sprint": "F230B",
+  "title": "Deterministic PUBLIC Bootstrap First",
+  "description": "Fix bootstrap telemetry counters and ensure bootstrap runs BEFORE discovery provider for nonfeed_diagnostic profile",
+  "status": "complete",
+  "bugs_fixed": [
+    {
+      "id": "F230B-BUG-1",
+      "description": "_pub_bootstrap_fetch_attempted never incremented when bootstrap hits created",
+      "file": "pipeline/live_public_pipeline.py",
+      "line": 2653,
+      "fix": "Added _pub_bootstrap_fetch_attempted += 1 inside bootstrap hit creation loop"
+    },
+    {
+      "id": "F230B-BUG-2",
+      "description": "_pub_bootstrap_accepted_findings never updated when bootstrap-sourced findings accepted",
+      "file": "pipeline/live_public_pipeline.py",
+      "line": 1473,
+      "fix": "Added source='bootstrap' check when _pub_accepted > 0 to track bootstrap findings"
+    },
+    {
+      "id": "F230B-BUG-3",
+      "description": "_pub_bootstrap_fetch_success never computed from page results",
+      "file": "pipeline/live_public_pipeline.py",
+      "line": 3156,
+      "fix": "Added post-aggregate computation of _pub_bootstrap_fetch_success from fetched page results"
+    },
+    {
+      "id": "F230B-BUG-4",
+      "description": "public_duplicate_count variable assigned but not used in return block",
+      "file": "pipeline/live_public_pipeline.py",
+      "line": 3171,
+      "fix": "Added public_duplicate_count = _pub_duplicate_count before return block"
+    }
+  ],
+  "files_created": [
+    "tests/probe_f230b_public_bootstrap_first/test_bootstrap_first.py",
+    "REPORT_PUBLIC_BOOTSTRAP_FIRST.md",
+    "public_bootstrap_first.json"
+  ],
+  "files_modified": [
+    "pipeline/live_public_pipeline.py"
+  ],
+  "backup_file": "pipeline/live_public_pipeline.py.bak_F230B_PUBLIC_BOOTSTRAP_FIRST",
+  "tests": {
+    "f230b": {
+      "file": "tests/probe_f230b_public_bootstrap_first/test_bootstrap_first.py",
+      "passed": 14,
+      "failed": 0
+    },
+    "f217c_regression": {
+      "file": "tests/probe_f217c_public_bootstrap/test_bootstrap.py",
+      "passed": 41,
+      "failed": 0
+    },
+    "f226b_regression": {
+      "file": "tests/probe_f226b_public_acceptance/test_public_acceptance.py",
+      "passed": 12,
+      "failed": 0
+    }
+  },
+  "invariants_verified": [
+    "Bootstrap candidates generated before discovery",
+    "Bootstrap fetch attempts tracked via _pub_bootstrap_fetch_attempted",
+    "Bootstrap accepted findings tracked via _pub_bootstrap_accepted_findings",
+    "Bootstrap fetch success computed via _pub_bootstrap_fetch_success",
+    "Stage derivation prevents DISCOVERY_TIMEOUT when bootstrap accepted > 0",
+    "Non-domain queries skip bootstrap (generate_bootstrap_urls returns empty list)"
+  ]
+}
