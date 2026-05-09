@@ -29,6 +29,9 @@ class GuardVerdict(Enum):
     FAIL_POLICY_CLASS_OVERENGINEERING = "CODEHEALTH_FAIL_POLICY_CLASS_OVERENGINEERING"
     FAIL_MISSING_INPUT_DATACLASS = "CODEHEALTH_FAIL_MISSING_INPUT_DATACLASS"
     FAIL_MISSING_RULE_HELPERS = "CODEHEALTH_FAIL_MISSING_RULE_HELPERS"
+    FAIL_FILE_NOT_FOUND = "CODEHEALTH_FAIL_FILE_NOT_FOUND"
+    FAIL_SYNTAX_ERROR = "CODEHEALTH_FAIL_SYNTAX_ERROR"
+    FAIL_SYMBOL_MISSING = "CODEHEALTH_FAIL_SYMBOL_MISSING"
 
 
 @dataclass
@@ -206,7 +209,7 @@ def run_guard(
     path = Path(file_path)
     if not path.exists():
         return GuardResult(
-            verdict=GuardVerdict.PASS,
+            verdict=GuardVerdict.FAIL_FILE_NOT_FOUND,
             function_name=symbol,
             explicit_args=0,
             source_lines=0,
@@ -223,7 +226,7 @@ def run_guard(
         tree = ast.parse(source_text)
     except SyntaxError as e:
         return GuardResult(
-            verdict=GuardVerdict.PASS,
+            verdict=GuardVerdict.FAIL_SYNTAX_ERROR,
             function_name=symbol,
             explicit_args=0,
             source_lines=0,
@@ -243,7 +246,7 @@ def run_guard(
 
     if func_node is None:
         return GuardResult(
-            verdict=GuardVerdict.PASS,
+            verdict=GuardVerdict.FAIL_SYMBOL_MISSING,
             function_name=symbol,
             explicit_args=0,
             source_lines=0,
@@ -383,6 +386,9 @@ def _render_markdown(result: GuardResult) -> str:
         GuardVerdict.FAIL_POLICY_CLASS_OVERENGINEERING: "Policy class overengineering detected (.*Rule class names).",
         GuardVerdict.FAIL_MISSING_INPUT_DATACLASS: "NextActionInput dataclass not found in source.",
         GuardVerdict.FAIL_MISSING_RULE_HELPERS: f"Only {result.rule_helper_count} _rule_* helpers found (min 4).",
+        GuardVerdict.FAIL_FILE_NOT_FOUND: "Source file does not exist — guard cannot inspect.",
+        GuardVerdict.FAIL_SYNTAX_ERROR: "Source file has syntax errors — guard cannot parse.",
+        GuardVerdict.FAIL_SYMBOL_MISSING: "Target function/symbol not found in source file.",
     }
     for verd, desc in verdicts.items():
         lines.append(f"- `{verd.value}`: {desc}")

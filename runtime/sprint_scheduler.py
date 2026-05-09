@@ -1880,6 +1880,22 @@ class SprintScheduler:
             _t.add_done_callback(self._bg_tasks.discard)
 
             while not self._runner.is_terminal():
+                # Sprint F212A: Hard deadline check FIRST — before any lifecycle
+                # transitions or guards that could break early. Ensures deadline
+                # is always enforced regardless of windup_guard or 8BK guard state.
+                if not self._check_hard_deadline():
+                    # Deadline exceeded — stop starting new work
+                    await self._ensure_nonfeed_predispatch_before_finalization(
+                        query, "hard_deadline_exceeded"
+                    )
+                    self._capture_timing_fields()
+                    await self._finalize_result_truth(
+                        "hard_deadline_exceeded",
+                        f"hard deadline exceeded at cycle {self._result.cycles_started}",
+                        "GATHER",
+                        query,
+                    )
+                    break
                 if self._stop_requested:
                     # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal state
                     if await self._ensure_mandatory_nonfeed_before_return(
@@ -2059,20 +2075,6 @@ class SprintScheduler:
                     )
                     self._capture_timing_fields()
                     await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
-                    break
-                # ── Sprint F212A: Hard deadline check before new cycle ─────────
-                if not self._check_hard_deadline():
-                    # Deadline exceeded — stop starting new work
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        query, "hard_deadline_exceeded"
-                    )
-                    self._capture_timing_fields()
-                    await self._finalize_result_truth(
-                        "hard_deadline_exceeded",
-                        f"hard deadline exceeded at cycle {self._result.cycles_started}",
-                        "GATHER",
-                        query,
-                    )
                     break
                 # Sprint 8XE: Store sources for public discovery query hint
                 self._last_sources = list(ordered_sources)
