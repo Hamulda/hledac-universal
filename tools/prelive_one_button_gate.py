@@ -1059,6 +1059,136 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
         if not r.valid:
             blocking_reasons.append(f"cross-sprint artifact invalid/missing: {r.probe_dir}/{r.filename}")
 
+    # ------------------------------------------------------------------------- #
+    # F229-GATE-A: F229 artifact checks (nonfeed uplift structural gate)
+    # ------------------------------------------------------------------------- #
+    # Categories: F229-EXPORT-A, F229-RUNTIME-A, F229-PUBLIC-A, F229-NONFEED-A
+    # These are structural import/existence checks only — no live execution.
+    # ------------------------------------------------------------------------- #
+
+    # F229-EXPORT-A: export/sprint_exporter.py must be importable
+    try:
+        from export import sprint_exporter as _export_sprint_exporter
+        _has_export = hasattr(_export_sprint_exporter, "_generate_next_sprint_seeds")
+        if not _has_export:
+            blocking_reasons.append("F229-EXPORT-A: export.sprint_exporter missing _generate_next_sprint_seeds")
+        else:
+            artifact_matrix.append({
+                "probe_dir": "export",
+                "filename": "sprint_exporter.py",
+                "category": "F229-EXPORT-A",
+                "found": True,
+                "valid": True,
+                "parse_error": None,
+                "blocks_live": True,
+            })
+    except ImportError as _exc:
+        blocking_reasons.append(f"F229-EXPORT-A: export.sprint_exporter not importable: {_exc}")
+        artifact_matrix.append({
+            "probe_dir": "export",
+            "filename": "sprint_exporter.py",
+            "category": "F229-EXPORT-A",
+            "found": False,
+            "valid": False,
+            "parse_error": str(_exc),
+            "blocks_live": True,
+        })
+
+    # F229-RUNTIME-A: runtime/sprint_scheduler.py must be importable
+    try:
+        from runtime import sprint_scheduler as _runtime_scheduler
+        _has_scheduler = hasattr(_runtime_scheduler, "SprintScheduler") or hasattr(_runtime_scheduler, "run_sprint")
+        if not _has_scheduler:
+            blocking_reasons.append("F229-RUNTIME-A: runtime.sprint_scheduler missing SprintScheduler/run_sprint")
+        else:
+            artifact_matrix.append({
+                "probe_dir": "runtime",
+                "filename": "sprint_scheduler.py",
+                "category": "F229-RUNTIME-A",
+                "found": True,
+                "valid": True,
+                "parse_error": None,
+                "blocks_live": True,
+            })
+    except ImportError as _exc:
+        blocking_reasons.append(f"F229-RUNTIME-A: runtime.sprint_scheduler not importable: {_exc}")
+        artifact_matrix.append({
+            "probe_dir": "runtime",
+            "filename": "sprint_scheduler.py",
+            "category": "F229-RUNTIME-A",
+            "found": False,
+            "valid": False,
+            "parse_error": str(_exc),
+            "blocks_live": True,
+        })
+
+    # F229-PUBLIC-A: pipeline/live_public_pipeline.py must have public_bootstrap_order field
+    try:
+        from pipeline.live_public_pipeline import PipelineRunResult as _PipResult
+        if hasattr(_PipResult, "public_bootstrap_order"):
+            artifact_matrix.append({
+                "probe_dir": "pipeline",
+                "filename": "live_public_pipeline.py",
+                "category": "F229-PUBLIC-A",
+                "found": True,
+                "valid": True,
+                "parse_error": None,
+                "blocks_live": True,
+            })
+        else:
+            blocking_reasons.append("F229-PUBLIC-A: PipelineRunResult missing public_bootstrap_order field")
+            artifact_matrix.append({
+                "probe_dir": "pipeline",
+                "filename": "live_public_pipeline.py",
+                "category": "F229-PUBLIC-A",
+                "found": True,
+                "valid": False,
+                "parse_error": "public_bootstrap_order field not found on PipelineRunResult",
+                "blocks_live": True,
+            })
+    except ImportError as _exc:
+        blocking_reasons.append(f"F229-PUBLIC-A: pipeline.live_public_pipeline not importable: {_exc}")
+        artifact_matrix.append({
+            "probe_dir": "pipeline",
+            "filename": "live_public_pipeline.py",
+            "category": "F229-PUBLIC-A",
+            "found": False,
+            "valid": False,
+            "parse_error": str(_exc),
+            "blocks_live": True,
+        })
+
+    # F229-NONFEED-A: nonfeed_profile_expected_lanes in LiveMeasurementResult
+    try:
+        from benchmarks.live_sprint_measurement import LiveMeasurementResult as _LMR
+        _has_lanes = hasattr(_LMR, "nonfeed_profile_expected_lanes")
+        _has_acq_report = hasattr(_LMR, "acquisition_report")
+        if not _has_lanes:
+            blocking_reasons.append("F229-NONFEED-A: LiveMeasurementResult missing nonfeed_profile_expected_lanes")
+        if not _has_acq_report:
+            blocking_reasons.append("F229-NONFEED-A: LiveMeasurementResult missing acquisition_report")
+        _nonfeed_valid = _has_lanes and _has_acq_report
+        artifact_matrix.append({
+            "probe_dir": "benchmarks",
+            "filename": "live_sprint_measurement.py",
+            "category": "F229-NONFEED-A",
+            "found": True,
+            "valid": _nonfeed_valid,
+            "parse_error": None if _nonfeed_valid else "missing nonfeed fields",
+            "blocks_live": True,
+        })
+    except ImportError as _exc:
+        blocking_reasons.append(f"F229-NONFEED-A: benchmarks.live_sprint_measurement not importable: {_exc}")
+        artifact_matrix.append({
+            "probe_dir": "benchmarks",
+            "filename": "live_sprint_measurement.py",
+            "category": "F229-NONFEED-A",
+            "found": False,
+            "valid": False,
+            "parse_error": str(_exc),
+            "blocks_live": True,
+        })
+
     # 5. Validate expected_assertions contract
     expected_profile = profile
     expected_acquisition = _get_acquisition_profile_for_benchmark(expected_profile)
