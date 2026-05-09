@@ -1,0 +1,50 @@
+{
+  "hooks": {
+    "self-review": {
+      "timeout": 45000,
+      "targetPatterns": [
+        "**/*.py",
+        "**/*.toml",
+        "**/*.json",
+        "**/*.md",
+        "!**/.venv/**",
+        "!**/node_modules/**",
+        "!**/.pytest_cache/**",
+        "!**/.ruff_cache/**",
+        "!**/__pycache__/**",
+        "!**/probe_*/**",
+        "!**/tests/probe_*/**",
+        "!**/archive/**",
+        "!**/reports/**",
+        "!**/tmp/**",
+        "!**/temp/**"
+      ],
+      "focusAreas": [
+        {
+          "name": "Implementation Completeness",
+          "questions": [
+            "Did the change implement real behavior instead of mocks, placeholders, pass stubs, or hardcoded success?",
+            "Are there TODO/FIXME comments or temporary shortcuts left in production paths?",
+            "Does the implementation preserve existing public contracts and avoid fake-green tests?"
+          ]
+        },
+        {
+          "name": "Hledac Architecture Invariants",
+          "questions": [
+            "Does the change preserve uv-managed Python 3.14 and avoid global pip or pyenv assumptions?",
+            "Does it respect M1 8GB constraints: bounded memory, bounded concurrency, no unnecessary heavy dependencies?",
+            "Does async code avoid lifecycle leaks, unclosed sessions, unsafe run_until_complete, and broken cancellation semantics?"
+          ]
+        },
+        {
+          "name": "Integration and Ownership",
+          "questions": [
+            "Is the code wired into the canonical owner instead of adding a duplicate parallel path?",
+            "Are teardown, fail-soft behavior, and observability handled where this project expects them?",
+            "Are tests or probes aligned with the current architecture rather than old legacy surfaces?"
+          ]
+        }
+      ]
+    }
+  }
+}

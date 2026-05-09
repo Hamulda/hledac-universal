@@ -119,18 +119,8 @@ def compute_confidence(
     float
         Confidence in [MIN_CONFIDENCE, MAX_CONFIDENCE].
     """
-    # Map source_family to baseline — unrecognized families use default
-    _BASELINES = {
-        "FEED": FEED,
-        "PUBLIC": PUBLIC,
-        "CT": CT,
-        "WAYBACK": WAYBACK,
-        "PASSIVE_DNS": PASSIVE_DNS,
-        "SOCIAL": SOCIAL,
-        "PLANNER": PLANNER,
-        "STEALTH": STEALTH,
-    }
-    base = _BASELINES.get(source_family.upper(), default)
+    # Map source_family to baseline via module-level constant
+    base = _SOURCE_BASELINES.get(source_family.upper(), default)
 
     confidence = base
     modifiers: list[str] = []

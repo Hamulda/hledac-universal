@@ -2036,6 +2036,258 @@ def _was_family_attempted(runtime_truth: dict, family: str) -> bool:
     return timed_out
 
 
+@dataclass(frozen=True)
+class NextActionInput:
+    """All inputs needed by _derive_next_action rule helpers.
+
+    Frozen dataclass ensures rule helpers are pure and cannot mutate inputs.
+    All fields have explicit defaults so callers can pass by name.
+    """
+    status: MeasurementStatus
+    is_memory_gate_abort: bool
+    nonfeed_accepted_findings: int
+    public_fetch_attempted: bool
+    public_findings: int
+    feed_findings: int
+    total_findings: int
+    ct_findings: int
+    runtime_truth: dict
+    # Optional fields with defaults
+    feed_dominance_score: float | None = None
+    top_public_reject_reason: str | None = None
+    nonfeed_starvation_suspected: bool = False
+    prewindup_barrier_checked: bool = False
+    prewindup_barrier_satisfied: bool = False
+    prewindup_required_lanes: list[str] | None = None
+    prewindup_attempted_lanes: list[str] | None = None
+    acquisition_strategy: dict | None = None
+    return_guard_observation: dict | None = None
+    scheduler_exit: dict | None = None
+    acquisition_terminality_checked: bool | None = None
+    acquisition_terminality_satisfied: bool | None = None
+    acquisition_terminality_missing_lanes: list[str] | None = None
+    run_quality_verdict: str | None = None
+    acquisition_prelude_checked: bool | None = None
+    acquisition_prelude_ran: bool | None = None
+    acquisition_prelude_required_lanes: list[str] | None = None
+    acquisition_prelude_terminal_lanes: list[str] | None = None
+    acquisition_prelude_missing_lanes: list[str] | None = None
+    acquisition_prelude_skipped_lanes: dict | None = None
+    acquisition_prelude_errors: dict | None = None
+    acquisition_prelude_duration_s: float | None = None
+    acquisition_prelude_reason: str | None = None
+    windup_guard_observation: dict | None = None
+    scheduler_deadline_enforced: bool = False
+    scheduler_deadline_checks: int = 0
+
+
+# ----------------------------------------------------------------------
+# Rule helpers — each returns tuple[str, str] | None
+# Order matches the priority dispatch in _derive_next_action
+# ----------------------------------------------------------------------
+
+
+def _rule_wallclock_enforcement(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rule 0: Wallclock budget exceeded — distinguish scheduler enforcement vs benchmark observation."""
+    if inp.run_quality_verdict == RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED.value:
+        if not inp.scheduler_deadline_enforced:
+            return ("fix_scheduler_deadline_enforcement", None)
+        return ("fix_branch_tail_timeout", None)
+    return None
+
+
+def _rule0b_memory_or_swap_gate(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rule 1 (memory gate): Critical system state — clean memory."""
+    if inp.is_memory_gate_abort:
+        return ("clean_memory", None)
+    return None
+
+
+def _rule0g_prewindup_barrier(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rule 0 / 0b / 0c / 0d: Pre-windup barrier rules (F207Q)."""
+    prewindup_required_lanes = inp.prewindup_required_lanes or []
+    prewindup_attempted_lanes = inp.prewindup_attempted_lanes or []
+
+    has_barrier_telemetry = inp.acquisition_strategy is not None and bool(inp.acquisition_strategy)
+
+    # Rule 0: barrier telemetry present but never checked
+    if (has_barrier_telemetry
+            and inp.runtime_truth.get("cycles_started", 0) > 0
+            and inp.runtime_truth.get("primary_signal_source")
+            and not inp.prewindup_barrier_checked):
+        return ("fix_prewindup_barrier_not_called", None)
+
+    # Rule 0b: barrier checked but NOT satisfied
+    if inp.prewindup_barrier_checked and not inp.prewindup_barrier_satisfied:
+        return ("fix_required_lane_terminal_state", None)
+
+    # Rule 0c: barrier checked+satisfied but ALL required lanes missing from attempted_lanes
+    if (inp.prewindup_barrier_checked
+            and inp.prewindup_barrier_satisfied
+            and prewindup_required_lanes
+            and not any(lane in prewindup_attempted_lanes for lane in prewindup_required_lanes)
+            and inp.ct_findings == 0
+            and inp.public_findings == 0):
+        return ("fix_report_mapping", None)
+
+    # Rule 0d: barrier checked+satisfied — starvation was false positive, fall through
+    return None
+
+
+def _rule_profile_propagation(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rules -1, -1b, -1d, -1e: Return guard and scheduler exit path rules (F207T, F207V-B, F208M)."""
+    wg = inp.windup_guard_observation or {}
+    wg_supplied = wg.get("callback_supplied_count", 0)
+    wg_exec = wg.get("callback_executed_count", 0)
+
+    # Windup callback wired but never executed
+    if wg_supplied > 0 and wg_exec == 0:
+        return ("fix_callback_execution", None)
+
+    rg = inp.return_guard_observation or {}
+    has_rg_telemetry = bool(rg)
+    rg_checked: bool = bool(rg.get("checked")) if has_rg_telemetry else False
+    rg_satisfied: bool = rg.get("satisfied", False) if has_rg_telemetry else False
+
+    # Rule -1: return guard telemetry present, checked=False
+    if (has_rg_telemetry
+            and rg_checked is False
+            and inp.runtime_truth.get("cycles_started", 0) > 0
+            and inp.runtime_truth.get("primary_signal_source")
+            and inp.feed_findings > 0
+            and inp.ct_findings == 0
+            and inp.public_findings == 0):
+        return ("fix_scheduler_return_guard_not_called", None)
+
+    # Rule -1b: return guard checked but NOT satisfied
+    if has_rg_telemetry and rg_checked and not rg_satisfied:
+        return ("fix_return_guard_terminal_state", None)
+
+    # Windup callback NOT supplied but guard was called
+    wg_call_count = wg.get("windup_guard_call_count", 0)
+    if wg_supplied == 0 and wg_call_count > 0:
+        return ("fix_callback_wiring", None)
+
+    # Rule -1d: scheduler_exit dict present but exit_path missing/empty
+    se = inp.scheduler_exit
+    se_path = se.get("exit_path") if se is not None else None
+    if se is not None and not se_path:
+        return ("add_scheduler_exit_tracer", None)
+
+    # Rule -1e: feed-only + nonfeed eligible + return_guard not checked + non-run_complete path
+    if (se is not None
+            and se_path
+            and se_path != "run_complete"
+            and not rg_checked
+            and inp.runtime_truth.get("cycles_started", 0) > 0
+            and inp.runtime_truth.get("primary_signal_source")
+            and inp.feed_findings > 0
+            and inp.ct_findings == 0
+            and inp.public_findings == 0):
+        return (f"patch_scheduler_exit_path:{se_path}", None)
+
+    return None
+
+
+def _rule_terminality(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rules 0e, 0f: Acquisition terminality wiring (F208F, F208M)."""
+    # Rule 0e: active300 domain query has eligible PUBLIC or CT but terminality never checked
+    if (inp.acquisition_terminality_checked is False
+            and inp.runtime_truth.get("cycles_started", 0) > 0
+            and inp.runtime_truth.get("primary_signal_source")
+            and (inp.ct_findings > 0 or inp.public_findings > 0)):
+        return ("fix_terminality_wiring", None)
+
+    # Rule 0f: terminality checked but NOT satisfied — mandatory lanes missing terminal state
+    if inp.acquisition_terminality_checked is True and inp.acquisition_terminality_satisfied is False:
+        missing = inp.acquisition_terminality_missing_lanes or []
+        if missing:
+            return (f"fix_terminality_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")
+        return ("fix_terminality_wiring", None)
+
+    return None
+
+
+def _rule_provider_surface(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rules 0g, 0h, 0i: Acquisition prelude telemetry rules (F209B)."""
+    _is_domain = inp.runtime_truth.get("cycles_started", 0) > 0 and inp.runtime_truth.get("primary_signal_source")
+    _has_nonfeed = inp.ct_findings > 0 or inp.public_findings > 0
+
+    # Rule 0g: active300 domain but acquisition_prelude never checked
+    if (_is_domain and _has_nonfeed and inp.acquisition_prelude_checked is not True):
+        if inp.is_memory_gate_abort:
+            return ("clean_memory", None)
+        return ("wire_acquisition_prelude_into_run_path", None)
+
+    # Rule 0h: prelude checked but required lanes are missing from terminal lanes
+    if inp.acquisition_prelude_checked is True and inp.acquisition_prelude_missing_lanes:
+        missing = list(inp.acquisition_prelude_missing_lanes) if inp.acquisition_prelude_missing_lanes else []
+        if missing:
+            if inp.nonfeed_starvation_suspected:
+                return ("fix_nonfeed_scheduler_order", None)
+            return (f"fix_acquisition_prelude_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")
+
+    # Rule 0i: terminality not checked but prelude terminal lanes are present
+    _prelude_terminal = list(inp.acquisition_prelude_terminal_lanes) if inp.acquisition_prelude_terminal_lanes else []
+    if (_is_domain and _has_nonfeed and inp.acquisition_terminality_checked is not True and _prelude_terminal):
+        if inp.is_memory_gate_abort:
+            return ("clean_memory", None)
+        return ("fix_terminality_report_from_prelude", None)
+
+    return None
+
+
+def _rule_quality_gate(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rules 1 (starvation), 1 (memory gate): Critical system quality gates."""
+    # Rule 1: nonfeed starvation — must fire early so operators see it
+    if inp.nonfeed_starvation_suspected:
+        return ("fix_nonfeed_scheduler_order", None)
+    # Rule 1: memory gate abort (already handled in _rule0b_memory_or_swap_gate,
+    # but kept here for priority order — memory gate fires before public rejection)
+    if inp.is_memory_gate_abort:
+        return ("clean_memory", None)
+    return None
+
+
+def _rule_default(inp: NextActionInput) -> tuple[str, str | None] | None:
+    """Rules 3, 2, 5, 4, 6, 7, default: Feed/public/ct/quality default rules."""
+    # Rule 3: public attempted but accepted=0 (only when ct was NOT attempted)
+    # Must come BEFORE Rule 2 so public rejection reason surfaces even when feed dominance >= 0.7
+    if (inp.public_fetch_attempted and inp.nonfeed_accepted_findings == 0
+            and inp.feed_findings == inp.total_findings
+            and not _was_family_attempted(inp.runtime_truth, "ct")):
+        return ("inspect_public_reject_reasons", inp.top_public_reject_reason)
+
+    # Rule 2: feed dominance high, BOTH public AND ct were attempted, nonfeed accepted=0 → inspect
+    if inp.feed_dominance_score is not None and inp.feed_dominance_score >= 0.7:
+        if inp.nonfeed_accepted_findings == 0:
+            both_attempted = inp.public_fetch_attempted and _was_family_attempted(inp.runtime_truth, "ct")
+            if both_attempted:
+                return ("inspect_nonfeed_rejection_or_raw_counts", None)
+            return ("improve_nonfeed_lanes", None)
+
+    # Rule 5: ct attempted but raw=0
+    if inp.ct_findings == 0 and _was_family_attempted(inp.runtime_truth, "ct"):
+        return ("inspect_ct_query_domain", None)
+
+    # Rule 4: feed-only with public findings present AND ct was attempted but zero ct findings
+    if (inp.total_findings > 0 and inp.feed_findings == inp.total_findings
+            and _was_family_attempted(inp.runtime_truth, "ct")
+            and inp.public_findings > 0):
+        return ("improve_nonfeed_lanes", None)
+
+    # Rule 6: valid multi-source yield
+    if inp.nonfeed_accepted_findings > 0:
+        return ("run_active600_or_targeted_query", None)
+
+    # Rule 7: no findings but sprint completed — inspect
+    if inp.total_findings == 0 and inp.status == MeasurementStatus.COMPLETED:
+        return ("inspect_empty_run", None)
+
+    # Default: no action determinable
+    return None
+
+
 def _derive_next_action(
     status: MeasurementStatus,
     is_memory_gate_abort: bool,
@@ -2059,9 +2311,7 @@ def _derive_next_action(
     acquisition_terminality_checked: bool | None = None,
     acquisition_terminality_satisfied: bool | None = None,
     acquisition_terminality_missing_lanes: list[str] | None = None,
-    # F210D: wallclock budget enforcement
     run_quality_verdict: str | None = None,
-    # F209B: Acquisition prelude telemetry
     acquisition_prelude_checked: bool | None = None,
     acquisition_prelude_ran: bool | None = None,
     acquisition_prelude_required_lanes: list[str] | None = None,
@@ -2072,13 +2322,12 @@ def _derive_next_action(
     acquisition_prelude_duration_s: float | None = None,
     acquisition_prelude_reason: str | None = None,
     windup_guard_observation: dict | None = None,
-    # F212C: Scheduler deadline enforcement telemetry
     scheduler_deadline_enforced: bool = False,
     scheduler_deadline_checks: int = 0,
 ) -> tuple[str, str | None]:
     """Derive (next_action, next_action_detail) based on sprint outcome rules.
 
-    Returns a (action, detail) tuple where detail may be None.
+    Thin priority dispatcher — delegates to NextActionInput + rule helpers.
     Rule order matters — public rejection (Rule 3) checked BEFORE feed-dominance (Rule 2)
     so operators see WHY public_findings=0 before generic nonfeed recommendations.
     F207M: starvation rule fires before most other rules to surface scheduler-order fixes.
@@ -2089,230 +2338,59 @@ def _derive_next_action(
     F208M: scheduler_exit run_complete => never suggest add_scheduler_exit_tracer
     F212C: scheduler deadline enforcement distinguishes scheduler-enforced deadline from benchmark-observed overrun.
     """
-    # F212C + F210D: Wallclock budget exceeded — distinguish scheduler enforcement vs benchmark observation
-    # Rule 0: fires FIRST, before all other rules — wallclock overrun is a critical signal
-    # F212C: scheduler_deadline_enforced=False means scheduler did NOT check/enforce hard deadline
-    # F212C: scheduler_deadline_enforced=True means scheduler DID enforce deadline, branch tail issue
-    if run_quality_verdict == RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED.value:
-        if not scheduler_deadline_enforced:
-            return ("fix_scheduler_deadline_enforcement", None)
-        else:
-            return ("fix_branch_tail_timeout", None)
+    inp = NextActionInput(
+        status=status,
+        is_memory_gate_abort=is_memory_gate_abort,
+        nonfeed_accepted_findings=nonfeed_accepted_findings,
+        public_fetch_attempted=public_fetch_attempted,
+        public_findings=public_findings,
+        feed_findings=feed_findings,
+        total_findings=total_findings,
+        ct_findings=ct_findings,
+        runtime_truth=runtime_truth,
+        feed_dominance_score=feed_dominance_score,
+        top_public_reject_reason=top_public_reject_reason,
+        nonfeed_starvation_suspected=nonfeed_starvation_suspected,
+        prewindup_barrier_checked=prewindup_barrier_checked,
+        prewindup_barrier_satisfied=prewindup_barrier_satisfied,
+        prewindup_required_lanes=prewindup_required_lanes,
+        prewindup_attempted_lanes=prewindup_attempted_lanes,
+        acquisition_strategy=acquisition_strategy,
+        return_guard_observation=return_guard_observation,
+        scheduler_exit=scheduler_exit,
+        acquisition_terminality_checked=acquisition_terminality_checked,
+        acquisition_terminality_satisfied=acquisition_terminality_satisfied,
+        acquisition_terminality_missing_lanes=acquisition_terminality_missing_lanes,
+        run_quality_verdict=run_quality_verdict,
+        acquisition_prelude_checked=acquisition_prelude_checked,
+        acquisition_prelude_ran=acquisition_prelude_ran,
+        acquisition_prelude_required_lanes=acquisition_prelude_required_lanes,
+        acquisition_prelude_terminal_lanes=acquisition_prelude_terminal_lanes,
+        acquisition_prelude_missing_lanes=acquisition_prelude_missing_lanes,
+        acquisition_prelude_skipped_lanes=acquisition_prelude_skipped_lanes,
+        acquisition_prelude_errors=acquisition_prelude_errors,
+        acquisition_prelude_duration_s=acquisition_prelude_duration_s,
+        acquisition_prelude_reason=acquisition_prelude_reason,
+        windup_guard_observation=windup_guard_observation,
+        scheduler_deadline_enforced=scheduler_deadline_enforced,
+        scheduler_deadline_checks=scheduler_deadline_checks,
+    )
 
-    prewindup_required_lanes = prewindup_required_lanes or []
-    prewindup_attempted_lanes = prewindup_attempted_lanes or []
+    # Strict priority order — first non-None result wins
+    for helper in [
+        _rule_wallclock_enforcement,
+        _rule0g_prewindup_barrier,
+        _rule_profile_propagation,
+        _rule_provider_surface,
+        _rule_terminality,
+        _rule_quality_gate,   # includes starvation + memory gate (starvation first in old code)
+        _rule0b_memory_or_swap_gate,
+        _rule_default,
+    ]:
+        result = helper(inp)
+        if result is not None:
+            return result
 
-    # F208M: Windup guard callback rule — fire before return guard rules
-    # When callback_supplied > 0 but callback_executed == 0, the callback was wired
-    # but never executed. This is a distinct issue from callback_supplied == 0 (wiring).
-    wg = windup_guard_observation or {}
-    wg_supplied = wg.get("callback_supplied_count", 0)
-    wg_exec = wg.get("callback_executed_count", 0)
-    if wg_supplied > 0 and wg_exec == 0:
-        return ("fix_callback_execution", None)
-
-    # F207T: Return guard rules — fire BEFORE prewindup barrier rules
-    # because return_guard_checked=false with windup_guard_call_count=0 means
-    # the scheduler return path guard was never reached (distinct from windup_guard miss).
-    # Return guard fires at ACTIVE→WINDUP transition; windup_guard fires at windup_lead boundary.
-    # Rule -1 ONLY fires when return_guard_observation telemetry is PRESENT (not None/empty).
-    # If return_guard_observation=None, we cannot determine whether return guard was called — fall through.
-    rg = return_guard_observation or {}
-    has_rg_telemetry = bool(rg)
-    rg_checked: bool = bool(rg.get("checked")) if has_rg_telemetry else False
-    rg_satisfied: bool = rg.get("satisfied", False) if has_rg_telemetry else False
-
-    # Rule -1 (F207T): Return guard never checked — scheduler return guard not called
-    # ONLY when we have return_guard telemetry AND checked=False.
-    # This means the scheduler's return guard was reached but never called (not that we don't know).
-    # Conditions: return_guard telemetry present, cycles_started > 0, primary_signal_source present,
-    # feed-only (windup_guard_call_count=0 proxy), nonfeed not dispatched.
-    if (has_rg_telemetry
-            and rg_checked is False
-            and runtime_truth.get("cycles_started", 0) > 0
-            and runtime_truth.get("primary_signal_source")
-            and feed_findings > 0
-            and ct_findings == 0
-            and public_findings == 0):
-        return ("fix_scheduler_return_guard_not_called", None)
-
-    # Rule -1b (F207T): Return guard checked but NOT satisfied — terminal state issue
-    if has_rg_telemetry and rg_checked and not rg_satisfied:
-        return ("fix_return_guard_terminal_state", None)
-
-    # F208N: Windup callback NOT supplied but windup guard was called
-    # windup_guard_call_count > 0 means the guard was active but no callback was wired.
-    # Distinct from fix_callback_execution where callback was wired but never executed.
-    wg_call_count = wg.get("windup_guard_call_count", 0)
-    if wg_supplied == 0 and wg_call_count > 0:
-        return ("fix_callback_wiring", None)
-
-    # F208M: Return guard checked AND satisfied — never emit fix_return_guard_report_mapping.
-    # If both checked and satisfied are True, the guard is working correctly and
-    # any nonfeed starvation is a pre-dispatch issue, not a report mapping gap.
-
-    # F207V-B: Scheduler exit path rules — fire before return guard rules
-    # so operators see which exit path was taken when guard was bypassed.
-    # Rule -1d: scheduler_exit dict is present but exit_path is missing/empty
-    # This means the F207V-A tracer has not been wired up yet.
-    # Only fire when scheduler_exit was explicitly provided (not None).
-    # If scheduler_exit is None (no telemetry available), fall through.
-    se = scheduler_exit
-    # F208M: run_complete is a legitimate exit path — do not suggest add_scheduler_exit_tracer
-    se_path = se.get("exit_path") if se is not None else None
-    if se is not None and not se_path:
-        return ("add_scheduler_exit_tracer", None)
-
-    # Rule -1e (F207V-B): feed-only + nonfeed eligible + return_guard not checked
-    # The scheduler exit path bypassed the return guard. Include the specific path.
-    # F208M: skip run_complete — it's a legitimate exit path, not a bypass.
-    if (se is not None
-            and se_path
-            and se_path != "run_complete"
-            and not rg_checked
-            and runtime_truth.get("cycles_started", 0) > 0
-            and runtime_truth.get("primary_signal_source")
-            and feed_findings > 0
-            and ct_findings == 0
-            and public_findings == 0):
-        return (f"patch_scheduler_exit_path:{se_path}", None)
-
-    # Rule 0: Pre-windup barrier not called (F207Q)
-    # Only fire when acquisition_strategy telemetry is PRESENT (not None/empty).
-    # If no barrier telemetry exists, we cannot determine whether barrier was called —
-    # fall through to other rules so existing tests are not broken.
-    has_barrier_telemetry = acquisition_strategy is not None and bool(acquisition_strategy)
-    if (has_barrier_telemetry
-            and runtime_truth.get("cycles_started", 0) > 0
-            and runtime_truth.get("primary_signal_source")
-            and not prewindup_barrier_checked):
-        return ("fix_prewindup_barrier_not_called", None)
-
-    # Rule 0b: Pre-windup barrier checked but NOT satisfied (F207Q)
-    if prewindup_barrier_checked and not prewindup_barrier_satisfied:
-        return ("fix_required_lane_terminal_state", None)
-
-    # Rule 0c: Barrier checked and satisfied but ALL required lanes are missing from attempted_lanes (F207Q)
-    # "satisfied" but nothing was actually dispatched → report mapping gap
-    # Condition: barrier checked+satisfied, required lanes exist, attempted_lanes doesn't include any required lanes,
-    #           AND both ct_findings and public_findings are 0 (no nonfeed findings despite barrier satisfied)
-    if (prewindup_barrier_checked
-            and prewindup_barrier_satisfied
-            and prewindup_required_lanes
-            and not any(lane in prewindup_attempted_lanes for lane in prewindup_required_lanes)
-            and ct_findings == 0
-            and public_findings == 0):
-        return ("fix_report_mapping", None)
-
-    # Rule 0d: Barrier checked and satisfied, no starvation (F207Q)
-    # If barrier was checked AND satisfied AND ct/public were attempted/skipped → starvation is false
-    if prewindup_barrier_checked and prewindup_barrier_satisfied:
-        # starvation was false positive — barrier did its job
-        pass  # fall through to other rules
-
-    # F209B: Acquisition prelude next-action rules — fire BEFORE terminality rules
-    # BUT memory gate and starvation are critical system states that override prelude rules.
-    _is_domain = runtime_truth.get("cycles_started", 0) > 0 and runtime_truth.get("primary_signal_source")
-    _has_nonfeed = ct_findings > 0 or public_findings > 0
-
-    # Rule 0g: active300 domain but acquisition_prelude never checked
-    # Means the F209A prelude was never wired into the run path.
-    # Memory gate takes priority over this — critical system state.
-    if (_is_domain
-            and _has_nonfeed
-            and acquisition_prelude_checked is not True):
-        if is_memory_gate_abort:
-            return ("clean_memory", None)
-        return ("wire_acquisition_prelude_into_run_path", None)
-
-    # Rule 0h: prelude checked but required lanes are missing from terminal lanes
-    # prelude ran and had required lanes, but some didn't reach terminal state.
-    # Starvation takes priority over this — starvation is a scheduler-order issue.
-    if (acquisition_prelude_checked is True
-            and acquisition_prelude_missing_lanes):
-        missing = list(acquisition_prelude_missing_lanes) if acquisition_prelude_missing_lanes else []
-        if missing:
-            if nonfeed_starvation_suspected:
-                return ("fix_nonfeed_scheduler_order", None)
-            return (f"fix_acquisition_prelude_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")
-
-    # Rule 0i: terminality not checked but prelude terminal lanes are present
-    # Prelude ran and recorded terminal lanes, but terminality wiring was never called.
-    # Derive terminality report from prelude data. Fires BEFORE Rule 0e.
-    _prelude_terminal = list(acquisition_prelude_terminal_lanes) if acquisition_prelude_terminal_lanes else []
-    if (_is_domain
-            and _has_nonfeed
-            and acquisition_terminality_checked is not True
-            and _prelude_terminal):
-        if is_memory_gate_abort:
-            return ("clean_memory", None)
-        return ("fix_terminality_report_from_prelude", None)
-
-    # F208F: Acquisition terminality wiring — active300 domain queries must check terminality
-    # Rule 0e: active300 domain query has eligible PUBLIC or CT but terminality was never checked
-    # Conditions: acquisition_terminality_checked is False AND domain query (ct_findings > 0 or public_findings > 0)
-    # This means the F208B terminality check never ran for an active300 query.
-    if (acquisition_terminality_checked is False
-            and runtime_truth.get("cycles_started", 0) > 0
-            and runtime_truth.get("primary_signal_source")
-            and (ct_findings > 0 or public_findings > 0)):
-        return ("fix_terminality_wiring", None)
-
-    # Rule 0f (F208M): Terminality checked but NOT satisfied — mandatory lanes missing terminal state
-    # This is the active300 signal that required lanes (PUBLIC/CT) didn't reach terminal state.
-    # F208M: emit fix_terminality_missing_lane:<lane> with specific lane, not generic fix_terminality_wiring.
-    if acquisition_terminality_checked is True and acquisition_terminality_satisfied is False:
-        missing = acquisition_terminality_missing_lanes or []
-        if missing:
-            return (f"fix_terminality_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")
-        return ("fix_terminality_wiring", None)
-
-    # Rule 1: nonfeed starvation (F207M) — must fire early so operators see it
-    if nonfeed_starvation_suspected:
-        return ("fix_nonfeed_scheduler_order", None)
-
-    # Rule 1: memory gate abort
-    if is_memory_gate_abort:
-        return ("clean_memory", None)
-
-    # Rule 3: public attempted but accepted=0 (only when ct was NOT attempted)
-    # F207K-B: include top rejection reason in detail
-    # Must come BEFORE Rule 2 so public rejection reason surfaces even when feed dominance >= 0.7
-    if (public_fetch_attempted and nonfeed_accepted_findings == 0
-            and feed_findings == total_findings
-            and not _was_family_attempted(runtime_truth, "ct")):
-        return ("inspect_public_reject_reasons", top_public_reject_reason)
-
-    # Rule 2: feed dominance high, BOTH public AND ct were attempted, nonfeed accepted=0 → inspect
-    # NOTE: Rule 5 and Rule 4 must fire BEFORE this rule so specific CT/public actions take priority
-    if feed_dominance_score is not None and feed_dominance_score >= 0.7:
-        if nonfeed_accepted_findings == 0:
-            # BOTH nonfeed families must have run (not just one)
-            both_attempted = public_fetch_attempted and _was_family_attempted(runtime_truth, "ct")
-            if both_attempted:
-                return ("inspect_nonfeed_rejection_or_raw_counts", None)
-            return ("improve_nonfeed_lanes", None)
-
-    # Rule 5: ct attempted but raw=0 (covers ct-only and feed+ct scenarios)
-    if ct_findings == 0 and _was_family_attempted(runtime_truth, "ct"):
-        return ("inspect_ct_query_domain", None)
-
-    # Rule 4: feed-only with public findings present AND ct was attempted but zero ct findings
-    # Only fires when public had findings (public_findings > 0) — distinguishes from Rule 5
-    if (total_findings > 0 and feed_findings == total_findings
-            and _was_family_attempted(runtime_truth, "ct")
-            and public_findings > 0):
-        return ("improve_nonfeed_lanes", None)
-
-    # Rule 6: valid multi-source yield
-    if nonfeed_accepted_findings > 0:
-        return ("run_active600_or_targeted_query", None)
-
-    # Rule 7: no findings but sprint completed — inspect
-    if total_findings == 0 and status == MeasurementStatus.COMPLETED:
-        return ("inspect_empty_run", None)
-
-    # Default: no action determinable
     return ("unknown", None)
 
 

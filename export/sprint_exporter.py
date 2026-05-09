@@ -285,6 +285,13 @@ async def export_sprint(
     # Sprint F150I §2: Build product_value_summary from all existing surfaces
     pvs = _build_product_value_summary(store, eh, _sprint_id)
 
+    # Sprint F225F/F228D: capability_synthesis — MUST be built BEFORE JSON write
+    # and injected into the report so the JSON file contains it (not just return dict).
+    acquisition_report = _get_acquisition_truth(eh).get("acquisition_report")
+    capability_runtime_truth = _get_runtime_truth(eh)
+    capability_research_depth = _compute_research_depth(eh, pvs, None, None, None)
+    capability_synthesis = _build_capability_synthesis(pvs, eh.analyst_brief, capability_runtime_truth, acquisition_report, capability_research_depth)
+
     # 1. JSON report — write via canonical path (F10 boundary applied)
     # report_path already computed via get_sprint_json_report_path() above
     try:
@@ -329,8 +336,11 @@ async def export_sprint(
                     sanitized_obj[_field] = _value
             # Sprint F211A: reconcile terminality from final source_family_outcomes
             sanitized_obj = _reconcile_acquisition_terminality_from_source_outcomes(sanitized_obj)
+            # F228D fix: Inject capability_synthesis into JSON report BEFORE writing.
+            # Previously it was built AFTER the write and only appeared in the return dict.
+            sanitized_obj["capability_synthesis"] = capability_synthesis
         elif isinstance(sanitized_obj, list):
-            sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs}
+            sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(sanitized_obj, f, indent=2, default=str)
@@ -338,15 +348,6 @@ async def export_sprint(
     except Exception as e:
         logger.warning(f"[EXPORT] JSON write failed: {e}")
         report_path = None
-
-    # Sprint F225F: capability_synthesis — did this run improve actual OSINT capability?
-    # _get_acquisition_truth is pure (no side effects), safe to call again here.
-    acquisition_report = _get_acquisition_truth(eh).get("acquisition_report")
-    # F228D fix: compute runtime_truth BEFORE capability_synthesis needs it
-    capability_runtime_truth = _get_runtime_truth(eh)
-    # F228D fix: compute research_depth BEFORE capability_synthesis needs it
-    capability_research_depth = _compute_research_depth(eh, pvs, None, None, None)
-    capability_synthesis = _build_capability_synthesis(pvs, eh.analyst_brief, capability_runtime_truth, acquisition_report, capability_research_depth)
 
     # 2. Seed tasky pro příští sprint — top_nodes z ExportHandoff (typed)
     # Post-8VZ: __main__._print_scorecard_report() sources top_nodes directly from

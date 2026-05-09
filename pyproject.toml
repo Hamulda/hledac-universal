@@ -106,6 +106,7 @@ nlp = [
 # uvloop accelerates asyncio on Darwin.
 apple-accel = [
     "mlx>=0.16.0; platform_system=='Darwin' and platform_machine=='arm64'",
+    "mlx-embeddings>=0.1.0",
     "uvloop>=0.21.0; platform_system=='Darwin'",        # asyncio event loop acceleration
 ]
 
@@ -145,6 +146,7 @@ dev = [
     "pygments>=2.15.0",         # syntax highlighting in test output
     "ruff>=0.1.0",
     "mypy>=1.9.0",
+    "pytest-asyncio>=1.3.0",
 ]
 
 # --- acceleration: fast string matching ---

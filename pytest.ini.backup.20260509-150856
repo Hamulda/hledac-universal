@@ -31,6 +31,8 @@ norecursedirs =
     __pycache__
     node_modules
     probe_*
+    test/probe_*
+    tests/probe_*
     probe_final
     artifacts
     reports
@@ -47,15 +49,8 @@ markers =
     mlx: Apple Silicon MLX tests
     torch: PyTorch tests
     browser: browser or Playwright tests
-    hermetic: tests that must run without network or external services
-    stress: stress/load tests, exclude from default local runs
-    legacy: legacy tests for deprecated or migrated surfaces
-    monolith: very large monolithic tests, run explicitly only
-    archival: historical regression tests for old sprint contracts
 
 asyncio_mode = auto
 
 addopts =
     -ra
-    --ignore-glob=tests/probe_*
-    --ignore-glob=probe_*
