@@ -2,8 +2,8 @@
 Sprint report parsing for live measurement.
 
 Pure module: no live sprint, no scheduler import, no MLX, no network.
-
 F227C extraction from benchmarks/live_sprint_measurement.py.
+F228D: terminality predicates delegated to live_measurement_terminality.py.
 """
 
 from __future__ import annotations
@@ -12,46 +12,22 @@ import json
 from pathlib import Path
 from typing import Any
 
+from benchmarks.live_measurement_terminality import (
+    has_terminal_source_outcomes as _has_terminal_source_outcomes_impl,
+    has_scheduler_exit_path as _has_scheduler_exit_path_impl,
+)
+
 
 # ---------------------------------------------------------------------------
-# Pure predicate helpers
+# Backward-compatibility aliases — tests expect underscore names
 # ---------------------------------------------------------------------------
 
 def _has_terminal_source_outcomes(acquisition_strategy: dict | None) -> bool:
-    """
-    Return True if acquisition_strategy has non-empty source_family_outcomes.
-
-    source_family_outcomes is the canonical record of which lanes were
-    dispatched and their terminal state. An empty/missing dict means the
-    acquisition never reached the point of recording lane outcomes.
-    """
-    if not acquisition_strategy or not isinstance(acquisition_strategy, dict):
-        return False
-    sf_outcomes = acquisition_strategy.get("source_family_outcomes")
-    if isinstance(sf_outcomes, dict):
-        return bool(sf_outcomes)
-    if isinstance(sf_outcomes, list):
-        return bool(sf_outcomes)
-    return False
+    return _has_terminal_source_outcomes_impl(acquisition_strategy)
 
 
 def _has_scheduler_exit_path(scheduler_exit: dict | None) -> bool:
-    """
-    Return True if scheduler_exit contains a non-empty path string.
-
-    scheduler_exit_path is the canonical record of how the scheduler exited
-    (which guard/condition triggered windup). An empty/missing path means
-    the scheduler exit was never recorded.
-    """
-    if not scheduler_exit or not isinstance(scheduler_exit, dict):
-        return False
-    path = (
-        scheduler_exit.get("path")
-        or scheduler_exit.get("exit_path")  # canonical field in scheduler_exit dict
-        or scheduler_exit.get("scheduler_exit_path")  # legacy live_kpi alias
-        or ""
-    )
-    return bool(str(path).strip())
+    return _has_scheduler_exit_path_impl(scheduler_exit)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +46,6 @@ def _parse_canonical_sprint_report(data: dict) -> dict | None:
         return None
 
     result: dict = {}
-
     rt = data.get("runtime_truth") or {}
     tt = data.get("timing_truth") or {}
     summary = data.get("canonical_run_summary") or {}
@@ -97,7 +72,6 @@ def _parse_canonical_sprint_report(data: dict) -> dict | None:
         result["ct_candidates_accumulated"] = lane_verdict.get("ct_candidates_accumulated", 0)
         result["ct_candidates_stored"] = lane_verdict.get("ct_candidates_stored", 0)
         result["ct_storage_rejected"] = lane_verdict.get("ct_storage_rejected", 0)
-
     result["cycles_completed"] = rt.get("cycles_completed")
     result["cycles_started"] = rt.get("cycles_started")
     result["accepted_findings"] = rt.get("accepted_findings")
@@ -110,7 +84,6 @@ def _parse_canonical_sprint_report(data: dict) -> dict | None:
     )
     result["canonical_run_summary"] = summary if isinstance(summary, dict) else None
     result["acquisition_report"] = acq_report
-
     # F225A: claims_runtime_status
     claims_rs = acq_report.get("claims_runtime_status")
     result["claims_runtime_status"] = claims_rs if isinstance(claims_rs, dict) else None
@@ -219,7 +192,6 @@ def _parse_canonical_sprint_report(data: dict) -> dict | None:
     # scheduler_exit
     se = acq_report.get("scheduler_exit")
     result["scheduler_exit"] = se if isinstance(se, dict) else None
-
     # acquisition_prelude
     apl = acq_report.get("acquisition_prelude")
     if isinstance(apl, dict):
@@ -242,7 +214,6 @@ def _parse_canonical_sprint_report(data: dict) -> dict | None:
         result["acquisition_prelude_errors"] = None
         result["acquisition_prelude_duration_s"] = None
         result["acquisition_prelude_reason"] = None
-
     # acquisition_terminality_* — top-level keys in canonical report
     result["acquisition_terminality_checked"] = data.get("acquisition_terminality_checked")
     result["acquisition_terminality_satisfied"] = data.get("acquisition_terminality_satisfied")
@@ -255,7 +226,6 @@ def _parse_canonical_sprint_report(data: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 # Legacy fallback parsing (no acquisition_report)
 # ---------------------------------------------------------------------------
-
 def _parse_legacy_sprint_report(data: dict) -> dict:
     """
     Parse sprint JSON report using legacy multi-path extraction.
@@ -268,7 +238,6 @@ def _parse_legacy_sprint_report(data: dict) -> dict:
     summary = data.get("canonical_run_summary") or {}
 
     result: dict = {}
-
     branch_mix = rt.get("branch_mix", {})
     result["findings_count"] = (
         summary.get("findings_count")

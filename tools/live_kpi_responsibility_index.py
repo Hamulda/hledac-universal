@@ -259,6 +259,7 @@ def build_responsibility_index() -> dict[str, Any]:
         "high_risk": [n for n, s in specs.items() if s.extraction_risk == "HIGH"],
         "medium_risk": [n for n, s in specs.items() if s.extraction_risk == "MEDIUM"],
         "low_risk": [n for n, s in specs.items() if s.extraction_risk == "LOW"],
+        "dead_rule_helpers": [],   # intentionally empty — no dead _rule_* helpers in next_action dispatch
     }
 
 
