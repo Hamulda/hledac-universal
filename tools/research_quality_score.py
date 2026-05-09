@@ -81,6 +81,8 @@ class ScoreComponents:
     feed_dominance_penalty: float
     wallclock_penalty: float
     memory_taint_penalty: float
+    # F225A: Analysis depth bonus for claim extraction
+    analysis_depth_bonus: float = 0.0
 
 
 @dataclass
@@ -186,6 +188,8 @@ def _normalize_benchmark(data: dict) -> dict:
         "branch_mix": branch_mix,
         "live_kpi": live_kpi,
         "ct_loss_stage": ct_loss_stage,
+        # F225A: Claims runtime surface from live_kpi
+        "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
     }
 
 
@@ -227,6 +231,8 @@ def _normalize_live(data: dict) -> dict:
         "branch_mix": branch_mix,
         "live_kpi": live_kpi,
         "ct_loss_stage": ct_loss_stage,
+        # F225A: Claims runtime surface from live_kpi
+        "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
     }
 
 
@@ -378,6 +384,8 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     swap_gib = norm["swap_gib"]
     swap_warn = norm["swap_warning"]
     ct_loss_stage = norm.get("ct_loss_stage", "no_loss")
+    # F225A: Claims runtime surface
+    claims_extracted = norm.get("claims_extracted_count", 0)
 
     # F215E: Extract hardware_constrained from live_kpi if present
     hw_constrained = False
@@ -397,7 +405,14 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     wcp, exceeded = _wallclock_penalty(planned, actual)
     mtp = _memory_taint_penalty(swap_gib, swap_warn)
 
-    raw = fvs + sds + nes + cts + pus + pas - fdp - wcp - mtp
+    # F225A: Analysis depth bonus — small score boost when claims were extracted
+    # This does NOT change grade (FEED_ONLY still applies when nonfeed=0)
+    # but provides diagnostic differentiation for "raw findings only" vs "findings with claim analysis"
+    analysis_depth_bonus = 0.0
+    if claims_extracted > 0:
+        analysis_depth_bonus = 5.0  # Small bonus for having claim analysis present
+
+    raw = fvs + sds + nes + cts + pus + pas - fdp - wcp - mtp + analysis_depth_bonus
     total_quality_score = max(0.0, min(100.0, raw))
 
     # Grade thresholds
@@ -437,6 +452,7 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
             feed_dominance_penalty=round(fdp, 2),
             wallclock_penalty=round(wcp, 2),
             memory_taint_penalty=round(mtp, 2),
+            analysis_depth_bonus=round(analysis_depth_bonus, 2),
         ),
         total_findings=total,
         accepted_findings=accepted,
@@ -663,12 +679,15 @@ def score_research_quality(data: dict) -> dict:
             "feed_dominance_penalty": comp.feed_dominance_penalty,
             "wallclock_penalty": comp.wallclock_penalty,
             "memory_taint_penalty": comp.memory_taint_penalty,
+            "analysis_depth_bonus": comp.analysis_depth_bonus,
         },
         "diagnostic_flags": {
             "wallclock_exceeded": rqs.wallclock_exceeded,
             "swap_gib": rqs.swap_gib,
             "swap_warning": rqs.swap_warning,
             "hardware_constrained": hw_constrained,
+            # F225A: Claims extraction diagnostic
+            "claims_extracted": (norm.get("claims_extracted_count", 0) or 0) > 0,
         },
         # F215A: Surface contract — always present fields
         "feed_dominance_score": rqs.feed_dominance_score,

@@ -92,6 +92,29 @@ def _check_uma() -> dict:
 
 PROBE_ROOT_ENV = "PRELIVE_PROBE_ROOT"  # allow override in tests
 
+# --------------------------------------------------------------------------- #
+# F224 artifact constants — blocking + warning lanes
+# --------------------------------------------------------------------------- #
+# Blocking lanes (block clean active300/nonfeed_diagnostic if missing):
+#   F224A worker_pool_import_seal    — import safety invariant
+#   F224C discovery_provider_gap    — provider surface gap audit
+#   F224D confidence_policy          — confidence computation seam
+# Warning lanes (warn but do not block):
+#   F224B claims_extraction_v1       — claims extraction (optional intelligence)
+#   F224E type_checking_hygiene      — dead import hygiene (cosmetic)
+# --------------------------------------------------------------------------- #
+_F224_BLOCKING_PROBES = [
+    ("probe_f224a_worker_pool_import_seal", "worker_pool_import_seal.json"),
+    ("probe_f224c_discovery_provider_gap", "discovery_provider_gap.json"),
+    ("probe_f224d_confidence_policy", "confidence_policy.json"),
+]
+_F224_WARNING_PROBES = [
+    ("probe_f224b_claims_extraction_v1", "claims_extraction_v1.json"),
+    ("probe_f224e_type_checking_hygiene", "type_checking_hygiene.json"),
+]
+# Profiles that require F224 blocking artifacts to be present
+_F224_BLOCKING_PROFILES = ("active300", "nonfeed_diagnostic")
+
 
 @dataclass
 class ProbeReport:
@@ -372,6 +395,59 @@ def _check_ct_cooldown(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport
 
 
 # --------------------------------------------------------------------------- #
+# F224 artifact check — F225E integration
+# --------------------------------------------------------------------------- #
+# Blocking policy:
+#   - Profile in _F224_BLOCKING_PROFILES → missing F224A/C/D blocks with BLOCKED_BY_CONTRACT
+#   - Profile in _F224_BLOCKING_PROFILES → missing F224B/E warns only
+#   - Other profiles → all F224 artifacts warn only
+# --------------------------------------------------------------------------- #
+
+def _check_f224_artifacts(repo_root: Path, profile: str) -> tuple[bool, list[str], list[str], dict]:
+    """
+    Check F224 artifact presence and return (core_ready, warnings, missing_blocking, checked_dict).
+    core_ready = True when all blocking probes are present for blocking profiles.
+    warnings = list of warning messages for missing warning probes.
+    missing_blocking = list of missing blocking probe names (for reasons list).
+    """
+    blocking_warnings: list[str] = []
+    warning_msgs: list[str] = []
+    missing_blocking: list[str] = []
+    checked_local: dict[str, dict] = {}
+    is_blocking_profile = profile in _F224_BLOCKING_PROFILES
+
+    # Check blocking probes
+    for probe_dir, filename in _F224_BLOCKING_PROBES:
+        report = _load_report(repo_root, probe_dir, filename)
+        key = f"{probe_dir}_f224"
+        checked_local[key] = {
+            "found": report.found,
+            "parse_error": report.parse_error,
+            "pass": report.found and not report.parse_error,
+        }
+        if not report.found or report.parse_error:
+            detail = f"parse error: {report.parse_error}" if report.parse_error else "absent"
+            blocking_warnings.append(f"f224_blocking:{probe_dir} {detail}")
+            missing_blocking.append(probe_dir)
+
+    # Check warning probes
+    for probe_dir, filename in _F224_WARNING_PROBES:
+        report = _load_report(repo_root, probe_dir, filename)
+        key = f"{probe_dir}_f224"
+        checked_local[key] = {
+            "found": report.found,
+            "parse_error": report.parse_error,
+            "pass": report.found and not report.parse_error,
+        }
+        if not report.found or report.parse_error:
+            detail = f"parse error: {report.parse_error}" if report.parse_error else "absent"
+            warning_msgs.append(f"f224_warning:{probe_dir} {detail}")
+
+    core_ready = len(missing_blocking) == 0 if is_blocking_profile else True
+    return core_ready, blocking_warnings + warning_msgs, missing_blocking, checked_local
+
+
+# --------------------------------------------------------------------------- #
 # Nonfeed candidate ledger boundedness check
 # --------------------------------------------------------------------------- #
 
@@ -419,6 +495,10 @@ class DecisionResult:
     hardware_constrained: bool = False
     swap_policy_tier: str = "unknown"  # "clean" | "diagnostic" | "hard_block"
     swap_gate_reason: str = ""
+    # F225E: F224 artifact gate
+    f224_core_ready: bool = False
+    f224_warnings: list[str] = field(default_factory=list)
+    missing_f224_artifacts: list[str] = field(default_factory=list)
 
 
 def run_gate(
@@ -614,7 +694,19 @@ def run_gate(
     }
 
     # --------------------------------------------------------------------------- #
-    # 12. UMA check — done last; memory decision overrides contract/other blocks
+    # 12. F224 artifact check — F225E: missing blocking artifacts block contracts
+    # --------------------------------------------------------------------------- #
+    f224_core_ready, f224_warnings, missing_f224, f224_checked = _check_f224_artifacts(repo_root, profile)
+    checked.update(f224_checked)
+
+    if not f224_core_ready:
+        # Only block if profile requires F224 blocking artifacts
+        for probe in missing_f224:
+            reasons.append(f"BLOCKED_BY_CONTRACT: {probe} missing — required for {profile}")
+    warnings.extend(f224_warnings)
+
+    # --------------------------------------------------------------------------- #
+    # 13. UMA check — done last; memory decision overrides contract/other blocks
     # F220F: Tiered macOS swap-aware policy (no longer hard-blocks on tiny swap)
     # --------------------------------------------------------------------------- #
     uma = _check_uma()
@@ -680,7 +772,7 @@ def run_gate(
         reasons.append("All required probe checks passed; UMA within limits")
 
     # --------------------------------------------------------------------------- #
-    # 13. Build command suggestions
+    # 14. Build command suggestions
     # F220F: Clean command includes --require-memory-ok; diagnostic uses --allow-high-swap
     # --------------------------------------------------------------------------- #
     encoded_query = query.replace('"', '\\"')
@@ -716,6 +808,9 @@ def run_gate(
         hardware_constrained=hardware_constrained,
         swap_policy_tier=swap_policy_tier,
         swap_gate_reason=swap_gate_reason,
+        f224_core_ready=f224_core_ready,
+        f224_warnings=f224_warnings,
+        missing_f224_artifacts=missing_f224,
     )
 
 
@@ -870,6 +965,10 @@ def main() -> int:
                 k: {kk: vv for kk, vv in v.items() if kk not in ("data",)}
                 for k, v in result.checked_reports.items()
             },
+            # F225E: F224 artifact gate telemetry
+            "f224_core_ready": result.f224_core_ready,
+            "f224_warnings": result.f224_warnings,
+            "missing_f224_artifacts": result.missing_f224_artifacts,
         }
         args.write_report.parent.mkdir(parents=True, exist_ok=True)
         with open(args.write_report, "w", encoding="utf-8") as fh:

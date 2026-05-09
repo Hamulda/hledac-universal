@@ -46,6 +46,17 @@ _OPTIONAL_PROBES = [
     ("probe_f219f_prelive_decision_gate", "prelive_decision_gate.json"),
 ]
 
+# F224 artifact lanes — read-only readiness signals
+# Blocking: F224A (worker_pool import seal), F224C (discovery provider gap), F224D (confidence policy)
+# Warning: F224B (claims extraction), F224E (type checking hygiene)
+_F224_PROBES = [
+    ("probe_f224a_worker_pool_import_seal", "worker_pool_import_seal.json"),
+    ("probe_f224b_claims_extraction_v1", "claims_extraction_v1.json"),
+    ("probe_f224c_discovery_provider_gap", "discovery_provider_gap.json"),
+    ("probe_f224d_confidence_policy", "confidence_policy.json"),
+    ("probe_f224e_type_checking_hygiene", "type_checking_hygiene.json"),
+]
+
 
 # --------------------------------------------------------------------------- #
 # Sprint ID Collision Detection — F224D (shared with cockpit)
@@ -253,6 +264,16 @@ def check_all_artifacts(repo_root: Path) -> tuple[list[ProbeArtifact], list[Prob
     return required, optional
 
 
+def check_all_artifacts_with_f224(repo_root: Path) -> tuple[list[ProbeArtifact], list[ProbeArtifact], list[ProbeArtifact]]:
+    """Check all required, optional, and F224 artifact probes. Returns (required, optional, f224)."""
+    required, optional = check_all_artifacts(repo_root)
+    f224 = []
+    for probe_dir, filename in _F224_PROBES:
+        artifact = check_artifact(repo_root, probe_dir, filename, required=False)
+        f224.append(artifact)
+    return required, optional, f224
+
+
 def build_regeneration_commands(
     required: list[ProbeArtifact],
 ) -> list[str]:
@@ -346,8 +367,27 @@ def render_json(
     required: list[ProbeArtifact],
     commands: list[str],
     overall: ArtifactStatus,
+    f224: Optional[list[ProbeArtifact]] = None,
 ) -> dict:
     """Render the JSON report."""
+    f224_section = {}
+    if f224 is not None:
+        f224_section = {
+            "f224_artifacts": [
+                {
+                    "probe_dir": a.probe_dir,
+                    "filename": a.filename,
+                    "path": a.full_path,
+                    "found": a.found,
+                    "status": a.status.value,
+                    "parse_error": a.parse_error,
+                }
+                for a in f224
+            ],
+            "f224_all_present": all(a.status == ArtifactStatus.READY_FOR_PRELIVE_GATE for a in f224),
+            "f224_present_count": sum(1 for a in f224 if a.status == ArtifactStatus.READY_FOR_PRELIVE_GATE),
+            "f224_total": len(f224),
+        }
     return {
         "status": overall.value,
         "overall": overall.value,
@@ -374,6 +414,7 @@ def render_json(
             "missing_required": sum(1 for a in required if a.status == ArtifactStatus.MISSING_REQUIRED),
             "stale_or_corrupt": sum(1 for a in required if a.status == ArtifactStatus.STALE_OR_CORRUPT),
         },
+        **f224_section,
     }
 
 
@@ -436,7 +477,7 @@ def main() -> int:
     repo_root = args.repo_root.resolve()
 
     # Check all artifacts
-    required, optional = check_all_artifacts(repo_root)
+    required, optional, f224 = check_all_artifacts_with_f224(repo_root)
     overall = overall_status(required)
     commands = build_regeneration_commands(required)
 
@@ -484,7 +525,7 @@ def main() -> int:
             if result.returncode != 0:
                 print(f"WARNING: Command exited with {result.returncode}")
         # Re-check after regeneration attempt
-        required, optional = check_all_artifacts(repo_root)
+        required, optional, f224 = check_all_artifacts_with_f224(repo_root)
         overall = overall_status(required)
         commands = build_regeneration_commands(required)
         print("\n" + "=" * 60)
@@ -493,7 +534,7 @@ def main() -> int:
     # Write outputs
     if args.output_json:
         args.output_json.parent.mkdir(parents=True, exist_ok=True)
-        json_out = render_json(required, commands, overall)
+        json_out = render_json(required, commands, overall, f224)
         # F224D: inject collision data into JSON output
         if collision_report.has_collisions:
             json_out["sprint_id_collisions"] = {

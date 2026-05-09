@@ -20,6 +20,9 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
+from ..intelligence.confidence_policy import (
+    compute_confidence,
+)
 from .base import UniversalCoordinator
 
 logger = logging.getLogger(__name__)
@@ -78,6 +81,15 @@ class ClaimsCoordinator(UniversalCoordinator):
         self._evidence_processed: int = 0
         self._uncertain_clusters: List[str] = []
         self._stop_reason: Optional[str] = None
+
+        # F225A: Claims runtime surface counters
+        self._claims_extracted_count: int = 0
+        self._claims_positive_count: int = 0
+        self._claims_negative_count: int = 0
+        self._claims_neutral_count: int = 0
+        self._claims_low_confidence_count: int = 0
+        self._claims_extraction_packets_seen: int = 0
+        self._claims_extraction_packets_with_claims: int = 0
 
         # Orchestrator reference (set via start)
         self._orchestrator: Optional[Any] = None
@@ -222,6 +234,23 @@ class ClaimsCoordinator(UniversalCoordinator):
 
             # Extract claims (would use orchestrator's method)
             claims = await self._extract_claims(evidence_packet)
+
+            # F225A: Update claims runtime surface counters
+            self._claims_extraction_packets_seen += 1
+            if claims:
+                self._claims_extraction_packets_with_claims += 1
+                self._claims_extracted_count += len(claims)
+                for claim in claims:
+                    pol = claim.get('polarity', 'neutral')
+                    if pol == 'positive':
+                        self._claims_positive_count += 1
+                    elif pol == 'negative':
+                        self._claims_negative_count += 1
+                    else:
+                        self._claims_neutral_count += 1
+                    if claim.get('confidence', 1.0) < BASE_CONFIDENCE + 0.05:
+                        self._claims_low_confidence_count += 1
+
             if not claims:
                 return None
 
@@ -400,28 +429,69 @@ class ClaimsCoordinator(UniversalCoordinator):
         title: str,
         summary: str
     ) -> float:
-        """Derive confidence from heuristic factors."""
-        confidence = BASE_CONFIDENCE
+        """Derive confidence using canonical confidence policy."""
+        # Determine source family from evidence packet
+        source = evidence_packet.get('source_type', evidence_packet.get('source', '')).upper()
+        if source in ('CT', 'CERTIFICATE_TRANSPARENCY'):
+            source_family = 'CT'
+        elif source in ('FEED', 'RSS', 'ATOM'):
+            source_family = 'FEED'
+        elif source in ('WAYBACK', 'ARCHIVE', 'ARCHIVE_ORG'):
+            source_family = 'WAYBACK'
+        elif source in ('STEALTH', 'HIDDEN'):
+            source_family = 'STEALTH'
+        else:
+            source_family = 'PUBLIC'  # default for crawler/public sources
 
-        # URL/domain/IOC-like pattern bonus
-        url_pattern = r'https?://|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
-        if re.search(url_pattern, text):
-            confidence += URL_BONUS
+        # Check for provenance
+        has_provenance = bool(
+            evidence_packet.get('source') or
+            evidence_packet.get('provenance')
+        )
 
-        # Provenance bonus
-        if evidence_packet.get('source') or evidence_packet.get('provenance'):
-            confidence += PROVENANCE_BONUS
+        # Check for IOC (URL, domain, email, IP)
+        ioc_pattern = re.compile(
+            r'https?://|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+        )
+        has_ioc = bool(ioc_pattern.search(text))
 
-        # Title agreement bonus
+        # Corroboration: title/summary/text overlap
+        corroboration_count = 0
         if title and summary:
             title_words = set(title.lower().split())
             summary_words = set(summary.lower().split())
             text_words = set(text.lower().split())
             overlap = title_words & summary_words & text_words
             if overlap:
-                confidence += TITLE_AGREEMENT_BONUS
+                corroboration_count = 1
 
+        # Compute via policy
+        confidence = compute_confidence(
+            source_family=source_family,
+            has_provenance=has_provenance,
+            has_ioc=has_ioc,
+            corroboration_count=corroboration_count,
+        )
+
+        # Cap for deterministic claims v1
         return min(confidence, MAX_CONFIDENCE)
+
+    def get_claims_runtime_status(self) -> dict:
+        """
+        Return lightweight claims runtime status dict.
+
+        F225A: Makes claim extraction visible as first-class runtime signal
+        without requiring live network or LLM.
+        """
+        return {
+            'claims_extracted_count': self._claims_extracted_count,
+            'claims_positive_count': self._claims_positive_count,
+            'claims_negative_count': self._claims_negative_count,
+            'claims_neutral_count': self._claims_neutral_count,
+            'claims_low_confidence_count': self._claims_low_confidence_count,
+            'claims_extraction_packets_seen': self._claims_extraction_packets_seen,
+            'claims_extraction_packets_with_claims': self._claims_extraction_packets_with_claims,
+        }
 
     async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
         """Cleanup on shutdown."""

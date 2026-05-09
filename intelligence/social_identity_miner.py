@@ -30,6 +30,8 @@ from urllib.parse import urlparse
 
 from typing import TYPE_CHECKING
 
+from .confidence_policy import compute_confidence as _compute_confidence
+
 if TYPE_CHECKING:
     from ..knowledge.duckdb_store import DuckDBShadowStore
     from ..project_types import CanonicalFinding
@@ -462,34 +464,25 @@ class SocialIdentityMiner:
         linked_domains: list[str],
         linked_emails: list[str],
     ) -> float:
-        """Compute confidence for a social identity facet."""
-        base_confidence: float = 0.50
+        """Compute confidence using canonical confidence policy."""
+        # has_provenance: social profiles are derived from evidence
+        has_provenance = True
+        # has_ioc: email or domain links count as IOC
+        has_ioc = bool(linked_emails or linked_domains)
+        # corroboration_count: linked domains and emails provide corroboration
+        corroboration_count = min(len(linked_domains) + len(linked_emails), 4)
 
-        # Platform verification bonus
-        if platform in ("github", "keybase", "gitlab"):
-            base_confidence = 0.65  # More verifiable platforms
-        elif platform in ("twitter", "linkedin"):
-            base_confidence = 0.60
-        elif platform in ("mastodon", "hackernews"):
-            base_confidence = 0.55
+        # Compute via policy
+        confidence = _compute_confidence(
+            source_family="SOCIAL",
+            has_provenance=has_provenance,
+            has_ioc=has_ioc,
+            corroboration_count=corroboration_count,
+            model_score=None,
+        )
 
-        # Domain link bonus (bio mentions own domain)
-        if linked_domains:
-            base_confidence += 0.10
-
-        # Email association bonus
-        if linked_emails:
-            base_confidence += 0.10
-
-        # Username quality bonus (longer = more likely real)
-        if len(username) >= 5:
-            base_confidence += 0.05
-
-        # Domain in username bonus
-        if any(d in username.lower() for d in linked_domains):
-            base_confidence += 0.10
-
-        return min(0.95, base_confidence)
+        # Preserve minimum threshold
+        return max(confidence, SOCIAL_MIN_CONFIDENCE)
 
     # ── Deduplication & Write ───────────────────────────────────────────────────
 

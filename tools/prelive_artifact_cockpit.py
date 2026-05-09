@@ -268,6 +268,11 @@ class CockpitResult:
     # F224D: sprint ID collision telemetry
     sprint_collision: Optional[SprintIdCollisionWarning] = None
 
+    # F225E: F224 artifact gate telemetry
+    f224_core_ready: bool = False
+    f224_warnings: list[str] = field(default_factory=list)
+    missing_f224_artifacts: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return {
             "verdict": self.verdict.value,
@@ -305,6 +310,10 @@ class CockpitResult:
             "swap_gate_reason": self.swap_gate_reason,
             "merge_log": self.merge_log,
             "sprint_collision": self.sprint_collision.to_dict() if self.sprint_collision else None,
+            # F225E: F224 artifact gate
+            "f224_core_ready": self.f224_core_ready,
+            "f224_warnings": self.f224_warnings,
+            "missing_f224_artifacts": self.missing_f224_artifacts,
         }
 
 
@@ -490,6 +499,12 @@ def merge_cockpit(
     else:
         log.append("readiness=not provided (OK)")
 
+    # ---- 6. F224 artifact gate (F225E) ----
+    f224_core_ready = decision_data.get("f224_core_ready", False)
+    f224_warnings = decision_data.get("f224_warnings", [])
+    missing_f224_artifacts = decision_data.get("missing_f224_artifacts", [])
+    log.append(f"f224_core_ready={f224_core_ready} missing_f224={len(missing_f224_artifacts)}")
+
     # ------------------------------------------------------------------------- #
     # Verdicts
     # ------------------------------------------------------------------------- #
@@ -531,7 +546,8 @@ def merge_cockpit(
         log.append("verdict=BLOCKED_BY_MEMORY")
 
     # D: Gate blocked by contract (non-provider-surface)
-    elif gate_decision == "BLOCKED_BY_CONTRACT":
+    # F225E: also blocks if F224 blocking artifacts missing for blocking profiles
+    elif gate_decision == "BLOCKED_BY_CONTRACT" or (missing_f224_artifacts and not f224_core_ready):
         verdict = Verdict.BLOCKED_BY_ARTIFACTS
         next_action = NextAction.FIX_CONTRACT_GATE
         next_action_detail = ""
@@ -670,6 +686,10 @@ def merge_cockpit(
         swap_policy_tier=swap_policy_tier,
         swap_gate_reason=swap_gate_reason,
         merge_log=log,
+        # F225E: F224 artifact gate
+        f224_core_ready=f224_core_ready,
+        f224_warnings=f224_warnings,
+        missing_f224_artifacts=missing_f224_artifacts,
     )
 
 

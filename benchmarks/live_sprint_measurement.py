@@ -490,6 +490,9 @@ class LiveMeasurementResult:
     # Stored at top-level for validator self-containment
     acquisition_report: dict | None = None
 
+    # F225A: Claims runtime surface status from ClaimsCoordinator.get_claims_runtime_status()
+    claims_runtime_status: dict | None = None
+
     # F208N: Resolved output paths (absolute, resolved before write)
     resolved_output_json: str | None = None
     resolved_output_md: str | None = None
@@ -945,6 +948,10 @@ def _parse_sprint_report(report_path: str | None) -> dict | None:
             # windup_guard_observation, scheduler_exit, acquisition_prelude).
             result["acquisition_report"] = acq_report if isinstance(acq_report, dict) else None
 
+            # F225A: Extract claims_runtime_status from canonical report if present
+            claims_rs = acq_report.get("claims_runtime_status") if isinstance(acq_report, dict) else None
+            result["claims_runtime_status"] = claims_rs if isinstance(claims_rs, dict) else None
+
             # public_pipeline
             pp = data.get("public_pipeline") or {}
             result["public_pipeline"] = pp if isinstance(pp, dict) else None
@@ -1322,6 +1329,8 @@ def _derive_live_kpi(
     acquisition_prelude_reason: str | None = None,
     # F210D: wallclock budget enforcement
     planned_duration_s: float | None = None,
+    # F225A: Claims runtime surface status from ClaimsCoordinator
+    claims_runtime_status: dict | None = None,
 ) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
@@ -1939,12 +1948,80 @@ def _derive_live_kpi(
         "ct_candidates_accumulated": lane_verdict.get("ct_candidates_accumulated", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_candidates_stored": lane_verdict.get("ct_candidates_stored", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_storage_rejected": lane_verdict.get("ct_storage_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        # F225A: Claims runtime surface telemetry
+        "claims_extracted_count": (claims_runtime_status or {}).get("claims_extracted_count", 0) if claims_runtime_status else 0,
+        "claims_polarity_mix": {
+            "positive": (claims_runtime_status or {}).get("claims_positive_count", 0) if claims_runtime_status else 0,
+            "negative": (claims_runtime_status or {}).get("claims_negative_count", 0) if claims_runtime_status else 0,
+            "neutral": (claims_runtime_status or {}).get("claims_neutral_count", 0) if claims_runtime_status else 0,
+        },
+        "claims_packets_with_claims": (claims_runtime_status or {}).get("claims_extraction_packets_with_claims", 0) if claims_runtime_status else 0,
+        # F225C: Discovery Provider Debug Surface
+        # Surfaced from acquisition_report.provider_status_debug if present
+        "discovery_provider_status_debug": _derive_discovery_provider_status_debug(acquisition_report),
+        "discovery_selected_providers": _derive_discovery_selected_providers(acquisition_report),
+        "discovery_skipped_providers": _derive_discovery_skipped_providers(acquisition_report),
+        "discovery_stub_providers": _derive_discovery_stub_providers(acquisition_report),
+        "discovery_not_wired_providers": _derive_discovery_not_wired_providers(acquisition_report),
         # F215A: Missing canonical fields — tracks which canonical fields were absent
         # External tools should check this list to know when benchmark used fallback heuristics
         "missing_canonical_fields": (
             ["source_family_outcomes"] if not _sfo_has_canonical else []
         ),
     }
+
+
+def _derive_discovery_provider_status_debug(acquisition_report: dict | None) -> list[dict]:
+    """
+    Extract and serialize provider_status_debug from acquisition_report.
+
+    F225C: Surfaces discovery provider plan truth in live KPI.
+    Returns JSON-safe list with provider, state (string), selected, reason.
+    """
+    if not acquisition_report or not isinstance(acquisition_report, dict):
+        return []
+
+    psd = acquisition_report.get("provider_status_debug")
+    if not isinstance(psd, list):
+        return []
+
+    result = []
+    for entry in psd:
+        if isinstance(entry, dict):
+            state = entry.get("state")
+            if hasattr(state, "value"):
+                state = state.value
+            result.append({
+                "provider": entry.get("provider", ""),
+                "state": str(state) if state is not None else "",
+                "selected": bool(entry.get("selected", False)),
+                "reason": entry.get("reason", ""),
+            })
+    return result
+
+
+def _derive_discovery_selected_providers(acquisition_report: dict | None) -> list[str]:
+    """Extract selected providers (selected=True) from provider_status_debug."""
+    psd = _derive_discovery_provider_status_debug(acquisition_report)
+    return [e["provider"] for e in psd if e.get("selected")]
+
+
+def _derive_discovery_skipped_providers(acquisition_report: dict | None) -> list[str]:
+    """Extract skipped providers (selected=False) from provider_status_debug."""
+    psd = _derive_discovery_provider_status_debug(acquisition_report)
+    return [e["provider"] for e in psd if not e.get("selected")]
+
+
+def _derive_discovery_stub_providers(acquisition_report: dict | None) -> list[str]:
+    """Extract ADVISORY_STUB providers from provider_status_debug."""
+    psd = _derive_discovery_provider_status_debug(acquisition_report)
+    return [e["provider"] for e in psd if e.get("state") == "advisory_stub"]
+
+
+def _derive_discovery_not_wired_providers(acquisition_report: dict | None) -> list[str]:
+    """Extract NOT_WIRED providers from provider_status_debug."""
+    psd = _derive_discovery_provider_status_debug(acquisition_report)
+    return [e["provider"] for e in psd if e.get("state") == "not_wired"]
 
 
 def _was_family_attempted(runtime_truth: dict, family: str) -> bool:
@@ -2281,6 +2358,8 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
         acquisition_prelude_reason=getattr(result, "acquisition_prelude_reason", None),
         # F210D: wallclock budget enforcement
         planned_duration_s=getattr(result, "planned_duration_s", None),
+        # F225A: Claims runtime surface status
+        claims_runtime_status=getattr(result, "claims_runtime_status", None),
     )
     result.live_kpi = kpi
 
@@ -2891,6 +2970,8 @@ async def _run_live_sprint(
                 result.nonfeed_provider_failures = parsed.get("nonfeed_provider_failures")
                 result.nonfeed_memory_skips = parsed.get("nonfeed_memory_skips")
                 result.nonfeed_mission_exit_reason = parsed.get("nonfeed_mission_exit_reason")
+                # F225A: Extract claims_runtime_status from parsed report
+                result.claims_runtime_status = parsed.get("claims_runtime_status")
                 # F223A: Propagate actual acquisition_profile from canonical acquisition_report
                 # (runtime already has the correct value; env var was just initialization hedge)
                 if result.acquisition_report and isinstance(result.acquisition_report, dict):

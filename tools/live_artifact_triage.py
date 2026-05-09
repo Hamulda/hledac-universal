@@ -42,6 +42,9 @@ class RootCause(str, Enum):
     PUBLIC_TERMINALITY_MISSING = "PUBLIC_TERMINALITY_MISSING"
     TERMINALITY_SURFACE_DRIFT = "TERMINALITY_SURFACE_DRIFT"
     NONFEED_EVIDENCE_MISSING = "NONFEED_EVIDENCE_MISSING"
+    # F225C: Discovery provider debug surface
+    DISCOVERY_PROVIDER_NOT_WIRED = "DISCOVERY_PROVIDER_NOT_WIRED"
+    DISCOVERY_NO_PROVIDER_SELECTED = "DISCOVERY_NO_PROVIDER_SELECTED"
     UNKNOWN = "UNKNOWN"
 
 
@@ -251,6 +254,66 @@ def _has_ct(data: dict) -> bool:
         if isinstance(entry, dict) and entry.get("source_family") == "ct" and (entry.get("attempted", 0) or 0) > 0:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# F225C: Discovery Provider Debug Surface extractors
+# ---------------------------------------------------------------------------
+
+def _discovery_provider_status_debug(data: dict) -> list[dict]:
+    """Extract provider_status_debug from live_kpi or acquisition_report."""
+    lkp = data.get("live_kpi", {})
+    if isinstance(lkp, dict):
+        psd = lkp.get("discovery_provider_status_debug")
+        if isinstance(psd, list):
+            return psd
+    # Fallback: acquisition_report.provider_status_debug
+    ar = _acquisition_report(data)
+    if isinstance(ar, dict):
+        psd = ar.get("provider_status_debug")
+        if isinstance(psd, list):
+            return psd
+    return []
+
+
+def _discovery_selected_providers(data: dict) -> list[str]:
+    """Extract discovery_selected_providers from live_kpi."""
+    lkp = data.get("live_kpi", {})
+    if isinstance(lkp, dict):
+        selected = lkp.get("discovery_selected_providers")
+        if isinstance(selected, list):
+            return selected
+    return []
+
+
+def _discovery_skipped_providers(data: dict) -> list[str]:
+    """Extract discovery_skipped_providers from live_kpi."""
+    lkp = data.get("live_kpi", {})
+    if isinstance(lkp, dict):
+        skipped = lkp.get("discovery_skipped_providers")
+        if isinstance(skipped, list):
+            return skipped
+    return []
+
+
+def _discovery_stub_providers(data: dict) -> list[str]:
+    """Extract discovery_stub_providers from live_kpi."""
+    lkp = data.get("live_kpi", {})
+    if isinstance(lkp, dict):
+        stubs = lkp.get("discovery_stub_providers")
+        if isinstance(stubs, list):
+            return stubs
+    return []
+
+
+def _discovery_not_wired_providers(data: dict) -> list[str]:
+    """Extract discovery_not_wired_providers from live_kpi."""
+    lkp = data.get("live_kpi", {})
+    if isinstance(lkp, dict):
+        nw = lkp.get("discovery_not_wired_providers")
+        if isinstance(nw, list):
+            return nw
+    return []
 
 
 def _acquisition_report(data: dict) -> dict | None:
@@ -674,7 +737,72 @@ def triage_live_artifact(data: dict, allow_high_swap: bool = False) -> TriageRes
         )
 
     # -------------------------------------------------------------------------
-    # 8. NONFEED_EVIDENCE_MISSING — FAIL_NONFEED_EVIDENCE_MISSING verdict
+    # F225C: Discovery provider debug surface rules
+    # These fire BEFORE FEED_DOMINATED so provider wiring gaps are surfaced
+    # before generic feed-only diagnoses.
+    # -------------------------------------------------------------------------
+    selected_providers = _discovery_selected_providers(data)
+    not_wired_providers = _discovery_not_wired_providers(data)
+    stub_providers = _discovery_stub_providers(data)
+    skipped_providers = _discovery_skipped_providers(data)
+
+    # DISCOVERY_NO_PROVIDER_SELECTED — selected providers list empty
+    if len(selected_providers) == 0 and len(skipped_providers) > 0:
+        return TriageResult(
+            root_cause_class=RootCause.DISCOVERY_NO_PROVIDER_SELECTED,
+            confidence=0.88,
+            reasons=[
+                f"discovery_selected_providers=[] — no providers selected during discovery planning",
+                f"skipped_providers={skipped_providers}",
+            ],
+            next_best_action="inspect discovery planner output; check provider reliability scores and budget allocation",
+            recommended_sprint_family=SprintFamily.F207,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                "discovery_selected_providers": selected_providers,
+                "discovery_skipped_providers": skipped_providers,
+                "discovery_stub_providers": stub_providers,
+                "discovery_not_wired_providers": not_wired_providers,
+            },
+            exact_followup_command=(
+                f"python benchmarks/live_sprint_measurement.py --profile active300 "
+                f'--query "{_query(data)}" --live'
+            ),
+        )
+
+    # DISCOVERY_PROVIDER_NOT_WIRED — NOT_WIRED providers with nonfeed=0
+    nonfeed_acc = _nonfeed_accepted(data)
+    if len(not_wired_providers) > 0 and nonfeed_acc == 0:
+        return TriageResult(
+            root_cause_class=RootCause.DISCOVERY_PROVIDER_NOT_WIRED,
+            confidence=0.88,
+            reasons=[
+                f"nonfeed_accepted_findings=0, discovery_not_wired_providers={not_wired_providers}",
+                "required nonfeed providers were NOT_WIRED — pipeline context missing",
+            ],
+            next_best_action="wire_feed_pivots_provider or check pipeline_context_available flag",
+            recommended_sprint_family=SprintFamily.F207,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                "discovery_not_wired_providers": not_wired_providers,
+                "discovery_not_wired_count": len(not_wired_providers),
+                "discovery_selected_providers": selected_providers,
+                "discovery_stub_providers": stub_providers,
+                "discovery_skipped_providers": skipped_providers,
+                "nonfeed_accepted_findings": nonfeed_acc,
+            },
+            exact_followup_command=(
+                f"python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 "
+                f'--query "{_query(data)}" --live'
+            ),
+        )
+
+    # -------------------------------------------------------------------------
+    # 9. FEED_DOMINATED — feed share > 0.9 and nonfeed accepted = 0
+    # -------------------------------------------------------------------------
+    # (nonfeed_acc already declared above for F225C check)
     # F224C: Terminality was likely satisfied but nonfeed evidence was insufficient.
     # Distinct from TERMINALITY_UNSATISFIED (which means terminality itself failed).
     # NOT memory blocked, NOT windup bug, NOT benchmark drift.

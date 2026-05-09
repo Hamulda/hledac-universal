@@ -125,6 +125,40 @@ class ProviderStatusDebug:
     reason: str  # human-readable skip/select reason
 
 
+def serialize_provider_status_debug(
+    debug_entries: list[ProviderStatusDebug] | list[dict],
+) -> list[dict]:
+    """
+    Serialize provider status debug entries to JSON-safe dicts.
+
+    Handles both ProviderStatusDebug objects (from DiscoveryPlan.provider_status_debug)
+    and already-serialized dicts (from acquisition_report.provider_status_debug).
+
+    Returns list of dicts with keys: provider, state, selected, reason.
+    Enum values are serialized as lowercase strings.
+    """
+    result = []
+    for entry in debug_entries:
+        if isinstance(entry, ProviderStatusDebug):
+            result.append({
+                "provider": entry.provider,
+                "state": entry.state.value if hasattr(entry.state, "value") else str(entry.state),
+                "selected": entry.selected,
+                "reason": entry.reason,
+            })
+        elif isinstance(entry, dict):
+            state = entry.get("state")
+            if hasattr(state, "value"):
+                state = state.value
+            result.append({
+                "provider": entry.get("provider", ""),
+                "state": state if state is not None else str(state),
+                "selected": entry.get("selected", False),
+                "reason": entry.get("reason", ""),
+            })
+    return result
+
+
 @dataclass
 class DiscoveryPlan:
     """Full plan for a sprint discovery pass."""
@@ -137,6 +171,10 @@ class DiscoveryPlan:
     def is_viable(self) -> bool:
         """At least one provider planned."""
         return len(self.plans) > 0
+
+    def serialized_provider_status_debug(self) -> list[dict]:
+        """Return JSON-safe representation of provider_status_debug."""
+        return serialize_provider_status_debug(self.provider_status_debug)
 
 
 # ---------------------------------------------------------------------------
