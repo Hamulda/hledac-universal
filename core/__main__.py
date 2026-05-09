@@ -420,6 +420,10 @@ def _scheduler_result_acquisition_payload(
         )
         _acq_report["acquisition_prelude_duration_s"] = getattr(result, "acquisition_prelude_duration_s", 0.0)
         _acq_report["acquisition_prelude_reason"] = getattr(result, "acquisition_prelude_reason", "")
+        # F228A: Normalization telemetry — surfaces the three-phase normalization chain
+        _acq_report["acquisition_profile_input"] = _acq_input
+        _acq_report["acquisition_profile_effective"] = _acq_effective
+        _acq_report["acquisition_profile_normalized"] = _acq_normalized
     except Exception:
         # Fallback: emit explicit fallback acquisition_report
         # F219A: Even the fallback includes all schema fields (no silent truncation)
@@ -818,6 +822,28 @@ async def run_sprint(
     # Scheduler config
     # F221: windup_lead_s param allows profile to override default 180s windup
     _windup_lead_s = windup_lead_s if windup_lead_s is not None else 180.0
+    # F228A: Defensive normalization — benchmark profile aliases must not reach
+    # acquisition_strategy as raw values. Record all three phases for telemetry.
+    _acq_input = acquisition_profile
+    _acq_effective = acquisition_profile
+    _acq_normalized = False
+    if _acq_effective == "nonfeed_diagnostic180":
+        _acq_effective = "nonfeed_diagnostic"
+        _acq_normalized = True
+    # Check _acq_effective (not _acq_input) since _acq_effective may have been
+    # normalized by the alias check above — we only want to flag truly unknown values
+    if _acq_effective not in ("default", "nonfeed_diagnostic"):
+        if _acq_input is not None and _acq_input not in ("default", "nonfeed_diagnostic"):
+            logger.warning(
+                "[F228A] Unknown acquisition_profile=%r normalized to 'default'",
+                _acq_input,
+            )
+        _acq_effective = "default"
+        _acq_normalized = True
+    # Propagate normalized value to scheduler and env for downstream seams
+    if "HLEDAC_ACQUISITION_PROFILE" not in os.environ:
+        os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
+    acquisition_profile = _acq_effective or "default"
     config = SprintSchedulerConfig(
         sprint_duration_s=duration_s,
         windup_lead_s=_windup_lead_s,

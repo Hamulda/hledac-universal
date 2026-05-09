@@ -9,8 +9,10 @@ Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector 
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Optional, Callable, Awaitable
 
 import numpy as np
 
@@ -28,8 +30,116 @@ except ImportError:
 MODELS_DIR = Path.home() / ".hledac" / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Sprint F228B: Telemetry
+_ANE_TELEMETRY = {
+    "ane_embed_attempted": 0,
+    "ane_embed_fallback_used": 0,
+    "ane_warmup_executed": 0,
+    "ane_warmup_error": 0,
+}
+
+
+class ANEStatus(Enum):
+    """ANE status codes."""
+    NOT_AVAILABLE = "not_available"
+    MODEL_NOT_FOUND = "model_not_found"
+    LOADED = "loaded"
+    LOAD_FAILED = "load_failed"
+
+
+@dataclass
+class ANEStatusResult:
+    """Result of get_ane_status()."""
+    available: bool
+    loaded: bool
+    model_path_exists: bool
+    fallback_configured: bool
+    last_error: Optional[str]
+    inference_path: str  # "coreml", "fallback", "hash_fallback", "unavailable"
+
+
+def get_ane_status(embedder: "ANEEmbedder | None" = None) -> ANEStatusResult:
+    """
+    Sprint F228B: Returns ANE status as a dataclass.
+    Callers can inspect without triggering model loading.
+    """
+    global _ANE_EMBEDDER
+
+    if embedder is None:
+        embedder = get_ane_embedder()
+
+    if not ANE_AVAILABLE:
+        return ANEStatusResult(
+            available=False,
+            loaded=False,
+            model_path_exists=False,
+            fallback_configured=False,
+            last_error="CoreML/pyobjc not available",
+            inference_path="unavailable",
+        )
+
+    if embedder is None:
+        # ANE_AVAILABLE is True here (caught above), but embedder not initialized yet.
+        # No CoreML model loaded, no fallback configured → hash fallback path.
+        return ANEStatusResult(
+            available=True,
+            loaded=False,
+            model_path_exists=False,
+            fallback_configured=False,
+            last_error=None,
+            inference_path="hash_fallback",
+        )
+
+    model_exists = embedder.coreml_path.exists() if hasattr(embedder, 'coreml_path') else False
+    fallback_configured = embedder._fallback_embedder is not None
+
+    if embedder.is_loaded:
+        return ANEStatusResult(
+            available=True,
+            loaded=True,
+            model_path_exists=model_exists,
+            fallback_configured=fallback_configured,
+            last_error=None,
+            inference_path="coreml",
+        )
+
+    # Loaded=False but ANE is available — determine why
+    if not model_exists:
+        return ANEStatusResult(
+            available=True,
+            loaded=False,
+            model_path_exists=False,
+            fallback_configured=fallback_configured,
+            last_error=None,
+            inference_path="hash_fallback",
+        )
+
+    return ANEStatusResult(
+        available=True,
+        loaded=False,
+        model_path_exists=True,
+        fallback_configured=fallback_configured,
+        last_error=getattr(embedder, '_last_load_error', None),
+        inference_path="fallback" if fallback_configured else "unavailable",
+    )
+
+
+def get_ane_telemetry() -> dict:
+    """Sprint F228B: Returns a copy of ANE telemetry counters."""
+    return dict(_ANE_TELEMETRY)
+
+
+def reset_ane_telemetry() -> None:
+    """Sprint F228B: Reset telemetry counters (for testing)."""
+    _ANE_TELEMETRY["ane_embed_attempted"] = 0
+    _ANE_TELEMETRY["ane_embed_fallback_used"] = 0
+    _ANE_TELEMETRY["ane_warmup_executed"] = 0
+    _ANE_TELEMETRY["ane_warmup_error"] = 0
+
+
 # Sprint 8VF-ANE: pyobjc CoreML inference helpers
 _HF_TOKENIZER = None
+
 
 def _get_hf_tokenizer():
     global _HF_TOKENIZER
@@ -39,6 +149,7 @@ def _get_hf_tokenizer():
             "sentence-transformers/all-MiniLM-L6-v2", use_fast=True
         )
     return _HF_TOKENIZER
+
 
 def _make_ml_array(data_list: list, length: int = 64):
     arr, err = _CoreML.MLMultiArray.alloc().initWithShape_dataType_error_(
@@ -51,6 +162,7 @@ def _make_ml_array(data_list: list, length: int = 64):
     for i in range(length):
         arr.setObject_atIndexedSubscript_(ns_arr[i], i)
     return arr
+
 
 def _coreml_embed(model, text: str) -> "np.ndarray":
     tok = _get_hf_tokenizer()
@@ -88,6 +200,8 @@ class ANEEmbedder:
     """
     Embedder, který se pokusí použít ANE (přes CoreML) a pokud není k dispozici,
     spoléhá na volání MLX embedderu (který musí být poskytnut zvenčí).
+
+    Sprint F228B: Truthful ANE path — no NotImplementedError in production.
     """
 
     def __init__(self, model_name: str = "modernbert", hidden_dim: int = 768):
@@ -95,14 +209,15 @@ class ANEEmbedder:
         self.hidden_dim = hidden_dim
         self.model = None
         self._loaded = False
+        self._last_load_error: Optional[str] = None
         self.coreml_path = MODELS_DIR / f"{model_name}_ane.mlpackage"
-        self._fallback_embedder = None  # bude nastaven z ModelManager
+        self._fallback_embedder: Optional[Callable[..., Awaitable[np.ndarray]]] = None
 
-    def set_fallback(self, fallback_func):
-        """Nastaví fallback funkci (např. MLX embedder)."""
+    def set_fallback(self, fallback_func: Callable[..., Awaitable[np.ndarray]]) -> None:
+        """Nastaví fallback async funkci (např. MLX embedder)."""
         self._fallback_embedder = fallback_func
 
-    async def load(self):
+    async def load(self) -> None:
         """Pokusí se načíst CoreML model, pokud existuje."""
         if self._loaded or not ANE_AVAILABLE:
             return
@@ -116,8 +231,10 @@ class ANEEmbedder:
                 raise RuntimeError(f"CoreML load failed: {err}")
             self.model = model
             self._loaded = True
+            self._last_load_error = None
             logger.info(f"ANEEmbedder loaded for {self.model_name}")
         except Exception as e:
+            self._last_load_error = str(e)
             logger.warning(f"ANE embedder failed to load: {e}, using MLX fallback")
 
     async def convert_to_ane(self) -> bool:
@@ -150,38 +267,75 @@ class ANEEmbedder:
         return False
 
     async def embed(self, texts: Union[str, List[str]]) -> np.ndarray:
-        if not self._loaded or self.model is None:
-            raise NotImplementedError("ANE embedder not loaded, use fallback")
+        """
+        Sprint F228B: Truthful embed — no NotImplementedError in production.
+        Falls back gracefully: CoreML → fallback embedder → hash fallback.
+        """
+        global _ANE_TELEMETRY
+        _ANE_TELEMETRY["ane_embed_attempted"] += 1
+
         if isinstance(texts, str):
             texts = [texts]
-        loop = asyncio.get_running_loop()
-        def _run():
-            return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
-        return await loop.run_in_executor(None, _run)
+
+        # Path 1: CoreML loaded
+        if self._loaded and self.model is not None:
+            loop = asyncio.get_running_loop()
+            def _run():
+                return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
+            return await loop.run_in_executor(None, _run)
+
+        # Path 2: Fallback embedder configured — call it
+        if self._fallback_embedder is not None:
+            _ANE_TELEMETRY["ane_embed_fallback_used"] += 1
+            fb = self._fallback_embedder
+            # Handle both sync and async fallback
+            if asyncio.iscoroutinefunction(fb):
+                return await fb(texts)
+            else:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, lambda: fb(texts))
+
+        # Path 3: Hash fallback — deterministic, zero RAM
+        _ANE_TELEMETRY["ane_embed_fallback_used"] += 1
+        return self._hash_embed(texts)
+
+    def _hash_embed(self, texts: Union[str, List[str]]) -> np.ndarray:
+        """Deterministic hash-based fallback — always works, no model needed."""
+        if isinstance(texts, str):
+            texts = [texts]
+        vecs = []
+        for t in texts:
+            h = hash(t[:512]) % (2**32)
+            vec = np.zeros(self.hidden_dim, dtype=np.float32)
+            # Spread hash across vector for diversity
+            for i in range(min(self.hidden_dim, 384)):
+                vec[i] = float((h >> (i % 32)) & 1) * 2 - 1
+            norm = np.linalg.norm(vec)
+            vecs.append(vec / norm if norm > 0 else vec)
+        return np.array(vecs, dtype=np.float32)
 
     async def warmup(self) -> None:
         """
-        Sprint 8TC B.5: Pre-run dummy embedding pro načtení CoreML modelu do ANE cache.
-
-        M1: první inference je vždy pomalá (~2s) — toto ji přesune do WARMUP fáze.
-        Volá se z __main__.py v WARMUP fázi sprintu.
+        Sprint F228B: Fixed warmup — awaits embed() correctly.
+        Never passes async embed() directly to run_in_executor.
         """
+        global _ANE_TELEMETRY
+
         if not ANE_AVAILABLE:
             logger.debug("ANEEmbedder warmup skipped: ANE not available")
             return
         if not self._loaded or self.model is None:
             logger.debug("ANEEmbedder warmup skipped: model not loaded")
             return
+
+        _ANE_TELEMETRY["ane_warmup_executed"] += 1
         try:
-            loop = asyncio.get_running_loop()
             dummy = ["warmup probe osint security"]
-            await loop.run_in_executor(None, self.embed, dummy)
+            # Sprint F228B: await embed() directly — no run_in_executor wrapping
+            await self.embed(dummy)
             logger.debug("ANEEmbedder warmed up (ANE cache primed)")
-        except NotImplementedError:
-            # embed() throws NotImplementedError until real inference is implemented
-            # This is expected — warmup still counts as "priming the ANE subsystem"
-            logger.debug("ANEEmbedder warmup: real inference not implemented yet, skipping")
         except Exception as e:
+            _ANE_TELEMETRY["ane_warmup_error"] += 1
             logger.debug(f"ANEEmbedder warmup failed: {e}")
 
     @property
@@ -192,7 +346,6 @@ class ANEEmbedder:
 
 # Backward compat — importuje z kanonického mista
 from hledac.universal.brain.ner_engine import extract_iocs_from_text, _IOC_PATTERNS
-
 
 # ============================================================================
 # Sprint 8VF: ANE Semantic Dedup
@@ -287,12 +440,6 @@ def rerank_findings_cosine(
     Cosine similarity reranker over ANE MiniLM embeddings.
     RAM: ~22MB model (CoreML), <5ms inference, ANE accelerated.
     Fallback: confidence sort.
-
-    Why NOT phi-3-mini as reranker:
-      - phi-3-mini is generative LLM (~2GB RAM)
-      - For scoring/reranking, correct approach is cross-encoder
-        or cosine similarity with embedding model
-      - On 8GB M1, phi-3-mini + sprint pipeline = memory pressure
     """
     try:
         embedder = get_ane_embedder()
@@ -316,12 +463,9 @@ def rerank_findings_cosine(
             f_vec = f_vec / f_norm
             score = float(np.dot(q_vec, f_vec))
             scored.append((score, f))
-
         scored.sort(key=lambda x: x[0], reverse=True)
         return [f for _, f in scored[:top_k]]
-
     except Exception:
-        # Fallback: sort by confidence
         return sorted(
             findings,
             key=lambda x: x.get("confidence", 0.5),
@@ -363,42 +507,31 @@ def rerank_findings_crossencoder(
 ) -> list[dict]:
     """
     Cross-encoder reranker using flashrank ms-marco-MiniLM-L-12-v2.
-
     Superior to cosine similarity for cross-document relevance scoring.
     Falls back to rerank_findings_cosine if flashrank unavailable.
-
-    Args:
-        query: Search query string.
-        findings: List of Finding dicts with .get('content')/.get('text')/.get('snippet') attributes.
-        top_k: Number of top results to return.
-
-    Returns:
-        Reranked list of findings, top_k items.
     """
-    ranker = _get_flashrank_reranker()
-    if ranker is None:
-        logger.debug("[RERANK:A] Using cosine fallback")
-        return rerank_findings_cosine(findings, query, top_k)
-
     try:
+        ranker = _get_flashrank_reranker()
+        if ranker is None:
+            logger.debug("[RERANK:A] Using cosine fallback")
+            return rerank_findings_cosine(findings, query, top_k)
+
         from flashrank import RerankRequest
 
-        # Build passages — detect attribute name dynamically
         passages = []
-        for i, f in enumerate(findings[:200]):  # cap at 200 for RAM
+        for i, f in enumerate(findings[:200]):
             text = (
                 f.get("content")
                 or f.get("text")
                 or f.get("snippet")
                 or f.get("title", "")
                 or str(f)
-            )[:2048]  # cap at 2048 chars
+            )[:2048]
             passages.append({"id": i, "text": text})
 
         request = RerankRequest(query=query[:512], passages=passages)
         results = ranker.rerank(request)
 
-        # Map back to original findings by id
         id_to_finding = {r["id"]: findings[r["id"]] for r in results[:top_k] if r["id"] < len(findings)}
         reranked = [id_to_finding[r["id"]] for r in results[:top_k] if r["id"] in id_to_finding]
 

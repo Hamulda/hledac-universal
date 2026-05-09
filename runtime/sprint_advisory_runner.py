@@ -67,6 +67,10 @@ class AdvisoryRunOutcome:
     executed_pivots: int = 0
     governor_recorded: bool = False
     brief_generated: bool = False
+    local_search_attempted: bool = False
+    local_search_hits: int = 0
+    local_search_source: str = "none"
+    local_search_error: Optional[str] = field(default=None)
     error: Optional[str] = field(default=None)
 
 
@@ -148,6 +152,9 @@ class SprintAdvisoryRunner:
             # Step 4: Analyst brief advisory
             outcome = await self._run_analyst_brief_advisory(outcome)
 
+            # Step 5: Local search advisory (F228C)
+            outcome = await self._run_local_search_advisory(outcome)
+
         except asyncio.CancelledError:
             raise  # [I6] propagate CancelledError — never swallowed
 
@@ -170,11 +177,11 @@ class SprintAdvisoryRunner:
         if planner is None:
             return outcome
 
-        try:
-            findings = getattr(self._scheduler, "_all_findings", [])
-            if not findings:
-                return outcome
+        findings = getattr(self._scheduler, "_all_findings", [])
+        if not findings:
+            return outcome
 
+        try:
             # Get graph stats for scoring
             graph_stats: dict[str, Any] = {}
             try:
@@ -225,6 +232,10 @@ class SprintAdvisoryRunner:
                 executed_pivots=outcome.executed_pivots,
                 governor_recorded=outcome.governor_recorded,
                 brief_generated=outcome.brief_generated,
+                local_search_attempted=outcome.local_search_attempted,
+                local_search_hits=outcome.local_search_hits,
+                local_search_source=outcome.local_search_source,
+                local_search_error=outcome.local_search_error,
                 error=None,
             )
 
@@ -282,6 +293,10 @@ class SprintAdvisoryRunner:
                 executed_pivots=len(results),
                 governor_recorded=outcome.governor_recorded,
                 brief_generated=outcome.brief_generated,
+                local_search_attempted=outcome.local_search_attempted,
+                local_search_hits=outcome.local_search_hits,
+                local_search_source=outcome.local_search_source,
+                local_search_error=outcome.local_search_error,
                 error=None,
             )
 
@@ -353,10 +368,76 @@ class SprintAdvisoryRunner:
             executed_pivots=outcome.executed_pivots,
             governor_recorded=governor_recorded,
             brief_generated=outcome.brief_generated,
+            local_search_attempted=outcome.local_search_attempted,
+            local_search_hits=outcome.local_search_hits,
+            local_search_source=outcome.local_search_source,
+            local_search_error=outcome.local_search_error,
             error=None,
         )
 
-    # ── Step 4: Analyst Brief ───────────────────────────────────────────────
+    # ── Step 5: Local Search ────────────────────────────────────────────────
+
+    async def _run_local_search_advisory(
+        self, outcome: AdvisoryRunOutcome
+    ) -> AdvisoryRunOutcome:
+        """
+        F228C: Local search advisory at teardown.
+
+        Uses LocalSearchSeam to provide local evidence context for research.
+        Bounded, fail-soft, no network, no model load.
+
+        Telemetry fields added to AdvisoryRunOutcome:
+            local_search_attempted: True if seam was found and queried
+            local_search_hits: Number of hits returned
+            local_search_source: Module that provided the seam ("search_index" or "none")
+            local_search_error: Error string if failed, else None
+        """
+        try:
+            from hledac.universal.knowledge.search_index import LocalSearchSeam
+
+            seam = LocalSearchSeam()
+            # Query with sprint query for context
+            query = getattr(self._scheduler, "query", None) or ""
+            if not query:
+                return AdvisoryRunOutcome(
+                    planned_pivots=outcome.planned_pivots,
+                    executed_pivots=outcome.executed_pivots,
+                    governor_recorded=outcome.governor_recorded,
+                    brief_generated=outcome.brief_generated,
+                    local_search_attempted=True,
+                    local_search_hits=0,
+                    local_search_source="local_search",
+                    local_search_error="no_query",
+                    error=None,
+                )
+
+            result = seam.search(query, top_k=10)
+            hits = len(result.results)
+
+            return AdvisoryRunOutcome(
+                planned_pivots=outcome.planned_pivots,
+                executed_pivots=outcome.executed_pivots,
+                governor_recorded=outcome.governor_recorded,
+                brief_generated=outcome.brief_generated,
+                local_search_attempted=True,
+                local_search_hits=hits,
+                local_search_source="search_index",
+                local_search_error=None,
+                error=None,
+            )
+
+        except Exception as e:
+            return AdvisoryRunOutcome(
+                planned_pivots=outcome.planned_pivots,
+                executed_pivots=outcome.executed_pivots,
+                governor_recorded=outcome.governor_recorded,
+                brief_generated=outcome.brief_generated,
+                local_search_attempted=True,
+                local_search_hits=0,
+                local_search_source="local_search",
+                local_search_error=str(e),
+                error=None,
+            )
 
     async def _run_analyst_brief_advisory(
         self, outcome: AdvisoryRunOutcome
@@ -445,6 +526,10 @@ class SprintAdvisoryRunner:
                 executed_pivots=outcome.executed_pivots,
                 governor_recorded=outcome.governor_recorded,
                 brief_generated=True,
+                local_search_attempted=outcome.local_search_attempted,
+                local_search_hits=outcome.local_search_hits,
+                local_search_source=outcome.local_search_source,
+                local_search_error=outcome.local_search_error,
                 error=None,
             )
 

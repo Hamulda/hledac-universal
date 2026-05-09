@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import hashlib
 import logging
 import ctypes
 import sys
@@ -27,6 +28,7 @@ import threading
 import time
 import weakref
 from collections import OrderedDict, deque
+from pathlib import Path
 from dataclasses import dataclass, field, is_dataclass, asdict
 from enum import Enum, IntEnum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -2403,8 +2405,10 @@ class MultiLevelContextCache:
             "similarities": []
         }
         
-        # Thread safety
-        self._lock = threading.RLock()
+        # Thread safety — asyncio.Lock because all callers are async.
+        # Sync boundary methods (allocate/free/touch/record_cleanup/get_memory_usage/get_zone_usage)
+        # use self.lock (threading.Lock, line 739) instead.
+        self._lock: asyncio.Lock = asyncio.Lock()
         
         # Load existing L2 cache
         self._load_l2_cache()
@@ -2522,16 +2526,15 @@ class MultiLevelContextCache:
         """
         threshold = threshold or self.similarity_threshold
         
-        with self._lock:
-            self.stats["total_requests"] += 1
-        
+        self.stats["total_requests"] += 1
+
         input_text = str(input_data)
         
         # Check semantic cache for similar entries
         similar_entry = await self._find_similar_entry(input_text, threshold)
         
         if similar_entry:
-            with self._lock:
+            async with self._lock:
                 self.stats["hits"] += 1
                 self._update_access(similar_entry.cache_id)
                 
@@ -2540,10 +2543,9 @@ class MultiLevelContextCache:
                     self._promote_to_l1(similar_entry.cache_id)
             
             return similar_entry.content
-        
-        with self._lock:
+
             self.stats["misses"] += 1
-        return None
+            return None
     
     async def _find_similar_entry(
         self,
@@ -2578,7 +2580,7 @@ class MultiLevelContextCache:
                     # Get entry from L1 or L2
                     entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                     if entry:
-                        with self._lock:
+                        async with self._lock:
                             self.stats["similarities"].append(float(similarity))
                         return entry
         except Exception as e:
@@ -2610,7 +2612,7 @@ class MultiLevelContextCache:
                 if entry:
                     # Compute similarity (hnswlib returns distances, convert to similarity)
                     # For cosine distance: similarity = 1 - distance
-                    with self._lock:
+                    async with self._lock:
                         self.stats["similarities"].append(1.0)  # Assume match for hnsw
                     return entry
         except Exception as e:
@@ -2655,7 +2657,7 @@ class MultiLevelContextCache:
             metadata={}
         )
         
-        with self._lock:
+        async with self._lock:
             # Add to semantic index
             if embedding is not None and self.faiss_available:
                 try:
@@ -2761,7 +2763,7 @@ class MultiLevelContextCache:
         Args:
             location: Specific location to clear, or None for all
         """
-        with self._lock:
+        async with self._lock:
             if location is None or location == CacheLocation.L1_MEMORY:
                 self.l1_cache.clear()
             

@@ -343,7 +343,12 @@ class SprintPolicyManager:
 
         Call this from SprintScheduler.inject_policy_manager() alongside the
         policy manager injection so both references are available.
+
+        F228A: No-op when policy is disabled — _scheduler must not be set
+        to avoid leaking scheduler reference into disabled policy manager.
         """
+        if not self._enabled:
+            return
         self._scheduler = scheduler
 
     # ── Reset ────────────────────────────────────────────────────────────────

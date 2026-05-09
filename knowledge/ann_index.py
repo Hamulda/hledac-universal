@@ -74,6 +74,10 @@ class _ANNIndex:
         self._boot_error: Optional[str] = None
         self._initialized: bool = False
         self._lock = threading.Lock()
+        # SAFETY: SAFE_SYNC_BOUNDARY — _lock guards LanceDB table.search() and table.add()
+        # operations in ann_search() and upsert(). Both are called from the embedding_pipeline
+        # sync context (not async). The lock prevents concurrent LanceDB operations across threads
+        # in the ThreadPoolExecutor. No await occurs inside this lock.
 
     def _check_memory_guard(self) -> bool:
         """Return True if ANN init is safe (RSS below threshold)."""
@@ -296,6 +300,9 @@ class _ANNIndex:
 
 _ann_index: Optional[_ANNIndex] = None
 _ann_index_lock = threading.Lock()
+# SAFETY: SAFE_SYNC_BOUNDARY — _ann_index_lock guards module-level singleton _ann_index.
+# Double-checked locking pattern: fast path without lock when _ann_index is already set.
+# No async callers.
 
 
 def get_ann_index(lmdb_path: str | None = None) -> _ANNIndex:
@@ -340,6 +347,9 @@ def check_ann_duplicate(
     """
     try:
         ann = get_ann_index()
+        # SAFETY: SAFE_SYNC_BOUNDARY — _ann_index_lock guards the module-level singleton _ann_index.
+        # get_ann_index() is called from embedding_pipeline sync context.
+        # Double-checked locking pattern: fast path without lock when _ann_index is already set.
         if ann._boot_error is not None:
             return False
 

@@ -592,7 +592,8 @@ class CTLossStage(Enum):
     """
 
     NO_RAW = "no_raw"  # CT adapter returned 0 hits
-    BRIDGE_NOT_INVOKED = "bridge_not_invoked"  # CT raw existed but bridge was never called
+    BRIDGE_NOT_INVOKED = "bridge_not_invoked"  # CT adapter returned 0 raw and bridge was never called
+    RAW_NOT_BRIDGED = "raw_not_bridged"  # F228E: raw > 0 but bridge was never called (_needs_ct=False)
     UNSUPPORTED_RAW_SHAPE = "unsupported_raw_shape"  # batch_result has no .hits attribute
     ALL_REJECTED_BY_BRIDGE = "all_rejected_by_bridge"  # hits existed but all candidates rejected
     CANDIDATES_BUILT_NOT_ACCUMULATED = "candidates_built_not_accumulated"  # bridge returned candidates but scheduler dropped them
@@ -798,6 +799,11 @@ class SprintSchedulerResult:
     feed_no_pattern_with_content: bool = False   # no_pattern_hits_with_content in any feed
     findings_build_loss_detected: bool = False   # findings_build_loss in any feed
     feed_no_signal_sources: list[str] = field(default_factory=list)  # source URLs with zero_signal_reason
+    # Sprint F228A: Policy quality feedback telemetry — populated by update_with_quality_decisions calls
+    policy_quality_feedback_calls: int = 0          # total calls to update_with_quality_decisions
+    policy_quality_feedback_decisions: int = 0      # total decisions processed across all calls
+    policy_quality_feedback_sources: int = 0        # unique sources fed to policy
+    policy_quality_feedback_errors: int = 0         # exceptions caught during policy calls
     # Sprint F169E: Public branch blocker aggregation
     public_backend_degraded: bool = False         # backend_degraded was True in any public cycle
     # Sprint F169E: Dominant blocker summary (first non-empty wins per category)
@@ -942,6 +948,10 @@ class SprintSchedulerResult:
     acquisition_prelude_errors: dict[str, str] = field(default_factory=dict)
     acquisition_prelude_duration_s: float = 0.0
     acquisition_prelude_reason: str = ""
+    acquisition_prelude_domain_detected: bool = False
+    acquisition_prelude_plan_present: bool = False
+    acquisition_prelude_plan_built_for_prelude: bool = False
+    acquisition_prelude_domain_detection_error: str = ""
     # Sprint F216E: Feed dominance budget telemetry
     # Populated by _check_feed_dominance_budget() called per-cycle and at teardown
     feed_budget_active: bool = False                    # True when budget policy is configured
@@ -2297,6 +2307,45 @@ class SprintScheduler:
         except Exception as e:
             log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
 
+        # Sprint F228A: Call policy_manager.update_with_quality_decisions if enabled and decisions exist.
+        # Collect decisions from the store's batch results accumulated during the sprint.
+        # Fail-soft: any exception is caught and logged; CancelledError propagates.
+        # Telemetry: policy_quality_feedback_calls, _decisions, _sources, _errors.
+        if self._policy_manager is not None and self._policy_manager.enabled:
+            _decisions: list = []
+            _feed_url = "feed"
+            # Feed ingest decisions: reconstructed from _source_quality_feedback per feed_url.
+            # Each decision dict has accepted (bool) and source_family (str) keys.
+            try:
+                # Reconstruct FindingQualityDecision-style dicts from accumulated feedback
+                for _feed, _fb in self._source_quality_feedback.items():
+                    _total = _fb.get("fetched", 0)
+                    _accepted = _fb.get("accepted", 0)
+                    if _total == 0:
+                        continue
+                    # One decision per feed_url: accepted is True if ratio >= 0.15 (same threshold as _adapt)
+                    _ratio = _accepted / _total if _total > 0 else 0.0
+                    _decisions.append({
+                        "accepted": _ratio >= 0.15,
+                        "source_family": _feed,
+                    })
+                if _decisions:
+                    try:
+                        self._policy_manager.update_with_quality_decisions(_decisions, feed_url=_feed_url)
+                        self._result.policy_quality_feedback_calls += 1
+                        self._result.policy_quality_feedback_decisions += len(_decisions)
+                        self._result.policy_quality_feedback_sources += len(set(d.get("source_family") for d in _decisions))
+                    except asyncio.CancelledError:
+                        raise  # CancelledError must propagate — do not catch here
+                    except Exception as _e:
+                        self._result.policy_quality_feedback_errors += 1
+                        log.debug(f"[F228A] policy_quality_feedback update failed: {_e}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as _e:
+                self._result.policy_quality_feedback_errors += 1
+                log.debug(f"[F228A] policy_quality_feedback decision collection failed: {_e}")
+
         # Sprint F208I-B: Finalize result ONCE before returning.
         # _finalize_result_truth computes terminality + calls _record_scheduler_exit.
         # Sprint F215D: Skip if early exit already finalized (break paths already called
@@ -3102,6 +3151,7 @@ class SprintScheduler:
                     if not _ct_cache_used and _ct_results_raw == 0:
                         # F217D: raw=0 and no stale cache used — explicit provider failure
                         _ct_loss_stage = CTLossStage.PROVIDER_FAILURE.value
+                        self._result.ct_bridge_invoked = False
                     elif (
                         _bridge_raw == 0
                         and _ct_results_raw > 0
@@ -3109,25 +3159,35 @@ class SprintScheduler:
                         and REJECTION_UNSUPPORTED_SHAPE in _rejection_reasons
                     ):
                         _ct_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
-                    # F215C: ALL_REJECTED_BY_BRIDGE only when bridge produced candidates=0 AND we have bridge telemetry (raw sampled)
+                        self._result.ct_bridge_invoked = True
+                    # F215C: ALL_REJECTED_BY_BRIDGE when bridge was called, produced zero candidates,
+                    # and telemetry recorded raw entries (hits were processed by bridge).
                     elif _bridge_candidates == 0 and _bridge_raw > 0:
                         _ct_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
+                        self._result.ct_bridge_invoked = True
                     elif _bridge_candidates > 0 and not _storage_attempted:
                         _ct_loss_stage = CTLossStage.CANDIDATES_BUILT_NOT_ACCUMULATED.value
+                        self._result.ct_bridge_invoked = True
                     elif _bridge_candidates > 0 and accepted == 0:
                         _ct_loss_stage = CTLossStage.ACCUMULATED_NOT_STORED.value
+                        self._result.ct_bridge_invoked = True
                     elif _bridge_candidates > 0 and accepted > 0:
                         # F215C: no_loss requires ALL: raw>0, candidates>0, stored>0, accepted>0
                         _ct_loss_stage = CTLossStage.NO_LOSS.value
+                        self._result.ct_bridge_invoked = True
                     elif _ct_results_raw > 0 and _bridge_candidates == 0 and _bridge_raw == 0:
-                        # F215C: raw exists but bridge never invoked — unknown loss stage
+                        # F215C: bridge was called but returned no telemetry entries (early-return path).
+                        # Hits were presented but all were rejected at the raw-entry level.
                         _ct_loss_stage = CTLossStage.UNKNOWN_LOSS.value
+                        self._result.ct_bridge_invoked = True
                     else:
-                        _ct_loss_stage = CTLossStage.BRIDGE_NOT_INVOKED.value
+                        # F228E: Bridge was NOT called despite raw entries existing (e.g., _needs_ct=False).
+                        # This is RAW_NOT_BRIDGED — distinct from BRIDGE_NOT_INVOKED (no raw at all).
+                        _ct_loss_stage = CTLossStage.RAW_NOT_BRIDGED.value
+                        self._result.ct_bridge_invoked = False
 
                     # Persist CT bridge loss telemetry onto the canonical result
                     self._result.ct_loss_stage = _ct_loss_stage
-                    self._result.ct_bridge_invoked = True
                     # Sprint F216A: Emit CT raw_received and CT terminal events
                     _ct_raw = _ct_results_raw
                     if _ct_raw > 0:
@@ -3596,17 +3656,25 @@ class SprintScheduler:
                 pass
 
         _has_domain = False
-        if self._acquisition_plan is not None:
-            try:
-                from hledac.universal.runtime.acquisition_strategy import _has_domain_or_ip
-                _has_domain = _has_domain_or_ip(query)
-            except Exception:
-                _has_domain = False
+        _domain_error = ""
+        try:
+            from hledac.universal.runtime.acquisition_strategy import _has_domain_or_ip
+            _has_domain = _has_domain_or_ip(query)
+        except Exception as _exc:
+            _domain_error = f"{type(_exc).__name__}:{_exc}"
+            _has_domain = False
+
+        self._result.acquisition_prelude_domain_detected = _has_domain
+        self._result.acquisition_prelude_plan_present = self._acquisition_plan is not None
+        self._result.acquisition_prelude_domain_detection_error = _domain_error
 
         # If not a domain query, skip prelude (CT not required)
         if not _has_domain:
             self._result.acquisition_prelude_ran = False
-            self._result.acquisition_prelude_reason = "non_domain_query"
+            if _domain_error:
+                self._result.acquisition_prelude_reason = f"domain_detection_error:{_domain_error}"
+            else:
+                self._result.acquisition_prelude_reason = "non_domain_query"
             self._result.acquisition_prelude_required_lanes = ()
             self._result.acquisition_prelude_duration_s = _time.monotonic() - _t0
             return
@@ -3614,6 +3682,8 @@ class SprintScheduler:
         # Derive required lanes
         _required: tuple[str, ...] = ()
         _mlt_tuples: tuple = ()
+        _plan_built = False
+        _rtl = None
         if self._acquisition_plan is not None:
             try:
                 from hledac.universal.runtime.acquisition_strategy import (
@@ -3634,7 +3704,42 @@ class SprintScheduler:
                 )
             except Exception:
                 _required = ("PUBLIC", "CT")
+        else:
+            # Sprint F228B: no acquisition plan but domain query detected
+            # Build minimal plan so required_terminal_lanes can derive correct lanes
+            try:
+                from hledac.universal.runtime.acquisition_strategy import (
+                    build_acquisition_plan,
+                    required_terminal_lanes as _rtl,
+                )
+                _minimal = build_acquisition_plan(
+                    query=query,
+                    duration_s=60.0,
+                    uma_state=_uma,
+                    swap_detected=False,
+                    memory_budget_mb=512,
+                )
+                if _minimal is not None:
+                    self._acquisition_plan = _minimal
+                    _plan_built = True
+                    _mlt_tuples = _rtl(
+                        snapshot=_minimal,
+                        query=query,
+                        uma_state=_uma,
+                        swap_detected=False,
+                    )
+                    _required = tuple(
+                        mlt.lane.value if hasattr(mlt.lane, 'value')
+                        else str(mlt.lane).upper()
+                        for mlt in _mlt_tuples
+                        if getattr(mlt, 'required', False)
+                    )
+                else:
+                    _required = ("PUBLIC", "CT")
+            except Exception:
+                _required = ("PUBLIC", "CT")
 
+        self._result.acquisition_prelude_plan_built_for_prelude = _plan_built
         _needs_public = "PUBLIC" in _required or "public" in [r.lower() for r in _required]
         _needs_ct = "CT" in _required or "ct" in [r.lower() for r in _required]
 
@@ -3804,18 +3909,22 @@ class SprintScheduler:
                 _prelude_candidates = len(_candidates_prelude) if _candidates_prelude else 0
                 if _ct_results_raw == 0:
                     _prelude_loss_stage = CTLossStage.NO_RAW.value
+                    _prelude_bridge_invoked = False
                 elif (
                     _prelude_candidates == 0
                     and _ct_results_raw > 0
                     and REJECTION_UNSUPPORTED_SHAPE in _rejections_prelude
                 ):
                     _prelude_loss_stage = CTLossStage.UNSUPPORTED_RAW_SHAPE.value
+                    _prelude_bridge_invoked = True
                 # F215E: Fallback for raw>0 but bridge produced no candidates without explicit rejection.
                 # Mirrors the main path fix for the same gap condition.
                 elif _prelude_candidates == 0 and _ct_results_raw > 0:
                     _prelude_loss_stage = CTLossStage.ALL_REJECTED_BY_BRIDGE.value
+                    _prelude_bridge_invoked = True
                 else:
                     _prelude_loss_stage = CTLossStage.CANDIDATES_BUILT_NOT_ACCUMULATED.value
+                    _prelude_bridge_invoked = True
                 # Sample keys from prelude hits
                 # _ct_result is set by the CT adapter on success; guarded by _ct_results_raw > 0
                 _prelude_keys: tuple[str, ...] = ()
@@ -3826,7 +3935,7 @@ class SprintScheduler:
                         if k
                     )))
                 self._result.ct_loss_stage = _prelude_loss_stage
-                self._result.ct_bridge_invoked = True
+                self._result.ct_bridge_invoked = _prelude_bridge_invoked
                 self._result.ct_raw_sample_keys = _prelude_keys
                 self._result.ct_raw_sample_count = _ct_results_raw
                 self._result.ct_raw_count = _ct_results_raw
@@ -4058,6 +4167,21 @@ class SprintScheduler:
                     _attempted.append("ct")
                 else:
                     _attempted.append("ct")
+                    # F228E: Pre-windup barrier got raw CT but did not call bridge.
+                    # Set full telemetry so raw>0 + accepted=0 is truthfully explained.
+                    # Matches prelude path field completeness for RAW_NOT_BRIDGED exit.
+                    if outcome.get("raw_count", 0) > 0:
+                        self._result.ct_bridge_invoked = False
+                        self._result.ct_loss_stage = CTLossStage.RAW_NOT_BRIDGED.value
+                        self._result.ct_raw_count = outcome.get("raw_count", 0)
+                        self._result.ct_raw_sample_count = 0
+                        self._result.ct_candidates_built = 0
+                        self._result.ct_candidates_accumulated = 0
+                        self._result.ct_candidates_stored = 0
+                        self._result.ct_storage_rejected = 0
+                        self._result.ct_quarantine_count = 0
+                        self._result.ct_bridge_rejections_count = 0
+                        self._result.ct_bridge_rejection_reasons = ()
             except Exception as exc:
                 _skipped["ct"] = f"exception:{type(exc).__name__}"
                 _errors["ct"] = f"{type(exc).__name__}:{exc}"
@@ -8226,9 +8350,60 @@ class SprintScheduler:
                     "hardware_skipped_lanes": list(nd.hardware_skipped_lanes),
                     "nonfeed_execution_scheduled": nd.nonfeed_execution_scheduled,
                     "nonfeed_execution_skip_reason": nd.nonfeed_execution_skip_reason,
+                    # F216B: Nonfeed diagnostic profile telemetry
+                    "acquisition_profile": getattr(nd, "acquisition_profile", "default"),
+                    "feed_cap_reason": getattr(nd, "feed_cap_reason", None),
+                    "nonfeed_priority_enabled": getattr(nd, "nonfeed_priority_enabled", False),
+                    "nonfeed_profile_expected_lanes": list(getattr(nd, "nonfeed_profile_expected_lanes", ()) or ()),
+                    # F216F: Pivot executor telemetry
+                    "pivot_executor_enabled": getattr(nd, "pivot_executor_enabled", False),
+                    "pivot_candidates_count": getattr(nd, "pivot_candidates_count", 0),
+                    "pivot_candidate_types": list(getattr(nd, "pivot_candidate_types", ()) or ()),
+                    "pivot_scheduled_lanes": list(getattr(nd, "pivot_scheduled_lanes", ()) or ()),
+                    "pivot_skip_reason": getattr(nd, "pivot_skip_reason", None),
+                    "pivot_errors": list(getattr(nd, "pivot_errors", ()) or ()),
+                    # F225A: Mission intent telemetry
+                    "mission_intent": getattr(nd, "mission_intent", "unknown"),
+                    "mission_target_kind": getattr(nd, "mission_target_kind", "unknown"),
+                    "mission_required_lanes": list(getattr(nd, "mission_required_lanes", ()) or ()),
+                    "mission_optional_lanes": list(getattr(nd, "mission_optional_lanes", ()) or ()),
+                    "mission_reason": getattr(nd, "mission_reason", ""),
+                    # F226A: Mission runtime wiring
+                    "mission_runtime_applied": getattr(nd, "mission_runtime_applied", False),
+                    "mission_lane_priority": list(getattr(nd, "mission_lane_priority", ()) or ()),
+                    "mission_pivot_boost_applied": getattr(nd, "mission_pivot_boost_applied", False),
+                    # F227D: Mission-aware feed cap telemetry
+                    "mission_feed_cap_reason": getattr(nd, "mission_feed_cap_reason", None),
+                    "feed_cap_applied_by_mission": getattr(nd, "feed_cap_applied_by_mission", False),
+                    "feed_cap_mission_intent": getattr(nd, "feed_cap_mission_intent", None),
                 }
             # source_family_outcomes as list of dicts (normalize_source_family_outcome returns dict)
             _sfo_list = list(_sfo.values())
+
+            # F228C: Compute nonfeed surface completeness telemetry from _sfo dict
+            # _sfo is keyed by family name (wayback, passive_dns, etc.)
+            # nonfeed_profile_expected_lanes uses UPPERCASE lane constants (CT, WAYBACK, etc.)
+            # _sfo entries use lowercase family names (ct, wayback, etc.)
+            _sfo_by_family = {entry.get("family", ""): entry for entry in _sfo_list}
+            _expected = list(_nd.get("nonfeed_profile_expected_lanes", ()) or []) if _nd else (nonfeed_expected_lanes or [])
+            # Map uppercase lane constants to lowercase family names for comparison
+            _FAM_MAP = {
+                "CT": "ct", "WAYBACK": "wayback", "PASSIVE_DNS": "passive_dns",
+                "BLOCKCHAIN": "blockchain", "PUBLIC": "public",
+                "PIVOT_EXECUTOR": "pivot_executor",
+            }
+            _surf_wayback = _sfo_by_family.get("wayback", {})
+            _surf_pdns = _sfo_by_family.get("passive_dns", {})
+            _surf_ct = _sfo_by_family.get("ct", {})
+            _surf_public = _sfo_by_family.get("public", {})
+            # A lane is "surfaced" if it was attempted OR explicitly skipped (not absent)
+            _surfaced_lower = {
+                _FAM_MAP.get(fam.upper(), fam.lower())
+                for fam, entry in _sfo_by_family.items()
+                if entry.get("attempted") or entry.get("skipped")
+            }
+            _missing = [e for e in _expected if _FAM_MAP.get(e, e.lower()) not in _surfaced_lower]
+            _surf_complete = len(_missing) == 0
 
             report["acquisition_report"] = build_acquisition_report(
                 plan=self._acquisition_plan,
@@ -8245,6 +8420,12 @@ class SprintScheduler:
                     if self._config.acquisition_profile is not None
                     else "default"
                 ),
+                # F228C: Nonfeed surface completeness telemetry
+                nonfeed_expected_lanes=_expected,
+                nonfeed_missing_expected_lanes=_missing,
+                wayback_terminal_state=_surf_wayback.get("terminal_state", ""),
+                passive_dns_terminal_state=_surf_pdns.get("terminal_state", ""),
+                nonfeed_surface_complete=_surf_complete,
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only

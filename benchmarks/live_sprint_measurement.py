@@ -140,6 +140,24 @@ PROFILE_META: dict[str, dict] = {
     },
 }
 
+_CANONICAL_ACQUISITION_PROFILES = frozenset(["default", "nonfeed_diagnostic"])
+
+
+def _resolve_acquisition_profile(profile: str) -> str:
+    """
+    F228A: Resolve benchmark profile → canonical acquisition profile.
+
+    Reads PROFILE_META[profile]["acquisition_profile"] when present,
+    falls back to "default". Validates returned value is a canonical
+    acquisition profile name — never returns benchmark-specific aliases
+    like "nonfeed_diagnostic180" as an acquisition_profile.
+    """
+    resolved = PROFILE_META.get(profile, {}).get("acquisition_profile", "default")
+    if resolved not in _CANONICAL_ACQUISITION_PROFILES:
+        resolved = "default"
+    return resolved
+
+
 MIN_DURATION_S = 180
 
 # F222B: Namespace Reality Guard — diagnostic without heavy imports
@@ -2777,9 +2795,12 @@ async def _run_live_sprint(
         )
 
         # Run canonical sprint
-        # F221: Pass windup_lead_s from profile metadata so diagnostic profiles
+        # F228A: Resolve benchmark profile → canonical acquisition profile.
+        # Also pass windup_lead_s from profile metadata so diagnostic profiles
         # (nonfeed_diagnostic180) enter active immediately instead of 180s windup delay
         _windup_lead_s = PROFILE_META.get(profile, {}).get("expected_windup_lead_s")
+        _acquisition_profile = _resolve_acquisition_profile(profile)
+        os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acquisition_profile
         await core_main.run_sprint(
             query=query,
             duration_s=float(duration_s),
@@ -2788,6 +2809,7 @@ async def _run_live_sprint(
             deep_probe_enabled=deep_probe,
             ui_mode=False,
             windup_lead_s=_windup_lead_s,
+            acquisition_profile=_acquisition_profile,
         )
 
         end_time_iso = _now_iso()

@@ -342,7 +342,11 @@ async def export_sprint(
     # Sprint F225F: capability_synthesis — did this run improve actual OSINT capability?
     # _get_acquisition_truth is pure (no side effects), safe to call again here.
     acquisition_report = _get_acquisition_truth(eh).get("acquisition_report")
-    capability_synthesis = _build_capability_synthesis(pvs, eh.analyst_brief, runtime_truth, acquisition_report, research_depth)
+    # F228D fix: compute runtime_truth BEFORE capability_synthesis needs it
+    capability_runtime_truth = _get_runtime_truth(eh)
+    # F228D fix: compute research_depth BEFORE capability_synthesis needs it
+    capability_research_depth = _compute_research_depth(eh, pvs, None, None, None)
+    capability_synthesis = _build_capability_synthesis(pvs, eh.analyst_brief, capability_runtime_truth, acquisition_report, capability_research_depth)
 
     # 2. Seed tasky pro příští sprint — top_nodes z ExportHandoff (typed)
     # Post-8VZ: __main__._print_scorecard_report() sources top_nodes directly from
@@ -379,8 +383,9 @@ async def export_sprint(
 
     # Sprint F150K: build sprint_summary for human use
     try:
-        seeds_data = json.loads(seeds_path.read_text()) if seeds_path.exists() else []
-        seeds_count = len(seeds_data) if isinstance(seeds_data, list) else 0
+        seeds_data = json.loads(seeds_path.read_text()) if seeds_path.exists() else {"seeds": []}
+        # Sprint F228D §2: seeds_count from wrapper dict .get("seeds", [])
+        seeds_count = len(seeds_data.get("seeds", [])) if isinstance(seeds_data, dict) else 0
     except Exception:
         seeds_count = 0
     sprint_summary = _build_sprint_summary(pvs, seeds_count) if pvs else None
@@ -540,6 +545,12 @@ async def export_sprint(
         "evidence_chains": evidence_chains,
         # Sprint F225F: capability synthesis
         "capability_synthesis": capability_synthesis,
+        # Sprint F228D: export telemetry — capability loop always-on contract
+        "capability_synthesis_generated": True,
+        "capability_synthesis_skip_reason": None,
+        "next_sprint_seeds_generated": True,
+        "next_sprint_seeds_count": seeds_count,
+        "next_sprint_seeds_path": str(seeds_path) if seeds_path else None,
     }
 
 
@@ -668,7 +679,12 @@ def _generate_next_sprint_seeds(
             seeds.sort(key=lambda s: s.get("priority", 0.5), reverse=True)
             seeds = seeds[:MAX_SEEDS]
 
-        _seeds_text = json.dumps(seeds, indent=2, default=str)
+        # Sprint F228D §2: Wrap seeds list in {seeds: [...], capability_synthesis: {...}}
+        _seeds_wrapper = {
+            "seeds": seeds,
+            "capability_synthesis": capability_synthesis,
+        }
+        _seeds_text = json.dumps(_seeds_wrapper, indent=2, default=str)
         _seeds_bytes = _seeds_text.encode("utf-8")
         # F214ZSTD2: write optional zstd sidecar (4.8% ratio, 1.98x faster decomp)
         # Written as NEW sidecar (.json.zst) — existing .json untouched for backward compat
@@ -683,7 +699,9 @@ def _generate_next_sprint_seeds(
         logger.info(f"[EXPORT] {len(seeds)} enhanced seeds ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
-        _empty_text = json.dumps([], indent=2)
+        # Sprint F228D §2: empty wrapper fallback (not bare list)
+        _empty_wrapper = {"seeds": [], "capability_synthesis": capability_synthesis}
+        _empty_text = json.dumps(_empty_wrapper, indent=2)
         try:
             import compression.zstd
             seeds_zst = seeds_path.with_suffix(".json.zst")
@@ -2340,7 +2358,7 @@ def _compute_research_depth(
             "pivot_depth": round(pivot_score, 1),
         },
         "depth_signals": {
-            "unique_source_types": unique_types,
+            "unique_source_types": list(source_counts.keys()),
             "deep_sources_found": deep_hits,
             "total_source_hits": total_hits,
             "corroborated": is_corroborated,

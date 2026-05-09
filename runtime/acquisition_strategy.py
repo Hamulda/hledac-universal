@@ -782,6 +782,12 @@ def build_acquisition_report(
     nonfeed_candidate_ledger_summary: dict | None = None,
     # F216E: Feed dominance budget telemetry
     feed_dominance_budget: dict | None = None,
+    # F228C: Nonfeed surface completeness telemetry
+    nonfeed_expected_lanes: list[str] | None = None,
+    nonfeed_missing_expected_lanes: list[str] | None = None,
+    wayback_terminal_state: str = "",
+    passive_dns_terminal_state: str = "",
+    nonfeed_surface_complete: bool = False,
 ) -> dict:
     """
     [F208C] Build a stable canonical acquisition report dict.
@@ -856,6 +862,12 @@ def build_acquisition_report(
         low_information_by_family:     F216G: Low-information rejection counts.
         nonfeed_candidate_ledger_summary: F217E: Nonfeed candidate ledger summary.
         feed_dominance_budget:         F216E: Feed dominance budget telemetry.
+        # F228C: Nonfeed surface completeness telemetry
+        nonfeed_expected_lanes:         F228C: Expected nonfeed lanes from profile.
+        nonfeed_missing_expected_lanes: F228C: Expected lanes not surfaced.
+        wayback_terminal_state:         F228C: WAYBACK family terminal state.
+        passive_dns_terminal_state:     F228C: PASSIVE_DNS family terminal state.
+        nonfeed_surface_complete:       F228C: True when all expected lanes surfaced.
 
     Returns:
         Canonical acquisition report dict with schema_version="f208.v1".
@@ -966,6 +978,12 @@ def build_acquisition_report(
         "nonfeed_candidate_ledger_summary": nonfeed_candidate_ledger_summary or {},
         # F216E: Feed dominance budget telemetry
         "feed_dominance_budget": feed_dominance_budget or {},
+        # F228C: Nonfeed surface completeness telemetry
+        "nonfeed_expected_lanes": nonfeed_expected_lanes or [],
+        "nonfeed_missing_expected_lanes": nonfeed_missing_expected_lanes or [],
+        "wayback_terminal_state": wayback_terminal_state,
+        "passive_dns_terminal_state": passive_dns_terminal_state,
+        "nonfeed_surface_complete": nonfeed_surface_complete,
     }
 
 
@@ -1848,6 +1866,17 @@ def build_acquisition_plan(
       - Bounded: max 8 lane plans
       - Fail-soft: on any error returns minimal snapshot with all lanes disabled
     """
+    # F228A: Defensive normalization — benchmark aliases must not reach
+    # plan internals as non-canonical values.
+    _input_profile = acquisition_profile
+    if acquisition_profile == "nonfeed_diagnostic180":
+        acquisition_profile = "nonfeed_diagnostic"
+    elif acquisition_profile not in ("default", "nonfeed_diagnostic") and acquisition_profile:
+        import os
+        _orig = acquisition_profile
+        acquisition_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "default")
+        # Record unknown profile signal via nonfeed_plan_debug disabled_reasons
+        # (applied in _build_plan_impl path; fail-soft elsewhere)
     # F216B: Fall back to env var if not explicitly passed
     if acquisition_profile == "default":
         import os
