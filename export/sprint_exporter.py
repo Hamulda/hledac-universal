@@ -585,9 +585,12 @@ def _generate_next_sprint_seeds(
       slim (default) — skip hypothesis_engine (numpy/mlx heavy import)
       full — enables hypothesis_engine for query suggestions
     """
-    from hledac.universal.paths import get_sprint_next_seeds_path, SPRINT_STORE_ROOT
+    from hledac.universal.paths import SPRINT_STORE_ROOT
+    # Seeds colocate with report — use report_path.parent when report_path is set.
+    # This ensures seeds land next to the JSON report regardless of whether
+    # get_sprint_json_report_path was patched (test) or is the canonical path (prod).
     if report_path is not None:
-        seeds_path = get_sprint_next_seeds_path(sprint_id)
+        seeds_path = report_path.parent / f"{sprint_id}_next_seeds.json"
     else:
         seeds_path = SPRINT_STORE_ROOT.parent / "reports" / f"{sprint_id}_next_seeds.json"
         seeds_path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
@@ -31,6 +32,15 @@ MAX_UNCERTAIN_CLUSTERS = 10
 # 10000 chosen as reasonable upper bound for research session
 # Keeps last N evidence IDs (keep-last determinism)
 MAX_PENDING_EVIDENCE_IDS = 10000
+
+# Deterministic claim extraction bounds
+MAX_CLAIMS_PER_EVIDENCE = 20
+MAX_SENTENCE_LENGTH = 512
+BASE_CONFIDENCE = 0.45
+URL_BONUS = 0.10
+PROVENANCE_BONUS = 0.10
+TITLE_AGREEMENT_BONUS = 0.10
+MAX_CONFIDENCE = 0.75
 
 
 @dataclass
@@ -263,15 +273,155 @@ class ClaimsCoordinator(UniversalCoordinator):
 
     async def _extract_claims(self, evidence_packet: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Extract claims from evidence packet.
+        Deterministic claim extraction from evidence packet.
 
-        This would delegate to the orchestrator's claim extraction logic.
-        For now, returns empty list as placeholder.
+        Safety: no network, no MLX, no blocking I/O. Malformed packet returns [].
         """
-        # Thisestrator's claim would use the orch extraction
-        # For now, return empty - real implementation would call
-        # the orchestrator's internal claim extraction method
+        if not evidence_packet or not isinstance(evidence_packet, dict):
+            return []
+
+        claims = []
+
+        # 1. Check for pre-existing JSON claims list
+        json_claims = self._extract_json_claims(evidence_packet)
+        if json_claims:
+            return json_claims[:MAX_CLAIMS_PER_EVIDENCE]
+
+        # 2. Extract text content from evidence packet
+        text_content = self._extract_text_content(evidence_packet)
+        if not text_content:
+            return []
+
+        # 3. Split into sentence-like units
+        sentences = self._split_into_sentences(text_content)
+
+        # 4. Build claim dicts with polarity and confidence
+        title = evidence_packet.get('title', '') or ''
+        summary = evidence_packet.get('summary', '') or ''
+
+        for sentence in sentences:
+            if not sentence or len(sentence) > MAX_SENTENCE_LENGTH:
+                continue
+
+            # Skip if too short (likely a fragment)
+            if len(sentence) < 20:
+                continue
+
+            polarity = self._derive_polarity(sentence)
+            confidence = self._derive_confidence(
+                sentence, evidence_packet, title, summary
+            )
+
+            claims.append({
+                'text': sentence,
+                'polarity': polarity,
+                'confidence': confidence,
+                'source': 'deterministic_claim_extractor',
+                'evidence_type': evidence_packet.get('type') or evidence_packet.get('evidence_type'),
+            })
+
+            if len(claims) >= MAX_CLAIMS_PER_EVIDENCE:
+                break
+
+        return claims
+
+    def _extract_json_claims(self, evidence_packet: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract claims from JSON claims field if present."""
+        claims_field = evidence_packet.get('claims')
+        if isinstance(claims_field, list) and claims_field:
+            result = []
+            for item in claims_field:
+                if isinstance(item, dict) and 'text' in item:
+                    result.append({
+                        'text': item['text'],
+                        'polarity': item.get('polarity', 'neutral'),
+                        'confidence': min(item.get('confidence', BASE_CONFIDENCE), MAX_CONFIDENCE),
+                        'source': 'deterministic_claim_extractor',
+                        'evidence_type': evidence_packet.get('type') or evidence_packet.get('evidence_type'),
+                    })
+            return result
         return []
+
+    def _extract_text_content(self, evidence_packet: Dict[str, Any]) -> str:
+        """Extract text content from evidence packet fields."""
+        fields = ['claim', 'claims', 'title', 'summary', 'text', 'payload_text', 'content']
+        parts = []
+
+        for field in fields:
+            value = evidence_packet.get(field)
+            if not value:
+                continue
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and item.strip():
+                        parts.append(item.strip())
+
+        return ' '.join(parts)
+
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """Split text into sentence-like units deterministically."""
+        # Normalize whitespace
+        text = ' '.join(text.split())
+
+        # Split on sentence-ending punctuation followed by space/uppercase
+        # Pattern: . ! ? followed by space and uppercase (or end)
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+
+        result = []
+        for s in sentences:
+            s = s.strip()
+            if s and len(s) >= 20:
+                result.append(s)
+
+        return result
+
+    def _derive_polarity(self, text: str) -> str:
+        """Derive polarity from text heuristics."""
+        text_lower = text.lower()
+
+        negative_indicators = ['not', 'no evidence', 'false', 'denies', 'debunked', 'failed to']
+        for indicator in negative_indicators:
+            if indicator in text_lower:
+                return 'negative'
+
+        positive_indicators = ['confirmed', 'observed', 'detected', 'reported', 'evidence shows']
+        for indicator in positive_indicators:
+            if indicator in text_lower:
+                return 'positive'
+
+        return 'neutral'
+
+    def _derive_confidence(
+        self,
+        text: str,
+        evidence_packet: Dict[str, Any],
+        title: str,
+        summary: str
+    ) -> float:
+        """Derive confidence from heuristic factors."""
+        confidence = BASE_CONFIDENCE
+
+        # URL/domain/IOC-like pattern bonus
+        url_pattern = r'https?://|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+        if re.search(url_pattern, text):
+            confidence += URL_BONUS
+
+        # Provenance bonus
+        if evidence_packet.get('source') or evidence_packet.get('provenance'):
+            confidence += PROVENANCE_BONUS
+
+        # Title agreement bonus
+        if title and summary:
+            title_words = set(title.lower().split())
+            summary_words = set(summary.lower().split())
+            text_words = set(text.lower().split())
+            overlap = title_words & summary_words & text_words
+            if overlap:
+                confidence += TITLE_AGREEMENT_BONUS
+
+        return min(confidence, MAX_CONFIDENCE)
 
     async def _do_shutdown(self, ctx: Dict[str, Any]) -> None:
         """Cleanup on shutdown."""

@@ -859,6 +859,15 @@ class SprintSchedulerResult:
     lane_wayback_accepted_findings: int = 0
     lane_pdns_accepted_findings: int = 0
     lane_blockchain_accepted_findings: int = 0
+    # Sprint F229: Wayback/PassiveDNS raw and candidate telemetry
+    wayback_attempted: bool = False
+    wayback_raw_count: int = 0
+    wayback_candidates_built: int = 0
+    wayback_accepted_count: int = 0
+    passive_dns_attempted: bool = False
+    passive_dns_raw_count: int = 0
+    passive_dns_candidates_built: int = 0
+    passive_dns_accepted_count: int = 0
     # Sprint F207M-A: Nonfeed pre-dispatch telemetry
     nonfeed_predispatch_attempted: bool = False
     nonfeed_predispatch_skipped: dict[str, str] = field(default_factory=dict)
@@ -5114,6 +5123,9 @@ class SprintScheduler:
         # Sprint F221C: Include public_bootstrap_enabled so timeout exception handler can determine
         # precise bootstrap terminal stage at the point of timeout (not at exception time).
         _pub_bootstrap_en = getattr(public_result, 'public_bootstrap_enabled', False)
+        _pub_bootstrap_ord = getattr(public_result, 'public_bootstrap_order', 'disabled')
+        _pub_bootstrap_prevented = getattr(public_result, 'public_bootstrap_prevented_discovery_timeout', False)
+        _pub_bootstrap_fetch_att = getattr(public_result, 'public_bootstrap_first_fetch_attempted', False)
         self._public_outcome = {
             "lane": "PUBLIC",
             "attempted": True,
@@ -5126,6 +5138,10 @@ class SprintScheduler:
             "timeout": getattr(public_result, 'timed_out', False),
             "duration_s": getattr(public_result, 'elapsed_s', None),
             "public_bootstrap_enabled": _pub_bootstrap_en,
+            # Sprint F229A: Bootstrap ordering telemetry
+            "public_bootstrap_order": _pub_bootstrap_ord,
+            "public_bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented,
+            "public_bootstrap_first_fetch_attempted": _pub_bootstrap_fetch_att,
         }
 
         log.debug(
@@ -5399,6 +5415,21 @@ class SprintScheduler:
                 self._result.lane_pdns_accepted_findings += accepted
             elif lane_name == AcquisitionLane.BLOCKCHAIN:
                 self._result.lane_blockchain_accepted_findings += accepted
+
+            # Sprint F229: Populate wayback/pdns telemetry from AcquisitionLaneOutcome
+            wayback_raw = getattr(outcome, "wayback_raw_count", 0) or 0
+            passive_dns_raw = getattr(outcome, "passive_dns_raw_count", 0) or 0
+            candidate_findings = getattr(outcome, "candidate_findings", ()) or ()
+            if lane_name == AcquisitionLane.WAYBACK:
+                self._result.wayback_attempted = True
+                self._result.wayback_raw_count += wayback_raw
+                self._result.wayback_candidates_built += len(candidate_findings)
+                self._result.wayback_accepted_count += accepted
+            elif lane_name == AcquisitionLane.PASSIVE_DNS:
+                self._result.passive_dns_attempted = True
+                self._result.passive_dns_raw_count += passive_dns_raw
+                self._result.passive_dns_candidates_built += len(candidate_findings)
+                self._result.passive_dns_accepted_count += accepted
 
             # Accumulate into _lane_verdicts (same shape as _feed_verdicts)
             # Shape: (verdict_tag, signal, fallback_use, fallback_waste, quality)
@@ -8405,6 +8436,11 @@ class SprintScheduler:
             _missing = [e for e in _expected if _FAM_MAP.get(e, e.lower()) not in _surfaced_lower]
             _surf_complete = len(_missing) == 0
 
+            # Sprint F229A: Extract bootstrap ordering telemetry from public outcome
+            _pub_bootstrap_order = _surf_public.get("public_bootstrap_order", "disabled")
+            _pub_bootstrap_prevented = _surf_public.get("public_bootstrap_prevented_discovery_timeout", False)
+            _pub_bootstrap_fetch_att = _surf_public.get("public_bootstrap_first_fetch_attempted", False)
+
             report["acquisition_report"] = build_acquisition_report(
                 plan=self._acquisition_plan,
                 terminality=_term_rep,
@@ -8426,6 +8462,10 @@ class SprintScheduler:
                 wayback_terminal_state=_surf_wayback.get("terminal_state", ""),
                 passive_dns_terminal_state=_surf_pdns.get("terminal_state", ""),
                 nonfeed_surface_complete=_surf_complete,
+                # Sprint F229A: Bootstrap ordering telemetry
+                public_bootstrap_order=_pub_bootstrap_order,
+                public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented,
+                public_bootstrap_first_fetch_attempted=_pub_bootstrap_fetch_att,
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only
@@ -10196,6 +10236,15 @@ class SprintScheduler:
         self._result.lane_wayback_accepted_findings = 0
         self._result.lane_pdns_accepted_findings = 0
         self._result.lane_blockchain_accepted_findings = 0
+        # Sprint F229: Clear wayback/pdns telemetry
+        self._result.wayback_attempted = False
+        self._result.wayback_raw_count = 0
+        self._result.wayback_candidates_built = 0
+        self._result.wayback_accepted_count = 0
+        self._result.passive_dns_attempted = False
+        self._result.passive_dns_raw_count = 0
+        self._result.passive_dns_candidates_built = 0
+        self._result.passive_dns_accepted_count = 0
         # Sprint F216A: Clear event log for new sprint
         self._result.source_family_events.clear()
 

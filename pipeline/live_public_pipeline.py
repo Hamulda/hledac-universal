@@ -439,6 +439,10 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_bootstrap_fetch_success: int = 0  # bootstrap URLs that fetched successfully
     public_bootstrap_accepted_findings: int = 0  # findings accepted from bootstrap hits
     public_bootstrap_errors: int = 0  # bootstrap-specific errors (parse, dedup, etc.)
+    # Sprint F229A: Bootstrap ordering telemetry
+    public_bootstrap_order: str = "disabled"  # "before_discovery" | "after_discovery" | "disabled"
+    public_bootstrap_prevented_discovery_timeout: bool = False  # True when bootstrap produced candidates but discovery would have returned zero
+    public_bootstrap_first_fetch_attempted: bool = False  # True when bootstrap hits were added to hits before fetch
     # zero_hit_quality_reason_counts: breakdown of WHY zero-hit pages failed
     # keys are the specific quality_reason values from PipelinePageResult
     zero_hit_quality_reason_counts: dict = {}
@@ -2612,6 +2616,10 @@ async def async_run_live_public_pipeline(
     _pub_bootstrap_fetch_success: int = 0
     _pub_bootstrap_accepted_findings: int = 0
     _pub_bootstrap_errors: int = 0
+    # Sprint F229A: Bootstrap ordering telemetry
+    _pub_bootstrap_order: str = "disabled"
+    _pub_bootstrap_prevented_discovery_timeout: bool = False
+    _pub_bootstrap_first_fetch_attempted: bool = False
 
     # F226B: PUBLIC acceptance uplift telemetry (initialized before try block)
     _pub_build_success_count: int = 0
@@ -2662,6 +2670,15 @@ async def async_run_live_public_pipeline(
         if bootstrap_hits:
             hits = tuple(bootstrap_hits) + tuple(hits)
             _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
+            # Sprint F229A: Bootstrap was attempted and produced candidates.
+            # Record the order so telemetry reflects bootstrap ran BEFORE discovery providers.
+            _pub_bootstrap_order = "before_discovery"
+            _pub_bootstrap_first_fetch_attempted = True
+            # Sprint F229A: If discovery returned 0 hits, bootstrap prevented discovery timeout.
+            # Bootstrap candidates are now in the hits tuple, so the early-return won't fire.
+            _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else (discovery_result.get("hits", ()) if isinstance(discovery_result, dict) else ())
+            if len(_disc_hits) == 0:
+                _pub_bootstrap_prevented_discovery_timeout = True
 
         err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
         if err_val:
@@ -2692,6 +2709,11 @@ async def async_run_live_public_pipeline(
         )
         hits = ()
 
+    # Sprint F229A: Check for hits AFTER bootstrap prepend (fixes bootstrap-before-discovery bug).
+    # Previously this block was at line 2695, BEFORE bootstrap was prepended at line 2662-2664.
+    # That caused bootstrap URLs to never be fetched for domain queries: the early return
+    # fired before bootstrap hits could be added to the hits tuple, so bootstrap candidates
+    # were silently dropped and public_terminal_stage became DISCOVERY_TIMEOUT.
     if not hits:
         return PipelineRunResult(
             query=query,
@@ -2750,6 +2772,10 @@ async def async_run_live_public_pipeline(
             public_acceptance_ratio=0.0,
             public_skipped_url_sample=(),
             public_rejected_url_samples=(),
+            # Sprint F229A: Bootstrap ordering telemetry
+            public_bootstrap_order="disabled",
+            public_bootstrap_prevented_discovery_timeout=False,
+            public_bootstrap_first_fetch_attempted=False,
         )
 
     # P16: Academic discovery integration — run after DuckDuckGo discovery
@@ -3902,6 +3928,10 @@ async def async_run_live_public_pipeline(
         public_bootstrap_fetch_success=_pub_bootstrap_fetch_success,
         public_bootstrap_accepted_findings=_pub_bootstrap_accepted_findings,
         public_bootstrap_errors=_pub_bootstrap_errors,
+        # Sprint F229A: Bootstrap ordering telemetry
+        public_bootstrap_order=_pub_bootstrap_order,
+        public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented_discovery_timeout,
+        public_bootstrap_first_fetch_attempted=_pub_bootstrap_first_fetch_attempted,
         # F207F: PUBLIC Yield telemetry
         public_discovered=public_discovered,
         public_fetch_attempted=public_fetch_attempted,

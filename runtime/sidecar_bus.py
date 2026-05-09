@@ -33,7 +33,9 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
-if False:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 

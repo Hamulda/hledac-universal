@@ -28,7 +28,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-if False:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
     from ..knowledge.duckdb_store import DuckDBShadowStore
     from ..project_types import CanonicalFinding
 

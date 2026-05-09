@@ -87,10 +87,58 @@ __all__ = [
     "MissionIntent",
     "MissionTargetKind",
     "infer_mission_intent",
+    "normalize_acquisition_profile",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
 ACQUISITION_REPORT_SCHEMA_VERSION = "f208.v1"
+
+
+def normalize_acquisition_profile(profile: str | None) -> dict:
+    """
+    F229: Runtime-normalize an acquisition_profile value.
+
+    Returns a dict with keys:
+      - input:       the raw input value
+      - effective:   the canonical profile name
+      - normalized:  True if input != effective
+      - reason:      human-readable explanation
+
+    Canonical profiles: "default", "nonfeed_diagnostic"
+    Benchmark aliases: "nonfeed_diagnostic180" → "nonfeed_diagnostic"
+    """
+    _CANONICAL = frozenset(["default", "nonfeed_diagnostic"])
+    _input = profile
+    _effective = profile
+    _normalized = False
+    _reason = ""
+
+    if _effective is None:
+        _effective = "default"
+        _normalized = True
+        _reason = "None input → default"
+    elif _effective == "":
+        _effective = "default"
+        _normalized = True
+        _reason = "empty string → default"
+    elif _effective == "nonfeed_diagnostic180":
+        _effective = "nonfeed_diagnostic"
+        _normalized = True
+        _reason = "benchmark alias → canonical nonfeed_diagnostic"
+    elif _effective not in _CANONICAL:
+        _effective = "default"
+        _normalized = True
+        _reason = f"unknown profile {_effective!r} → default"
+    else:
+        _reason = "canonical profile unchanged"
+
+    return {
+        "input": _input,
+        "effective": _effective,
+        "normalized": _normalized,
+        "reason": _reason,
+    }
+
 
 # ── Lane constants ────────────────────────────────────────────────────────────
 
@@ -767,6 +815,10 @@ def build_acquisition_report(
     # F217C: PUBLIC bootstrap telemetry
     public_terminal_stage: str = "",
     public_stage_counters: dict | None = None,
+    # Sprint F229A: Bootstrap ordering telemetry
+    public_bootstrap_order: str = "disabled",
+    public_bootstrap_prevented_discovery_timeout: bool = False,
+    public_bootstrap_first_fetch_attempted: bool = False,
     # F217D: CT provider resilience telemetry
     ct_provider_status: str = "",
     ct_cache_used: bool = False,
@@ -963,6 +1015,10 @@ def build_acquisition_report(
         # F217C: PUBLIC bootstrap telemetry
         "public_terminal_stage": public_terminal_stage,
         "public_stage_counters": public_stage_counters or {},
+        # Sprint F229A: Bootstrap ordering telemetry
+        "public_bootstrap_order": public_bootstrap_order,
+        "public_bootstrap_prevented_discovery_timeout": public_bootstrap_prevented_discovery_timeout,
+        "public_bootstrap_first_fetch_attempted": public_bootstrap_first_fetch_attempted,
         # F217D: CT provider resilience telemetry
         "ct_provider_status": ct_provider_status,
         "ct_cache_used": ct_cache_used,
@@ -1214,6 +1270,9 @@ class AcquisitionLaneOutcome:
     rejection_reasons: tuple = ()
     rejected_count: int = 0
     sample_rejections: tuple = ()
+    # Sprint F229: Wayback/PassiveDNS raw count telemetry
+    wayback_raw_count: int = 0
+    passive_dns_raw_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -1232,6 +1291,9 @@ class AcquisitionLaneOutcome:
             # [F207K-A] Bridge rejections
             "rejected_count": self.rejected_count,
             "sample_rejections": list(self.sample_rejections),
+            # Sprint F229: Wayback/PassiveDNS raw count telemetry
+            "wayback_raw_count": self.wayback_raw_count,
+            "passive_dns_raw_count": self.passive_dns_raw_count,
         }
 
 
@@ -2426,6 +2488,7 @@ async def run_enabled_acquisition_lanes(
                     rejection_reasons=rejection_reasons,
                     rejected_count=rejected_count,
                     sample_rejections=sample_rejections,
+                    wayback_raw_count=len(result.change_events),
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -2440,6 +2503,7 @@ async def run_enabled_acquisition_lanes(
                 rejection_reasons=rejection_reasons,
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
+                wayback_raw_count=0,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -2453,6 +2517,7 @@ async def run_enabled_acquisition_lanes(
                 rejection_reasons=rejection_reasons,
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
+                wayback_raw_count=0,
             )
 
     async def _run_pdns_lane(plan) -> "AcquisitionLaneOutcome":
@@ -2519,6 +2584,7 @@ async def run_enabled_acquisition_lanes(
                     rejection_reasons=rejection_reasons,
                     rejected_count=rejected_count,
                     sample_rejections=sample_rejections,
+                    passive_dns_raw_count=produced,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -2533,6 +2599,7 @@ async def run_enabled_acquisition_lanes(
                 rejection_reasons=rejection_reasons,
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
+                passive_dns_raw_count=0,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -2546,6 +2613,7 @@ async def run_enabled_acquisition_lanes(
                 rejection_reasons=rejection_reasons,
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
+                passive_dns_raw_count=0,
             )
 
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
