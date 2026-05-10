@@ -90,7 +90,7 @@ def inspect_artifact(repo_root: str, probe_dir: str, artifact_file: str) -> Arti
         return ArtifactResult(name=name, exists=True, valid_json=False, error=str(e))
 
 
-def run_inventory(repo_root: str) -> PackInventory:
+def run_inventory(repo_root: str, gate_artifact_path: Optional[str] = None) -> PackInventory:
     artifacts: dict[str, ArtifactResult] = {}
     present: list[str] = []
     missing: list[str] = []
@@ -114,13 +114,19 @@ def run_inventory(repo_root: str) -> PackInventory:
     else:
         verdict = "F231_PACK_MISSING_ARTIFACTS"
 
-    # Gate cross-check
+    # Gate cross-check — semantics fix F231Q
     missing_blocking = sorted(set(GATE_BLOCKING_SET) & set(missing))
-    gate_status = (
-        "GATE_CORRECTLY_BLOCKING" if missing_blocking else "GATE_STALE"
-    )
 
-    return PackInventory(
+    if missing_blocking:
+        gate_status = "GATE_CORRECTLY_BLOCKING"
+    elif verdict == "F231_PACK_READY":
+        gate_status = "GATE_READY"
+    elif verdict == "F231_PACK_MALFORMED_ARTIFACTS":
+        gate_status = "GATE_MALFORMED"
+    else:
+        gate_status = "GATE_NOT_BLOCKING"
+
+    inv = PackInventory(
         verdict=verdict,
         gate_status=gate_status,
         present=present,
@@ -129,6 +135,44 @@ def run_inventory(repo_root: str) -> PackInventory:
         missing_blocking=missing_blocking,
         artifacts=artifacts,
     )
+
+    # Apply gate-artifact stale override if path provided
+    if gate_artifact_path:
+        inv = _apply_gate_artifact_stale(inv, gate_artifact_path, repo_root)
+
+    return inv
+
+
+def _apply_gate_artifact_stale(inv: PackInventory, gate_artifact_path: Optional[str], repo_root: str) -> PackInventory:
+    """Override gate_status to GATE_STALE if gate artifact blocks probes already present."""
+    if not gate_artifact_path:
+        gate_artifact_path = os.path.join(
+            repo_root,
+            "probe_f231h_prelive_evidence_lift_gate",
+            "prelive_evidence_lift_gate.json",
+        )
+    if not os.path.exists(gate_artifact_path):
+        return inv
+    with open(gate_artifact_path) as f:
+        gate_data = json.load(f)
+    gate_blocking = gate_data.get("blocking_probes", [])
+    if not gate_blocking:
+        return inv
+    if inv.gate_status != "GATE_READY":
+        return inv
+    gate_blocking_set = set(gate_blocking)
+    inventory_blocking_set = set(GATE_BLOCKING_SET) & set(inv.present)
+    if gate_blocking_set & inventory_blocking_set:
+        return PackInventory(
+            verdict=inv.verdict,
+            gate_status="GATE_STALE",
+            present=inv.present,
+            missing=inv.missing,
+            malformed=inv.malformed,
+            missing_blocking=inv.missing_blocking,
+            artifacts=inv.artifacts,
+        )
+    return inv
 
 
 # ------------------------------------------------------------------
@@ -210,7 +254,16 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     repo_root = os.path.abspath(args.repo_root)
 
-    inv = run_inventory(repo_root)
+    gate_path = args.gate_artifact
+    if not gate_path:
+        gate_path = os.path.join(
+            repo_root,
+            "probe_f231h_prelive_evidence_lift_gate",
+            "prelive_evidence_lift_gate.json",
+        )
+
+    inv = run_inventory(repo_root, gate_artifact_path=gate_path)
+    inv = _apply_gate_artifact_stale(inv, gate_path, repo_root)
 
     # Console output
     print(f"Verdict:     {inv.verdict}")
@@ -222,18 +275,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"Missing Blocking: {inv.missing_blocking}")
 
     # Gate-specific check using gate artifact
-    gate_path = args.gate_artifact
-    if not gate_path:
-        gate_path = os.path.join(
-            repo_root,
-            "probe_f231h_prelive_evidence_lift_gate",
-            "prelive_evidence_lift_gate.json",
-        )
     if os.path.exists(gate_path):
         with open(gate_path) as f:
             gate_data = json.load(f)
-        gate_blocking = gate_data.get("blocking_probes", [])
         gate_verdict = gate_data.get("verdict", "UNKNOWN")
+        gate_blocking = gate_data.get("blocking_probes", [])
         print(f"\nF231H gate artifact verdict: {gate_verdict}")
         print(f"F231H blocking probes: {gate_blocking}")
 

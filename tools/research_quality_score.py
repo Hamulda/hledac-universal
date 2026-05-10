@@ -71,6 +71,20 @@ class QualityGate(str, Enum):
 
 
 @dataclass
+class EvidenceDepth:
+    """F231M: Production evidence depth diagnostics from KPI field aliases."""
+    claims_depth: float = 0.0
+    public_candidate_depth: float = 0.0
+    ct_clue_depth: float = 0.0
+    advisory_clue_depth: float = 0.0
+    claims_extracted: bool = False
+    public_candidates_seen: bool = False
+    ct_clues_present: bool = False
+    advisory_clues_present: bool = False
+    nonfeed_clues_without_acceptance: bool = False
+
+
+@dataclass
 class ScoreComponents:
     findings_volume_score: float
     source_diversity_score: float
@@ -83,6 +97,105 @@ class ScoreComponents:
     memory_taint_penalty: float
     # F225A: Analysis depth bonus for claim extraction
     analysis_depth_bonus: float = 0.0
+
+
+def _sum_alias_fields(src: dict | None, keys: list[str]) -> int:
+    """Return first non-zero value from src dict, or 0 if all None/zero."""
+    if not isinstance(src, dict):
+        return 0
+    for k in keys:
+        v = src.get(k)
+        if v and v > 0:
+            return int(v)
+    return 0
+
+
+def _extract_evidence_depth_inputs(live_kpi: dict | None) -> dict:
+    """F231M: Extract evidence depth inputs from live_kpi, resolving all F231A/B/C aliases."""
+    if live_kpi is None:
+        return {
+            "claims_extracted_count": 0,
+            "public_candidates_seen": 0,
+            "ct_clues_seen": 0,
+            "wayback_clues_seen": 0,
+            "passivedns_clues_seen": 0,
+        }
+    lk = live_kpi if isinstance(live_kpi, dict) else {}
+
+    # Claims — direct or via claims_extracted_count
+    claims_count = lk.get("claims_extracted_count", 0) or 0
+
+    # Public candidates — F231A alias chain
+    pub_seen = _sum_alias_fields(lk, ["public_candidates_seen"])
+    if pub_seen == 0:
+        pcl = lk.get("public_candidate_ledger_summary") or {}
+        pub_seen = _sum_alias_fields(pcl, ["public_candidates_discovered", "public_candidates_built", "public_candidates_stored"])
+
+    # CT clues — F231B alias chain
+    ct_seen = _sum_alias_fields(lk, ["ct_clues_seen"])
+    if ct_seen == 0:
+        ct_seen = _sum_alias_fields(lk, ["ct_expansion_clues_count", "ct_valid_public_domains"])
+
+    # Wayback advisory — F231C alias chain (wayback_advisory_clues_count takes priority)
+    wayback_seen = _sum_alias_fields(lk, ["wayback_clues_seen"])
+    if wayback_seen == 0:
+        wayback_seen = _sum_alias_fields(lk, ["wayback_advisory_clues_count"])
+    if wayback_seen == 0:
+        # Composite: changed_url + added_url + digest_changed
+        wayback_seen = _sum_alias_fields(lk, [
+            "wayback_changed_url_count",
+            "wayback_added_url_count",
+            "wayback_digest_changed_count",
+        ])
+
+    # Passive DNS advisory — F231C alias chain
+    pdns_seen = _sum_alias_fields(lk, ["passivedns_clues_seen"])
+    if pdns_seen == 0:
+        pdns_seen = _sum_alias_fields(lk, ["passive_dns_advisory_clues_count", "passive_dns_public_ip_count"])
+
+    return {
+        "claims_extracted_count": claims_count,
+        "public_candidates_seen": pub_seen,
+        "ct_clues_seen": ct_seen,
+        "wayback_clues_seen": wayback_seen,
+        "passivedns_clues_seen": pdns_seen,
+    }
+
+
+def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
+    """F231M: Compute evidence depth diagnostics from normalized KPI inputs."""
+    claims_count = norm.get("claims_extracted_count", 0) or 0
+    pub_candidates = norm.get("public_candidates_seen", 0) or 0
+    ct_clues = norm.get("ct_clues_seen", 0) or 0
+    wayback = norm.get("wayback_clues_seen", 0) or 0
+    passivedns = norm.get("passivedns_clues_seen", 0) or 0
+    advisory_total = wayback + passivedns
+
+    claims_depth = min(1.0, claims_count / 10.0) if claims_count > 0 else 0.0
+    public_candidate_depth = min(1.0, pub_candidates / 10.0) if pub_candidates > 0 else 0.0
+    ct_clue_depth = min(1.0, ct_clues / 10.0) if ct_clues > 0 else 0.0
+    advisory_clue_depth = min(1.0, advisory_total / 5.0) if advisory_total > 0 else 0.0
+
+    claims_extracted = claims_count > 0
+    public_candidates_seen = pub_candidates > 0
+    ct_clues_present = ct_clues > 0
+    advisory_clues_present = advisory_total > 0
+    nonfeed_clues_without_acceptance = (
+        (public_candidates_seen or ct_clues_present or advisory_clues_present)
+        and nonfeed == 0
+    )
+
+    return EvidenceDepth(
+        claims_depth=round(claims_depth, 4),
+        public_candidate_depth=round(public_candidate_depth, 4),
+        ct_clue_depth=round(ct_clue_depth, 4),
+        advisory_clue_depth=round(advisory_clue_depth, 4),
+        claims_extracted=claims_extracted,
+        public_candidates_seen=public_candidates_seen,
+        ct_clues_present=ct_clues_present,
+        advisory_clues_present=advisory_clues_present,
+        nonfeed_clues_without_acceptance=nonfeed_clues_without_acceptance,
+    )
 
 
 @dataclass
@@ -111,6 +224,8 @@ class ResearchQualityScore:
     # F215E: Quality gate verdict and comparability flag
     quality_gate: QualityGate = QualityGate.QUALITY_PASS
     research_quality_comparable: bool = True
+    # F231M: Production evidence depth diagnostics
+    evidence_depth: EvidenceDepth | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +277,12 @@ def _normalize_benchmark(data: dict) -> dict:
     feed = int(branch_mix.get("feed_findings", 0))
 
     # For hermetic/offline benchmarks, live_kpi may not exist
-    live_kpi = data.get("live_kpi", {})
+    live_kpi = data.get("live_kpi", {}) or None
 
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
-    return {
+    norm = {
         "total_findings": data.get("findings_count", 0),
         "accepted_findings": (rt.get("accepted_findings") if isinstance(rt, dict) else None) or data.get("accepted_findings") or data.get("findings_count") or 0,
         "feed_findings": feed,
@@ -177,7 +292,7 @@ def _normalize_benchmark(data: dict) -> dict:
         "nonfeed_findings": ct + pub + passive,
         "source_family_count": sum(1 for v in branch_mix.values() if v > 0) if branch_mix else 0,
         "feed_dominance_score": _coerce_feed_dominance_score(
-            live_kpi.get("feed_dominance_score") if live_kpi else None,
+            (live_kpi or {}).get("feed_dominance_score") if live_kpi else None,
             data.get("findings_count") or 0,
             feed,
         ),
@@ -186,11 +301,13 @@ def _normalize_benchmark(data: dict) -> dict:
         "swap_gib": _extract_uma_swap_gib(data),
         "swap_warning": _extract_swap_warning(data),
         "branch_mix": branch_mix,
-        "live_kpi": live_kpi,
+        "live_kpi": live_kpi or {},
         "ct_loss_stage": ct_loss_stage,
-        # F225A: Claims runtime surface from live_kpi
-        "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
     }
+    # F231M: Extract evidence depth inputs into norm
+    if live_kpi:
+        norm.update(_extract_evidence_depth_inputs(live_kpi))
+    return norm
 
 
 def _normalize_live(data: dict) -> dict:
@@ -198,19 +315,19 @@ def _normalize_live(data: dict) -> dict:
     rt = data.get("runtime_truth", {})
     branch_mix = rt.get("branch_mix", {}) if isinstance(rt, dict) else {}
     lane_verdict = rt.get("lane_verdict", {}) if isinstance(rt, dict) else {}
-    live_kpi = data.get("live_kpi", {})
+    live_kpi = data.get("live_kpi", {}) or None
 
     ct = int(branch_mix.get("ct_findings", 0))
     pub = int(branch_mix.get("public_findings", 0))
     passive = int(branch_mix.get("passive_findings", 0))
     feed = int(branch_mix.get("feed_findings", 0))
 
-    nonfeed_total = live_kpi.get("nonfeed_accepted_findings", ct + pub + passive)
+    nonfeed_total = (live_kpi or {}).get("nonfeed_accepted_findings", ct + pub + passive) if live_kpi else ct + pub + passive
 
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
-    return {
+    norm = {
         "total_findings": data.get("findings_count", 0),
         "accepted_findings": data.get("accepted_findings") or data.get("findings_count") or 0,
         "feed_findings": feed,
@@ -218,9 +335,9 @@ def _normalize_live(data: dict) -> dict:
         "public_findings": pub,
         "passive_findings": passive,
         "nonfeed_findings": nonfeed_total,
-        "source_family_count": live_kpi.get("source_family_count", sum(1 for v in branch_mix.values() if v > 0)) if live_kpi else 0,
+        "source_family_count": (live_kpi or {}).get("source_family_count", sum(1 for v in branch_mix.values() if v > 0)) if live_kpi else 0,
         "feed_dominance_score": _coerce_feed_dominance_score(
-            live_kpi.get("feed_dominance_score") if live_kpi else None,
+            (live_kpi or {}).get("feed_dominance_score") if live_kpi else None,
             data.get("findings_count") or 0,
             feed,
         ),
@@ -229,11 +346,13 @@ def _normalize_live(data: dict) -> dict:
         "swap_gib": _extract_uma_swap_gib(data),
         "swap_warning": _extract_swap_warning(data),
         "branch_mix": branch_mix,
-        "live_kpi": live_kpi,
+        "live_kpi": live_kpi or {},
         "ct_loss_stage": ct_loss_stage,
-        # F225A: Claims runtime surface from live_kpi
-        "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
     }
+    # F231M: Extract evidence depth inputs into norm
+    if live_kpi:
+        norm.update(_extract_evidence_depth_inputs(live_kpi))
+    return norm
 
 
 def _detect_format(data: dict) -> str:
@@ -439,6 +558,9 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         hardware_constrained=hw_constrained,
     )
 
+    # F231M: Compute production evidence depth diagnostics
+    ed = _compute_evidence_depth(norm, nonfeed)
+
     return ResearchQualityScore(
         total_quality_score=round(total_quality_score, 2),
         grade=grade,
@@ -472,6 +594,8 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         # F215E: Quality gate and comparability
         quality_gate=gate,
         research_quality_comparable=comparable,
+        # F231M: Production evidence depth
+        evidence_depth=ed,
     )
 
 
@@ -648,11 +772,12 @@ def score_research_quality(data: dict) -> dict:
       - quality_gate: str — QUALITY_PASS | QUALITY_FAIL_FEED_ONLY | QUALITY_FAIL_HARDWARE_TAINTED | QUALITY_FAIL_NONFEED_ZERO | QUALITY_WARN_MULTISOURCE_SHALLOW
       - research_quality_comparable: bool — False when hardware_constrained or swap_gib >= 3.0
       - components: dict of component scores
-      - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained)
+      - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained, claims_extracted)
       - feed_dominance_score: float (0-1, penalty applied)
       - swap_gib: float | None — post-sprint swap in GiB
       - swap_warning: bool — memory pressure signal
       - hardware_constrained: bool — from live_kpi hardware_constrained field
+      - evidence_depth: dict — F231M production evidence depth diagnostics
     """
     norm = normalize_benchmark_json(data)
     rqs = compute_research_quality_score(norm)
@@ -663,6 +788,23 @@ def score_research_quality(data: dict) -> dict:
     live_kpi = norm.get("live_kpi")
     if isinstance(live_kpi, dict):
         hw_constrained = bool(live_kpi.get("hardware_constrained"))
+
+    # F231M: Build evidence_depth dict from attached EvidenceDepth
+    ed = rqs.evidence_depth
+    if ed is None:
+        evidence_depth_dict: dict = {}
+    else:
+        evidence_depth_dict = {
+            "claims_depth": ed.claims_depth,
+            "public_candidate_depth": ed.public_candidate_depth,
+            "ct_clue_depth": ed.ct_clue_depth,
+            "advisory_clue_depth": ed.advisory_clue_depth,
+            "claims_extracted": ed.claims_extracted,
+            "public_candidates_seen": ed.public_candidates_seen,
+            "ct_clues_present": ed.ct_clues_present,
+            "advisory_clues_present": ed.advisory_clues_present,
+            "nonfeed_clues_without_acceptance": ed.nonfeed_clues_without_acceptance,
+        }
 
     return {
         "total_quality_score": rqs.total_quality_score,
@@ -686,8 +828,12 @@ def score_research_quality(data: dict) -> dict:
             "swap_gib": rqs.swap_gib,
             "swap_warning": rqs.swap_warning,
             "hardware_constrained": hw_constrained,
-            # F225A: Claims extraction diagnostic
-            "claims_extracted": (norm.get("claims_extracted_count", 0) or 0) > 0,
+            # F231M: Evidence depth flags in diagnostic_flags
+            "claims_extracted": ed.claims_extracted if ed else False,
+            "public_candidates_seen": ed.public_candidates_seen if ed else False,
+            "ct_clues_present": ed.ct_clues_present if ed else False,
+            "advisory_clues_present": ed.advisory_clues_present if ed else False,
+            "nonfeed_clues_without_acceptance": ed.nonfeed_clues_without_acceptance if ed else False,
         },
         # F215A: Surface contract — always present fields
         "feed_dominance_score": rqs.feed_dominance_score,
@@ -703,6 +849,8 @@ def score_research_quality(data: dict) -> dict:
         "passive_findings": rqs.passive_findings,
         "nonfeed_findings": rqs.nonfeed_findings,
         "source_family_count": rqs.source_family_count,
+        # F231M: Production evidence depth diagnostics
+        "evidence_depth": evidence_depth_dict,
     }
 
 
