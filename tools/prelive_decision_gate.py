@@ -395,6 +395,58 @@ def _check_ct_cooldown(repo_root: Path) -> tuple[bool, str, Optional[ProbeReport
 
 
 # --------------------------------------------------------------------------- #
+# F231 Evidence Lift Pack constants — Sprint F231H
+# --------------------------------------------------------------------------- #
+# Blocking lanes (block active300/nonfeed_diagnostic if missing):
+#   F231A public_candidate_ledger
+#   F231B ct_acceptance_lift
+#   F231C advisory_evidence_surface
+#   F231D research_quality_v2
+#   F231E research_quality_comparable_field
+#   F231F evidence_depth_aliases
+#   F231G quality_sanity_bundle_smoke
+# Profiles that require F231 blocking artifacts
+_F231_BLOCKING_PROFILES = ("active300", "nonfeed_diagnostic")
+_F231_BLOCKING_PROBES = [
+    ("probe_f231a_public_candidate_ledger", "public_candidate_ledger.json"),
+    ("probe_f231b_ct_acceptance_lift", "ct_acceptance_lift.json"),
+    ("probe_f231c_advisory_evidence_surface", "advisory_evidence_surface.json"),
+    ("probe_f231d_research_quality_v2", "research_quality_v2.json"),
+    ("probe_f231e_research_quality_comparable_field", "research_quality_comparable_field.json"),
+    ("probe_f231f_evidence_depth_aliases", "evidence_depth_aliases.json"),
+    ("probe_f231g_quality_sanity_bundle_smoke", "quality_sanity_bundle_smoke.json"),
+]
+
+
+def _check_f231_artifacts(repo_root: Path, profile: str) -> tuple[bool, list[str], list[str], dict]:
+    """
+    Check F231 Evidence Lift Pack artifact presence.
+    Returns (core_ready, warnings, missing_blocking, checked_dict).
+    core_ready = True when all F231 blocking probes are present for blocking profiles.
+    """
+    warnings: list[str] = []
+    missing_blocking: list[str] = []
+    checked_local: dict[str, dict] = {}
+    is_blocking_profile = profile in _F231_BLOCKING_PROFILES
+
+    for probe_dir, filename in _F231_BLOCKING_PROBES:
+        report = _load_report(repo_root, probe_dir, filename)
+        key = f"{probe_dir}_f231"
+        checked_local[key] = {
+            "found": report.found,
+            "parse_error": report.parse_error,
+            "pass": report.found and not report.parse_error,
+        }
+        if not report.found or report.parse_error:
+            detail = f"parse error: {report.parse_error}" if report.parse_error else "absent"
+            warnings.append(f"f231_blocking:{probe_dir} {detail}")
+            missing_blocking.append(probe_dir)
+
+    core_ready = len(missing_blocking) == 0 if is_blocking_profile else True
+    return core_ready, warnings, missing_blocking, checked_local
+
+
+# --------------------------------------------------------------------------- #
 # F224 artifact check — F225E integration
 # --------------------------------------------------------------------------- #
 # Blocking policy:
@@ -499,6 +551,10 @@ class DecisionResult:
     f224_core_ready: bool = False
     f224_warnings: list[str] = field(default_factory=list)
     missing_f224_artifacts: list[str] = field(default_factory=list)
+    # F231H: F231 Evidence Lift Pack gate
+    f231_core_ready: bool = False
+    f231_warnings: list[str] = field(default_factory=list)
+    missing_f231_artifacts: list[str] = field(default_factory=list)
 
 
 def run_gate(
@@ -706,7 +762,18 @@ def run_gate(
     warnings.extend(f224_warnings)
 
     # --------------------------------------------------------------------------- #
-    # 13. UMA check — done last; memory decision overrides contract/other blocks
+    # 13. F231 Evidence Lift Pack check — F231H: evidence lift surface gates
+    # --------------------------------------------------------------------------- #
+    f231_core_ready, f231_warnings, missing_f231, f231_checked = _check_f231_artifacts(repo_root, profile)
+    checked.update(f231_checked)
+
+    if not f231_core_ready:
+        for probe in missing_f231:
+            reasons.append(f"BLOCKED_BY_CONTRACT: {probe} missing — required evidence lift pack for {profile}")
+    warnings.extend(f231_warnings)
+
+    # --------------------------------------------------------------------------- #
+    # 14. UMA check — done last; memory decision overrides contract/other blocks
     # F220F: Tiered macOS swap-aware policy (no longer hard-blocks on tiny swap)
     # --------------------------------------------------------------------------- #
     uma = _check_uma()
@@ -811,6 +878,9 @@ def run_gate(
         f224_core_ready=f224_core_ready,
         f224_warnings=f224_warnings,
         missing_f224_artifacts=missing_f224,
+        f231_core_ready=f231_core_ready,
+        f231_warnings=f231_warnings,
+        missing_f231_artifacts=missing_f231,
     )
 
 
@@ -969,6 +1039,10 @@ def main() -> int:
             "f224_core_ready": result.f224_core_ready,
             "f224_warnings": result.f224_warnings,
             "missing_f224_artifacts": result.missing_f224_artifacts,
+            # F231H: F231 Evidence Lift Pack gate telemetry
+            "f231_core_ready": result.f231_core_ready,
+            "f231_warnings": result.f231_warnings,
+            "missing_f231_artifacts": result.missing_f231_artifacts,
         }
         args.write_report.parent.mkdir(parents=True, exist_ok=True)
         with open(args.write_report, "w", encoding="utf-8") as fh:

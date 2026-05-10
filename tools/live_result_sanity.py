@@ -287,7 +287,10 @@ def parse_quality(raw: dict[str, Any]) -> QualitySurface:
     surf.quality_gate = raw.get("quality_gate")
     surf.grade = raw.get("grade")
     surf.total_quality_score = raw.get("total_quality_score")
+    # F231E: Read canonical field first, fall back to legacy typo for backward compat
     surf.research_quality_comparable = raw.get("research_quality_comparable")
+    if surf.research_quality_comparable is None:
+        surf.research_quality_comparable = raw.get("research_quality_comparabl")
     # F231D: Extract evidence depth diagnostics
     ed = raw.get("evidence_depth", {})
     if isinstance(ed, dict):

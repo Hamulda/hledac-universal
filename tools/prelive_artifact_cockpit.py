@@ -273,6 +273,11 @@ class CockpitResult:
     f224_warnings: list[str] = field(default_factory=list)
     missing_f224_artifacts: list[str] = field(default_factory=list)
 
+    # F231H: F231 Evidence Lift Pack gate telemetry
+    f231_core_ready: bool = False
+    f231_warnings: list[str] = field(default_factory=list)
+    missing_f231_artifacts: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return {
             "verdict": self.verdict.value,
@@ -314,6 +319,10 @@ class CockpitResult:
             "f224_core_ready": self.f224_core_ready,
             "f224_warnings": self.f224_warnings,
             "missing_f224_artifacts": self.missing_f224_artifacts,
+            # F231H: F231 Evidence Lift Pack gate
+            "f231_core_ready": self.f231_core_ready,
+            "f231_warnings": self.f231_warnings,
+            "missing_f231_artifacts": self.missing_f231_artifacts,
         }
 
 
@@ -505,6 +514,12 @@ def merge_cockpit(
     missing_f224_artifacts = decision_data.get("missing_f224_artifacts", [])
     log.append(f"f224_core_ready={f224_core_ready} missing_f224={len(missing_f224_artifacts)}")
 
+    # ---- 7. F231 Evidence Lift Pack gate (F231H) ----
+    f231_core_ready = decision_data.get("f231_core_ready", False)
+    f231_warnings = decision_data.get("f231_warnings", [])
+    missing_f231_artifacts = decision_data.get("missing_f231_artifacts", [])
+    log.append(f"f231_core_ready={f231_core_ready} missing_f231={len(missing_f231_artifacts)}")
+
     # ------------------------------------------------------------------------- #
     # Verdicts
     # ------------------------------------------------------------------------- #
@@ -547,10 +562,13 @@ def merge_cockpit(
 
     # D: Gate blocked by contract (non-provider-surface)
     # F225E: also blocks if F224 blocking artifacts missing for blocking profiles
-    elif gate_decision == "BLOCKED_BY_CONTRACT" or (missing_f224_artifacts and not f224_core_ready):
+    # F231H: also blocks if F231 Evidence Lift Pack missing for blocking profiles
+    elif gate_decision == "BLOCKED_BY_CONTRACT" or (missing_f224_artifacts and not f224_core_ready) or (missing_f231_artifacts and not f231_core_ready):
         verdict = Verdict.BLOCKED_BY_ARTIFACTS
-        next_action = NextAction.FIX_CONTRACT_GATE
-        next_action_detail = ""
+        next_action = NextAction.RUN_MISSING_PROBE
+        # Combine missing F224 and F231 artifacts
+        all_missing = list(set(missing_f224_artifacts + missing_f231_artifacts))
+        next_action_detail = ",".join(all_missing) if all_missing else ""
         live_allowed = False
         swap_policy_tier = "blocked"
         swap_gate_reason = "contract gate failure"
@@ -690,6 +708,10 @@ def merge_cockpit(
         f224_core_ready=f224_core_ready,
         f224_warnings=f224_warnings,
         missing_f224_artifacts=missing_f224_artifacts,
+        # F231H: F231 Evidence Lift Pack gate
+        f231_core_ready=f231_core_ready,
+        f231_warnings=f231_warnings,
+        missing_f231_artifacts=missing_f231_artifacts,
     )
 
 

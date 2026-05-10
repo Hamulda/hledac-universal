@@ -772,6 +772,21 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "passive_dns_advisory_clues_count": lane_verdict.get("passive_dns_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
         "passive_dns_private_ip_rejected": lane_verdict.get("passive_dns_private_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,
         "passive_dns_empty_ip_rejected": lane_verdict.get("passive_dns_empty_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        # F231F: Evidence depth KPI alias fields — normalized names for research_quality_score
+        # These allow research_quality_score to read actual F231A/B/C canonical field names
+        # regardless of which naming convention the live KPI used.
+        "public_candidates_seen": _sum_alias_fields(inp.public_pipeline, [
+            "public_candidates_discovered", "public_candidates_built", "public_candidates_stored",
+        ]) if inp.public_pipeline else 0,
+        "ct_clues_seen": _sum_alias_fields(lane_verdict, [
+            "ct_expansion_clues_count", "ct_valid_public_domains",
+        ]) if isinstance(lane_verdict, dict) else 0,
+        "wayback_clues_seen": _sum_alias_fields(lane_verdict, [
+            "wayback_advisory_clues_count",
+        ]) if isinstance(lane_verdict, dict) else 0,
+        "passivedns_clues_seen": _sum_alias_fields(lane_verdict, [
+            "passive_dns_advisory_clues_count",
+        ]) if isinstance(lane_verdict, dict) else 0,
         "claims_extracted_count": (inp.claims_runtime_status or {}).get("claims_extracted_count", 0)
         if inp.claims_runtime_status
         else 0,
@@ -796,6 +811,26 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "discovery_not_wired_providers": _derive_discovery_not_wired_providers(inp.acquisition_report),
         "missing_canonical_fields": ["source_family_outcomes"] if not _sfo_has_canonical else [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Alias field helpers
+# ---------------------------------------------------------------------------
+
+def _sum_alias_fields(src: dict | None, aliases: list[str]) -> int:
+    """Sum the first non-zero alias field value from a source dict.
+
+    F231F: Used to normalize F231A/B/C canonical field names into the
+    evidence depth KPI alias fields (public_candidates_seen, ct_clues_seen,
+    wayback_clues_seen, passivedns_clues_seen) that research_quality_score reads.
+    """
+    if not isinstance(src, dict):
+        return 0
+    for alias in aliases:
+        val = src.get(alias)
+        if isinstance(val, (int, float)) and val > 0:
+            return int(val)
+    return 0
 
 
 # ---------------------------------------------------------------------------

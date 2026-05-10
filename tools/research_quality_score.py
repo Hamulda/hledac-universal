@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from enum import Enum
 from pathlib import Path
 
@@ -137,6 +138,108 @@ class ResearchQualityScore:
 # Normalization — handle both benchmark JSON and live_active300 JSON formats
 # ---------------------------------------------------------------------------
 
+def _sum_alias_fields(src: dict | None, aliases: list[str]) -> int:
+    """Sum the first non-zero alias field value from a source dict.
+
+    F231F: Used to normalize F231A/B/C canonical field names into the
+    evidence depth KPI alias fields (public_candidates_seen, ct_clues_seen,
+    wayback_clues_seen, passivedns_clues_seen) that research_quality_score reads.
+    """
+    if not isinstance(src, dict):
+        return 0
+    for alias in aliases:
+        val = src.get(alias)
+        if isinstance(val, (int, float)) and val > 0:
+            return int(val)
+    return 0
+
+
+def _extract_evidence_depth_inputs(live_kpi: dict) -> dict:
+    """
+    F231F: Extract and normalize evidence depth inputs from live_kpi.
+
+    Supports aliases from all F231A/B/C canonical field names:
+      public_candidates_seen:
+        - public_candidates_seen (direct)
+        - public_candidates_discovered
+        - public_candidates_built
+        - public_candidates_stored
+      ct_clues_seen:
+        - ct_clues_seen (direct)
+        - ct_expansion_clues_count
+        - ct_valid_public_domains
+      wayback_clues_seen:
+        - wayback_clues_seen (direct)
+        - wayback_advisory_clues_count
+        - wayback_changed_url_count + wayback_added_url_count + wayback_digest_changed_count
+      passivedns_clues_seen:
+        - passivedns_clues_seen (direct)
+        - passive_dns_advisory_clues_count
+        - passive_dns_public_ip_count
+    """
+    if not isinstance(live_kpi, dict):
+        return {
+            "public_candidates_seen": 0,
+            "ct_clues_seen": 0,
+            "wayback_clues_seen": 0,
+            "passivedns_clues_seen": 0,
+        }
+
+    # Direct reads (fallback)
+    public_candidates_seen = live_kpi.get("public_candidates_seen", 0)
+    ct_clues_seen = live_kpi.get("ct_clues_seen", 0)
+    wayback_clues_seen = live_kpi.get("wayback_clues_seen", 0)
+    passivedns_clues_seen = live_kpi.get("passivedns_clues_seen", 0)
+
+    # F231A: public_candidate_ledger_summary
+    pcl = live_kpi.get("public_candidate_ledger_summary")
+    if isinstance(pcl, dict):
+        _pcl_val = _sum_alias_fields(pcl, [
+            "public_candidates_discovered", "public_candidates_built", "public_candidates_stored",
+        ])
+        if _pcl_val > 0:
+            public_candidates_seen = _pcl_val
+        elif not isinstance(public_candidates_seen, (int, float)) or public_candidates_seen == 0:
+            public_candidates_seen = _pcl_val
+
+    # F231B: CT expansion clues
+    ct_clues_seen = _sum_alias_fields(live_kpi, [
+        "ct_expansion_clues_count", "ct_valid_public_domains",
+    ]) or ct_clues_seen
+
+    # F231C: Wayback advisory clues (sum composite fields)
+    wayback_sum = _sum_alias_fields(live_kpi, ["wayback_advisory_clues_count"])
+    if wayback_sum == 0:
+        # Composite: wayback_changed_url_count + wayback_added_url_count + wayback_digest_changed_count
+        wc = live_kpi.get("wayback_changed_url_count", 0) or 0
+        wa = live_kpi.get("wayback_added_url_count", 0) or 0
+        wd = live_kpi.get("wayback_digest_changed_count", 0) or 0
+        wayback_sum = wc + wa + wd
+    wayback_clues_seen = wayback_sum or wayback_clues_seen
+
+    # F231C: PassiveDNS advisory clues
+    passivedns_clues_seen = _sum_alias_fields(live_kpi, [
+        "passive_dns_advisory_clues_count", "passive_dns_public_ip_count",
+    ]) or passivedns_clues_seen
+
+    def _to_int(val):
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            try:
+                return int(float(val))
+            except (ValueError, TypeError):
+                return 0
+        return 0
+
+    return {
+        "public_candidates_seen": _to_int(public_candidates_seen),
+        "ct_clues_seen": _to_int(ct_clues_seen),
+        "wayback_clues_seen": _to_int(wayback_clues_seen),
+        "passivedns_clues_seen": _to_int(passivedns_clues_seen),
+    }
+
+
 def _extract_uma_swap_gib(data: dict) -> float | None:
     """Extract swap in GiB from various UMA fields across formats."""
     # Live format: uma_post_swap_gib at top level
@@ -187,7 +290,7 @@ def _normalize_benchmark(data: dict) -> dict:
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
-    return {
+    norm = {
         "total_findings": data.get("findings_count", 0),
         "accepted_findings": (rt.get("accepted_findings") if isinstance(rt, dict) else None) or data.get("accepted_findings") or data.get("findings_count") or 0,
         "feed_findings": feed,
@@ -210,14 +313,11 @@ def _normalize_benchmark(data: dict) -> dict:
         "ct_loss_stage": ct_loss_stage,
         # F225A: Claims runtime surface from live_kpi
         "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
-        # F231D: Evidence depth — public candidate ledger (accepted count from nonfeed sources)
-        "public_candidates_seen": live_kpi.get("public_candidates_seen", 0) if isinstance(live_kpi, dict) else 0,
-        # F231D: Evidence depth — CT clues raw (seen but may not have been accepted)
-        "ct_clues_seen": live_kpi.get("ct_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
-        # F231D: Evidence depth — advisory clues from wayback/passivedns
-        "wayback_clues_seen": live_kpi.get("wayback_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
-        "passivedns_clues_seen": live_kpi.get("passivedns_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
     }
+    # F231F: Apply evidence depth alias normalization (AFTER constructing dict)
+    _evi = _extract_evidence_depth_inputs(live_kpi) if isinstance(live_kpi, dict) else {}
+    norm.update(_evi)
+    return norm
 
 
 def _normalize_live(data: dict) -> dict:
@@ -237,7 +337,7 @@ def _normalize_live(data: dict) -> dict:
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
-    return {
+    norm = {
         "total_findings": data.get("findings_count", 0),
         "accepted_findings": data.get("accepted_findings") or data.get("findings_count") or 0,
         "feed_findings": feed,
@@ -258,16 +358,13 @@ def _normalize_live(data: dict) -> dict:
         "branch_mix": branch_mix,
         "live_kpi": live_kpi,
         "ct_loss_stage": ct_loss_stage,
-        # F225A: Claims runtime surface from live_kpi
+        # F231F: Claims runtime surface from live_kpi
         "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
-        # F231D: Evidence depth — public candidate ledger (accepted count from nonfeed sources)
-        "public_candidates_seen": live_kpi.get("public_candidates_seen", 0) if isinstance(live_kpi, dict) else 0,
-        # F231D: Evidence depth — CT clues raw (seen but may not have been accepted)
-        "ct_clues_seen": live_kpi.get("ct_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
-        # F231D: Evidence depth — advisory clues from wayback/passivedns
-        "wayback_clues_seen": live_kpi.get("wayback_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
-        "passivedns_clues_seen": live_kpi.get("passivedns_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
     }
+    # F231F: Apply evidence depth alias normalization (AFTER constructing dict)
+    _evi = _extract_evidence_depth_inputs(live_kpi) if isinstance(live_kpi, dict) else {}
+    norm.update(_evi)
+    return norm
 
 
 def _detect_format(data: dict) -> str:
@@ -319,7 +416,6 @@ def _nonfeed_evidence_score(nonfeed: int, total: int) -> float:
         return 0.0
     ratio = nonfeed / total
     # Power curve: 5% ratio ≈ 3pts, 20% ≈ 10pts, 50% ≈ 21pts, 80% ≈ 30pts (capped at 25)
-    import math
     score = 25.0 * (ratio ** 0.3)
     return min(25.0, max(0.0, score))
 
@@ -329,7 +425,6 @@ def _ct_evidence_score(ct: int, total: int) -> float:
     if total == 0 or ct == 0:
         return 0.0
     ratio = ct / total
-    import math
     score = 10 * math.log1p(ratio * 50) / math.log1p(10)
     return min(20.0, max(0.0, score))
 
@@ -339,7 +434,6 @@ def _public_evidence_score(pub: int, total: int) -> float:
     if total == 0 or pub == 0:
         return 0.0
     ratio = pub / total
-    import math
     score = 7 * math.log1p(ratio * 50) / math.log1p(10)
     return min(15.0, max(0.0, score))
 
@@ -403,7 +497,7 @@ def _memory_taint_penalty(swap_gib: float | None, swap_warning: bool) -> float:
     return 0.0
 
 
-def _compute_evidence_depth(norm: dict, accepted: int, nonfeed: int) -> EvidenceDepth:
+def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
     """
     F231D: Compute evidence depth diagnostics.
 
@@ -551,7 +645,7 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         ct_loss_stage,
         gate,
         comparable,
-        _compute_evidence_depth(norm, accepted, nonfeed),
+        _compute_evidence_depth(norm, nonfeed),
     )
 
 
@@ -618,10 +712,10 @@ def _render_md(score: ResearchQualityScore) -> str:
             f"(CT raw &gt; 0 but accepted = 0 — evidence lost in pipeline)"
         )
 
-    # F215E: comparable may be inaccessible via getattr due to Python 3.14 dataclass quirk.
-    # Recompute from accessible fields.
-    hw_constrained_md = getattr(score, "hardware_constrained", False)
-    comparable = not (hw_constrained_md or (score.swap_gib is not None and score.swap_gib >= 3.0))
+    # F215E: hardware_constrained is not stored on ResearchQualityScore (only in live_kpi).
+    # Recompute comparable from swap_gib which is always accessible.
+    comparable = not (getattr(score, "hardware_constrained", False)
+        or (score.swap_gib is not None and score.swap_gib >= 3.0))
 
     lines = [
         "# Research Quality Score",
@@ -698,8 +792,8 @@ def main() -> int:
             f.write(md)
         print(f"Markdown written: {args.output_md}")
 
-    # F215E: comparable may be inaccessible via getattr due to Python 3.14 dataclass quirk.
-    # Recompute from accessible fields (swap_gib, swap_warning are both accessible).
+    # F215E: hardware_constrained is not stored on ResearchQualityScore (only in live_kpi).
+    # Recompute comparable from swap_gib which is always accessible.
     comparable = not (
         getattr(score, "hardware_constrained", False)
         or (score.swap_gib is not None and score.swap_gib >= 3.0)
@@ -756,8 +850,9 @@ def score_research_quality(data: dict) -> dict:
     if isinstance(live_kpi, dict):
         hw_constrained = bool(live_kpi.get("hardware_constrained"))
 
-    # F215E: Compute comparable inline — rqs.research_quality_comparable may be
-    # inaccessible due to a Python 3.14 dataclass STORE_ATTR name-encoding quirk.
+    # F215E: Compute comparable inline — hardware_constrained is not stored on
+    # ResearchQualityScore (only available in live_kpi), so recompute from available
+    # fields. swap_gib is always accessible via rqs.swap_gib.
     comparable = True
     if hw_constrained:
         comparable = False
