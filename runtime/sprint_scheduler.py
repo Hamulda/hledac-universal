@@ -5065,6 +5065,19 @@ class SprintScheduler:
                         await self._ingest_ct_lane_candidates(_outcomes, duckdb_store)
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
+                        # Sprint R8: Run CT→PassiveDNS active-cycle pivot after lane ingestion (aggressive)
+                        ct_findings: list = []
+                        for _oc in _outcomes:
+                            if getattr(_oc, "source_family", None) == "ct":
+                                _cands = getattr(_oc, "candidate_findings", ()) or ()
+                                if _cands:
+                                    ct_findings.extend(_cands)
+                        if ct_findings:
+                            await self._run_ct_to_passivedns_active_pivot(
+                                ct_findings=ct_findings,
+                                duckdb_store=duckdb_store,
+                                remaining_s=remaining_s,
+                            )
                         # Sprint F217E: Mirror quality rejections in ledger (aggressive advisory)
                         for _rec in self._result.quality_rejection_ledger or ():
                             try:
