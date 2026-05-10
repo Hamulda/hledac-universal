@@ -334,31 +334,46 @@ class GlobalPriorityScheduler:
 
             try:
                 if inspect.iscoroutinefunction(func):
+                    # Option A: always use a fresh event loop in this worker process.
+                    # Never use get_running_loop() + run_coroutine_threadsafe() — that pattern
+                    # is only valid when there is an explicit owner loop running in another thread.
+                    # In a ProcessPoolExecutor child process there is no such loop, so we must
+                    # create our own each time.
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
                     try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        new_loop = asyncio.new_event_loop()
+                        coro = func(*args, **kwargs)
+                        # Use wait_for so we get asyncio.CancelledError on timeout rather than
+                        # a generic concurrent.futures.TimeoutError.  CancelledError is
+                        # propagable and tells us the task was already cancelled by the time
+                        # wait_for resolved.
+                        result = new_loop.run_until_complete(
+                            asyncio.wait_for(coro, timeout=30.0)
+                        )
+                        # Report SUCCEEDED (same as sync path below)
                         try:
-                            new_loop.run_until_complete(func(*args, **kwargs))
-                        finally:
-                            new_loop.close()
-                        continue
-                    # M1-SAFE: Schedule coroutine on running loop from worker thread
-                    # using run_coroutine_threadsafe instead of nested run_until_complete
-                    # Add timeout to prevent worker thread blocking forever
-                    future = asyncio.run_coroutine_threadsafe(func(*args, **kwargs), loop)
-                    try:
-                        future.result(timeout=30)
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Task {task_name} timed out after 30s")
-                        raise
+                            self._result_queue.put((job_id, "succeeded", None, worker_id))
+                        except Exception:
+                            pass
+                    except asyncio.CancelledError:
+                        # Task was cancelled (timeout or concurrent cancellation).
+                        # CancelledError from wait_for means the coroutine was already closed
+                        # by the runtime when the timeout fired — nothing extra to close here.
+                        logger.warning(f"Task {task_name} timed out or was cancelled after 30s")
+                        try:
+                            self._result_queue.put((job_id, "failed", "task timeout/cancelled", worker_id))
+                        except Exception:
+                            pass
+                    finally:
+                        asyncio.set_event_loop(None)
+                        new_loop.close()
                 else:
                     func(*args, **kwargs)
-                # Report SUCCEEDED
-                try:
-                    self._result_queue.put((job_id, "succeeded", None, worker_id))
-                except Exception:
-                    pass
+                    # Report SUCCEEDED
+                    try:
+                        self._result_queue.put((job_id, "succeeded", None, worker_id))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.exception(f"Worker {worker_id} failed to execute {task_name}: {e}")
                 try:

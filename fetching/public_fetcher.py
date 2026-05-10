@@ -610,6 +610,11 @@ def _try_decode(body: bytes) -> tuple[str, bool, int]:
 
 
 # ---------------------------------------------------------------------------
+# F206AR: Transport router — unified lane selection authority
+# ---------------------------------------------------------------------------
+from hledac.universal.transport.transport_router import route_transport, TransportDecision
+
+# ---------------------------------------------------------------------------
 # P4: Tor session helpers — SOCKS5 proxy via aiohttp_socks
 # ---------------------------------------------------------------------------
 
@@ -1243,18 +1248,34 @@ async def async_fetch_public_text(
             transport_counters=_tc,
         )
 
-    # --- P4: Determine transport mode ---
-    is_onion = _is_onion_url(url)
-    is_i2p = _is_i2p_url(url)
-    is_freenet = _is_freenet_url(url)
-    use_tor = is_onion  # .onion URLs always go via Tor
-    use_i2p = is_i2p  # .i2p/.b32.i2p URLs go via I2P SOCKS
-    use_freenet = is_freenet  # .freenet URLs go via Freenet HTTP proxy
+    # --- F206AR: Route transport via canonical router ---
+    _router_decision: TransportDecision = route_transport(
+        url,
+        use_stealth=use_stealth,
+        use_js=use_js,
+        cache_safe=False,
+        retry_after_status=None,  # Escalation from 403/429 handled by curl_cffi path
+        suggested_timeout_s=timeout_s,
+        suggested_max_bytes=max_bytes,
+        suggested_concurrency=None,
+    )
+    _router_lane = _router_decision.lane
+    _router_reason = _router_decision.reason
+    _original_policy_reason: str | None = None  # For additive fallback tracking
 
-    # --- F206K: HTTPX H2 optional clearnet lane ---
-    _use_httpx_h2, _httpx_reason = should_use_httpx_h2(url, use_stealth, use_js)
+    # --- F206AR: Fallback reason tracking (defined early for all paths) ---
+    _httpx_fallback_reason: str | None = None
+    _curl_fallback_reason: str | None = None
+
+    # Derive use_tor/use_i2p from router decision (replaces manual URL parsing)
+    use_tor = _router_lane == "tor_socks"
+    use_i2p = _router_lane == "i2p_socks"
+
+    # --- F206AR: H2 lane — router selected httpx_h2? ---
+    _use_httpx_h2: bool = _router_lane == "httpx_h2"
     if _use_httpx_h2:
-        logger.debug(f"[HTTPX] H2 lane selected for {url}: {_httpx_reason}")
+        logger.debug(f"[HTTPX] H2 lane selected for {url}: {_router_reason}")
+        _original_policy_reason = _router_reason
         try:
             import httpx as _httpx
 
@@ -1296,7 +1317,7 @@ async def async_fetch_public_text(
                         failure_stage="size",
                         selected_transport="httpx_h2",
                         http_version=_http_ver,
-                        transport_policy_reason=_httpx_reason,
+                        transport_policy_reason=_router_reason,
                         transport_counters=_tc,
                     )
                 _body_chunks.append(_chunk)
@@ -1324,7 +1345,7 @@ async def async_fetch_public_text(
                 redirect_target=redirect_target,
                 selected_transport="httpx_h2",
                 http_version=_http_ver,
-                transport_policy_reason=_httpx_reason,
+                transport_policy_reason=_router_reason,
                 transport_counters=_tc,
             )
         except asyncio.CancelledError:
@@ -1346,11 +1367,11 @@ async def async_fetch_public_text(
             except Exception:
                 _httpx_err_type = "unknown_httpx_error"
             # HTTPX H2 failed — fallback to aiohttp with telemetry
+            # F206AR: Keep router_reason as primary policy reason (additive fallback)
             logger.warning(f"[HTTPX] H2 lane failed for {url} ({_httpx_err_type}), falling back to aiohttp: {_e}")
             _use_httpx_h2 = False
-            _httpx_reason = "httpx_h2_fallback"
             # F206AF: Set transport_fallback_reason for this URL
-            # (will be set on the FetchResult from the aiohttp fallback path)
+            _httpx_fallback_reason: str | None = "httpx_h2_fallback"
 
     # Apply longer timeout for anonymized networks (Tor/I2P)
     if use_tor or use_i2p:
@@ -1382,12 +1403,10 @@ async def async_fetch_public_text(
         except Exception as e:
             logger.warning(f"Stealth session unavailable, proceeding without: {e}")
 
-    # --- F206M: curl_cffi stealth lane — explicit use_stealth escalation on clearnet ---
-    # Respects should_use_curl_cffi guards: darknet/JS/Freenet are protected.
-    # Falls back to aiohttp hot-path on any curl_cffi failure (including CancelledError re-raised).
-    _curl_fallback_reason: str | None = None
-    _use_curl, _curl_reason = should_use_curl_cffi(url, use_stealth=use_stealth, use_js=use_js)
-    if _use_curl:
+    # --- F206AR: curl_cffi stealth lane — router selected curl_cffi_stealth? ---
+    # Router already enforced: no darknet/JS/Freenet. Falls back to aiohttp on failure.
+    if _router_lane == "curl_cffi_stealth":
+        _original_policy_reason = _router_reason
         try:
             _curl_result = await fetch_via_curl_cffi(
                 url=url,
@@ -1429,7 +1448,7 @@ async def async_fetch_public_text(
                 network_error_kind=_curl_result.get("network_error_kind", None),
                 selected_transport="curl_cffi",
                 http_version=None,  # curl_cffi doesn't expose HTTP version
-                transport_policy_reason=_curl_reason,
+                transport_policy_reason=_router_reason,
                 transport_fallback_reason=None,
                 transport_counters=_tc,
             )
@@ -1603,7 +1622,7 @@ async def async_fetch_public_text(
                                                 network_error_kind=_esc_result.get("network_error_kind", None),
                                                 selected_transport="curl_cffi",
                                                 http_version=None,
-                                                transport_policy_reason=_esc_curl_reason,
+                                                transport_policy_reason=_router_reason,
                                                 transport_fallback_reason="aiohttp_status_403_or_429_to_curl_cffi",
                                                 transport_counters=_tc,
                                             )
@@ -1658,7 +1677,7 @@ async def async_fetch_public_text(
                                     # non-XML body under wrong CT: reject without reading remainder
                                     elapsed_ms = (time.monotonic() - t0) * 1000
                                     redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                                    if _httpx_reason == "httpx_h2_fallback":
+                                    if _httpx_fallback_reason == "httpx_h2_fallback":
                                         _tc.httpx_h2_fallback_to_aiohttp_count += 1
                                         _tc.fallback_count += 1
                                     elif _curl_fallback_reason is not None:
@@ -1683,8 +1702,8 @@ async def async_fetch_public_text(
                                         redirect_target=redirect_target,
                                         failure_stage="http",
                                         selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-                                        transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-                                        transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
+                                        transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                        transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
                                         transport_counters=_tc,
                                     )
 
@@ -1696,7 +1715,7 @@ async def async_fetch_public_text(
                                 accumulated_ok = False
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 redirected, redirect_target = _derive_redirect_fields(url, final_url)
-                                if _httpx_reason == "httpx_h2_fallback":
+                                if _httpx_fallback_reason == "httpx_h2_fallback":
                                     _tc.httpx_h2_fallback_to_aiohttp_count += 1
                                     _tc.fallback_count += 1
                                 elif _curl_fallback_reason is not None:
@@ -1721,8 +1740,8 @@ async def async_fetch_public_text(
                                     redirect_target=redirect_target,
                                     failure_stage="size",
                                     selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-                                    transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-                                    transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
+                                    transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                                    transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
                                     transport_counters=_tc,
                                 )
                             body_chunks.append(chunk)
@@ -1816,7 +1835,7 @@ async def async_fetch_public_text(
                         # curl_cffi fallback takes priority — set when curl lane failed and aiohttp succeeded
                         if _curl_fallback_reason:
                             _fallback_info = _curl_fallback_reason
-                        elif not _use_httpx_h2 and _httpx_reason == "httpx_h2_fallback":
+                        elif not _use_httpx_h2 and _httpx_fallback_reason == "httpx_h2_fallback":
                             _fallback_info = "httpx_h2_fallback"
                         # --- F206N: Transport counter for aiohttp success ---
                         if _curl_fallback_reason:
@@ -1849,7 +1868,7 @@ async def async_fetch_public_text(
                             redirect_target=redirect_target,
                             selected_transport=_actual_transport,
                             http_version="http/1.1",  # aiohttp always HTTP/1.1
-                            transport_policy_reason=_httpx_reason if _use_httpx_h2 else "clearnet_default",
+                            transport_policy_reason=_router_reason if _use_httpx_h2 else "clearnet_default",
                             transport_fallback_reason=_fallback_info,
                             transport_counters=_tc,
                             js_renderer_skipped_reason=skip_js_reason,  # F207F
@@ -1862,7 +1881,7 @@ async def async_fetch_public_text(
             # --- F206N: Transport counter for timeout ---
             if _curl_fallback_reason:
                 pass  # curl fallback counter already incremented
-            elif _httpx_reason == "httpx_h2_fallback":
+            elif _httpx_fallback_reason == "httpx_h2_fallback":
                 _tc.httpx_h2_fallback_to_aiohttp_count += 1
                 _tc.fallback_count += 1
             elif use_tor:
@@ -1884,8 +1903,8 @@ async def async_fetch_public_text(
                 failure_stage="connection",
                 network_error_kind="timeout",
                 selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-                transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-                transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
+                transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
                 transport_counters=_tc,
             )
         except asyncio.CancelledError:
@@ -1903,7 +1922,7 @@ async def async_fetch_public_text(
             # --- F206N: Transport counter for exception ---
             if _curl_fallback_reason:
                 pass  # curl fallback counter already incremented
-            elif _httpx_reason == "httpx_h2_fallback":
+            elif _httpx_fallback_reason == "httpx_h2_fallback":
                 _tc.httpx_h2_fallback_to_aiohttp_count += 1
                 _tc.fallback_count += 1
             elif use_tor:
@@ -1926,8 +1945,8 @@ async def async_fetch_public_text(
                 failure_stage=failure_stage,
                 network_error_kind=network_error_kind,
                 selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-                transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-                transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
+                transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+                transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
                 transport_counters=_tc,
             )
 
@@ -1939,7 +1958,7 @@ async def async_fetch_public_text(
     # --- F206N: Transport counter (same logic as retry exhausted) ---
     if _curl_fallback_reason:
         pass  # curl fallback counter already incremented
-    elif _httpx_reason == "httpx_h2_fallback":
+    elif _httpx_fallback_reason == "httpx_h2_fallback":
         _tc.httpx_h2_fallback_to_aiohttp_count += 1
         _tc.fallback_count += 1
     elif use_tor:
@@ -1962,8 +1981,8 @@ async def async_fetch_public_text(
         failure_stage=failure_stage,
         network_error_kind=network_error_kind,
         selected_transport="httpx_h2" if _use_httpx_h2 else ("aiohttp_socks" if (use_tor or use_i2p) else "aiohttp"),
-        transport_policy_reason=_httpx_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
-        transport_fallback_reason="httpx_h2_fallback" if _httpx_reason == "httpx_h2_fallback" else None,
+        transport_policy_reason=_router_reason if _use_httpx_h2 else ("darknet_url" if (use_tor or use_i2p) else "clearnet_default"),
+        transport_fallback_reason="httpx_h2_fallback" if _httpx_fallback_reason == "httpx_h2_fallback" else None,
         transport_counters=_tc,
     )
 

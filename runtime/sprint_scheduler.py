@@ -871,6 +871,8 @@ class SprintSchedulerResult:
     lane_wayback_accepted_findings: int = 0
     lane_pdns_accepted_findings: int = 0
     lane_blockchain_accepted_findings: int = 0
+    # R10: IPFS CID-only lane telemetry
+    lane_ipfs_accepted_findings: int = 0
     # Sprint F229: Wayback/PassiveDNS raw and candidate telemetry
     wayback_attempted: bool = False
     wayback_raw_count: int = 0
@@ -2509,6 +2511,7 @@ class SprintScheduler:
                 + r.lane_wayback_accepted_findings
                 + r.lane_pdns_accepted_findings
                 + r.lane_blockchain_accepted_findings
+                + r.lane_ipfs_accepted_findings
             )
             if r.accepted_findings > 0 and nonfeed_accepted == 0:
                 return (
@@ -4485,6 +4488,7 @@ class SprintScheduler:
             or self._result.lane_wayback_accepted_findings > 0
             or self._result.lane_pdns_accepted_findings > 0
             or self._result.lane_blockchain_accepted_findings > 0
+            or self._result.lane_ipfs_accepted_findings > 0
         )
 
         # Run sources under TaskGroup (bounded concurrency)
@@ -4760,6 +4764,7 @@ class SprintScheduler:
             or self._result.lane_wayback_accepted_findings > 0
             or self._result.lane_pdns_accepted_findings > 0
             or self._result.lane_blockchain_accepted_findings > 0
+            or self._result.lane_ipfs_accepted_findings > 0
         )
 
         async def _run_feed_branch() -> None:
@@ -5746,6 +5751,7 @@ class SprintScheduler:
             AcquisitionLane.WAYBACK: "wayback_archive",
             AcquisitionLane.PASSIVE_DNS: "passive_dns",
             AcquisitionLane.BLOCKCHAIN: "blockchain",
+            AcquisitionLane.IPFS: "ipfs",
         }
 
         for outcome in outcomes:
@@ -5772,6 +5778,8 @@ class SprintScheduler:
                 self._result.lane_pdns_accepted_findings += accepted
             elif lane_name == AcquisitionLane.BLOCKCHAIN:
                 self._result.lane_blockchain_accepted_findings += accepted
+            elif lane_name == AcquisitionLane.IPFS:
+                self._result.lane_ipfs_accepted_findings += accepted
 
             # Sprint F229: Populate wayback/pdns telemetry from AcquisitionLaneOutcome
             wayback_raw = getattr(outcome, "wayback_raw_count", 0) or 0
@@ -10479,6 +10487,7 @@ class SprintScheduler:
                     "wayback_findings": self._result.lane_wayback_accepted_findings,
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
+                    "ipfs_findings": self._result.lane_ipfs_accepted_findings,
                     # Sprint F214D: CT Bridge Loss Audit telemetry
                     "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
@@ -10681,6 +10690,7 @@ class SprintScheduler:
                     "wayback_findings": self._result.lane_wayback_accepted_findings,
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
+                    "ipfs_findings": self._result.lane_ipfs_accepted_findings,
                     # Sprint F214D: CT Bridge Loss Audit telemetry
                     "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
@@ -11023,6 +11033,7 @@ class SprintScheduler:
         self._result.lane_wayback_accepted_findings = 0
         self._result.lane_pdns_accepted_findings = 0
         self._result.lane_blockchain_accepted_findings = 0
+        self._result.lane_ipfs_accepted_findings = 0
         # Sprint F229: Clear wayback/pdns telemetry
         self._result.wayback_attempted = False
         self._result.wayback_raw_count = 0

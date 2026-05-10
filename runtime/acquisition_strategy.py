@@ -88,6 +88,10 @@ __all__ = [
     "MissionTargetKind",
     "infer_mission_intent",
     "normalize_acquisition_profile",
+    "_has_explicit_cid",
+    "_extract_cids_from_text",
+    "_CIDV0_RE",
+    "_CIDV1_BASE32_RE",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -153,10 +157,48 @@ class AcquisitionLane:
     STEALTH = "STEALTH"
     PIVOT_EXECUTOR = "PIVOT_EXECUTOR"
     ACADEMIC = "ACADEMIC"
+    IPFS = "IPFS"
 
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
 _ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical"})
+
+
+# R10: CID detection regex — bounded, no catastrophic backtracking
+_CIDV0_RE = re.compile(r"^Qm[A-Za-z2-7]{44}$")  # CIDv0: Qm + 44 base58 chars
+_CIDV1_BASE32_RE = re.compile(r"^bafy[a-z2-7]{50,59}$")  # CIDv1 base32: bafy + 50-59 base32 chars
+
+
+def _has_explicit_cid(value: str) -> bool:
+    """Return True if value is an explicit IPFS CID (CIDv0 or CIDv1 base32)."""
+    if not value or len(value) < 46 or len(value) > 70:
+        return False
+    if value.startswith("Qm") and len(value) == 46:
+        return bool(_CIDV0_RE.match(value))
+    if value.startswith("bafy"):
+        return bool(_CIDV1_BASE32_RE.match(value))
+    return False
+
+
+def _extract_cids_from_text(text: str) -> list[str]:
+    """Extract unique explicit CIDs from arbitrary text. Bounded dedup."""
+    if not text:
+        return []
+    cids_seen: set[str] = set()
+    cids: list[str] = []
+    for word in text.split():
+        word = word.strip().rstrip("/").rstrip(")")
+        if _has_explicit_cid(word) and word not in cids_seen:
+            cids_seen.add(word)
+            cids.append(word)
+        # Also check for CID embedded in URL/path
+        if "/" in word or ":" in word:
+            for part in word.replace(":", "/").split("/"):
+                part = part.strip()
+                if _has_explicit_cid(part) and part not in cids_seen:
+                    cids_seen.add(part)
+                    cids.append(part)
+    return cids
 
 
 def is_academic_profile(profile: str) -> bool:
@@ -1319,6 +1361,9 @@ class AcquisitionLaneOutcome:
     # Sprint F229: Wayback/PassiveDNS raw count telemetry
     wayback_raw_count: int = 0
     passive_dns_raw_count: int = 0
+    # R10: IPFS CID-only fetch telemetry
+    ipfs_cid_count: int = 0
+    ipfs_terminal_state: str = "none"
 
     def to_dict(self) -> dict:
         return {
@@ -1340,6 +1385,9 @@ class AcquisitionLaneOutcome:
             # Sprint F229: Wayback/PassiveDNS raw count telemetry
             "wayback_raw_count": self.wayback_raw_count,
             "passive_dns_raw_count": self.passive_dns_raw_count,
+            # R10: IPFS CID-only fetch telemetry
+            "ipfs_cid_count": self.ipfs_cid_count,
+            "ipfs_terminal_state": self.ipfs_terminal_state,
         }
 
 
@@ -2220,13 +2268,34 @@ def _build_plan_impl(
         )
     )
 
+    # ── IPFS ─────────────────────────────────────────────────────────────────
+    # R10: CID-only evidence fetch — enabled only when explicit CID is present.
+    # No DHT. No search. No recursive traversal. No pinning. No daemon dependency.
+    query_has_cid = _has_explicit_cid(query.strip())
+    ipfs_enabled = query_has_cid and not hardware_critical
+    plans.append(
+        AcquisitionLanePlan(
+            lane=AcquisitionLane.IPFS,
+            enabled=ipfs_enabled,
+            reason="explicit_cid_in_query"
+            if ipfs_enabled
+            else ("no_cid_in_query" if not query_has_cid else "hardware_critical"),
+            max_items=3,  # default max CIDs per sprint; hard cap is 5
+            timeout_s=60,
+            concurrency=1,
+            risk_level=RiskLevel.MEDIUM,
+        )
+    )
+
     # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
     # F216B: Updated to include nonfeed_diagnostic telemetry
+    # R10: IPFS is included in nonfeed lanes (CID-only, bounded)
     _NONFEED_LANES = (
         AcquisitionLane.CT,
         AcquisitionLane.WAYBACK,
         AcquisitionLane.PASSIVE_DNS,
         AcquisitionLane.BLOCKCHAIN,
+        AcquisitionLane.IPFS,
     )
     _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if hardware_critical else set()
 
@@ -2761,6 +2830,132 @@ async def run_enabled_acquisition_lanes(
                 source_family="academic",
             )
 
+    async def _run_ipfs_lane(plan) -> "AcquisitionLaneOutcome":
+        """R10: CID-only IPFS evidence fetch — bounded gateway fetch, no search/DHT/recursive.
+
+        Enabled only when query is an explicit CID. No model load, no browser,
+        no stealth. Hard cap: 5 CIDs per sprint regardless of max_items.
+        """
+        start = time.monotonic()
+        query_cid = query.strip()
+        all_cids: list[str] = [query_cid] if _has_explicit_cid(query_cid) else []
+        MAX_IPFS_CIDS = 5
+        cids_to_fetch = all_cids[:MAX_IPFS_CIDS]
+        accepted = 0
+        produced = 0
+        candidate_findings: tuple = ()
+        terminal_state = "success"
+        ipfs_cid_count = 0
+
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.network.ipfs_client import (
+                    fetch_ipfs,
+                    ipfs_content_to_finding_dict,
+                )
+                import hashlib
+
+                findings_list: list = []
+                for cid in cids_to_fetch:
+                    content: Optional[bytes] = None
+                    gateway_used = "none"
+                    for gw_name, gw_url in [
+                        ("cloudflare", "https://cloudflare-ipfs.com/ipfs/"),
+                        ("ipfs.io", "https://ipfs.io/ipfs/"),
+                    ]:
+                        try:
+                            content = await fetch_ipfs(cid, timeout=25)
+                            if content is not None:
+                                gateway_used = gw_name
+                                break
+                        except Exception:
+                            continue
+
+                    if content is None:
+                        terminal_state = "empty"
+                        continue
+
+                    content_text = content.decode("utf-8", errors="replace")
+                    content_hash = hashlib.sha256(content_text[:2000].encode()).hexdigest()[:16]
+                    finding_id = f"ipfs_{cid}_{int(start * 1000)}_{content_hash}"
+
+                    finding_dict = ipfs_content_to_finding_dict(
+                        cid=cid,
+                        content=content,
+                        gateway=gateway_used,
+                        query=query_cid,
+                        ts=start,
+                        finding_id_prefix="ipfs",
+                    )
+                    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                    try:
+                        finding = CanonicalFinding(
+                            finding_id=finding_dict["finding_id"],
+                            query=finding_dict["query"],
+                            source_type=finding_dict["source_type"],
+                            confidence=finding_dict["confidence"],
+                            ts=finding_dict["ts"],
+                            provenance=finding_dict["provenance"],
+                            payload_text=finding_dict.get("payload_text"),
+                        )
+                        findings_list.append(finding)
+                        produced += 1
+                        ipfs_cid_count += 1
+                    except Exception:
+                        terminal_state = "error"
+                        continue
+
+                candidate_findings = tuple(findings_list)
+
+                if candidate_findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(
+                                list(candidate_findings)
+                            )
+                            accepted = sum(
+                                1 for r in ingest_results
+                                if isinstance(r, dict) and r.get("accepted")
+                            )
+                        except Exception:
+                            pass
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.IPFS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=produced,
+                    duration_s=time.monotonic() - start,
+                    source_family="ipfs",
+                    candidate_findings=candidate_findings,
+                    ipfs_cid_count=ipfs_cid_count,
+                    ipfs_terminal_state=terminal_state,
+                )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.IPFS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="ipfs",
+                ipfs_terminal_state="timeout",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.IPFS,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="ipfs",
+                ipfs_terminal_state="error",
+            )
+
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
         """Run blockchain forensics lane."""
         start = time.monotonic()
@@ -2843,6 +3038,7 @@ async def run_enabled_acquisition_lanes(
         AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane,
         AcquisitionLane.STEALTH: _stealth_never_run,
         AcquisitionLane.ACADEMIC: _run_academic_lane,
+        AcquisitionLane.IPFS: _run_ipfs_lane,
     }
 
     for plan in snapshot.plans:
