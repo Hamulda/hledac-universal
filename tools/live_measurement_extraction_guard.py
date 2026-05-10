@@ -312,21 +312,36 @@ TERMINALITY_HELPERS = frozenset([
 
 def _is_thin_delegation(node: ast.FunctionDef) -> bool:
     """
-    Return True if the function body is a single direct delegation
-    to an imported helper (i.e., just passes through to the extracted module).
+    Return True if the function body is a thin delegation alias:
+    - optional docstring
+    - exactly one remaining statement: Return(Call(...))
+    - call target may be ast.Name or ast.Attribute (e.g. _qm._helper)
+    - no other logic allowed
     """
     if len(node.body) == 0:
         return False
-    # Single return statement calling another function with minimal wrapping
-    if len(node.body) == 1:
-        stmt = node.body[0]
-        if isinstance(stmt, ast.Return):
-            value = stmt.value
-            # Direct call: return _some_func(inp) or return _some_func(...)
-            if isinstance(value, ast.Call):
-                if isinstance(value.func, ast.Name) and value.func.id.startswith("_"):
-                    # Direct pass-through with no extra logic
-                    return True
+    # Strip optional leading docstring (Expr(Constant(str)))
+    body = node.body
+    if (len(body) >= 1
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
+        body = body[1:]
+    # Must have exactly one remaining statement
+    if len(body) != 1:
+        return False
+    stmt = body[0]
+    if not isinstance(stmt, ast.Return):
+        return False
+    value = stmt.value
+    if not isinstance(value, ast.Call):
+        return False
+    # Accept ast.Name or ast.Attribute call targets
+    func = value.func
+    if isinstance(func, ast.Name) and func.id.startswith("_"):
+        return True
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return True
     return False
 
 

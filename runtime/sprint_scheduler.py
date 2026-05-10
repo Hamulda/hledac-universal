@@ -4587,6 +4587,8 @@ class SprintScheduler:
                         self._lane_outcomes = _outcomes
                         self._result.acquisition_lane_outcomes = _outcomes
                         self._accumulate_lane_findings(_outcomes, query)
+                        # Sprint R1B: Ingest CT lane CanonicalFinding candidates via DuckDBShadowStore
+                        await self._ingest_ct_lane_candidates(_outcomes, duckdb_store)
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
                         # Sprint F217E: Mirror quality rejections in ledger (stable advisory)
@@ -4992,6 +4994,8 @@ class SprintScheduler:
                         self._lane_outcomes = _outcomes
                         self._result.acquisition_lane_outcomes = _outcomes
                         self._accumulate_lane_findings(_outcomes, query)
+                        # Sprint R1B: Ingest CT lane CanonicalFinding candidates via DuckDBShadowStore
+                        await self._ingest_ct_lane_candidates(_outcomes, duckdb_store)
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
                         # Sprint F217E: Mirror quality rejections in ledger (aggressive advisory)
@@ -5532,6 +5536,117 @@ class SprintScheduler:
                     if len(self._lane_rejections) > MAX_LANE_REJECTIONS:
                         self._lane_rejections_dropped += len(self._lane_rejections) - MAX_LANE_REJECTIONS
                         self._lane_rejections = self._lane_rejections[-MAX_LANE_REJECTIONS:]
+
+    # ── Sprint R1B: CT Lane Canonical Finding Ingest ─────────────────────────
+
+    async def _ingest_ct_lane_candidates(
+        self,
+        outcomes: tuple,
+        duckdb_store: Any,
+    ) -> None:
+        """
+        Sprint R1B: Ingest CT lane CanonicalFinding candidates via DuckDBShadowStore.
+
+        Bridges the gap between the acquisition lane's ct_results_to_findings() output
+        (which produces CanonicalFinding dicts in candidate_findings) and the canonical
+        storage path (async_ingest_findings_batch).
+
+        Flow per CT outcome with candidates:
+          1. Extract candidate_findings from CT AcquisitionLaneOutcome
+          2. Call duckdb_store.async_ingest_findings_batch(candidates)
+          3. Record storage results in NonfeedCandidateLedger (stored / quarantine / provider_failed)
+          4. Update _result.lane_ct_accepted_findings with accepted count
+
+        Fail-soft: storage errors never crash the sprint.
+        CancelledError: re-raised to caller (GHOST_INVARIANTS I6).
+        M1/UMA: no MLX model load in this path.
+
+        Args:
+            outcomes:   Tuple of AcquisitionLaneOutcome from run_enabled_acquisition_lanes.
+            duckdb_store: DuckDBShadowStore instance for canonical storage.
+        """
+        if not duckdb_store:
+            return
+        for outcome in outcomes:
+            if getattr(outcome, "source_family", None) != "ct":
+                continue
+            if not getattr(outcome, "attempted", False):
+                continue
+            candidates = getattr(outcome, "candidate_findings", ()) or ()
+            if not candidates:
+                continue
+
+            # Record bridge rejections (quarantined) before storage
+            rejection_reasons = getattr(outcome, "rejection_reasons", ()) or ()
+            sample_rejections = getattr(outcome, "sample_rejections", ()) or ()
+            for rej in rejection_reasons[:5]:
+                try:
+                    reason_str = getattr(rej, "reject_reason", str(rej)) or "bridge_rejection"
+                    domain_str = getattr(rej, "domain", "") or ""
+                    self._nonfeed_ledger.add_ct_quarantine(
+                        domain=domain_str,
+                        reject_reason=reason_str,
+                        source_url="",
+                        query=getattr(outcome, "ct_query", "") or "",
+                    )
+                except Exception:
+                    pass  # fail-soft ledger write
+
+            # Call canonical storage
+            try:
+                storage_results = await duckdb_store.async_ingest_findings_batch(list(candidates))
+
+                # Record storage outcomes in ledger
+                accepted_count = 0
+                for i, result in enumerate(storage_results):
+                    is_accepted = (
+                        getattr(result, "lmdb_success", False) if hasattr(result, "lmdb_success")
+                        else result.get("lmdb_success", False) if isinstance(result, dict) else False
+                    )
+                    candidate = candidates[i] if i < len(candidates) else None
+                    candidate_id = (
+                        getattr(candidate, "finding_id", "")[:32]
+                        if candidate else ""
+                    )
+                    domain = (
+                        getattr(candidate, "query", "") if candidate else ""
+                    )
+                    if is_accepted:
+                        accepted_count += 1
+                        try:
+                            self._nonfeed_ledger.add_public_event(
+                                stage="stored",
+                                candidate_id=candidate_id,
+                                reason="ct_stored",
+                                accepted=True,
+                                sample_url="",
+                                sample_value=domain[:64] if domain else candidate_id[:16],
+                            )
+                        except Exception:
+                            pass  # fail-soft
+                    else:
+                        try:
+                            self._nonfeed_ledger.add_public_event(
+                                stage="quarantine",
+                                candidate_id=candidate_id,
+                                reason="ct_quarantine",
+                                accepted=False,
+                                sample_url="",
+                                sample_value=domain[:64] if domain else candidate_id[:16],
+                            )
+                        except Exception:
+                            pass  # fail-soft
+
+                # Update accepted count on result (set by _accumulate_lane_findings; augment)
+                if accepted_count > 0:
+                    self._result.lane_ct_accepted_findings = (
+                        getattr(self._result, "lane_ct_accepted_findings", 0) + accepted_count
+                    )
+
+            except asyncio.CancelledError:
+                raise  # [I6] propagate CancelledError
+            except Exception:
+                pass  # fail-soft: storage error never crashes sprint
 
     # ── F202B: Identity Stitching Sidecar ────────────────────────────────────
 
