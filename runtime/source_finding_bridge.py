@@ -60,6 +60,7 @@ __all__ = [
     "REJECTION_CANDIDATE_BUILT_NOT_STORED",
     "MAX_BRIDGE_OUTPUT",
     "record_ct_storage_results",
+    "academic_results_to_findings",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1505,3 +1506,142 @@ def summarize_ct_conversion(
         "ctCandidateExamples": ct_candidate_examples,
         "ctExpansionCluesCount": ct_expansion_clues_count,
     }
+
+
+# ── R9: Academic → CanonicalFinding ─────────────────────────────────────────
+
+
+def academic_results_to_findings(
+    results: list,
+    query: str,
+    sprint_id: str = "",
+) -> tuple:
+    """
+    R9: Convert AcademicSearchEngine SearchResult list to CanonicalFinding candidates.
+
+    SearchResult items are produced by the academic lane runner from
+    AcademicSearchEngine.search() deduplicated results. No live network calls here.
+
+    Returns (candidates, rejections, _telemetry) where:
+      - candidates: tuple of CanonicalFinding (or dicts) for accepted results
+      - rejections: tuple of Rejection for filtered results
+      - _telemetry: empty dict (academic lane has no separate telemetry object)
+
+    Bounded: max_results hard cap enforced upstream by plan.max_items=10.
+    No hash() builtin — blake2b for dedup key. Fail-soft on any error.
+    GHOST_INVARIANTS: No network I/O, no MLX/model load, CancelledError re-raised.
+    """
+    candidates: list = []
+    rejections: list = []
+
+    # Module-level dedup set (persists across calls in same batch)
+    if not hasattr(academic_results_to_findings, "_seen"):
+        academic_results_to_findings._seen = set()  # type: ignore[attr-defined]
+
+    seen: set = academic_results_to_findings._seen  # type: ignore[attr-defined]
+
+    try:
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    except ImportError:
+        return (), (), {}
+
+    for result in results:
+        try:
+            url = getattr(result, "url", "") or ""
+            title = getattr(result, "title", "") or ""
+            source = getattr(result, "source", "") or ""
+            snippet = getattr(result, "snippet", "") or ""
+
+            if not url:
+                rejections.append(
+                    Rejection(
+                        reject_reason=REJECTION_MISSING_VALUE,
+                        domain="",
+                        value="",
+                        input_shape=getattr(result, "to_dict", lambda: {})(),
+                    )
+                )
+                continue
+
+            if not title:
+                rejections.append(
+                    Rejection(
+                        reject_reason=REJECTION_LOW_INFORMATION,
+                        domain="",
+                        value=url,
+                        input_shape=getattr(result, "to_dict", lambda: {})(),
+                    )
+                )
+                continue
+
+            # blake2b dedup (no hash() builtin)
+            try:
+                url_hash = hashlib.blake2b(url.encode(), digest_size=16).hexdigest()
+            except Exception:
+                url_hash = url[:32]
+
+            if url_hash in seen:
+                rejections.append(
+                    Rejection(
+                        reject_reason=REJECTION_DUPLICATE_CANDIDATE,
+                        domain="",
+                        value=url,
+                        input_shape=getattr(result, "to_dict", lambda: {})(),
+                    )
+                )
+                continue
+            seen.add(url_hash)
+
+            # Extract metadata
+            metadata = getattr(result, "metadata", None) or {}
+            authors = metadata.get("authors", []) or []
+            if not isinstance(authors, list):
+                authors = []
+            published = metadata.get("published") or None
+            doi = metadata.get("doi") or None
+            citation_count = metadata.get("citation_count") or None
+
+            # Build payload text (same style as CT — "\n".join, not JSON)
+            parts: list[str] = []
+            parts.append(f"title: {title[:500]}")
+            parts.append(f"url: {url}")
+            parts.append(f"source: {source}")
+            if snippet:
+                parts.append(f"snippet: {snippet[:2000]}")
+            if authors:
+                parts.append(f"authors: {', '.join(str(a) for a in authors[:20])}")
+            if published:
+                parts.append(f"published: {published}")
+            if doi:
+                parts.append(f"doi: {doi}")
+            if citation_count is not None:
+                parts.append(f"citations: {citation_count}")
+
+            payload_text = "\n".join(parts)
+
+            import time as _time
+
+            url_hash = url_hash if 'url_hash' in dir() else url[:16]
+            finding_id_str = f"acad-{url_hash[:20]}"
+            if sprint_id:
+                finding_id_str = f"{sprint_id[:12]}-{url_hash[:16]}"
+
+            finding = CanonicalFinding(
+                finding_id=finding_id_str,
+                source_type="academic_search",
+                confidence=0.75,
+                query=query[:256] if query else "",
+                ts=_time.time(),
+                payload_text=payload_text if 'payload_text' in dir() else "",
+                provenance=(
+                    f"source:{source}",
+                    f"url:{url[:200]}",
+                    f"doi:{doi}" if doi else "doi:null",
+                ),
+            )
+            candidates.append(finding)
+
+        except Exception:
+            continue
+
+    return tuple(candidates), tuple(rejections), {}

@@ -152,6 +152,16 @@ class AcquisitionLane:
     BLOCKCHAIN = "BLOCKCHAIN"
     STEALTH = "STEALTH"
     PIVOT_EXECUTOR = "PIVOT_EXECUTOR"
+    ACADEMIC = "ACADEMIC"
+
+
+# Valid research/academic/geopolitical profiles that enable ACADEMIC lane
+_ACADEMIC_PROFILES = frozenset({"research", "academic", "geopolitical"})
+
+
+def is_academic_profile(profile: str) -> bool:
+    """Return True if profile enables the ACADEMIC acquisition lane."""
+    return profile in _ACADEMIC_PROFILES
 
 
 class AcquisitionProfile:
@@ -1969,12 +1979,6 @@ def build_acquisition_plan(
     _input_profile = acquisition_profile
     if acquisition_profile == "nonfeed_diagnostic180":
         acquisition_profile = "nonfeed_diagnostic"
-    elif acquisition_profile not in ("default", "nonfeed_diagnostic") and acquisition_profile:
-        import os
-        _orig = acquisition_profile
-        acquisition_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", "default")
-        # Record unknown profile signal via nonfeed_plan_debug disabled_reasons
-        # (applied in _build_plan_impl path; fail-soft elsewhere)
     # F216B: Fall back to env var if not explicitly passed
     if acquisition_profile == "default":
         import os
@@ -2195,6 +2199,24 @@ def _build_plan_impl(
             timeout_s=15,
             concurrency=base_conc + 1,
             risk_level=RiskLevel.LOW,
+        )
+    )
+
+    # ── ACADEMIC ───────────────────────────────────────────────────────────
+    # R9: Optional lane — enabled only for research/academic/geopolitical profiles.
+    # NOT enabled for default domain/IP/infrastructure queries.
+    academic_enabled = is_academic_profile(acquisition_profile) and not hardware_critical
+    plans.append(
+        AcquisitionLanePlan(
+            lane=AcquisitionLane.ACADEMIC,
+            enabled=academic_enabled,
+            reason="academic_profile"
+            if academic_enabled
+            else ("hardware_critical" if hardware_critical else "non_academic_profile"),
+            max_items=10,  # hard cap 10
+            timeout_s=45,
+            concurrency=1,
+            risk_level=RiskLevel.MEDIUM,
         )
     )
 
@@ -2654,6 +2676,91 @@ async def run_enabled_acquisition_lanes(
                 passive_dns_raw_count=0,
             )
 
+    async def _run_academic_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run academic search lane — R9: bounded, research-profile-only, no query expansion."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.academic_search import (
+                    AcademicSearchEngine,
+                    SearchResult,
+                )
+                from hledac.universal.runtime.source_finding_bridge import (
+                    academic_results_to_findings,
+                )
+
+                # R9: enable_expansion=False in sprint path (no LLM-based expansion)
+                engine = AcademicSearchEngine(enable_expansion=False)
+                try:
+                    result = await engine.search(
+                        query,
+                        max_results=plan.max_items,
+                        sources=["arxiv", "crossref"],
+                    )
+                finally:
+                    await engine.cleanup()
+
+                # Convert SearchResult list to CanonicalFinding candidates
+                search_results = [
+                    r for r in result.deduplicated_results
+                    if isinstance(r, SearchResult)
+                ]
+                candidates, rejections, _telemetry = academic_results_to_findings(
+                    search_results, query, sprint_id=f"academic-{int(time.time())}"
+                )
+                candidate_findings = tuple(candidates)
+                rejection_reasons = tuple(rejections)
+                rejected_count = len(rejections)
+                sample_rejections = tuple(rejections[:5])
+
+                accepted = 0
+                if candidate_findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(
+                                list(candidate_findings)
+                            )
+                            accepted = sum(
+                                1 for r in ingest_results
+                                if isinstance(r, dict) and r.get("accepted")
+                            )
+                        except Exception:
+                            pass  # fail-soft
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.ACADEMIC,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(search_results),
+                    duration_s=time.monotonic() - start,
+                    source_family="academic",
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
+                )
+        except asyncio.CancelledError:
+            raise  # GHOST_INVARIANTS I6: re-raise CancelledError
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.ACADEMIC,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="academic",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.ACADEMIC,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="academic",
+            )
+
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
         """Run blockchain forensics lane."""
         start = time.monotonic()
@@ -2735,6 +2842,7 @@ async def run_enabled_acquisition_lanes(
         AcquisitionLane.PASSIVE_DNS: _run_pdns_lane,
         AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane,
         AcquisitionLane.STEALTH: _stealth_never_run,
+        AcquisitionLane.ACADEMIC: _run_academic_lane,
     }
 
     for plan in snapshot.plans:
@@ -2805,6 +2913,7 @@ _LANE_TO_FAMILY: dict[str, str] = {
     AcquisitionLane.BLOCKCHAIN: "blockchain",
     AcquisitionLane.STEALTH: "stealth",
     AcquisitionLane.PIVOT_EXECUTOR: "pivot",
+    AcquisitionLane.ACADEMIC: "academic",
 }
 
 

@@ -76,28 +76,32 @@ def maximal_marginal_relevance(
     selected: List[int] = []
     remaining = set(range(len(candidate_vectors)))
 
+    # Pre-normalize all candidates into a matrix (vectorized)
+    cand_matrix = np.stack(cand_norms, axis=0) if cand_norms else np.array([])
+
     for _ in range(top_k):
         if not remaining:
             break
 
-        mmr_scores = []
-        for idx in remaining:
-            # Relevance: cosine similarity to query
-            relevance = float(np.dot(cand_norms[idx], query_norm))
+        remaining_list = list(remaining)
+        cand_subset = cand_matrix[remaining_list]
 
-            # Diversity: max similarity to already selected
-            max_diversity = 0.0
-            if selected:
-                selected_vectors = cand_matrix[selected]
-                similarities = np.dot(selected_vectors, cand_norms[idx])
-                max_diversity = float(np.max(similarities))
+        # Relevance: cosine similarity to query — vectorized
+        relevances = np.dot(cand_subset, query_norm)
 
-            # MMR score
-            mmr = lambda_param * relevance - (1 - lambda_param) * max_diversity
-            mmr_scores.append((idx, mmr))
+        # Diversity: max similarity to already selected — vectorized
+        if selected:
+            selected_matrix = cand_matrix[selected]
+            diversity = np.max(np.dot(selected_matrix, cand_subset.T), axis=0)
+        else:
+            diversity = np.zeros(len(remaining_list))
 
-        # Select candidate with highest MMR score
-        best_idx, best_score = max(mmr_scores, key=lambda x: x[1])
+        # MMR score per candidate — fully vectorized
+        mmr_scores = lambda_param * relevances - (1 - lambda_param) * diversity
+
+        # Select best and update state
+        best_local_idx = int(np.argmax(mmr_scores))
+        best_idx = remaining_list[best_local_idx]
         selected.append(best_idx)
         remaining.remove(best_idx)
 

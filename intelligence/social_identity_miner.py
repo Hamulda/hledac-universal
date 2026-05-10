@@ -8,7 +8,7 @@ invasive scraping.
 
 GHOST_INVARIANTS enforced:
 - asyncio.gather always with return_exceptions=True
-- _check_gathered() called after every gather
+- gather(return_exceptions=True) results are filtered inline and CancelledError is re-raised
 - asyncio.CancelledError re-raised
 - No blocking calls in event loop
 - Canonical write path: async_ingest_findings_batch()
@@ -24,7 +24,7 @@ import asyncio
 import json
 import re
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -181,7 +181,7 @@ _EMAIL_PATTERNS: re.Pattern[str] = re.compile(
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
 )
 
-# PGP fingerprint patterns
+# PGP fingerprint patterns — defined for future use (PGP extraction not yet wired)
 _PGP_PATTERNS: re.Pattern[str] = re.compile(
     r"\b(?:PGP|GPG)[:\s]*(?:0x)?([A-F0-9]{8,40})\b",
     re.IGNORECASE,
@@ -222,30 +222,7 @@ def _is_url(text: str) -> bool:
     return bool(re.match(r"https?://", text, re.IGNORECASE))
 
 
-# ── Platform URL map (for _build_profile_url) ──────────────────────────────────
-_PLATFORM_PROFILE_URL: dict[str, str] = {
-    "github": "https://github.com/{username}",
-    "twitter": "https://twitter.com/{username}",
-    "linkedin": "https://linkedin.com/in/{username}",
-    "mastodon": "https://mastodon.social/@{username}",
-    "keybase": "https://keybase.io/{username}",
-    "gitlab": "https://gitlab.com/{username}",
-    "hackernews": "https://news.ycombinator.com/user?id={username}",
-    "reddit": "https://www.reddit.com/user/{username}",
-    "youtube": "https://youtube.com/@{username}",
-    "facebook": "https://www.facebook.com/{username}",
-    # R7: new platforms
-    "telegram": "https://t.me/{username}",
-    "matrix": "https://matrix.to/#/{username}",
-    "medium": "https://medium.com/@{username}",
-    "substack": "https://{username}.substack.com/",
-    "npmjs": "https://www.npmjs.com/~{username}",
-    "pypi": "https://pypi.org/user/{username}",
-    "huggingface": "https://huggingface.co/{username}",
-    "github_gist": "https://gist.github.com/{username}",
-    "gitlab_selfhosted": "https://{platform_host}/u/{username}",
-    # discord_invite is NOT a person identity — no profile URL generated
-}
+
 class SocialIdentityMiner:
     """
     Deterministic social identity facet miner.
@@ -365,8 +342,10 @@ class SocialIdentityMiner:
                     pass
             gathered = []
 
-        # Collect valid facets
+        # Collect valid facets — re-raise CancelledError per GHOST_INVARIANTS
         for result in gathered:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if isinstance(result, Exception):
                 self._stats["skipped"] += 1
                 continue
@@ -552,8 +531,8 @@ class SocialIdentityMiner:
 
     def _compute_confidence(
         self,
-        platform: str,
-        username: str,
+        _platform: str,
+        _username: str,
         linked_domains: list[str],
         linked_emails: list[str],
     ) -> float:

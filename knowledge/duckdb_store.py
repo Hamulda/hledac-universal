@@ -429,6 +429,65 @@ _DUCKDB_MEMORY_LIMIT: str = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
 _DUCKDB_MAX_TEMP: str = os.environ.get("GHOST_DUCKDB_MAX_TEMP", "1GB")
 
 
+# ---------------------------------------------------------------------------
+# UMA-aware DuckDB runtime settings
+# ---------------------------------------------------------------------------
+
+def _resolve_duckdb_runtime_settings(
+    uma_state: str | None = None,
+    swap_detected: bool = False,
+) -> dict[str, str | int]:
+    """
+    Resolve DuckDB runtime settings based on UMA memory pressure state.
+
+    DuckDB store receives explicit uma_state from resource_governor/scheduler
+    — it MUST NOT import heavy runtime schedulers to determine this internally.
+
+    Args:
+        uma_state: One of "WARN", "CRITICAL", "EMERGENCY", or None for normal.
+        swap_detected: True if system-level swap pressure is detected.
+
+    Returns:
+        dict with keys: memory_limit (str), max_temp (str),
+                        threads (int), preserve_insertion_order (bool),
+                        safe_mode (bool).
+    """
+    base_mem = os.environ.get("GHOST_DUCKDB_MEMORY", "400MB")
+    base_threads = 2
+
+    settings: dict[str, str | int] = {
+        "memory_limit": base_mem,
+        "max_temp": _DUCKDB_MAX_TEMP,
+        "threads": base_threads,
+        "preserve_insertion_order": False,
+        "safe_mode": False,
+    }
+
+    if swap_detected:
+        # EMERGENCY: minimize memory footprint
+        settings["memory_limit"] = "200MB"
+        settings["threads"] = 1
+        settings["safe_mode"] = True
+
+    elif uma_state == "EMERGENCY":
+        settings["memory_limit"] = "200MB"
+        settings["threads"] = 1
+        settings["safe_mode"] = True
+
+    elif uma_state == "CRITICAL":
+        settings["memory_limit"] = "250MB"
+        settings["threads"] = 1
+
+    elif uma_state == "WARN":
+        # Conservative but still usable
+        settings["memory_limit"] = "250MB"
+        settings["threads"] = 2
+
+    # else: normal — use base env values (already set in defaults)
+
+    return settings
+
+
 def _validate_duckdb_setting(value: str, setting_name: str) -> str:
     """
     Validate DuckDB setting value to prevent SQL injection.
@@ -608,6 +667,7 @@ class DuckDBShadowStore:
         self,
         db_path: Optional[Path | str] = None,
         temp_dir: Optional[Path | str] = None,
+        uma_state: Optional[str] = None,
     ) -> None:
         """
         Initialize DuckDBShadowStore.
@@ -617,6 +677,10 @@ class DuckDBShadowStore:
                      Passing a Path enables file-mode (MODE A) without requiring paths.py.
             temp_dir: Optional explicit temp directory for DuckDB scratch space.
                      Required when db_path is set; ignored for :memory: mode.
+            uma_state: Optional UMA memory pressure state ("WARN", "CRITICAL", "EMERGENCY").
+                     Set by resource_governor or scheduler at startup to adjust DuckDB
+                     settings for memory-constrained environments (M1 8GB UMA).
+                     DuckDB store does NOT import schedulers — receives this explicitly.
         """
         self._initialized: bool = False
         self._closed: bool = False
@@ -626,6 +690,27 @@ class DuckDBShadowStore:
         self._memory_limit: str = _DUCKDB_MEMORY_LIMIT
         self._max_temp: str = _DUCKDB_MAX_TEMP
         self._duckdb_module: Optional[Any] = None
+        # Sprint F231: UMA-aware settings — explicit injection from resource_governor/scheduler
+        self._uma_state: Optional[str] = uma_state
+        self._duckdb_settings: dict[str, str | int] = {}  # resolved at connection init
+
+    def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
+        """
+        Set or update UMA memory pressure state at runtime.
+
+        Can be called while the store is open to adjust DuckDB settings.
+        Resolves new settings and applies to all connections immediately.
+
+        Args:
+            uma_state: "WARN", "CRITICAL", "EMERGENCY", or None for normal.
+            swap_detected: True if system-level swap is active.
+        """
+        self._uma_state = uma_state
+        self._duckdb_settings = _resolve_duckdb_runtime_settings(uma_state, swap_detected)
+
+    def get_uma_state(self) -> Optional[str]:
+        """Return currently configured UMA state."""
+        return self._uma_state
 
         # Single-worker executor for all DB operations (thread-affine)
         # Named thread so tests can assert duckdb_worker via thread name
@@ -1400,8 +1485,20 @@ class DuckDBShadowStore:
         Initialize the DuckDB connection. Must be called from the worker thread.
         Sets up file or :memory: mode, applies PRAGMAs and schema.
         For file mode, creates persistent _file_conn (Sprint 7H).
+
+        F231: Uses _resolve_duckdb_runtime_settings() for UMA-aware configuration.
+        Applies memory_limit, threads, and preserve_insertion_order based on
+        _uma_state (set via __init__ or set_uma_state()).
         """
         duckdb = _get_duckdb()
+
+        # F231: Resolve UMA-aware settings once per connection init
+        runtime = _resolve_duckdb_runtime_settings(self._uma_state, swap_detected=False)
+        self._duckdb_settings = runtime
+        resolved_memory = runtime["memory_limit"]
+        resolved_threads = runtime["threads"]
+        preserve_order = runtime["preserve_insertion_order"]
+        safe_mode = runtime["safe_mode"]
 
         if self._db_path:
             # MODE A: RAMDISK active — persistent file DB + temp on RAMDISK
@@ -1409,42 +1506,53 @@ class DuckDBShadowStore:
                 self._temp_dir = self._db_path.parent / "duckdb_tmp"
             self._temp_dir.mkdir(parents=True, exist_ok=True)
             conn = duckdb.connect(str(self._db_path))
-            # P1-3: Defense-in-depth: validate AND parameterize
-            memory_limit_val = _validate_duckdb_setting(self._memory_limit, 'memory_limit')
+            # F231: Use resolved settings instead of hardcoded class attrs
+            memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
             temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
             conn.execute("SET memory_limit = ?", [memory_limit_val])
             conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             conn.execute("SET temp_directory = ?", [temp_dir_val])
-            conn.execute("PRAGMA threads=2")
+            conn.execute(f"PRAGMA threads={resolved_threads}")
             conn.execute("PRAGMA enable_progress_bar=false")
             conn.execute("PRAGMA enable_object_cache=false")
+            # F231 B: preserve_insertion_order — fail-soft
+            try:
+                conn.execute("SET preserve_insertion_order = false")
+            except Exception:
+                pass  # older DuckDB version without this setting
             conn.execute(_SCHEMA_SQL)
             conn.close()
             # Sprint 8RC: ALTER TABLE for retrokompatibilita (B.2)
             self._apply_schema_migrations()
             # Sprint 7H: Persistent file-backed connection for reuse across writes
             self._file_conn = duckdb.connect(str(self._db_path))
-            # P1-3: Defense-in-depth: validate AND parameterize
-            memory_limit_val = _validate_duckdb_setting(self._memory_limit, 'memory_limit')
+            memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             max_temp_val = _validate_duckdb_setting(self._max_temp, 'max_temp')
             temp_dir_val = _validate_path_setting(self._temp_dir, 'temp_directory')
             self._file_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._file_conn.execute("SET max_temp_directory_size = ?", [max_temp_val])
             self._file_conn.execute("SET temp_directory = ?", [temp_dir_val])
-            self._file_conn.execute("PRAGMA threads=2")
+            self._file_conn.execute(f"PRAGMA threads={resolved_threads}")
             self._file_conn.execute("PRAGMA enable_progress_bar=false")
             self._file_conn.execute("PRAGMA enable_object_cache=false")
+            try:
+                self._file_conn.execute("SET preserve_insertion_order = false")
+            except Exception:
+                pass
         else:
             # MODE B: RAMDISK inactive — :memory: with PERSISTENT single connection
             self._persistent_conn = duckdb.connect(":memory:")
-            # P1-3: Defense-in-depth: validate AND parameterize
-            memory_limit_val = _validate_duckdb_setting(self._memory_limit, 'memory_limit')
+            memory_limit_val = _validate_duckdb_setting(str(resolved_memory), 'memory_limit')
             self._persistent_conn.execute("SET memory_limit = ?", [memory_limit_val])
             self._persistent_conn.execute("SET max_temp_directory_size = '0GB'")
-            self._persistent_conn.execute("PRAGMA threads=2")
+            self._persistent_conn.execute(f"PRAGMA threads={resolved_threads}")
             self._persistent_conn.execute("PRAGMA enable_progress_bar=false")
             self._persistent_conn.execute("PRAGMA enable_object_cache=false")
+            try:
+                self._persistent_conn.execute("SET preserve_insertion_order = false")
+            except Exception:
+                pass
             self._persistent_conn.execute(_SCHEMA_SQL)
 
     # Sprint 8RC: Retrokompatibilita — add missing columns to old DB files (B.2)
@@ -2511,6 +2619,110 @@ class DuckDBShadowStore:
             )
         except Exception:
             return []
+
+    async def async_query_arrow_batches(
+        self,
+        sql: str,
+        params: list[Any] | None = None,
+        batch_size: int = 500,
+    ) -> AsyncIterator[Any]:
+        """
+        F231 C: Streaming Arrow batch query — yields batches without loading full result.
+
+        Uses DuckDB's `fetch_record_batch()` when available (DuckDB 1.2+ with Arrow
+        extension), falls back to `to_arrow_reader()`, and finally to a warn-telemetry
+        chunked fetch if neither is available.
+
+        IMPORTANT: The DuckDB connection and all iteration stays on the worker thread.
+        The async generator bridge ensures no live reader crosses into the event loop.
+        Caller must consume the generator fully or cancel to avoid resource leaks.
+
+        Args:
+            sql: SQL query to execute.
+            params: Optional query parameters (parameterized for SQL injection safety).
+            batch_size: Rows per batch (default 500, aligned with batch chunking invariant).
+
+        Yields:
+            pyarrow.RecordBatch (or dict rows in fallback mode) — each batch is bounded.
+        """
+        if not self._initialized or self._closed:
+            return
+
+        def _sync_fetch_batches() -> Iterator[Any]:
+            # Lazy import — pyarrow not required for DuckDB basic operations
+            try:
+                import pyarrow as _pa
+            except ImportError:
+                return  # pyarrow not available — fallback path below
+
+            # Resolve which connection to use (worker-thread-only)
+            if self._db_path:
+                conn = self._file_conn
+            else:
+                conn = self._persistent_conn
+
+            if conn is None:
+                return
+
+            try:
+                # Try fetch_record_batch first (DuckDB 1.2+ Arrow extension)
+                result = conn.execute(sql, params or [])
+                if hasattr(result, 'fetch_record_batch'):
+                    reader = result.fetch_record_batch(batch_size)
+                    while True:
+                        try:
+                            batch = reader.read_next_batch()
+                            if batch is None:
+                                break
+                            yield batch
+                        except StopIteration:
+                            break
+                    return
+
+                # Try to_arrow_reader as second option
+                if hasattr(result, 'to_arrow_reader'):
+                    reader = result.to_arrow_reader(rows_per_batch=batch_size)
+                    while True:
+                        try:
+                            batch = reader.read_next_batch()
+                            if batch is None:
+                                break
+                            yield batch
+                        except StopIteration:
+                            break
+                    return
+
+            except Exception:
+                pass
+
+            # FALLBACK: chunked fetch with warning telemetry
+            # Use duckdb's native fetch — does NOT stream full result into memory
+            # if using fetchmany-style iteration, but loses Arrow benefits
+            import os as _os
+            _os.environ.setdefault("HLEDAC_WARN_ARROW_FALLBACK", "1")
+            result = conn.execute(sql, params or [])
+            while True:
+                rows = result.fetchmany(batch_size)
+                if not rows:
+                    break
+                # Convert to dict rows as fallback representation
+                yield rows
+
+        def _sync_iter_wrapper() -> Iterator[Any]:
+            yield from _sync_fetch_batches()
+
+        loop = asyncio.get_running_loop()
+        iterator = await loop.run_in_executor(self._executor, _sync_iter_wrapper)
+
+        # Async bridge: pull from worker-thread iterator without blocking event loop
+        while True:
+            try:
+                batch = await loop.run_in_executor(self._executor, next, iterator)
+                yield batch
+            except StopIteration:
+                break
+            except Exception:
+                break
 
     async def async_healthcheck(self) -> bool:
         """

@@ -9,11 +9,13 @@ import os
 import psutil
 import logging
 import json
-import time
+import subprocess
+import time as time_module
 from collections import deque
-from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
+from typing import Dict, List, Any, Optional, Tuple
+
 import yaml
 import numpy as np
 from datetime import datetime, timedelta
@@ -26,6 +28,119 @@ logger = logging.getLogger(__name__)
 
 # Sprint F206X: Bounded pending requests to prevent memory exhaustion
 MAX_PENDING_RESOURCE_REQUESTS = 1000
+
+# =============================================================================
+# BLOCKING I/O OFFLOAD SEAM
+# =============================================================================
+# All blocking system calls (psutil, system_profiler) are offloaded from async
+# hot paths via asyncio.to_thread. This sampler does NOT own Uma policy.
+
+
+@dataclass(slots=True, frozen=True)
+class CapacitySnapshot:
+    """Immutable snapshot of resource capacity with TTL tracking."""
+    cpu_percent: float
+    gpu_memory: float
+    gpu_usage: float
+    metal_available: bool
+    sampled_at_monotonic: float
+
+
+class _ResourceCapacitySampler:
+    """
+    Async-owned resource capacity sampler with TTL caching.
+
+    Offloads blocking psutil.cpu_percent(interval=1) and system_profiler
+    calls from async hot paths via asyncio.to_thread.
+    """
+
+    # TTL for CPU/quick metrics: 2-5s is reasonable for load balancing
+    _CPU_TTL_S = 3.0
+    # TTL for Metal availability: changes rarely (sprint lifetime ~300s+)
+    _METAL_TTL_S = 300.0
+
+    def __init__(self) -> None:
+        self._cpu_lock = asyncio.Lock()
+        self._metal_lock = asyncio.Lock()
+        self._cpu_cache: Optional[CapacitySnapshot] = None
+        self._metal_cache: Optional[bool] = None
+        self._metal_cache_time: float = 0.0
+
+    def _get_cpu_sync(self) -> Tuple[float, float, float]:
+        """
+        Blocking CPU/memory read via psutil.
+        MUST be called via asyncio.to_thread, never directly from event loop.
+        Returns (cpu_percent, gpu_memory, gpu_usage).
+        Uses interval=0.0 for non-blocking CPU measurement.
+        """
+        cpu_percent = psutil.cpu_percent(interval=0.0)
+        memory = psutil.virtual_memory()
+        gpu_memory = 0.0
+        gpu_usage = cpu_percent * 0.7  # Rough estimate
+        return cpu_percent, gpu_memory, gpu_usage
+
+    def _get_metal_sync(self) -> bool:
+        """
+        Blocking system_profiler call for Metal availability.
+        MUST be called via asyncio.to_thread.
+        """
+        try:
+            result = subprocess.run(
+                ['system_profiler', 'SPDisplaysDataType'],
+                capture_output=True, text=True, timeout=5
+            )
+            return 'Metal' in result.stdout
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return False
+
+    async def sample(self) -> CapacitySnapshot:
+        """
+        Get capacity snapshot with per-field TTL caching.
+
+        CPU/performance metrics: short TTL (3s).
+        Metal availability: long TTL (300s) since it rarely changes.
+        All blocking I/O offloaded via asyncio.to_thread.
+        """
+        now = time_module.monotonic()
+        cached = self._cpu_cache
+
+        # Fast path: fresh CPU cache without lock
+        if cached is not None and (now - cached.sampled_at_monotonic) < self._CPU_TTL_S:
+            return cached
+
+        # Slow path: CPU sampling with lock
+        async with self._cpu_lock:
+            # Double-check after acquiring lock
+            now = time_module.monotonic()
+            if self._cpu_cache is not None and (now - self._cpu_cache.sampled_at_monotonic) < self._CPU_TTL_S:
+                return self._cpu_cache
+
+            cpu_percent, gpu_memory, gpu_usage = await asyncio.to_thread(self._get_cpu_sync)
+            metal_available = await self._get_metal_with_cache(now)
+
+            self._cpu_cache = CapacitySnapshot(
+                cpu_percent=cpu_percent,
+                gpu_memory=gpu_memory,
+                gpu_usage=gpu_usage,
+                metal_available=metal_available,
+                sampled_at_monotonic=now
+            )
+            return self._cpu_cache
+
+    async def _get_metal_with_cache(self, now: float) -> bool:
+        """Get Metal availability with long TTL caching."""
+        if self._metal_cache is not None and (now - self._metal_cache_time) < self._METAL_TTL_S:
+            return self._metal_cache
+
+        async with self._metal_lock:
+            # Double-check after acquiring lock
+            if self._metal_cache is not None and (now - self._metal_cache_time) < self._METAL_TTL_S:
+                return self._metal_cache
+
+            metal_available = await asyncio.to_thread(self._get_metal_sync)
+            self._metal_cache = metal_available
+            self._metal_cache_time = now
+            return metal_available
 
 class ResourceType(Enum):
     """Resource types for allocation"""
@@ -105,6 +220,8 @@ class IntelligentResourceAllocator:
             'unified_memory': True,
             'neural_engine': True
         }
+        # Resource capacity sampler: offloads blocking I/O from async hot paths
+        self._capacity_sampler = _ResourceCapacitySampler()
 
         # Scaling threshnews
         self.scale_up_threshnew = self.config.get('scaling', {}).get('scale_up_threshnew', 0.8)
@@ -192,45 +309,30 @@ class IntelligentResourceAllocator:
         return self._scaler
 
     async def get_current_capacity(self) -> ResourceCapacity:
-        """Get current system resource capacity and usage"""
+        """
+        Get current system resource capacity and usage.
+
+        Offloads blocking psutil/system_profiler calls via _ResourceCapacitySampler.
+        Fail-soft: returns default ResourceCapacity on any error.
+        """
         try:
-            # CPU information
+            snapshot = await self._capacity_sampler.sample()
+
             cpu_count = psutil.cpu_count()
-            cpu_percent = psutil.cpu_percent(interval=1)
-
-            # Memory information
             memory = psutil.virtual_memory()
-
-            # GPU information (M1 specific)
-            gpu_memory = 0.0
-            gpu_usage = 0.0
-            try:
-                import subprocess
-                result = subprocess.run(['system_profiler', 'SPDisplaysDataType'],
-                                        capture_output=True, text=True)
-                if 'Metal' in result.stdout:
-                    # Estimate GPU memory based on unified memory
-                    gpu_memory = self.config['resources']['max_gpu_memory_gb']
-                    gpu_usage = cpu_percent * 0.7  # Rough estimate
-            except Exception as e:
-                logger.warning(f"Could not get GPU info: {e}")
-
-            # Storage information
             disk = psutil.disk_usage('/')
-
-            # Network information
             network = psutil.net_io_counters()
             network_bandwidth = 1000.0  # Default to 1Gbps
 
             return ResourceCapacity(
                 cpu_cores=cpu_count,
                 memory_gb=memory.total / (1024**3),
-                gpu_memory=gpu_memory,
+                gpu_memory=snapshot.gpu_memory,
                 storage_gb=disk.total / (1024**3),
                 network_bandwidth=network_bandwidth,
-                cpu_usage=cpu_percent / 100.0,
+                cpu_usage=snapshot.cpu_percent / 100.0,
                 memory_usage=memory.percent / 100.0,
-                gpu_usage=gpu_usage / 100.0
+                gpu_usage=snapshot.gpu_usage / 100.0
             )
         except Exception as e:
             logger.error(f"Error getting resource capacity: {e}")
@@ -623,40 +725,94 @@ class ResourceAwareScheduler:
     def __init__(self, allocator: IntelligentResourceAllocator):
         self.allocator = allocator
         self.task_queue = []
-        self.running_tasks = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._shutdown_event: asyncio.Event | None = None
+
+    @property
+    def active_task_count(self) -> int:
+        """Number of currently running tasks"""
+        return len(self._tasks)
 
     async def schedule_task(self,
                         task_id: str,
                         task_func: callable,
                         resource_request: ResourceRequest) -> bool:
         """Schedule a task with resource requirements"""
+        # Fail if shutdown is in progress
+        if self._shutdown_event is not None and self._shutdown_event.is_set():
+            logger.warning(f"Cannot schedule task {task_id}: shutdown in progress")
+            return False
+
         logger.info(f"Scheduling task: {task_id}")
 
         # Request resources
-        if await self.allocator.request_resources(resource_request):
-            # Execute task
-            asyncio.create_task(self._execute_task(task_id, task_func), name=f"resource_allocator:execute_task:{task_id}")
-            return True
-        else:
+        if not await self.allocator.request_resources(resource_request):
             logger.error(f"Failed to schedule task {task_id}: insufficient resources")
             return False
+
+        # Create task with done_callback for cleanup
+        task = asyncio.create_task(
+            self._execute_task(task_id, task_func),
+            name=f"resource_allocator:execute_task:{task_id}"
+        )
+
+        def done_callback(t: asyncio.Task) -> None:
+            # Remove from registry
+            self._tasks.pop(task_id, None)
+            # Log unexpected exceptions (not CancelledError)
+            if not t.cancelled():
+                exc = t.exception()
+                if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                    logger.error(f"Task {task_id} raised {exc!r}")
+
+        task.add_done_callback(done_callback)
+        self._tasks[task_id] = task
+        return True
 
     async def _execute_task(self, task_id: str, task_func: callable):
         """Execute a task with allocated resources"""
         try:
             logger.info(f"Executing task {task_id}")
-
-            # Execute the task
             result = await task_func()
-
             logger.info(f"Task {task_id} completed successfully")
-
+        except asyncio.CancelledError:
+            # Re-raise CancelledError after cleanup
+            logger.info(f"Task {task_id} cancelled")
+            raise
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}")
-
         finally:
-            # Release resources
+            # Always release resources
             await self.allocator.release_resources(task_id)
+
+    async def shutdown(self, timeout: float = 30.0) -> None:
+        """Graceful shutdown - wait for tasks to complete"""
+        if self._shutdown_event is None:
+            self._shutdown_event = asyncio.Event()
+        self._shutdown_event.set()
+
+        if not self._tasks:
+            return
+
+        logger.info(f"Shutting down scheduler, waiting for {len(self._tasks)} tasks")
+        done, pending = await asyncio.wait(
+            self._tasks.values(),
+            timeout=timeout,
+            return_when=asyncio.ALL_COMPLETED
+        )
+
+        # Note: exceptions already logged by done_callback — no need to log again
+
+        # Cancel any still-pending tasks
+        if pending:
+            logger.warning(f"Cancelling {len(pending)} remaining tasks")
+            for task in pending:
+                task.cancel()
+            # Drain cancelled tasks
+            await asyncio.wait(pending, timeout=5.0, return_when=asyncio.ALL_COMPLETED)
+
+        # Clean up registry
+        self._tasks.clear()
 
 # Parallel execution optimizer
 class ParallelExecutionOptimizer:

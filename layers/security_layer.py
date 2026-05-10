@@ -14,6 +14,8 @@ and adds integration logic for the universal orchestrator.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import hashlib
 import logging
 from typing import Any, Dict, List, Optional
@@ -83,6 +85,12 @@ class SecurityLayer:
         self._string_obfuscator = None
         self._research_obfuscator = None
         self._secure_destructor = None
+
+        # Dedicated executor for blocking file I/O (avoids event loop blocking)
+        self._file_destroy_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="security_destroy"
+        )
 
         # Unified Audit System
         self._mission_audit: Optional['MissionAudit'] = None  # Forensic mode
@@ -503,18 +511,18 @@ class SecurityLayer:
     def generate_chaff(self, count: Optional[int] = None) -> List[str]:
         """
         Generate chaff queries to mask real research.
-        
+
         Args:
             count: Number of chaff queries (uses config default if None)
-            
+
         Returns:
             List of chaff queries
         """
         if not self.config.enable_chaff_traffic:
             return []
-        
+
         count = count or int(1 / self.config.chaff_ratio) if self.config.chaff_ratio > 0 else 3
-        
+
         if self._research_obfuscator:
             try:
                 chaff = self._research_obfuscator.generate_chaff(count)
@@ -522,7 +530,7 @@ class SecurityLayer:
                 return chaff
             except Exception as e:
                 logger.warning(f"⚠️ Chaff generation failed: {e}")
-        
+
         # Fallback chaff
         fallback_chaff = [
             "weather forecast today",
@@ -536,11 +544,76 @@ class SecurityLayer:
             "book recommendations",
             "time management techniques",
         ]
-        
+
         import random
         chaff = random.sample(fallback_chaff, min(count, len(fallback_chaff)))
         self._chaff_generated += len(chaff)
         return chaff
+
+    # ====================================================================
+    # Secure File Destruction (non-blocking)
+    # ====================================================================
+
+    def _destroy_file_fallback_sync(
+        self,
+        file_path: str,
+        standard: WipeStandard
+    ) -> DestructionResult:
+        """
+        Synchronous fallback for file destruction - runs in ThreadPoolExecutor.
+
+        NOTE: On SSD/APFS, overwrite is best-effort only and does NOT guarantee
+        physical data sanitization. This is not a forensic-grade wipe.
+        Do NOT use "forensic-clean" or similar marketing claims for this fallback.
+
+        Args:
+            file_path: Path to file to destroy
+            standard: Wipe standard (informational - fallback is simple overwrite)
+
+        Returns:
+            DestructionResult with outcome
+        """
+        import os
+        import time as time_module
+
+        try:
+            if os.path.exists(file_path):
+                size = os.path.getsize(file_path)
+
+                # Simple overwrite with random bytes (best-effort on SSD/APFS)
+                with open(file_path, 'wb') as f:
+                    f.write(os.urandom(size))
+
+                # Remove file
+                os.remove(file_path)
+
+                return DestructionResult(
+                    file_path=file_path,
+                    standard=standard,
+                    passes_completed=1,
+                    bytes_overwritten=size,
+                    verification_passed=not os.path.exists(file_path),
+                    timestamp=time_module.time()
+                )
+            else:
+                return DestructionResult(
+                    file_path=file_path,
+                    standard=standard,
+                    passes_completed=0,
+                    bytes_overwritten=0,
+                    verification_passed=False,
+                    timestamp=time_module.time()
+                )
+        except Exception as e:
+            logger.error(f"❌ File destruction fallback failed: {e}")
+            return DestructionResult(
+                file_path=file_path,
+                standard=standard,
+                passes_completed=0,
+                bytes_overwritten=0,
+                verification_passed=False,
+                timestamp=time_module.time()
+            )
     
     async def destroy_file(
         self,
@@ -549,31 +622,31 @@ class SecurityLayer:
     ) -> DestructionResult:
         """
         Securely destroy a file.
-        
+
         Args:
             file_path: Path to file
             standard: Wipe standard (uses config default if None)
-            
+
         Returns:
             DestructionResult
         """
         standard = standard or WipeStandard(self.config.wipe_standard)
         self._destruction_count += 1
-        
+
         logger.info(f"🗑️ Securely destroying file: {file_path} (standard: {standard.value})")
-        
+
         try:
             if self._secure_destructor:
                 # Use real SecureDestructor
                 result = await self._secure_destructor.destroy_file(file_path)
-                
+
                 # Log to audit chain
                 self.log_action(
                     "file_destruction",
                     file_path.encode(),
                     {"standard": standard.value, "passes": result.passes if hasattr(result, 'passes') else 1}
                 )
-                
+
                 return DestructionResult(
                     file_path=file_path,
                     standard=standard,
@@ -583,45 +656,24 @@ class SecurityLayer:
                     timestamp=__import__('time').time()
                 )
             else:
-                # Fallback: simple overwrite
-                import os
-                import secrets
-                
-                if os.path.exists(file_path):
-                    size = os.path.getsize(file_path)
-                    
-                    # Overwrite with random data
-                    with open(file_path, 'wb') as f:
-                        f.write(secrets.token_bytes(size))
-                    
-                    # Delete
-                    os.remove(file_path)
-                    
-                    # Log to audit chain
-                    self.log_action(
-                        "file_destruction",
-                        file_path.encode(),
-                        {"standard": standard.value, "fallback": True}
-                    )
-                    
-                    return DestructionResult(
-                        file_path=file_path,
-                        standard=standard,
-                        passes_completed=1,
-                        bytes_overwritten=size,
-                        verification_passed=not os.path.exists(file_path),
-                        timestamp=__import__('time').time()
-                    )
-                else:
-                    return DestructionResult(
-                        file_path=file_path,
-                        standard=standard,
-                        passes_completed=0,
-                        bytes_overwritten=0,
-                        verification_passed=False,
-                        timestamp=__import__('time').time()
-                    )
-                    
+                # Fallback: run sync destruction in thread pool to avoid blocking event loop
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    self._file_destroy_executor,
+                    self._destroy_file_fallback_sync,
+                    file_path,
+                    standard
+                )
+
+                # Log to audit chain
+                self.log_action(
+                    "file_destruction",
+                    file_path.encode(),
+                    {"standard": standard.value, "fallback": True}
+                )
+
+                return result
+
         except Exception as e:
             logger.error(f"❌ File destruction failed: {e}")
             return DestructionResult(
@@ -640,40 +692,73 @@ class SecurityLayer:
     ) -> List[DestructionResult]:
         """
         Securely destroy a directory.
-        
+
         Args:
             dir_path: Path to directory
             recursive: Whether to recursively destroy subdirectories
-            
+
         Returns:
             List of DestructionResults
         """
         logger.info(f"🗑️ Securely destroying directory: {dir_path}")
-        
+
         results = []
-        
+
         try:
             import os
-            
+            import glob
+            # Walk directory in thread pool to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+
             if recursive:
-                for root, dirs, files in os.walk(dir_path, topdown=False):
-                    for file in files:
-                        result = await self.destroy_file(os.path.join(root, file))
-                        results.append(result)
+                # Collect all file paths first (sync in thread pool)
+                def _walk_sync():
+                    file_paths = []
+                    for root, dirs, files in os.walk(dir_path, topdown=False):
+                        for file in files:
+                            file_paths.append(os.path.join(root, file))
+                    return file_paths
+
+                all_files = await loop.run_in_executor(
+                    self._file_destroy_executor,
+                    _walk_sync
+                )
+
+                # Destroy each file via async destroy_file (non-blocking calls)
+                for file_path in all_files:
+                    result = await self.destroy_file(file_path)
+                    results.append(result)
+
+                # Remove directory structure (sync in thread pool)
+                def _remove_dirs_sync():
+                    for root, dirs, files in os.walk(dir_path, topdown=False):
+                        for d in dirs:
+                            os.rmdir(os.path.join(root, d))
+                    if os.path.exists(dir_path):
+                        os.rmdir(dir_path)
+
+                await loop.run_in_executor(
+                    self._file_destroy_executor,
+                    _remove_dirs_sync
+                )
             else:
-                import glob
-                for file in glob.glob(os.path.join(dir_path, "*")):
-                    if os.path.isfile(file):
-                        result = await self.destroy_file(file)
-                        results.append(result)
-            
-            # Remove directory
-            if os.path.exists(dir_path):
-                os.rmdir(dir_path)
-            
+                # Non-recursive: glob and destroy files only
+                def _glob_sync():
+                    import glob
+                    return [f for f in glob.glob(os.path.join(dir_path, "*")) if os.path.isfile(f)]
+
+                files = await loop.run_in_executor(
+                    self._file_destroy_executor,
+                    _glob_sync
+                )
+
+                for file_path in files:
+                    result = await self.destroy_file(file_path)
+                    results.append(result)
+
         except Exception as e:
             logger.error(f"❌ Directory destruction failed: {e}")
-        
+
         return results
     
     def get_statistics(self) -> Dict[str, Any]:
@@ -698,23 +783,28 @@ class SecurityLayer:
         return stats
     
     async def cleanup(self) -> None:
-        """Cleanup resources"""
+        """Cleanup resources - idempotent shutdown of all components."""
         logger.info("🧹 Cleaning up SecurityLayer...")
-        
+
+        # Shutdown file destroy executor (idempotent - shutdown() is safe to call multiple times)
+        if self._file_destroy_executor is not None:
+            self._file_destroy_executor.shutdown(wait=False)
+            self._file_destroy_executor = None
+
         # Cleanup components
         if self._secure_destructor and hasattr(self._secure_destructor, 'cleanup'):
             try:
                 await self._secure_destructor.cleanup()
             except Exception as e:
                 logger.warning(f"⚠️ SecureDestructor cleanup error: {e}")
-        
+
         # Cleanup MissionAudit
         if self._mission_audit and hasattr(self._mission_audit, 'cleanup'):
             try:
                 self._mission_audit.cleanup()
             except Exception as e:
                 logger.warning(f"⚠️ MissionAudit cleanup error: {e}")
-        
+
         logger.info("✅ SecurityLayer cleanup complete")
 
 

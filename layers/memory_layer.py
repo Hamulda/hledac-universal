@@ -23,6 +23,7 @@ Refactored with internal classes for M1 8GB optimization:
 - _MemoryStateManager: System state machine and health monitoring
 - _StorageCoordinator: RAM disk and shared memory management
 - _StealthMemoryManager: Entropy masking for stealth operations
+- _ThermalSampler: Offload-only thermal sampling (not canonical Uma owner)
 """
 
 from __future__ import annotations
@@ -31,7 +32,9 @@ import asyncio
 import gc
 import logging
 import subprocess
+import time
 from collections import deque
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 # Sprint 5N: Lazy MLX import - MLX is optional for M1 compatibility
@@ -58,6 +61,84 @@ from hledac.universal.project_types import (
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# THERMAL SAMPLING OFFLOAD SEAM (not canonical Uma owner)
+# =============================================================================
+# This sampler is a pure sampling/offload layer — it does NOT own Uma policy.
+# Canonical M1 Uma governance remains in core/resource_governor.py.
+# This class only offloads blocking thermal reads from async hot paths.
+
+
+@dataclass(slots=True, frozen=True)
+class ThermalSnapshot:
+    """Immutable snapshot of thermal reading with TTL tracking."""
+    celsius: Optional[float]
+    sampled_at_monotonic: float  # time.monotonic() at sample time
+
+
+class _ThermalSampler:
+    """
+    Async-owned thermal sampler with TTL caching and fail-soft recovery.
+
+    Offloads blocking ioreg subprocess calls from async hot paths via
+    asyncio.to_thread. Not the canonical Uma owner — sampling only.
+    """
+
+    def __init__(self, ttl_s: float = 10.0) -> None:
+        self._ttl_s = ttl_s
+        self._lock = asyncio.Lock()
+        self._cache: Optional[ThermalSnapshot] = None
+
+    def _read_temperature_sync(self) -> Optional[float]:
+        """
+        Blocking thermal read via ioreg (M1 MacBook Air).
+        MUST be called via asyncio.to_thread, never directly from event loop.
+        Returns None on any error (fail-soft).
+        """
+        try:
+            result = subprocess.run(
+                ["ioreg", "-r", "-c", "AppleSmartBattery", "-w0"],
+                capture_output=True, text=True, timeout=1
+            )
+            # Current implementation returns None — structured for future parsing
+            return None
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return None
+
+    async def sample(self) -> Optional[float]:
+        """
+        Get temperature with TTL caching and double-check locking.
+
+        Fast path: returns cached value if fresh (within TTL).
+        Slow path: acquires lock, double-checks freshness, then samples.
+        All blocking I/O offloaded via asyncio.to_thread.
+        """
+        now = time.monotonic()
+        cached = self._cache
+
+        # Fast path: fresh cache without lock
+        if cached is not None and (now - cached.sampled_at_monotonic) < self._ttl_s:
+            return cached.celsius
+
+        # Slow path: double-check with lock
+        async with self._lock:
+            # Double-check after acquiring lock (another coroutine may have updated)
+            now = time.monotonic()
+            if self._cache is not None and (now - self._cache.sampled_at_monotonic) < self._ttl_s:
+                return self._cache.celsius
+
+            # Sample via thread offload
+            celsius = await asyncio.to_thread(self._read_temperature_sync)
+
+            # Fail-soft: preserve last known value if sample failed
+            if celsius is None and self._cache is not None:
+                cached_age = now - self._cache.sampled_at_monotonic
+                if cached_age < self._ttl_s * 2:  # Allow stale window
+                    celsius = self._cache.celsius
+
+            self._cache = ThermalSnapshot(celsius=celsius, sampled_at_monotonic=now)
+            return celsius
+
 
 # =============================================================================
 # INTERNAL MEMORY MANAGEMENT CLASSES (M1 8GB Optimized)
@@ -83,6 +164,8 @@ class _MemoryStateManager:
         self._running = False
         self._state_change_callbacks: List[Callable[[SystemState, SystemState], None]] = []
         self._state_transitions: Dict[str, int] = {s.value: 0 for s in SystemState}
+        # Thermal sampler: offload-only, not canonical Uma owner
+        self._thermal_sampler = _ThermalSampler(ttl_s=10.0)
 
     async def start_monitoring(self) -> None:
         """Start background health monitoring."""
@@ -153,15 +236,13 @@ class _MemoryStateManager:
             )
 
     async def _get_temperature(self) -> Optional[float]:
-        """Get M1 temperature (if available)."""
-        try:
-            result = subprocess.run(
-                ["ioreg", "-r", "-c", "AppleSmartBattery", "-w0"],
-                capture_output=True, text=True, timeout=1
-            )
-            return None
-        except Exception:
-            return None
+        """
+        Get M1 temperature (if available).
+
+        Delegates to _ThermalSampler for async-safe sampling.
+        This is sampling/offload only — NOT canonical Uma policy owner.
+        """
+        return await self._thermal_sampler.sample()
 
     def _determine_state(self, metrics: SystemMetrics) -> SystemState:
         """Determine system state from metrics."""

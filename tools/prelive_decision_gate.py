@@ -168,9 +168,17 @@ def _is_pass(report: ProbeReport) -> bool:
     """
     Check if a probe report passes.
     Supports multiple schemas:
-      - {"status": "PASS"|"FAIL"}
+      - {"status": "PASS"|"FAIL"|"PASSED"|"COMPLETE"}
       - {"test_results": {"probe_XXX": {"status": "PASS"|"FAIL"}}}
+      - {"tests": {"all_passed": true}}
+      - {"tests": {"all_passing": true}}       (F225B schema)
+      - {"verification": {"passed": true}}
+      - {"verification": {"status": "PASS"|"PASSED"|"COMPLETE"}}
+      - {"all_passed": true}
+      - {"passed": true}
+      - {"ready_for_controlled_smoke": true}
       - {"verdict": "SANITY_PASS"}  (zero-findings sanity: PASS means no crash)
+    Fail-closed: explicit FAIL/FAILED status wins over weaker pass fields.
     """
     if not report.found:
         return False
@@ -179,23 +187,64 @@ def _is_pass(report: ProbeReport) -> bool:
 
     d = report.data
 
-    # Schema: status = PASS/FAIL
+    # Schema: status = PASS/FAIL — explicit status wins (fail-closed)
     status = d.get("status", "")
-    if isinstance(status, str) and status.upper() in ("PASS", "PASSED", "COMPLETE"):
-        return True
     if isinstance(status, str) and status.upper() in ("FAIL", "FAILED"):
         return False
+    if isinstance(status, str) and status.upper() in ("PASS", "PASSED", "COMPLETE"):
+        return True
 
-    # Schema: test_results.PROBE.status = PASS
+    # Schema: test_results.PROBE.status = PASS — fail-closed
     test_results = d.get("test_results", {})
     if isinstance(test_results, dict):
         for probe_data in test_results.values():
             if isinstance(probe_data, dict):
                 s = probe_data.get("status", "")
-                if isinstance(s, str) and s.upper() == "PASS":
-                    return True
                 if isinstance(s, str) and s.upper() == "FAIL":
                     return False
+                if isinstance(s, str) and s.upper() == "PASS":
+                    return True
+
+    # Schema: tests.all_passed = true/false — fail-closed
+    tests = d.get("tests", {})
+    if isinstance(tests, dict):
+        all_passed = tests.get("all_passed")
+        if isinstance(all_passed, bool) and all_passed is False:
+            return False
+        if isinstance(all_passed, bool) and all_passed is True:
+            return True
+        # F225B schema: tests.all_passing = True
+        all_passing = tests.get("all_passing")
+        if isinstance(all_passing, bool) and all_passing is True:
+            return True
+
+    # Schema: verification.passed = true/false — fail-closed
+    verification = d.get("verification", {})
+    if isinstance(verification, dict):
+        vp = verification.get("passed")
+        if isinstance(vp, bool) and vp is False:
+            return False
+        if isinstance(vp, bool) and vp is True:
+            return True
+        vs = verification.get("status", "")
+        if isinstance(vs, str) and vs.upper() in ("FAIL", "FAILED"):
+            return False
+        if isinstance(vs, str) and vs.upper() in ("PASS", "PASSED", "COMPLETE"):
+            return True
+
+    # Schema: top-level all_passed = true/false
+    all_passed = d.get("all_passed")
+    if isinstance(all_passed, bool) and all_passed is False:
+        return False
+    if isinstance(all_passed, bool) and all_passed is True:
+        return True
+
+    # Schema: top-level passed = true/false
+    passed = d.get("passed")
+    if isinstance(passed, bool) and passed is False:
+        return False
+    if isinstance(passed, bool) and passed is True:
+        return True
 
     # Schema: ready_for_controlled_smoke bool
     ready = d.get("ready_for_controlled_smoke")
@@ -454,6 +503,55 @@ def _check_f231_artifacts(repo_root: Path, profile: str) -> tuple[bool, list[str
 #   - Profile in _F224_BLOCKING_PROFILES → missing F224B/E warns only
 #   - Other profiles → all F224 artifacts warn only
 # --------------------------------------------------------------------------- #
+# F224D confidence policy alias table (F232AB):
+#   canonical: probe_f224d_confidence_policy/confidence_policy.json
+#   aliases:  probe_f224d_sprint_id_collision/sprint_id_collision.json
+#             probe_f225b_confidence_policy_migration/confidence_policy_migration.json
+# --------------------------------------------------------------------------- #
+
+_F224_CONFIDENCE_POLICY_CANONICAL = ("probe_f224d_confidence_policy", "confidence_policy.json")
+_F224_CONFIDENCE_POLICY_ALIASES = [
+    ("probe_f224d_sprint_id_collision", "sprint_id_collision.json"),
+    ("probe_f225b_confidence_policy_migration", "confidence_policy_migration.json"),
+]
+
+
+def _check_f224_confidence_policy(repo_root: Path) -> tuple[bool, str, dict]:
+    """
+    Check F224D confidence policy via canonical path and aliases.
+    Gate passes if any canonical/alias artifact exists and _is_pass() returns True.
+    Gate blocks if all are missing or all are failing.
+    Returns (pass, detail, checked_dict).
+    """
+    checked: dict[str, dict] = {}
+
+    # Check canonical
+    canonical_probe, canonical_file = _F224_CONFIDENCE_POLICY_CANONICAL
+    canonical_report = _load_report(repo_root, canonical_probe, canonical_file)
+    key = f"{canonical_probe}_f224"
+    checked[key] = {
+        "found": canonical_report.found,
+        "parse_error": canonical_report.parse_error,
+        "pass": canonical_report.found and not canonical_report.parse_error and _is_pass(canonical_report),
+    }
+    if canonical_report.found and not canonical_report.parse_error and _is_pass(canonical_report):
+        return True, "canonical", checked
+
+    # Check aliases
+    for alias_probe, alias_file in _F224_CONFIDENCE_POLICY_ALIASES:
+        alias_report = _load_report(repo_root, alias_probe, alias_file)
+        key = f"{alias_probe}_f224"
+        alias_pass = alias_report.found and not alias_report.parse_error and _is_pass(alias_report)
+        checked[key] = {
+            "found": alias_report.found,
+            "parse_error": alias_report.parse_error,
+            "pass": alias_pass,
+        }
+        if alias_report.found and not alias_report.parse_error and _is_pass(alias_report):
+            return True, f"alias:{alias_probe}", checked
+
+    return False, "all_absent_or_failing", checked
+
 
 def _check_f224_artifacts(repo_root: Path, profile: str) -> tuple[bool, list[str], list[str], dict]:
     """
@@ -468,19 +566,27 @@ def _check_f224_artifacts(repo_root: Path, profile: str) -> tuple[bool, list[str
     checked_local: dict[str, dict] = {}
     is_blocking_profile = profile in _F224_BLOCKING_PROFILES
 
-    # Check blocking probes
+    # Check blocking probes — F224D uses alias table, others use simple presence check
     for probe_dir, filename in _F224_BLOCKING_PROBES:
-        report = _load_report(repo_root, probe_dir, filename)
-        key = f"{probe_dir}_f224"
-        checked_local[key] = {
-            "found": report.found,
-            "parse_error": report.parse_error,
-            "pass": report.found and not report.parse_error,
-        }
-        if not report.found or report.parse_error:
-            detail = f"parse error: {report.parse_error}" if report.parse_error else "absent"
-            blocking_warnings.append(f"f224_blocking:{probe_dir} {detail}")
-            missing_blocking.append(probe_dir)
+        if probe_dir == "probe_f224d_confidence_policy":
+            cp_pass, cp_detail, cp_checked = _check_f224_confidence_policy(repo_root)
+            checked_local.update(cp_checked)
+            if not cp_pass:
+                blocking_warnings.append(f"f224_blocking:{probe_dir} {cp_detail}")
+                missing_blocking.append(probe_dir)
+        else:
+            report = _load_report(repo_root, probe_dir, filename)
+            key = f"{probe_dir}_f224"
+            pass_flag = report.found and not report.parse_error
+            checked_local[key] = {
+                "found": report.found,
+                "parse_error": report.parse_error,
+                "pass": pass_flag,
+            }
+            if not report.found or report.parse_error:
+                detail = f"parse error: {report.parse_error}" if report.parse_error else "absent"
+                blocking_warnings.append(f"f224_blocking:{probe_dir} {detail}")
+                missing_blocking.append(probe_dir)
 
     # Check warning probes
     for probe_dir, filename in _F224_WARNING_PROBES:

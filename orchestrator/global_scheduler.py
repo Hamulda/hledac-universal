@@ -343,7 +343,15 @@ class GlobalPriorityScheduler:
                         finally:
                             new_loop.close()
                         continue
-                    loop.run_until_complete(func(*args, **kwargs))
+                    # M1-SAFE: Schedule coroutine on running loop from worker thread
+                    # using run_coroutine_threadsafe instead of nested run_until_complete
+                    # Add timeout to prevent worker thread blocking forever
+                    future = asyncio.run_coroutine_threadsafe(func(*args, **kwargs), loop)
+                    try:
+                        future.result(timeout=30)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Task {task_name} timed out after 30s")
+                        raise
                 else:
                     func(*args, **kwargs)
                 # Report SUCCEEDED

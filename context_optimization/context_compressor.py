@@ -289,7 +289,7 @@ class ContextCompressor:
                 if hasattr(self.embedder, 'embed_query'):
                     return [self.embedder.embed_query(t) for t in texts]
                 results = self.embedder.encode(texts)
-                return [np.array(r.tolist() if hasattr(r, 'tolist') else r) for r in results]
+                return [np.asarray(r.tolist()) if hasattr(r, 'tolist') else np.array(r) for r in results]
             else:
                 return list(self.embedder.embed(texts))
         except Exception as e:
