@@ -1,0 +1,55 @@
+{
+  "sprint": "R6",
+  "tag": "F228C",
+  "title": "Local BM25 Relevance Over Accepted Findings",
+  "status": "complete",
+  "integration_point": "runtime/sprint_advisory_runner.py (Option A — cleaner than sidecar_bus.py)",
+  "files_modified": [
+    "runtime/sprint_advisory_runner.py",
+    "tests/r6_local_bm25_relevance/test_r6_local_bm25_relevance.py"
+  ],
+  "backups_created": [
+    "knowledge/search_index.py.bak_R6_LOCAL_BM25_RELEVANCE",
+    "runtime/sprint_advisory_runner.py.bak_R6_LOCAL_BM25_RELEVANCE",
+    "runtime/sidecar_bus.py.bak_R6_LOCAL_BM25_RELEVANCE",
+    "runtime/sprint_scheduler.py.bak_R6_LOCAL_BM25_RELEVANCE"
+  ],
+  "new_api": {
+    "function": "build_search_documents_from_findings(findings: list) -> list[SearchDocument]",
+    "location": "runtime/sprint_advisory_runner.py:50",
+    "exports": ["SprintAdvisoryRunner", "AdvisoryRunOutcome", "build_search_documents_from_findings"]
+  },
+  "advisory_result_shape": {
+    "attempted": "local_search_attempted: bool",
+    "indexed_count": "local_search_indexed: int",
+    "query": "from scheduler.query",
+    "top_result_count": "local_search_hits: int",
+    "top_results": "local_search_top_results: list[dict]",
+    "elapsed_ms": "local_search_elapsed_ms: float",
+    "skipped_reason": "local_search_error: str | None (None if no error)"
+  },
+  "local_search_top_results_item": {
+    "url": "str",
+    "title": "str",
+    "score": "float",
+    "source_type": "str",
+    "finding_id": "str"
+  },
+  "aborted": false,
+  "aborted_reasons": [],
+  "test_results": {
+    "r6_probe": "18 passed",
+    "r5x_regression": "19 passed"
+  },
+  "architectural_compliance": {
+    "no_new_storage_authority": true,
+    "no_persistent_db": true,
+    "no_embeddings_mlx": true,
+    "no_network": true,
+    "no_browser_stealth": true,
+    "fail_soft": true,
+    "cancelled_error_raised": true,
+    "bounded_results": true,
+    "duckdb_write_free": true
+  }
+}

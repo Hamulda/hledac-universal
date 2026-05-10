@@ -2491,8 +2491,8 @@ async def run_enabled_acquisition_lanes(
                 finally:
                     await miner.close()
 
-                # [F207K-A] Bridge conversion: WaybackDiffResult → CanonicalFinding candidates + rejections
-                candidates, rejections = wayback_results_to_findings(
+                # [F207K-A] Bridge conversion: WaybackDiffResult → CanonicalFinding candidates + rejections + telemetry
+                candidates, rejections, _wb_telemetry = wayback_results_to_findings(
                     result, query, sprint_id=f"wayback-{int(time.time())}"
                 )
                 candidate_findings = tuple(candidates)
@@ -2586,8 +2586,8 @@ async def run_enabled_acquisition_lanes(
                 elif pdns_outcome.error:
                     pdns_error = pdns_outcome.error
 
-                # [F207K-A] Bridge conversion: IP list → CanonicalFinding candidates + rejections
-                candidates, rejections = passive_dns_results_to_findings(
+                # [F207K-A] Bridge conversion: IP list → CanonicalFinding candidates + rejections + telemetry
+                candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(
                     ips, pdns_outcome, query, sprint_id=f"pdns-{int(time.time())}"
                 )
                 candidate_findings = tuple(candidates)
@@ -2622,21 +2622,6 @@ async def run_enabled_acquisition_lanes(
                     sample_rejections=sample_rejections,
                     passive_dns_raw_count=produced,
                 )
-        except asyncio.TimeoutError:
-            return AcquisitionLaneOutcome(
-                lane=AcquisitionLane.PASSIVE_DNS,
-                enabled=plan.enabled,
-                attempted=True,
-                timeout=True,
-                duration_s=time.monotonic() - start,
-                error="timeout",
-                source_family="passive_dns",
-                candidate_findings=candidate_findings,
-                rejection_reasons=rejection_reasons,
-                rejected_count=rejected_count,
-                sample_rejections=sample_rejections,
-                passive_dns_raw_count=0,
-            )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.PASSIVE_DNS,

@@ -1,0 +1,122 @@
+{
+  "sprint": "R5X",
+  "name": "Nonfeed Integration Truth Guard",
+  "status": "PASSED",
+  "date": "2026-05-10",
+  "total_assertions": 16,
+  "passed_assertions": 16,
+  "failed_assertions": 0,
+  "runtime_seconds": 0.80,
+  "abort_conditions": {
+    "live_network": false,
+    "mlx_model_load": false,
+    "browser_stealth": false,
+    "legacy_autonomous_orchestrator_import": false,
+    "deep_probe_import": false,
+    "dht_import": false
+  },
+  "assertions": [
+    {
+      "number": 1,
+      "description": "runtime_authority_manifest marks core.__main__.run_sprint as sole owner",
+      "status": "PASS"
+    },
+    {
+      "number": 2,
+      "description": "ACTIVE_RUNTIME_FILES does not include legacy/autonomous_orchestrator.py",
+      "status": "PASS"
+    },
+    {
+      "number": 3,
+      "description": "CT candidates from AcquisitionLaneOutcome reach async_ingest_findings_batch",
+      "status": "PASS"
+    },
+    {
+      "number": 4,
+      "description": "PassiveDNS candidates reach async_ingest_findings_batch",
+      "status": "PASS"
+    },
+    {
+      "number": 5,
+      "description": "Wayback outcome normalizes to WAYBACK in source_family_outcomes",
+      "status": "PASS"
+    },
+    {
+      "number": 6,
+      "description": "PUBLIC PipelineRunResult public_* fields reach public_stage_counters",
+      "status": "PASS"
+    },
+    {
+      "number": 7,
+      "description": "CT→PassiveDNS pivot records pivot_source=ct",
+      "status": "PASS"
+    },
+    {
+      "number": 8,
+      "description": "CT→PassiveDNS pivot depth is exactly 1 and never recursive",
+      "status": "PASS"
+    },
+    {
+      "number": 9,
+      "description": "NonfeedCandidateLedger receives CT/Pdns/Wayback/PUBLIC/PIVOT family events",
+      "status": "PASS"
+    },
+    {
+      "number": 10,
+      "description": "source_family_outcomes contains ct, passive_dns, wayback, public, pivot",
+      "status": "PASS"
+    },
+    {
+      "number": 11,
+      "description": "build_acquisition_report includes nonfeed_expected_lanes + source_family_outcomes",
+      "status": "PASS"
+    },
+    {
+      "number": 12,
+      "description": "No code path imports legacy autonomous orchestrator",
+      "status": "PASS"
+    },
+    {
+      "number": 13,
+      "description": "No code path imports deep_probe for these lanes",
+      "status": "PASS"
+    },
+    {
+      "number": 14,
+      "description": "No code path imports dht for these lanes",
+      "status": "PASS"
+    },
+    {
+      "number": 15,
+      "description": "No browser/stealth path is enabled (STEALTH lane disabled by default)",
+      "status": "PASS"
+    },
+    {
+      "number": 16,
+      "description": "Tests are hermetic: no live network, no MLX, no browser",
+      "status": "PASS"
+    }
+  ],
+  "integration_flows_verified": [
+    "CT → AcquisitionLaneOutcome.candidate_findings → async_ingest_findings_batch",
+    "PassiveDNS → pdns_candidates → async_ingest_findings_batch",
+    "Wayback → wayback_candidates → source_family_outcomes[WAYBACK]",
+    "PUBLIC → PipelineRunResult.public_* → _compute_public_stage → public_stage_counters",
+    "CT→PDNS pivot → pivot_source=ct → NonfeedCandidateLedger.add_pivot_discovered"
+  ],
+  "files_created": [
+    "tests/probe_r5x_nonfeed_integration_guard/__init__.py",
+    "tests/probe_r5x_nonfeed_integration_guard/test_r5x_nonfeed_integration_guard.py",
+    "tests/probe_r5x_nonfeed_integration_guard/REPORT_NONFEED_INTEGRATION_GUARD.md",
+    "tests/probe_r5x_nonfeed_integration_guard/nonfeed_integration_guard.json"
+  ],
+  "regression": {
+    "probe_r0_nonfeed_reality_lock": "pre-existing failures (import paths)",
+    "probe_r1a_nonfeed_body_inspection": "pre-existing failures (import paths)",
+    "probe_r2_passivedns_lane_closure": "pre-existing failures (import paths)",
+    "probe_r3_wayback_lane_closure": "pre-existing failures (import paths)",
+    "probe_r4_public_telemetry_propagation": "pre-existing failures (import paths)",
+    "probe_r5_ct_to_passivedns_pivot": "pre-existing failures (import paths)",
+    "probe_r5x_nonfeed_integration_guard": "19/19 PASSED"
+  }
+}

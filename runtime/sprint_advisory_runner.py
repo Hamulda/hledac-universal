@@ -39,12 +39,59 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-__all__ = ["SprintAdvisoryRunner", "AdvisoryRunOutcome"]
+__all__ = ["SprintAdvisoryRunner", "AdvisoryRunOutcome", "build_search_documents_from_findings"]
 
 log = logging.getLogger(__name__)
 
 # Bounds
 MAX_PIVOTS: int = 20  # from pivot_planner.py
+
+
+def build_search_documents_from_findings(findings: list) -> list:
+    """
+    F228C: Convert CanonicalFinding objects to SearchDocument records.
+
+    Advisory-only, no canonical writes. Skips findings without payload_text.
+    Deduplicates by url to avoid metadata explosion.
+    Bounds result to MAX_INDEXED_FINDINGS.
+
+    Args:
+        findings: List of CanonicalFinding objects (or dict-like with
+                  finding_id, source_type, payload_text attrs).
+
+    Returns:
+        List[SearchDocument] suitable for LocalSearchSeam.index().
+    """
+    from hledac.universal.knowledge.search_index import SearchDocument
+
+    MAX_INDEXED_FINDINGS = 5000
+    seen_urls: set[str] = set()
+    docs: list = []
+    for f in findings:
+        if len(docs) >= MAX_INDEXED_FINDINGS:
+            break
+        try:
+            payload = getattr(f, "payload_text", "") or (f.get("payload_text", "") if isinstance(f, dict) else "")
+            source_type = getattr(f, "source_type", "unknown") or (f.get("source_type", "unknown") if isinstance(f, dict) else "unknown")
+            finding_id = getattr(f, "finding_id", "?") or (f.get("finding_id", "?") if isinstance(f, dict) else "?")
+            url = getattr(f, "url", "") or (f.get("url", "") if isinstance(f, dict) else "")
+        except Exception:
+            continue
+        if not payload:
+            continue
+        if url and url in seen_urls:
+            continue
+        if url:
+            seen_urls.add(url)
+        title = payload[:80].strip()
+        doc = SearchDocument(
+            url=url or f"finding://{finding_id}",
+            title=title,
+            content=payload,
+            metadata={"finding_id": finding_id, "source_type": source_type},
+        )
+        docs.append(doc)
+    return docs
 
 
 # ── Advisory Run Outcome ────────────────────────────────────────────────────────
@@ -70,6 +117,9 @@ class AdvisoryRunOutcome:
     local_search_attempted: bool = False
     local_search_hits: int = 0
     local_search_source: str = "none"
+    local_search_indexed: int = 0
+    local_search_elapsed_ms: float = 0.0
+    local_search_top_results: list = field(default_factory=list)
     local_search_error: Optional[str] = field(default=None)
     error: Optional[str] = field(default=None)
 
@@ -235,6 +285,9 @@ class SprintAdvisoryRunner:
                 local_search_attempted=outcome.local_search_attempted,
                 local_search_hits=outcome.local_search_hits,
                 local_search_source=outcome.local_search_source,
+                local_search_indexed=outcome.local_search_indexed,
+                local_search_elapsed_ms=outcome.local_search_elapsed_ms,
+                local_search_top_results=outcome.local_search_top_results,
                 local_search_error=outcome.local_search_error,
                 error=None,
             )
@@ -296,6 +349,9 @@ class SprintAdvisoryRunner:
                 local_search_attempted=outcome.local_search_attempted,
                 local_search_hits=outcome.local_search_hits,
                 local_search_source=outcome.local_search_source,
+                local_search_indexed=outcome.local_search_indexed,
+                local_search_elapsed_ms=outcome.local_search_elapsed_ms,
+                local_search_top_results=outcome.local_search_top_results,
                 local_search_error=outcome.local_search_error,
                 error=None,
             )
@@ -371,6 +427,9 @@ class SprintAdvisoryRunner:
             local_search_attempted=outcome.local_search_attempted,
             local_search_hits=outcome.local_search_hits,
             local_search_source=outcome.local_search_source,
+            local_search_indexed=outcome.local_search_indexed,
+            local_search_elapsed_ms=outcome.local_search_elapsed_ms,
+            local_search_top_results=outcome.local_search_top_results,
             local_search_error=outcome.local_search_error,
             error=None,
         )
@@ -383,22 +442,38 @@ class SprintAdvisoryRunner:
         """
         F228C: Local search advisory at teardown.
 
-        Uses LocalSearchSeam to provide local evidence context for research.
+        Indexes accepted findings into LocalSearchSeam (advisory-only, no
+        canonical writes, no persistent DB). Then searches them with the
+        sprint query to surface relevant evidence for research context.
+
         Bounded, fail-soft, no network, no model load.
 
-        Telemetry fields added to AdvisoryRunOutcome:
-            local_search_attempted: True if seam was found and queried
-            local_search_hits: Number of hits returned
-            local_search_source: Module that provided the seam ("search_index" or "none")
+        Telemetry fields in AdvisoryRunOutcome:
+            local_search_attempted: True if seam was queried
+            local_search_hits: Number of top results returned
+            local_search_indexed: Number of findings indexed
+            local_search_source: "search_index" or "none"
+            local_search_elapsed_ms: Wall time of index+search
+            local_search_top_results: List[dict] with url/title/score/source_type/finding_id
             local_search_error: Error string if failed, else None
         """
+        from time import perf_counter
+
+        t0 = perf_counter()
         try:
             from hledac.universal.knowledge.search_index import LocalSearchSeam
 
             seam = LocalSearchSeam()
-            # Query with sprint query for context
+
+            # ── Index accepted findings ──────────────────────────────────
+            findings = getattr(self._scheduler, "_all_findings", []) or []
+            docs = build_search_documents_from_findings(findings)
+            indexed_count = seam.index(docs)
+
+            # ── Search ─────────────────────────────────────────────────
             query = getattr(self._scheduler, "query", None) or ""
             if not query:
+                elapsed = (perf_counter() - t0) * 1000
                 return AdvisoryRunOutcome(
                     planned_pivots=outcome.planned_pivots,
                     executed_pivots=outcome.executed_pivots,
@@ -406,14 +481,29 @@ class SprintAdvisoryRunner:
                     brief_generated=outcome.brief_generated,
                     local_search_attempted=True,
                     local_search_hits=0,
-                    local_search_source="local_search",
-                    local_search_error="no_query",
+                    local_search_indexed=indexed_count,
+                    local_search_source="search_index",
+                    local_search_elapsed_ms=elapsed,
+                    local_search_top_results=[],
+                    local_search_error=None,
                     error=None,
                 )
 
             result = seam.search(query, top_k=10)
             hits = len(result.results)
 
+            # Build top_results list
+            top_results = []
+            for doc in result.results:
+                top_results.append({
+                    "url": doc.url,
+                    "title": doc.title,
+                    "score": doc.score,
+                    "source_type": doc.metadata.get("source_type", "unknown"),
+                    "finding_id": doc.metadata.get("finding_id", ""),
+                })
+
+            elapsed = (perf_counter() - t0) * 1000
             return AdvisoryRunOutcome(
                 planned_pivots=outcome.planned_pivots,
                 executed_pivots=outcome.executed_pivots,
@@ -421,12 +511,18 @@ class SprintAdvisoryRunner:
                 brief_generated=outcome.brief_generated,
                 local_search_attempted=True,
                 local_search_hits=hits,
+                local_search_indexed=indexed_count,
                 local_search_source="search_index",
+                local_search_elapsed_ms=elapsed,
+                local_search_top_results=top_results,
                 local_search_error=None,
                 error=None,
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            elapsed = (perf_counter() - t0) * 1000
             return AdvisoryRunOutcome(
                 planned_pivots=outcome.planned_pivots,
                 executed_pivots=outcome.executed_pivots,
@@ -434,7 +530,10 @@ class SprintAdvisoryRunner:
                 brief_generated=outcome.brief_generated,
                 local_search_attempted=True,
                 local_search_hits=0,
+                local_search_indexed=0,
                 local_search_source="local_search",
+                local_search_elapsed_ms=elapsed,
+                local_search_top_results=[],
                 local_search_error=str(e),
                 error=None,
             )
@@ -529,6 +628,9 @@ class SprintAdvisoryRunner:
                 local_search_attempted=outcome.local_search_attempted,
                 local_search_hits=outcome.local_search_hits,
                 local_search_source=outcome.local_search_source,
+                local_search_indexed=outcome.local_search_indexed,
+                local_search_elapsed_ms=outcome.local_search_elapsed_ms,
+                local_search_top_results=outcome.local_search_top_results,
                 local_search_error=outcome.local_search_error,
                 error=None,
             )

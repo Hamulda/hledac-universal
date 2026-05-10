@@ -42,57 +42,131 @@ MAX_LINKS_PER_PROFILE: int = 20
 MAX_SOCIAL_TEXT_BYTES: int = 4096
 SOCIAL_MIN_CONFIDENCE: float = 0.35
 
-# Platform patterns: (platform_name, url_pattern_regex, username_extract_regex)
-_PLATFORM_PATTERNS: list[tuple[str, re.Pattern[str], re.Pattern[str]]] = [
+# Platform patterns: (platform_name, url_pattern_regex, username_extract_regex, is_invite_only)
+# is_invite_only: True = discord-style invite links that are not person identities
+_PLATFORM_PATTERNS: list[tuple[str, re.Pattern[str], re.Pattern[str], bool]] = [
     (
         "github",
         re.compile(r"https?://(?:www\.)?github\.com/([^/]+)?"),
         re.compile(r"(?:github\.com/|@)([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+        False,
     ),
     (
         "twitter",
         re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/([^/]+)?"),
         re.compile(r"(?:twitter\.com/|@)([a-zA-Z0-9_]{1,15})"),
+        False,
     ),
     (
         "linkedin",
         re.compile(r"https?://(?:www\.)?linkedin\.com/in/([^/]+)?"),
         re.compile(r"linkedin\.com/in/([a-zA-Z0-9_-]{3,100})"),
+        False,
     ),
     (
         "mastodon",
         re.compile(r"https?://(?:www\.)?mastodon\.social/@([^/]+)?"),
         re.compile(r"@(?:[a-zA-Z0-9_]+@)?([a-zA-Z0-9_]{1,30})"),
+        False,
     ),
     (
         "keybase",
         re.compile(r"https?://(?:www\.)?keybase\.io/([^/]+)?"),
         re.compile(r"(?:keybase\.io/|@)([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+        False,
     ),
     (
         "gitlab",
         re.compile(r"https?://(?:www\.)?gitlab\.com/([^/]+)?"),
         re.compile(r"(?:gitlab\.com/|@)([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+        False,
     ),
     (
         "hackernews",
         re.compile(r"https?://news\.ycombinator\.com/user\?id=([^&]+)?"),
         re.compile(r"(?:news\.ycombinator\.com/user\?id=|@)([a-zA-Z0-9_-]{1,30})"),
+        False,
     ),
     (
         "reddit",
         re.compile(r"https?://(?:www\.)?reddit\.com/user/([^/]+)?"),
         re.compile(r"(?:reddit\.com/user/|u/)([a-zA-Z0-9_-]{3,20})"),
+        False,
     ),
     (
         "youtube",
         re.compile(r"https?://(?:www\.)?youtube\.com/@([^/]+)?"),
         re.compile(r"(?:youtube\.com/@|@)([a-zA-Z0-9_-]{3,30})"),
+        False,
     ),
     (
         "facebook",
         re.compile(r"https?://(?:www\.)?facebook\.com/([^/]+)?"),
         re.compile(r"(?:facebook\.com/|@)([a-zA-Z0-9\.]{5,50})"),
+        False,
+    ),
+    # R7: new platforms
+    (
+        "telegram",
+        re.compile(r"https?://(?:www\.)?(?:t\.me|telegram\.me)/([^/]+)?"),
+        re.compile(r"(?:t\.me|telegram\.me)/([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    (
+        "matrix",
+        re.compile(r"https?://(?:www\.)?matrix\.to/#[^/]+/?$"),
+        re.compile(r"matrix\.to/#@?([^/]+)"),
+        False,
+    ),
+    (
+        "medium",
+        re.compile(r"https?://(?:www\.)?medium\.com/@([^/]+)?"),
+        re.compile(r"medium\.com/@([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    (
+        "substack",
+        re.compile(r"https?://(?:www\.)?([a-zA-Z0-9][a-zA-Z0-9_-]{0,48})\.substack\.com/?"),
+        re.compile(r"substack\.com/@([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    (
+        "npmjs",
+        re.compile(r"https?://(?:www\.)?npmjs\.com/~([^/]+)?"),
+        re.compile(r"npmjs\.com/~([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    (
+        "pypi",
+        re.compile(r"https?://(?:www\.)?pypi\.org/user/([^/]+)?"),
+        re.compile(r"pypi\.org/user/([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    (
+        "huggingface",
+        re.compile(r"https?://(?:www\.)?huggingface\.co/([^/]+)?"),
+        re.compile(r"huggingface\.co/([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    (
+        "github_gist",
+        re.compile(r"https?://(?:www\.)?gist\.github\.com/([^/]+)?"),
+        re.compile(r"gist\.github\.com/([a-zA-Z0-9_-]{3,50})"),
+        False,
+    ),
+    # Self-hosted GitLab instances (path-based, e.g. /u/admin)
+    (
+        "gitlab_selfhosted",
+        re.compile(r"https?://[^/]+/u/([^/]+)?"),
+        re.compile(r"/u/([a-zA-Z0-9][a-zA-Z0-9_-]{0,38})"),
+        False,
+    ),
+    # Discord invite — classified as invite NOT person identity
+    (
+        "discord_invite",
+        re.compile(r"https?://(?:www\.)?discord(?:(?:app)?\.com/invite|\.gg)/([^/]+)?"),
+        re.compile(r"discord(?:app)?\.com/invite/([a-zA-Z0-9_-]{3,20})"),
+        True,
     ),
 ]
 
@@ -127,6 +201,8 @@ class SocialIdentityFacet:
     linked_domains: tuple[str, ...]
     linked_emails: tuple[str, ...]
     confidence: float
+    # R7: evidence_kind tracks how this facet was derived
+    evidence_kind: str = "url_in_payload"  # url_in_payload | ioc_value | provenance | text_pattern
 
 
 @dataclass(frozen=True)
@@ -158,6 +234,17 @@ _PLATFORM_PROFILE_URL: dict[str, str] = {
     "reddit": "https://www.reddit.com/user/{username}",
     "youtube": "https://youtube.com/@{username}",
     "facebook": "https://www.facebook.com/{username}",
+    # R7: new platforms
+    "telegram": "https://t.me/{username}",
+    "matrix": "https://matrix.to/#/{username}",
+    "medium": "https://medium.com/@{username}",
+    "substack": "https://{username}.substack.com/",
+    "npmjs": "https://www.npmjs.com/~{username}",
+    "pypi": "https://pypi.org/user/{username}",
+    "huggingface": "https://huggingface.co/{username}",
+    "github_gist": "https://gist.github.com/{username}",
+    "gitlab_selfhosted": "https://{platform_host}/u/{username}",
+    # discord_invite is NOT a person identity — no profile URL generated
 }
 class SocialIdentityMiner:
     """
@@ -223,7 +310,7 @@ class SocialIdentityMiner:
             pass  # fail-soft: continue without RAM guard
 
         # Collect URLs from all findings
-        all_urls: list[tuple[str, str, str]] = []  # (url, finding_id, text_sample)
+        all_urls: list[tuple[str, str, str, str]] = []  # (url, finding_id, text_sample, evidence_kind)
         for finding in findings:
             if len(all_urls) >= MAX_SOCIAL_PROFILES:
                 break
@@ -232,13 +319,13 @@ class SocialIdentityMiner:
             # Extract from payload_text
             urls_from_payload = self._extract_urls_from_payload(finding)
             for url in urls_from_payload[:MAX_LINKS_PER_PROFILE]:
-                all_urls.append((url, getattr(finding, "finding_id", "unknown"), ""))
+                all_urls.append((url, getattr(finding, "finding_id", "unknown"), "", "url_in_payload"))
 
             # Extract from ioc_value (often a URL or domain)
             ioc_val = getattr(finding, "ioc_value", "")
             if ioc_val and isinstance(ioc_val, str) and len(ioc_val) < 2048:
                 if _is_url(ioc_val):
-                    all_urls.append((ioc_val, getattr(finding, "finding_id", "unknown"), ""))
+                    all_urls.append((ioc_val, getattr(finding, "finding_id", "unknown"), "", "ioc_value"))
 
             # Extract from source_type or other text fields
             source_type = getattr(finding, "source_type", "")
@@ -246,7 +333,7 @@ class SocialIdentityMiner:
                 # Parse certificate sanitized domains
                 domains = self._extract_domains_from_cert_text(getattr(finding, "payload_text", "") or "")
                 for domain in domains[:5]:
-                    all_urls.append((f"https://{domain}", getattr(finding, "finding_id", "unknown"), ""))
+                    all_urls.append((f"https://{domain}", getattr(finding, "finding_id", "unknown"), "", "provenance"))
 
         self._stats["scanned"] = len(findings)
 
@@ -260,8 +347,8 @@ class SocialIdentityMiner:
 
         # Process URLs concurrently (bounded)
         tasks = [
-            self._process_url(url, finding_id, text_sample)
-            for url, finding_id, text_sample in all_urls
+            self._process_url(url, finding_id, text_sample, evidence_kind)
+            for url, finding_id, text_sample, evidence_kind in all_urls
         ]
 
         gathered: list[Any] = []
@@ -308,6 +395,7 @@ class SocialIdentityMiner:
         url: str,
         finding_id: str,
         text_sample: str,
+        source: str = "url_in_payload",  # R7: evidence_kind source
     ) -> SocialIdentityFacet | None:
         """Extract social identity from a single URL."""
         async with self._semaphore:
@@ -317,7 +405,7 @@ class SocialIdentityMiner:
                 path = parsed.path.strip("/")
 
                 # Check against known platform patterns
-                for platform, url_re, username_re in _PLATFORM_PATTERNS:
+                for platform, url_re, username_re, is_invite_only in _PLATFORM_PATTERNS:
                     url_match = url_re.match(url)
                     if not url_match:
                         # Try host + path matching
@@ -330,6 +418,10 @@ class SocialIdentityMiner:
 
                     if not url_match and platform not in parsed.netloc:
                         continue
+
+                    # R7: discord_invite is NOT a person identity — skip
+                    if is_invite_only:
+                        return None
 
                     # Extract username
                     username = ""
@@ -344,7 +436,7 @@ class SocialIdentityMiner:
                         continue
 
                     # Build profile URL
-                    profile_url = self._build_profile_url(platform, username)
+                    profile_url = self._build_profile_url(platform, username, parsed.netloc)
 
                     # Linked domains/emails from text_sample
                     linked_domains = self._extract_linked_domains(text_sample)
@@ -365,6 +457,7 @@ class SocialIdentityMiner:
                         linked_domains=tuple(linked_domains),
                         linked_emails=tuple(linked_emails),
                         confidence=confidence,
+                        evidence_kind=source,
                     )
 
                 return None
@@ -521,6 +614,8 @@ class SocialIdentityMiner:
                     "linked_emails": list(facet.linked_emails),
                     "confidence": facet.confidence,
                     "source_finding_id": facet.finding_id,
+                    # R7: evidence_kind tracks derivation path
+                    "evidence_kind": facet.evidence_kind if hasattr(facet, "evidence_kind") else "url_in_payload",
                 })
 
                 finding = CanonicalFinding(
@@ -545,7 +640,7 @@ class SocialIdentityMiner:
 
     # ── Utility ─────────────────────────────────────────────────────────────────
 
-    def _build_profile_url(self, platform: str, username: str) -> str:
+    def _build_profile_url(self, platform: str, username: str, platform_host: str = "") -> str:
         """Build canonical profile URL for a platform."""
         platform_url_map = {
             "github": f"https://github.com/{username}",
@@ -558,7 +653,21 @@ class SocialIdentityMiner:
             "reddit": f"https://www.reddit.com/user/{username}",
             "youtube": f"https://youtube.com/@{username}",
             "facebook": f"https://www.facebook.com/{username}",
+            # R7: new platforms
+            "telegram": f"https://t.me/{username}",
+            "matrix": f"https://matrix.to/#/{username}",
+            "medium": f"https://medium.com/@{username}",
+            "substack": f"https://{username}.substack.com/",
+            "npmjs": f"https://www.npmjs.com/~{username}",
+            "pypi": f"https://pypi.org/user/{username}",
+            "huggingface": f"https://huggingface.co/{username}",
+            "github_gist": f"https://gist.github.com/{username}",
+            # discord_invite is NOT a person identity — no profile URL
         }
+        if platform == "gitlab_selfhosted" and platform_host:
+            return f"https://{platform_host}/u/{username}"
+        if platform == "discord_invite":
+            return ""  # invite links are not person identities
         return platform_url_map.get(platform, f"https://{platform}.com/{username}")
 
     def get_stats(self) -> dict[str, int]:
