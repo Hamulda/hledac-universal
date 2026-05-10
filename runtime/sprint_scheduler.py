@@ -2388,7 +2388,7 @@ class SprintScheduler:
             )
         return self._result
 
-    def _record_scheduler_exit(
+    async def _record_scheduler_exit(
         self,
         path: str,
         reason: str,
@@ -2405,7 +2405,19 @@ class SprintScheduler:
         self._result.scheduler_exit_phase = phase
         self._result.scheduler_exit_elapsed_s = _time.monotonic() - self._run_started_at
         self._result.scheduler_exit_cycle = self._result.cycles_started
-        # Capture guard state at exit
+        # Capture guard state at exit — P4 fix: if return_guard_checked is False
+        # but we have a valid exit_path, run the guard one final time so the
+        # capture reflects reality rather than a stale False default.
+        if not getattr(self._result, "return_guard_checked", False):
+            # Attempting the guard for capture is fail-safe (sets True or leaves False)
+            try:
+                await self._ensure_mandatory_nonfeed_before_return(
+                    getattr(self, "_query", "") or "",
+                    None,
+                    f"scheduler_exit_capture({path})",
+                )
+            except Exception:
+                pass
         self._result.scheduler_exit_guard_checked = self._result.return_guard_checked
         self._result.scheduler_exit_guard_required = self._result.return_guard_required_lanes
         self._result.scheduler_exit_guard_satisfied = self._result.return_guard_satisfied
@@ -2673,7 +2685,7 @@ class SprintScheduler:
         self._result.early_exit_reason = _exit_reason
 
         # Record scheduler exit path
-        self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
+        await self._record_scheduler_exit(exit_path, exit_reason, exit_phase)
 
         # Sprint F216C: Compute PUBLIC stage machine — must happen after all _public_outcome
         # assignments are complete (including in _run_public_discovery_in_cycle and

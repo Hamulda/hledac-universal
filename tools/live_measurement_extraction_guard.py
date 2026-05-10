@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-F227D LIVE MEASUREMENT EXTRACTION GUARD
+F227D/F228G LIVE MEASUREMENT EXTRACTION GUARD
 
-Hermetic AST/source guard for the F227 extraction boundary.
-Prevents live_sprint_measurement.py from silently re-absorbing schema/parser/markdown code.
+Hermetic AST/source guard for the F227 extraction boundary + F228G shadow guard.
+Prevents live_sprint_measurement.py from silently re-absorbing schema/parser/markdown code
+or locally redefining extracted quality/terminality helpers.
 
 Verdicts:
     EXTRACTION_GUARD_PASS
@@ -12,6 +13,9 @@ Verdicts:
     FAIL_MARKDOWN_DRIFT
     FAIL_RUNTIME_IMPORT_IN_EXTRACTED_MODULE
     FAIL_MISSING_EXTRACTED_MODULE
+    FAIL_QUALITY_SHADOWING
+    FAIL_TERMINALITY_SHADOWING
+    FAIL_KPI_INPUT_WIRING
 
 CLI:
     python tools/live_measurement_extraction_guard.py --repo-root . \\
@@ -78,6 +82,9 @@ class Verdict:
     FAIL_MARKDOWN_DRIFT = "FAIL_MARKDOWN_DRIFT"
     FAIL_RUNTIME_IMPORT = "FAIL_RUNTIME_IMPORT_IN_EXTRACTED_MODULE"
     FAIL_MISSING_MODULE = "FAIL_MISSING_EXTRACTED_MODULE"
+    FAIL_QUALITY_SHADOWING = "FAIL_QUALITY_SHADOWING"
+    FAIL_TERMINALITY_SHADOWING = "FAIL_TERMINALITY_SHADOWING"
+    FAIL_KPI_INPUT_WIRING = "FAIL_KPI_INPUT_WIRING"
 
 
 # --------------------------------------------------------------------------
@@ -284,6 +291,182 @@ def _check_extracted_module_exists(module_path: Path) -> bool:
 
 
 # --------------------------------------------------------------------------
+# F228G Shadow Guard helpers
+# --------------------------------------------------------------------------
+
+# Quality helpers that live in live_measurement_quality.py and must NOT be
+# locally redefined in live_sprint_measurement.py (unless body is single delegation)
+QUALITY_HELPERS = frozenset([
+    "_derive_run_quality_verdict",
+    "_uma_state_is_critical_or_emergency",
+    "_is_active_domain_query",
+])
+
+# Terminality helpers that live in live_measurement_parser.py and must NOT be
+# locally redefined (unless body is single delegation)
+TERMINALITY_HELPERS = frozenset([
+    "_has_terminal_source_outcomes",
+    "_has_scheduler_exit_path",
+])
+
+
+def _is_thin_delegation(node: ast.FunctionDef) -> bool:
+    """
+    Return True if the function body is a single direct delegation
+    to an imported helper (i.e., just passes through to the extracted module).
+    """
+    if len(node.body) == 0:
+        return False
+    # Single return statement calling another function with minimal wrapping
+    if len(node.body) == 1:
+        stmt = node.body[0]
+        if isinstance(stmt, ast.Return):
+            value = stmt.value
+            # Direct call: return _some_func(inp) or return _some_func(...)
+            if isinstance(value, ast.Call):
+                if isinstance(value.func, ast.Name) and value.func.id.startswith("_"):
+                    # Direct pass-through with no extra logic
+                    return True
+    return False
+
+
+def _check_shadowed_helpers(
+    runner_path: Path,
+    helper_names: frozenset[str],
+    source: str | None = None,
+) -> tuple[bool, list[dict]]:
+    """
+    Check that helper names are NOT locally defined as FunctionDef in runner,
+    unless the body is a single thin delegation to an imported helper.
+
+    Returns (has_violation, list_of_violations).
+    """
+    if source is None:
+        try:
+            source = _read_source(runner_path)
+        except Exception as e:
+            return True, [{"name": "?", "reason": f"Cannot read: {e}"}]
+
+    try:
+        tree = _parse_ast(source)
+    except Exception as e:
+        return True, [{"name": "?", "reason": f"Cannot parse: {e}"}]
+
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in helper_names:
+            if _is_thin_delegation(node):
+                continue  # thin alias/delegation is allowed
+            violations.append({
+                "name": node.name,
+                "line": node.lineno,
+                "reason": "local definition — body is not single delegation to imported helper",
+            })
+
+    return bool(violations), violations
+
+
+def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -> tuple[bool, list[dict]]:
+    """
+    Check LiveKpiInput wiring in live_sprint_measurement.py:
+    - LiveKpiInput dataclass exists
+    - _derive_live_kpi_from_input exists and has exactly one param named 'inp'
+    - _derive_live_kpi_from_input body must NOT load bare old param names
+      (status, runtime_truth, actual_duration_s, primary_signal_source, etc.)
+      as free variables — it must use inp.attr access.
+
+    Returns (has_violation, list_of_violations).
+    """
+    if source is None:
+        try:
+            source = _read_source(runner_path)
+        except Exception as e:
+            return True, [{"name": "?", "reason": f"Cannot read: {e}"}]
+
+    try:
+        tree = _parse_ast(source)
+    except Exception as e:
+        return True, [{"name": "?", "reason": f"Cannot parse: {e}"}]
+
+    violations = []
+
+    # 1. LiveKpiInput dataclass must exist
+    has_live_kpi_input = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
+            has_live_kpi_input = True
+
+    if not has_live_kpi_input:
+        violations.append({
+            "name": "LiveKpiInput",
+            "reason": "LiveKpiInput dataclass not found in live_sprint_measurement.py",
+        })
+
+    # 2. _derive_live_kpi_from_input must exist with exactly one param named 'inp'
+    has_kpi_func = False
+    kpi_func_single_inp = False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_derive_live_kpi_from_input":
+            has_kpi_func = True
+            args = [a.arg for a in node.args.args]
+            if len(args) == 1 and args[0] == "inp":
+                kpi_func_single_inp = True
+            else:
+                violations.append({
+                    "name": "_derive_live_kpi_from_input",
+                    "reason": f"expected single 'inp' param, got {len(args)} params: {args}",
+                })
+
+            # 3. Body must not load bare old param names as local vars
+            # Old param names that must be accessed via inp.*
+            old_param_names = frozenset([
+                "status", "runtime_truth", "actual_duration_s", "primary_signal_source",
+                "run_quality_verdict", "hardware_constrained", "public_pipeline",
+                "timing_truth", "acquisition_strategy", "windup_guard_observation",
+                "return_guard_observation", "scheduler_exit", "acquisition_report",
+                "profile_verdict", "acquisition_terminality_checked",
+                "acquisition_terminality_satisfied", "acquisition_terminality_missing_lanes",
+                "planned_duration_s", "claims_runtime_status",
+            ])
+
+            # Walk body and collect all Name nodes; then filter out those that
+            # appear as the object of an Attribute (i.e., inp.status → status is obj)
+            bare_usages = []
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and child.id in old_param_names:
+                    bare_usages.append(child.id)
+
+            # Filter out usages that appear as the object of an Attribute (inp.X)
+            # by checking if parent is Attribute with child.id as value
+            bad_usages = set()
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and child.id in old_param_names:
+                    # Check if parent is Attribute — if so, this is inp.X not bare X
+                    for parent in ast.walk(node):
+                        if isinstance(parent, ast.Attribute) and isinstance(parent.value, ast.Name):
+                            if parent.value.id == child.id:
+                                break  # this is an attribute access, skip
+                    else:
+                        # Not inside inp.X, treat as bare usage
+                        bad_usages.add(child.id)
+
+            if bad_usages:
+                violations.append({
+                    "name": "_derive_live_kpi_from_input",
+                    "reason": f"body loads bare old params (must use inp.attr): {sorted(bad_usages)}",
+                })
+
+    if not has_kpi_func:
+        violations.append({
+            "name": "_derive_live_kpi_from_input",
+            "reason": "_derive_live_kpi_from_input not found in live_sprint_measurement.py",
+        })
+
+    return bool(violations), violations
+
+
+# --------------------------------------------------------------------------
 # Main guard logic
 # --------------------------------------------------------------------------#
 
@@ -379,6 +562,41 @@ def run_guard(repo_root: Path) -> dict:
             if module_path.exists():
                 verdict = Verdict.FAIL_PARSER_DRIFT  # best-effort verdict
 
+    # 8. F228G: Check quality helpers not shadowed (unless thin delegation)
+    runner_source = _read_source(runner)
+    has_quality_violations, quality_violations = _check_shadowed_helpers(
+        runner, QUALITY_HELPERS, runner_source
+    )
+    checks.append({
+        "check": "quality_helpers_not_shadowed",
+        "pass": not has_quality_violations,
+        "detail": f"Violations: {quality_violations}" if quality_violations else "OK",
+    })
+    if has_quality_violations:
+        verdict = Verdict.FAIL_QUALITY_SHADOWING
+
+    # 9. F228G: Check terminality helpers not shadowed (unless thin delegation)
+    has_terminality_violations, terminality_violations = _check_shadowed_helpers(
+        runner, TERMINALITY_HELPERS, runner_source
+    )
+    checks.append({
+        "check": "terminality_helpers_not_shadowed",
+        "pass": not has_terminality_violations,
+        "detail": f"Violations: {terminality_violations}" if terminality_violations else "OK",
+    })
+    if has_terminality_violations:
+        verdict = Verdict.FAIL_TERMINALITY_SHADOWING
+
+    # 10. F228G: Check LiveKpiInput wiring
+    has_kpi_violations, kpi_violations = _check_live_kpi_input_wiring(runner, runner_source)
+    checks.append({
+        "check": "live_kpi_input_wiring",
+        "pass": not has_kpi_violations,
+        "detail": f"Violations: {kpi_violations}" if kpi_violations else "OK",
+    })
+    if has_kpi_violations:
+        verdict = Verdict.FAIL_KPI_INPUT_WIRING
+
     return {
         "verdict": verdict,
         "checks": checks,
@@ -400,8 +618,14 @@ def format_json(result: dict) -> str:
 
 
 def format_markdown(result: dict) -> str:
+    # Detect which sprint lane this is based on checks present
+    has_quality_check = any(c["check"] == "quality_helpers_not_shadowed" for c in result["checks"])
+    has_kpi_check = any(c["check"] == "live_kpi_input_wiring" for c in result["checks"])
+
+    title = "F227D/F228G Live Measurement Extraction Guard" if (has_quality_check or has_kpi_check) else "F227D Live Measurement Extraction Guard"
+
     lines = [
-        "# F227D Live Measurement Extraction Guard",
+        f"# {title}",
         "",
         f"**Verdict:** `{result['verdict']}`",
         "",
@@ -429,6 +653,27 @@ def format_markdown(result: dict) -> str:
     ])
     for cls in result["schema_classes"]:
         lines.append(f"- `{cls}`")
+
+    # F228G shadow guard section
+    if has_quality_check or has_kpi_check:
+        lines.extend([
+            "",
+            "## F228G Shadow Guard",
+            "",
+            "### Quality Helpers (from live_measurement_quality.py)",
+            "- `_derive_run_quality_verdict`",
+            "- `_uma_state_is_critical_or_emergency`",
+            "- `_is_active_domain_query`",
+            "",
+            "### Terminality Helpers (from live_measurement_parser.py)",
+            "- `_has_terminal_source_outcomes`",
+            "- `_has_scheduler_exit_path`",
+            "",
+            "### LiveKpiInput Wiring Rules",
+            "- `LiveKpiInput` dataclass must exist",
+            "- `_derive_live_kpi_from_input` must have exactly one param: `inp`",
+            "- Function body must use `inp.attr` not bare `attr`",
+        ])
 
     return "\n".join(lines)
 

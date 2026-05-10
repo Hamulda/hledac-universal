@@ -33,6 +33,29 @@ All entry points live in `hledac/universal/`. Do not reference or suggest runnin
 
 Work only within `hledac/universal/`. Do not reference modules, configs, or paths outside this folder.
 
+### Canonical Sprint Owner
+`core.__main__.run_sprint()` — sole production sprint owner. All sprint execution flows through this entry point.
+
+### Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `brain/` | AI/ML engine: Hermes3Engine, ModelLifecycle, inference, synthesis, hypothesis |
+| `coordinators/` | 20+ coordinators: fetch, memory, resource, research, security, performance, multimodal |
+| `knowledge/` | Storage: DuckDB (canonical write), LanceDB (RAG), graph_service, semantic_store |
+| `pipeline/` | Sprint execution: live_public_pipeline, live_feed_pipeline |
+| `runtime/` | Sprint scheduler: SprintScheduler (canonical execution engine) |
+| `fetching/` | HTTP transport seam: public_fetcher (curl_cffi, JA3 fingerprint) |
+| `transport/` | Multi-transport: httpx, tor, i2p, nym, circuit_breaker |
+| `security/` | Cryptography: PQ (ML-DSA-65, HPKE X-Wing), secure_enclave, audit, PII |
+| `forensics/` | Metadata extraction, enrichment, steganography |
+| `multimodal/` | Vision/OCR: VisionEncoder, MambaFusion, evidence_triage |
+| `text/` | Text analysis: hash_identifier, unicode_analyzer, encoding_detector |
+| `hypothesis/` | Hypothesis generation: HypothesisGenerator, DempsterShafer, EIGCalculator |
+| `export/` | Export: ExportManager, STIX, Markdown, JSON-LD |
+| `tools/` | Core utilities: url_dedup (RotatingBloomFilter), lmdb_kv, checkpoint |
+| `utils/` | Helpers: async_helpers, bloom_filter, concurrency, mlx_* |
+
 ### M1 8GB Constraints
 - Memory limit: <5.5GB active, never parallel models
 - No blocking ops in async contexts

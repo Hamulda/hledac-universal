@@ -60,8 +60,8 @@ _sys.modules['hledac'] = _hledac_stub
 from hledac.universal.core import __main__ as core_main
 from hledac.universal.paths import get_sprint_json_report_path
 from benchmarks.live_measurement_parser import parse_sprint_report as _parse_sprint_report_impl
-from benchmarks.live_measurement_parser import _has_terminal_source_outcomes as _has_terminal_source_outcomes
-from benchmarks.live_measurement_parser import _has_scheduler_exit_path as _has_scheduler_exit_path
+import benchmarks.live_measurement_quality as _qm
+from benchmarks.live_measurement_quality import _derive_run_quality_verdict as _quality_derive
 PROFILE_DURATION: dict[str, int] = {'smoke180': 180, 'nonfeed_diagnostic180': 180, 'active300': 300, 'active600': 600}
 PROFILE_META: dict[str, dict] = {'smoke180': {'planned_duration_s': 180, 'expected_windup_lead_s': 180, 'expected_active_window_s': 0, 'active_runtime_expected': False}, 'nonfeed_diagnostic180': {'planned_duration_s': 180, 'expected_windup_lead_s': 0, 'expected_active_window_s': 180, 'active_runtime_expected': True, 'acquisition_profile': 'nonfeed_diagnostic'}, 'active300': {'planned_duration_s': 300, 'expected_windup_lead_s': 180, 'expected_active_window_s': 120, 'active_runtime_expected': True}, 'active600': {'planned_duration_s': 600, 'expected_windup_lead_s': 180, 'expected_active_window_s': 420, 'active_runtime_expected': True}}
 _CANONICAL_ACQUISITION_PROFILES = frozenset(['default', 'nonfeed_diagnostic'])
@@ -154,131 +154,60 @@ async def _capture_uma() -> dict:
         return {'used_gib': None, 'swap_gib': None, 'state': None}
 
 def _uma_state_is_critical_or_emergency(state: str | None) -> bool:
-    """Return True if UMA state indicates critical or emergency memory pressure."""
-    if not state:
-        return False
-    return state in ('critical', 'emergency')
+    """Alias to benchmarks.live_measurement_quality — delegates to extracted pure module."""
+    return _qm._uma_state_is_critical_or_emergency(state)
+
 
 def _is_active_domain_query(runtime_truth: dict | None, profile_verdict: str | None) -> bool:
-    """
-    Detect whether the run was an active300/active600 domain query.
+    """Alias to benchmarks.live_measurement_quality — delegates to extracted pure module."""
+    return _qm._is_active_domain_query(runtime_truth, profile_verdict)
 
-    A domain query has meaningful runtime (cycles_started > 0) OR explicit ct/public
-    findings in branch_mix, indicating the non-feed acquisition lanes were targeted.
-    smoke180 profiles are NOT domain queries (they are just entry smoke checks).
-    """
-    if profile_verdict == 'ENTRY_SMOKE_ONLY':
-        return False
-    rt = runtime_truth or {}
-    cycles = rt.get('cycles_started', 0)
-    branch_mix = rt.get('branch_mix', {})
-    ct_findings = branch_mix.get('ct_findings', 0) if isinstance(branch_mix, dict) else 0
-    public_findings = branch_mix.get('public_findings', 0) if isinstance(branch_mix, dict) else 0
-    return cycles > 0 or ct_findings > 0 or public_findings > 0
 
 def _has_terminal_source_outcomes(acquisition_strategy: dict | None) -> bool:
-    """
-    Return True if acquisition_strategy has non-empty source_family_outcomes.
+    """Alias to benchmarks.live_measurement_quality — delegates to extracted pure module."""
+    return _qm._has_terminal_source_outcomes(acquisition_strategy)
 
-    source_family_outcomes is the canonical record of which lanes were
-    dispatched and their terminal state. An empty/missing dict means the
-    acquisition never reached the point of recording lane outcomes.
-    """
-    if not acquisition_strategy or not isinstance(acquisition_strategy, dict):
-        return False
-    sf_outcomes = acquisition_strategy.get('source_family_outcomes')
-    if isinstance(sf_outcomes, dict):
-        return bool(sf_outcomes)
-    if isinstance(sf_outcomes, list):
-        return bool(sf_outcomes)
-    return False
 
 def _has_scheduler_exit_path(scheduler_exit: dict | None) -> bool:
-    """
-    Return True if scheduler_exit contains a non-empty path string.
+    """Alias to benchmarks.live_measurement_quality — delegates to extracted pure module."""
+    return _qm._has_scheduler_exit_path(scheduler_exit)
 
-    scheduler_exit_path is the canonical record of how the scheduler exited
-    (which guard/condition triggered windup). An empty/missing path means
-    the scheduler exit was never recorded.
-    """
-    if not scheduler_exit or not isinstance(scheduler_exit, dict):
-        return False
-    path = scheduler_exit.get('path') or scheduler_exit.get('exit_path') or scheduler_exit.get('scheduler_exit_path') or ''
-    return bool(str(path).strip())
 
-def _derive_run_quality_verdict(status: MeasurementStatus, profile_verdict: str | None, uma_pre_state: str | None, runtime_truth: dict | None, swap_pre_gib: float | None, is_memory_gate_abort: bool=False, swap_gate_triggered: bool=False, acquisition_report: dict | None=None, acquisition_terminality_checked: bool | None=None, acquisition_terminality_satisfied: bool | None=None, acquisition_terminality_missing_lanes: tuple[str, ...] | None=None, acquisition_strategy: dict | None=None, scheduler_exit: dict | None=None, planned_duration_s: float | None=None, actual_duration_s: float | None=None) -> tuple[RunQualityVerdict | None, bool, str | None, bool, str | None, str | None]:
-    """
-    Derive run quality verdict from measurement state.
-
-    Returns:
-        (verdict, hardware_constrained, memory_state_pre, swap_warning,
-         recommended_next_profile, recommended_operator_action)
-
-    Verdict is None when no runtime execution occurred (PLANNED/RUNNING with no runtime_truth).
-    """
-    verdict: RunQualityVerdict | None = None
-    hardware_constrained = False
-    memory_state_pre = uma_pre_state
-    swap_warning = swap_pre_gib is not None and swap_pre_gib > 0
-    recommended_next_profile: str | None = None
-    recommended_operator_action: str | None = None
-    if is_memory_gate_abort:
-        verdict = RunQualityVerdict.ABORTED_MEMORY_GATE
-        hardware_constrained = True
-        recommended_next_profile = 'none_until_memory_ok'
-        recommended_operator_action = _MEMORY_GATE_OPERATOR_ACTION
-        return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
-    if swap_gate_triggered:
-        verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED
-        hardware_constrained = True
-        recommended_next_profile = 'smoke180 or active300_after_restart'
-        recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-        return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
-    if profile_verdict == 'ENTRY_SMOKE_ONLY':
-        verdict = RunQualityVerdict.ENTRY_SMOKE_ONLY
-        recommended_next_profile = 'active300'
-        return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
-    if status == MeasurementStatus.FAILED:
-        verdict = RunQualityVerdict.FAIL_RUNTIME_ERROR
-        return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
-    if status == MeasurementStatus.ABORTED:
-        verdict = RunQualityVerdict.FAIL_MEASUREMENT_ERROR
-        return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
-    if status == MeasurementStatus.COMPLETED:
-        if runtime_truth is None:
-            verdict = None
-            return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
-        is_critical_uma = _uma_state_is_critical_or_emergency(uma_pre_state)
-        runtime_meaningful = runtime_truth.get('cycles_started', 0) > 0
-        if is_critical_uma and runtime_meaningful:
-            verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED
-            hardware_constrained = True
-            recommended_next_profile = None
-        elif is_critical_uma and (not runtime_meaningful):
-            verdict = RunQualityVerdict.FAIL_MEASUREMENT_ERROR
-        else:
-            verdict = RunQualityVerdict.PASS_VALID_CAPABILITY_RUN
-            if uma_pre_state in ('warn',):
-                recommended_next_profile = 'active300'
-    if verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN:
-        if planned_duration_s is not None and actual_duration_s is not None:
-            tolerance_s = max(planned_duration_s * 1.1, planned_duration_s + 30.0)
-            if actual_duration_s > tolerance_s:
-                verdict = RunQualityVerdict.FAIL_WALLCLOCK_BUDGET_EXCEEDED
-    if verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN:
-        _is_domain_query = _is_active_domain_query(runtime_truth, profile_verdict)
-        if _is_domain_query:
-            if acquisition_report is None or not isinstance(acquisition_report, dict) or (not acquisition_report.get('schema_version')):
-                verdict = RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED
-            elif acquisition_terminality_checked is not True:
-                verdict = RunQualityVerdict.FAIL_TERMINALITY_NOT_CHECKED
-            elif acquisition_terminality_satisfied is not True and (acquisition_terminality_missing_lanes is not None and acquisition_terminality_missing_lanes != ()):
-                verdict = RunQualityVerdict.FAIL_TERMINALITY_UNSATISFIED
-            elif not _has_terminal_source_outcomes(acquisition_strategy):
-                verdict = RunQualityVerdict.FAIL_MISSING_SOURCE_OUTCOMES
-            elif not _has_scheduler_exit_path(scheduler_exit):
-                verdict = RunQualityVerdict.FAIL_SCHEDULER_EXIT_MISSING
-    return (verdict, hardware_constrained, memory_state_pre, swap_warning, recommended_next_profile, recommended_operator_action)
+def _derive_run_quality_verdict(
+    status: MeasurementStatus,
+    profile_verdict: str | None,
+    uma_pre_state: str | None,
+    runtime_truth: dict | None,
+    swap_pre_gib: float | None,
+    is_memory_gate_abort: bool = False,
+    swap_gate_triggered: bool = False,
+    acquisition_report: dict | None = None,
+    acquisition_terminality_checked: bool | None = None,
+    acquisition_terminality_satisfied: bool | None = None,
+    acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
+    acquisition_strategy: dict | None = None,
+    scheduler_exit: dict | None = None,
+    planned_duration_s: float | None = None,
+    actual_duration_s: float | None = None,
+) -> tuple[RunQualityVerdict | None, bool, str | None, bool, str | None, str | None]:
+    """Alias to benchmarks.live_measurement_quality — delegates to extracted pure module."""
+    return _quality_derive(
+        status=status,
+        profile_verdict=profile_verdict,
+        uma_pre_state=uma_pre_state,
+        runtime_truth=runtime_truth,
+        swap_pre_gib=swap_pre_gib,
+        is_memory_gate_abort=is_memory_gate_abort,
+        swap_gate_triggered=swap_gate_triggered,
+        acquisition_report=acquisition_report,
+        acquisition_terminality_checked=acquisition_terminality_checked,
+        acquisition_terminality_satisfied=acquisition_terminality_satisfied,
+        acquisition_terminality_missing_lanes=acquisition_terminality_missing_lanes,
+        acquisition_strategy=acquisition_strategy,
+        scheduler_exit=scheduler_exit,
+        planned_duration_s=planned_duration_s,
+        actual_duration_s=actual_duration_s,
+    )
 
 def _parse_sprint_report(report_path: str | None) -> dict | None:
     """
@@ -359,7 +288,83 @@ class LiveKpiInput:
     planned_duration_s: float | None = None
     claims_runtime_status: dict | None = None
 
-def _derive_live_kpi_from_input(status: MeasurementStatus, is_memory_gate_abort: bool, runtime_truth: dict | None, actual_duration_s: float | None, primary_signal_source: str | None, run_quality_verdict: str | None, hardware_constrained: bool | None, public_pipeline: dict | None=None, timing_truth: dict | None=None, acquisition_strategy: dict | None=None, windup_guard_observation: dict | None=None, return_guard_observation: dict | None=None, scheduler_exit: dict | None=None, acquisition_report: dict | None=None, profile_verdict: str | None=None, acquisition_terminality_checked: bool | None=None, acquisition_terminality_satisfied: bool | None=None, acquisition_terminality_missing_lanes: tuple[str, ...] | None=None, acquisition_terminality_report: dict | None=None, explicit_source_family_outcomes: list[dict] | None=None, acquisition_prelude_checked: bool | None=None, acquisition_prelude_ran: bool | None=None, acquisition_prelude_required_lanes: tuple[str, ...] | None=None, acquisition_prelude_terminal_lanes: tuple[str, ...] | None=None, acquisition_prelude_missing_lanes: tuple[str, ...] | None=None, acquisition_prelude_skipped_lanes: dict | None=None, acquisition_prelude_errors: dict | None=None, acquisition_prelude_duration_s: float | None=None, acquisition_prelude_reason: str | None=None, planned_duration_s: float | None=None, claims_runtime_status: dict | None=None) -> dict:
+def _derive_live_kpi(
+    status: MeasurementStatus,
+    is_memory_gate_abort: bool,
+    runtime_truth: dict | None,
+    actual_duration_s: float | None,
+    primary_signal_source: str | None,
+    run_quality_verdict: str | None,
+    hardware_constrained: bool | None,
+    public_pipeline: dict | None = None,
+    timing_truth: dict | None = None,
+    acquisition_strategy: dict | None = None,
+    windup_guard_observation: dict | None = None,
+    return_guard_observation: dict | None = None,
+    scheduler_exit: dict | None = None,
+    acquisition_report: dict | None = None,
+    profile_verdict: str | None = None,
+    acquisition_terminality_checked: bool | None = None,
+    acquisition_terminality_satisfied: bool | None = None,
+    acquisition_terminality_missing_lanes: tuple[str, ...] | None = None,
+    acquisition_terminality_report: dict | None = None,
+    explicit_source_family_outcomes: list[dict] | None = None,
+    acquisition_prelude_checked: bool | None = None,
+    acquisition_prelude_ran: bool | None = None,
+    acquisition_prelude_required_lanes: tuple[str, ...] | None = None,
+    acquisition_prelude_terminal_lanes: tuple[str, ...] | None = None,
+    acquisition_prelude_missing_lanes: tuple[str, ...] | None = None,
+    acquisition_prelude_skipped_lanes: dict | None = None,
+    acquisition_prelude_errors: dict | None = None,
+    acquisition_prelude_duration_s: float | None = None,
+    acquisition_prelude_reason: str | None = None,
+    planned_duration_s: float | None = None,
+    claims_runtime_status: dict | None = None,
+) -> dict:
+    """
+    Compatibility wrapper: accepts 31 explicit parameters, constructs LiveKpiInput,
+    and delegates to _derive_live_kpi_from_input.
+
+    Preserves the old 31-argument calling convention for backward compatibility
+    with any direct callers outside this module.
+    """
+    inp = LiveKpiInput(
+        status=status,
+        is_memory_gate_abort=is_memory_gate_abort,
+        runtime_truth=runtime_truth,
+        actual_duration_s=actual_duration_s,
+        primary_signal_source=primary_signal_source,
+        run_quality_verdict=run_quality_verdict,
+        hardware_constrained=hardware_constrained,
+        public_pipeline=public_pipeline,
+        timing_truth=timing_truth,
+        acquisition_strategy=acquisition_strategy,
+        windup_guard_observation=windup_guard_observation,
+        return_guard_observation=return_guard_observation,
+        scheduler_exit=scheduler_exit,
+        acquisition_report=acquisition_report,
+        profile_verdict=profile_verdict,
+        acquisition_terminality_checked=acquisition_terminality_checked,
+        acquisition_terminality_satisfied=acquisition_terminality_satisfied,
+        acquisition_terminality_missing_lanes=acquisition_terminality_missing_lanes,
+        acquisition_terminality_report=acquisition_terminality_report,
+        explicit_source_family_outcomes=explicit_source_family_outcomes,
+        acquisition_prelude_checked=acquisition_prelude_checked,
+        acquisition_prelude_ran=acquisition_prelude_ran,
+        acquisition_prelude_required_lanes=acquisition_prelude_required_lanes,
+        acquisition_prelude_terminal_lanes=acquisition_prelude_terminal_lanes,
+        acquisition_prelude_missing_lanes=acquisition_prelude_missing_lanes,
+        acquisition_prelude_skipped_lanes=acquisition_prelude_skipped_lanes,
+        acquisition_prelude_errors=acquisition_prelude_errors,
+        acquisition_prelude_duration_s=acquisition_prelude_duration_s,
+        acquisition_prelude_reason=acquisition_prelude_reason,
+        planned_duration_s=planned_duration_s,
+        claims_runtime_status=claims_runtime_status,
+    )
+    return _derive_live_kpi_from_input(inp)
+
+
+def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     """
     Compute live KPI dict from parsed sprint report.
 
@@ -1129,6 +1134,10 @@ async def _run_live_sprint(query: str, profile: str, duration_s: int, aggressive
                 result.public_pipeline = parsed.get('public_pipeline')
                 result.acquisition_strategy = parsed.get('acquisition_strategy')
                 result.windup_guard_observation = parsed.get('windup_guard_observation')
+                # P3: prewindup_barrier_checked propagates from parsed acquisition_strategy
+                _as = result.acquisition_strategy or {}
+                result.prewindup_barrier_checked = bool(_as.get('prewindup_barrier_checked', False))
+                result.prewindup_barrier_satisfied = bool(_as.get('prewindup_barrier_satisfied', False))
                 result.return_guard_observation = parsed.get('return_guard_observation')
                 result.scheduler_exit = parsed.get('scheduler_exit')
                 result.acquisition_terminality_checked = parsed.get('acquisition_terminality_checked')
@@ -1158,12 +1167,6 @@ async def _run_live_sprint(query: str, profile: str, duration_s: int, aggressive
                     _ap_from_report = result.acquisition_report.get('acquisition_profile')
                     if _ap_from_report:
                         result.acquisition_profile = _ap_from_report
-                try:
-                    with open(report_path) as _ar_f:
-                        _ar_data = json.load(_ar_f)
-                    result.acquisition_report = _ar_data.get('acquisition_report')
-                except Exception:
-                    result.acquisition_report = None
                 if result.acquisition_report and isinstance(result.acquisition_report, dict):
                     result.nonfeed_priority_enabled = bool(result.acquisition_report.get('nonfeed_priority_enabled', False))
                     _lanes = result.acquisition_report.get('nonfeed_profile_expected_lanes', [])
