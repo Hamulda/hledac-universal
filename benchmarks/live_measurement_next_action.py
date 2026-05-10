@@ -156,11 +156,13 @@ def _rule_provider_surface(inp: NextActionInput) -> tuple[str, str | None] | Non
 
 
 def _rule_quality_gate(inp: NextActionInput) -> tuple[str, str | None] | None:
-    """Rules 1 (starvation), 1 (memory gate): Critical system quality gates."""
+    """Rule 6 (starvation): Quality/starvation gates — no memory gate check here.
+
+    Memory gate is handled by _rule0b_memory_or_swap_gate at slot 5.
+    F228B fix: removed duplicate is_memory_gate_abort check that masked the dedicated rule.
+    """
     if inp.nonfeed_starvation_suspected:
         return ("fix_nonfeed_scheduler_order", None)
-    if inp.is_memory_gate_abort:
-        return ("clean_memory", None)
     return None
 
 
@@ -278,8 +280,8 @@ def _derive_next_action(
         _rule_profile_propagation,
         _rule_provider_surface,
         _rule_terminality,
-        _rule_quality_gate,
         _rule0b_memory_or_swap_gate,
+        _rule_quality_gate,
         _rule_default,
     ]:
         result = helper(inp)
