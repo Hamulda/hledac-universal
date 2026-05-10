@@ -4645,6 +4645,19 @@ class SprintScheduler:
                         await self._ingest_ct_lane_candidates(_outcomes, duckdb_store)
                         # Sprint F216G: Read quality rejection ledger from duckdb_store
                         self._record_quality_rejections_from_store(duckdb_store)
+                        # Sprint R8: Run CT→PassiveDNS active-cycle pivot after lane ingestion
+                        ct_findings: list = []
+                        for _oc in _outcomes:
+                            if getattr(_oc, "source_family", None) == "ct":
+                                _cands = getattr(_oc, "candidate_findings", ()) or ()
+                                if _cands:
+                                    ct_findings.extend(_cands)
+                        if ct_findings:
+                            await self._run_ct_to_passivedns_active_pivot(
+                                ct_findings=ct_findings,
+                                duckdb_store=duckdb_store,
+                                remaining_s=remaining_s,
+                            )
                         # Sprint F217E: Mirror quality rejections in ledger (stable advisory)
                         for _rec in self._result.quality_rejection_ledger or ():
                             try:
@@ -5504,6 +5517,193 @@ class SprintScheduler:
         except Exception:
             pass  # Fail-soft: ledger recording must never block sprint
 
+
+    # ── Sprint R8: CT → PassiveDNS Active-Cycle Pivot ───────────────────────
+    async def _run_ct_to_passivedns_active_pivot(
+        self,
+        ct_findings: list,
+        duckdb_store: Any | None,
+        remaining_s: float,
+    ) -> None:
+        """
+        Sprint R8: CT → PassiveDNS active-cycle bounded pivot.
+
+        One-hop pivot from CT lane accepted findings to PassiveDNS lookup.
+        Runs after CT lane candidates are ingested in ACTIVE cycle.
+
+        Bounds: default 3 max 5 pivots, depth=1, no recursive, no CT→CT, no PDNS→CT.
+        Skips if UMA critical/emergency, remaining time too low, or already ran.
+
+        Flow:
+          1. Guard: UMA, time, already-done flag
+          2. Select deduplicated domains (max 5)
+          3. Run PassiveDNS per domain (monkeypatched in tests)
+          4. Convert results via passive_dns_results_to_findings
+          5. Ingest via store.async_ingest_findings_batch
+          6. Record FAMILY_PIVOT in NonfeedCandidateLedger
+          7. Record source_family_outcomes pivot_source=ct, pivot_phase=active
+
+        GHOST_INVARIANTS:
+          - gather(return_exceptions=True), CancelledError re-raised
+          - Fail-soft: adapter/storage errors never crash sprint
+          - No asyncio.run() in async context
+        """
+        # Guard: skip if already done in this cycle
+        if getattr(self, "_ct_pdns_active_done", False):
+            log.debug("[R8] CT→PDNS active pivot skipped: already ran this cycle")
+            return
+
+        # Guard: skip under UMA critical/emergency
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                snap = await governor.evaluate()
+                uma_state = getattr(snap, "uma_state", "ok") or "ok"
+                if uma_state in ("critical", "emergency"):
+                    log.debug(f"[R8] CT→PDNS active pivot skipped: uma_state={uma_state}")
+                    return
+        except Exception:
+            pass
+
+        # Guard: skip if remaining time below safety floor
+        min_remaining = self._config._MIN_BRANCH_REMAINING_S if self._config else 3.0
+        if remaining_s <= min_remaining:
+            log.debug(f"[R8] CT→PDNS active pivot skipped: remaining={remaining_s:.1f}s <= floor={min_remaining:.1f}s")
+            return
+
+        if not ct_findings:
+            log.debug("[R8] CT→PDNS active pivot: no CT findings to pivot")
+            return
+
+        from hledac.universal.runtime.acquisition_strategy import (
+            select_ct_domains_for_passivedns_pivot,
+        )
+        pivot_domains = select_ct_domains_for_passivedns_pivot(ct_findings, max_pivots=5)
+        if not pivot_domains:
+            log.debug("[R8] CT→PDNS active pivot: no domains extracted from CT findings")
+            return
+
+        log.debug(f"[R8] CT→PDNS active pivot: {len(pivot_domains)} domains: {pivot_domains[:3]}...")
+
+        self._ct_pdns_active_done = True
+
+        store = getattr(self, "_duckdb_store", None) or duckdb_store
+        pdns_results: list = []
+        errors: list = []
+
+        from hledac.universal.security.passive_dns import (
+            call_lookup_passive_dns as _pdns_lookup,
+            PassiveDNSOutcome,
+        )
+        from hledac.universal.runtime.source_finding_bridge import (
+            passive_dns_results_to_findings,
+        )
+
+        async def _run_pdns_for_domain(domain: str) -> tuple[str, list[str], PassiveDNSOutcome | None]:
+            try:
+                ips, outcome = await _pdns_lookup(domain)
+                return domain, ips, outcome
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return domain, [], None
+
+        try:
+            gather_results = await asyncio.gather(
+                *[_run_pdns_for_domain(d) for d in pivot_domains],
+                return_exceptions=True,
+            )
+            for result in gather_results:
+                if isinstance(result, BaseException):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
+                    errors.append(str(result))
+                    continue
+                domain, ips, outcome = result
+                if outcome is not None:
+                    pdns_results.append({"domain": domain, "ips": ips, "outcome": outcome})
+                else:
+                    errors.append(f"domain_{domain}_none")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+        # Convert and ingest
+        if pdns_results and store is not None:
+            for res in pdns_results:
+                outcome = res["outcome"]
+                ips = res["ips"] or []
+                domain = res["domain"]
+                if not ips or outcome is None:
+                    continue
+                pdns_findings, pdns_rejections, pdns_telemetry = passive_dns_results_to_findings(
+                    ips, outcome, domain, sprint_id=self.sprint_id or ""
+                )
+                if pdns_findings:
+                    try:
+                        ingest_results = await store.async_ingest_findings_batch(pdns_findings)
+                        stored = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
+                        log.debug(f"[R8] PDNS pivot stored: domain={domain} stored={stored}")
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        log.debug(f"[R8] PDNS ingest failed for {domain}: {exc}")
+
+        # Record FAMILY_PIVOT in NonfeedCandidateLedger
+        ledger = getattr(self, "_nonfeed_ledger", None)
+        if ledger is not None:
+            for res in pdns_results:
+                try:
+                    domain = res.get("domain", "")
+                    outcome = res.get("outcome", None)
+                    if outcome and hasattr(outcome, "result_count"):
+                        count = getattr(outcome, "result_count", 0) or 0
+                        if count > 0:
+                            ledger.add_pivot_discovered(
+                                pivot_type="ct_to_passivedns",
+                                ioc_value=domain,
+                                source_hint=f"ct_domain:{domain}",
+                                reason=f"pdns_results={count}",
+                            )
+                            ledger.add_pivot_stored(
+                                pivot_type="ct_to_passivedns",
+                                ioc_value=domain,
+                                stored_count=count,
+                            )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+
+        # Record source_family_outcomes pivot_source=ct, pivot_phase=active
+        if pdns_results:
+            _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
+            for res in pdns_results:
+                outcome = res.get("outcome", None)
+                if outcome is None:
+                    continue
+                _sfos.append({
+                    "family": "passive_dns",
+                    "lane": "PASSIVE_DNS",
+                    "attempted": getattr(outcome, "attempted", True),
+                    "accepted": getattr(outcome, "result_count", 0) or 0,
+                    "terminal_state": "pivot_ct_domain",
+                    "raw_count": 0,
+                    "accepted_count": getattr(outcome, "result_count", 0) or 0,
+                    "error": getattr(outcome, "error", None),
+                    "timeout": getattr(outcome, "timeout", False),
+                    "skipped": False,
+                    "pivot_source": "ct",
+                    "pivot_phase": "active",
+                    "pivot_domains": pivot_domains,
+                })
+            self._result.source_family_outcomes_list = _sfos
+
+        log.debug(
+            f"[R8] CT→PDNS active pivot done: {len(pdns_results)} domains with results, "
+            f"errors={len(errors)}"
+        )
 
     # ── Sprint F207J-A: Lane findings accumulation into scheduler truth ──────────
 
@@ -10797,6 +10997,8 @@ class SprintScheduler:
         self._peak_rss_gib = 0.0
         # Sprint F207A: Reset multi-source lane outcomes for new sprint
         self._lane_outcomes = ()
+        # Sprint R8: Reset active-cycle CT→PDNS pivot flag
+        self._ct_pdns_active_done = False
         # Sprint F207K-A: Reset lane rejection tracking
         self._lane_rejections = []
         self._lane_rejections_total_seen = 0
