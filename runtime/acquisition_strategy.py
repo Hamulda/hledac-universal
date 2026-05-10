@@ -2637,6 +2637,23 @@ async def run_enabled_acquisition_lanes(
                 sample_rejections=sample_rejections,
                 passive_dns_raw_count=0,
             )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.PASSIVE_DNS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="passive_dns",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+                passive_dns_raw_count=0,
+            )
+        except asyncio.CancelledError:
+            raise  # [I6] propagate CancelledError
         except Exception as exc:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.PASSIVE_DNS,

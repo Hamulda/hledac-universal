@@ -1,14 +1,16 @@
 """
-F229E: NEXT ACTION GUARD — owner update from live_sprint_measurement.py → live_measurement_next_action.py.
+F229G: NEXT ACTION GUARD — owner-imported semantics for moved symbols.
 
 Checks:
-- function exists
+- function exists locally
+- OR symbol is imported from benchmarks.live_measurement_next_action (PASS_OWNER_IMPORTED)
 - explicit args <= 8, OR is compat wrapper (NextActionInput + rule-helper loop, <=110 lines)
 - source lines <= 80 unless wrapper delegate
 - no class names matching .*Rule in target file
 - NextActionInput dataclass exists in target file
 - at least 4 _rule_* helper functions exist in target file
 - OWNER_DELEGATED: live_sprint_measurement._derive_next_action delegates to imported _derive_next_action
+- PASS_OWNER_IMPORTED: symbol not locally defined — ownership moved to live_measurement_next_action.py
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ class GuardVerdict(Enum):
     PASS = "CODEHEALTH_PASS"
     PASS_COMPAT_WRAPPER = "CODEHEALTH_PASS_COMPAT_WRAPPER"
     PASS_OWNER_DELEGATED = "CODEHEALTH_PASS_OWNER_DELEGATED"
+    PASS_OWNER_IMPORTED = "CODEHEALTH_PASS_OWNER_IMPORTED"
     FAIL_TOO_MANY_ARGS = "CODEHEALTH_FAIL_TOO_MANY_ARGS"
     FAIL_TOO_LONG = "CODEHEALTH_FAIL_TOO_LONG"
     FAIL_POLICY_CLASS_OVERENGINEERING = "CODEHEALTH_FAIL_POLICY_CLASS_OVERENGINEERING"
@@ -49,6 +52,9 @@ class GuardResult:
     has_rule_classes: bool
     compatibility_wrapper_detected: bool = False
     owner_delegated_detected: bool = False
+    owner_imported_detected: bool = False
+    owner_module: str | None = None
+    imported_symbol: str | None = None
     error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +69,9 @@ class GuardResult:
             "has_rule_classes": self.has_rule_classes,
             "compatibility_wrapper_detected": self.compatibility_wrapper_detected,
             "owner_delegated_detected": self.owner_delegated_detected,
+            "owner_imported_detected": self.owner_imported_detected,
+            "owner_module": self.owner_module,
+            "imported_symbol": self.imported_symbol,
             "error_message": self.error_message,
         }
 
@@ -210,6 +219,32 @@ def _is_compat_wrapper(func_node: ast.FunctionDef | ast.AsyncFunctionDef, source
     return constructs_input and has_rule_for_loop and not has_long_elif_chain
 
 
+def _scan_imports_for_symbol(source_text: str, symbol: str) -> tuple[str | None, str | None]:
+    """Scan source for import of symbol from benchmarks.live_measurement_next_action.
+
+    Returns (owner_module, imported_symbol) if symbol is imported from
+    benchmarks.live_measurement_next_action, else (None, None).
+    """
+    import_block = []
+    capture = False
+    for line in source_text.splitlines():
+        if "from benchmarks.live_measurement_next_action import" in line:
+            capture = True
+            import_block = [line]
+        elif capture:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                break
+            import_block.append(line)
+            if stripped.startswith(")") or ("," not in stripped and not stripped.endswith("\\")):
+                break
+
+    import_text = " ".join(import_block)
+    if symbol in import_text:
+        return ("benchmarks.live_measurement_next_action", symbol)
+    return None, None
+
+
 def _is_owner_delegated(func_node: ast.FunctionDef | ast.AsyncFunctionDef, source_text: str) -> bool:
     if not func_node.body:
         return False
@@ -229,21 +264,8 @@ def _is_owner_delegated(func_node: ast.FunctionDef | ast.AsyncFunctionDef, sourc
     call_func = stmt.value.func
     if isinstance(call_func, ast.Name):
         func_name = call_func.id
-        # Check if this name was imported from benchmarks.live_measurement_next_action
-        # by collecting the full multi-line import block and checking if func_name appears
-        import_block = []
-        for line in source_text.splitlines():
-            if "from benchmarks.live_measurement_next_action import" in line:
-                import_block = [line]
-            elif import_block and line.strip() and not line.strip().startswith('#'):
-                if line.strip().endswith(')') or ',' in line or line.strip().startswith('_'):
-                    import_block.append(line)
-                    if line.strip().startswith(')'):
-                        break
-                else:
-                    break
-        import_text = ' '.join(import_block)
-        if func_name in import_text:
+        owner_module, imported_symbol = _scan_imports_for_symbol(source_text, func_name)
+        if owner_module is not None:
             return True
     return False
 
@@ -292,6 +314,25 @@ def run_guard(
                 break
 
     if func_node is None:
+        # Symbol not locally defined — check if it's imported from benchmarks.live_measurement_next_action
+        owner_module, imported_symbol = _scan_imports_for_symbol(source_text, symbol)
+        if owner_module is not None:
+            return GuardResult(
+                verdict=GuardVerdict.PASS_OWNER_IMPORTED,
+                function_name=symbol,
+                explicit_args=0,
+                source_lines=0,
+                is_wrapper_delegate=False,
+                has_input_dataclass=False,
+                rule_helper_count=0,
+                has_rule_classes=False,
+                compatibility_wrapper_detected=False,
+                owner_delegated_detected=False,
+                owner_imported_detected=True,
+                owner_module=owner_module,
+                imported_symbol=imported_symbol,
+                error_message=None,
+            )
         return GuardResult(
             verdict=GuardVerdict.FAIL_SYMBOL_MISSING,
             function_name=symbol,
@@ -427,6 +468,7 @@ def _render_markdown(result: GuardResult) -> str:
         GuardVerdict.PASS,
         GuardVerdict.PASS_COMPAT_WRAPPER,
         GuardVerdict.PASS_OWNER_DELEGATED,
+        GuardVerdict.PASS_OWNER_IMPORTED,
     ) else "❌"
     lines = [
         f"# NextAction Code Health Guard — `{result.function_name}`",
@@ -439,6 +481,9 @@ def _render_markdown(result: GuardResult) -> str:
         f"- Is wrapper delegate: {result.is_wrapper_delegate}",
         f"- Is compat wrapper: {result.compatibility_wrapper_detected}",
         f"- Is owner delegated: {result.owner_delegated_detected}",
+        f"- Is owner imported: {result.owner_imported_detected}",
+        f"- Owner module: {result.owner_module or 'N/A'}",
+        f"- Imported symbol: {result.imported_symbol or 'N/A'}",
         f"- Has NextActionInput dataclass: {result.has_input_dataclass}",
         f"- _rule_* helper count: {result.rule_helper_count} (min 4)",
         f"- Has .*Rule classes: {result.has_rule_classes}",
@@ -451,6 +496,7 @@ def _render_markdown(result: GuardResult) -> str:
         GuardVerdict.PASS: "Function passes all code-health checks.",
         GuardVerdict.PASS_COMPAT_WRAPPER: "Function has >8 args but is a thin compatibility wrapper (NextActionInput construction + rule helper delegation).",
         GuardVerdict.PASS_OWNER_DELEGATED: "Function delegates to the canonical next_action owner (live_measurement_next_action.py). Target file is the compatibility shim, not the implementation.",
+        GuardVerdict.PASS_OWNER_IMPORTED: "Symbol not locally defined because ownership moved to benchmarks.live_measurement_next_action.py.",
         GuardVerdict.FAIL_TOO_MANY_ARGS: "Function has too many explicit arguments (>8) and is not an acceptable compatibility wrapper.",
         GuardVerdict.FAIL_TOO_LONG: "Function source exceeds 80 lines and is not a wrapper delegate.",
         GuardVerdict.FAIL_POLICY_CLASS_OVERENGINEERING: "Policy class overengineering detected (.*Rule class names).",

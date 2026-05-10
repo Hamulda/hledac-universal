@@ -1,0 +1,77 @@
+{
+  "sprint": "R2",
+  "title": "PassiveDNS Lane Closure Through Existing Seams",
+  "goal": "Close PassiveDNS raw → bridge → store → outcome path without new runner file",
+  "path": [
+    "AcquisitionStrategySnapshot (PASSIVE_DNS plan)",
+    "run_enabled_acquisition_lanes()",
+    "_run_pdns_lane(plan) [acquisition_strategy.py:2559]",
+    "call_lookup_passive_dns(shaped_query) → (ips, PassiveDNSOutcome)",
+    "passive_dns_results_to_findings(ips, outcome, query, sprint_id)",
+    "store.async_ingest_findings_batch(candidates)",
+    "NonfeedCandidateLedger stages"
+  ],
+  "invariant_i6": {
+    "description": "CancelledError must propagate, not be swallowed",
+    "code": "except asyncio.CancelledError: raise  # [I6] propagate CancelledError",
+    "location": "runtime/acquisition_strategy.py:2655",
+    "ordering": "AFTER asyncio.TimeoutError handler, BEFORE generic Exception handler"
+  },
+  "outcome_contract": {
+    "lane": "AcquisitionLane.PASSIVE_DNS",
+    "source_family": "passive_dns",
+    "passive_dns_raw_count": "int (raw IP count from PDNS)",
+    "candidate_findings": "tuple (CanonicalFinding candidates)",
+    "rejection_reasons": "tuple (bridge rejection reasons)",
+    "rejected_count": "int (bridge rejections)",
+    "sample_rejections": "tuple (sample rejection reasons)",
+    "accepted_findings": "int (store-accepted count)"
+  },
+  "tests": {
+    "probe_r2_passivedns_lane_closure": {
+      "total": 27,
+      "passed": 27,
+      "failed": 0,
+      "details": [
+        "outcome_has_required_fields",
+        "empty_result_outcome",
+        "timeout_outcome",
+        "error_outcome",
+        "skip_outcome",
+        "ip_list_to_candidates",
+        "empty_ip_list_rejects",
+        "private_ip_rejected",
+        "duplicate_pair_rejected",
+        "ledger_receives_passive_dns_stored_event",
+        "ledger_receives_passive_dns_rejected_event",
+        "ledger_receives_passive_dns_provider_failed_event",
+        "accumulate_pdns_accepted_findings",
+        "accumulate_pdns_rejection_reflected",
+        "ingest_called_with_candidates",
+        "ingest_partial_accepted",
+        "domain_query_attempts_passive_dns",
+        "ip_query_attempts_passive_dns",
+        "empty_provider_result_empty_terminal_state",
+        "timeout_outcome_records_timeout",
+        "adapter_exception_records_error",
+        "cancelled_error_propagates",
+        "candidates_built_from_ip_list",
+        "storage_accepted_reflected_in_accepted_count",
+        "storage_rejection_reflected_in_rejected_count",
+        "no_network_imports",
+        "pdns_outcome_schema_complete"
+      ]
+    },
+    "probe_ct_lane_closure_regression": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    }
+  },
+  "files": {
+    "modified": ["runtime/acquisition_strategy.py"],
+    "created": ["tests/probe_r2_passivedns_lane_closure/test_passivedns_lane_closure.py"],
+    "outputs": ["REPORT_PASSIVEDNS_LANE_CLOSURE.md"]
+  },
+  "status": "COMPLETE"
+}

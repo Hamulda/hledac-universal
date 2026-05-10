@@ -16,6 +16,8 @@ Verdicts:
     FAIL_QUALITY_SHADOWING
     FAIL_TERMINALITY_SHADOWING
     FAIL_KPI_INPUT_WIRING
+    FAIL_KPI_DRIFT
+    FAIL_KPI_RUNTIME_IMPORT
 
 CLI:
     python tools/live_measurement_extraction_guard.py --repo-root . \\
@@ -85,6 +87,8 @@ class Verdict:
     FAIL_QUALITY_SHADOWING = "FAIL_QUALITY_SHADOWING"
     FAIL_TERMINALITY_SHADOWING = "FAIL_TERMINALITY_SHADOWING"
     FAIL_KPI_INPUT_WIRING = "FAIL_KPI_INPUT_WIRING"
+    FAIL_KPI_DRIFT = "FAIL_KPI_DRIFT"
+    FAIL_KPI_RUNTIME_IMPORT = "FAIL_KPI_RUNTIME_IMPORT"
 
 
 # --------------------------------------------------------------------------
@@ -405,17 +409,15 @@ def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -
 
     violations = []
 
-    # 1. LiveKpiInput dataclass must exist
+    # 1. LiveKpiInput dataclass must exist locally
+    # (After F230A extraction: runner imports it, so only fail if locally defined
+    # with wrong pattern — not if entirely absent since F230B boundary check handles imports)
     has_live_kpi_input = False
+    live_kpi_input_local = None
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
             has_live_kpi_input = True
-
-    if not has_live_kpi_input:
-        violations.append({
-            "name": "LiveKpiInput",
-            "reason": "LiveKpiInput dataclass not found in live_sprint_measurement.py",
-        })
+            live_kpi_input_local = node
 
     # 2. _derive_live_kpi_from_input must exist with exactly one param named 'inp'
     has_kpi_func = False
@@ -473,9 +475,111 @@ def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -
                 })
 
     if not has_kpi_func:
+        # F230A extracted _derive_live_kpi_from_input to live_measurement_kpi.py
+        # This is expected — only fail if it exists locally with wrong signature
+        pass
+
+    return bool(violations), violations
+
+
+# --------------------------------------------------------------------------
+# F230B: KPI module boundary check
+# --------------------------------------------------------------------------#
+
+def _check_kpi_module_boundary(
+    repo_root: Path,
+    runner_path: Path,
+    runner_source: str,
+) -> tuple[bool, list[dict]]:
+    """
+    Check KPI derivation boundary (F230B):
+    - benchmarks/live_measurement_kpi.py exists
+    - exports LiveKpiInput, _derive_live_kpi, _derive_live_kpi_from_input
+    - live_sprint_measurement.py imports these symbols from live_measurement_kpi
+    - live_sprint_measurement.py does NOT locally define LiveKpiInput
+    - live_sprint_measurement.py does NOT locally define _derive_live_kpi_from_input
+    - _stamp_live_kpi may remain local
+    - live_measurement_kpi.py has no runtime/network/MLX imports
+
+    Returns (has_violation, list_of_violations).
+    """
+    violations = []
+    kpi_module = repo_root / "benchmarks" / "live_measurement_kpi.py"
+
+    # 1. KPI module must exist
+    if not kpi_module.exists():
+        return True, [{
+            "name": "kpi_module_exists",
+            "reason": "benchmarks/live_measurement_kpi.py does not exist",
+        }]
+
+    # 2. KPI module must export the required symbols
+    try:
+        kpi_source = _read_source(kpi_module)
+        kpi_tree = _parse_ast(kpi_source)
+    except Exception as e:
+        return True, [{"name": "kpi_module_parse", "reason": f"Cannot read/parse: {e}"}]
+
+    required_exports = {"LiveKpiInput", "_derive_live_kpi", "_derive_live_kpi_from_input"}
+    found_exports = set()
+    for node in ast.walk(kpi_tree):
+        if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
+            found_exports.add("LiveKpiInput")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in required_exports:
+                found_exports.add(node.name)
+
+    missing_exports = required_exports - found_exports
+    if missing_exports:
         violations.append({
-            "name": "_derive_live_kpi_from_input",
-            "reason": "_derive_live_kpi_from_input not found in live_sprint_measurement.py",
+            "name": "kpi_exports",
+            "reason": f"live_measurement_kpi.py missing exports: {sorted(missing_exports)}",
+        })
+
+    # 3. Runner must import the KPI symbols from live_measurement_kpi
+    try:
+        runner_tree = _parse_ast(runner_source)
+    except Exception as e:
+        return True, [{"name": "runner_parse", "reason": f"Cannot parse runner: {e}"}]
+
+    kpi_imports = {}  # symbol -> module
+    for node in ast.walk(runner_tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and "live_measurement_kpi" in node.module:
+                for alias in node.names:
+                    kpi_imports[alias.name] = node.module
+
+    missing_imports = required_exports - set(kpi_imports.keys())
+    if missing_imports:
+        violations.append({
+            "name": "runner_imports_kpi",
+            "reason": f"live_sprint_measurement.py does not import from live_measurement_kpi: {sorted(missing_imports)}",
+        })
+
+    # 4. Runner must NOT locally define LiveKpiInput
+    for node in ast.walk(runner_tree):
+        if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
+            violations.append({
+                "name": "LiveKpiInput_local",
+                "reason": "LiveKpiInput must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",
+            })
+            break
+
+    # 5. Runner must NOT locally define _derive_live_kpi_from_input
+    for node in ast.walk(runner_tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_derive_live_kpi_from_input":
+            violations.append({
+                "name": "_derive_live_kpi_from_input_local",
+                "reason": "_derive_live_kpi_from_input must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",
+            })
+            break
+
+    # 6. KPI module must not import runtime/network/MLX
+    has_runtime_import, runtime_msg = _check_module_imports_runtime(kpi_module)
+    if has_runtime_import:
+        violations.append({
+            "name": "kpi_runtime_import",
+            "reason": f"live_measurement_kpi.py must not import runtime: {runtime_msg}",
         })
 
     return bool(violations), violations
@@ -612,6 +716,20 @@ def run_guard(repo_root: Path) -> dict:
     if has_kpi_violations:
         verdict = Verdict.FAIL_KPI_INPUT_WIRING
 
+    # 11. F230B: Check KPI module boundary
+    has_kpi_boundary_violations, kpi_boundary_violations = _check_kpi_module_boundary(
+        repo_root, runner, runner_source
+    )
+    checks.append({
+        "check": "kpi_module_boundary",
+        "pass": not has_kpi_boundary_violations,
+        "detail": f"Violations: {kpi_boundary_violations}" if kpi_boundary_violations else "OK",
+    })
+    if has_kpi_boundary_violations:
+        # Distinguish drift vs runtime import
+        has_runtime = any("runtime_import" in v.get("name", "") or "runtime" in v.get("reason", "") for v in kpi_boundary_violations)
+        verdict = Verdict.FAIL_KPI_RUNTIME_IMPORT if has_runtime else Verdict.FAIL_KPI_DRIFT
+
     return {
         "verdict": verdict,
         "checks": checks,
@@ -620,6 +738,7 @@ def run_guard(repo_root: Path) -> dict:
             "schema": str(schema.relative_to(repo_root)),
             "parser": str(parser.relative_to(repo_root)),
             "markdown": str(markdown.relative_to(repo_root)),
+            "kpi": str((repo_root / "benchmarks" / "live_measurement_kpi.py").relative_to(repo_root)),
         },
     }
 

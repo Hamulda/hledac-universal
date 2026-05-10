@@ -92,8 +92,8 @@ OLD_PARAM_NAMES = frozenset([
 # Required exports from live_measurement_kpi.py (post-extraction)
 KPI_MODULE_REQUIRED_EXPORTS = frozenset([
     "LiveKpiInput",
-    "derive_live_kpi_from_input",
-    "derive_live_kpi",
+    "_derive_live_kpi_from_input",
+    "_derive_live_kpi",
 ])
 
 
@@ -339,12 +339,16 @@ def _run_post_extraction_checks(repo_root: Path) -> dict[str, Any]:
     if missing_any and verdict == Verdict.PRE_PASS:
         verdict = Verdict.FAIL_KPI_MISSING_EXPORTS
 
-    # 3. Pre-extraction checks (blocking — only override exports verdict)
+    # 3. Pre-extraction checks (informational only in post-extraction — runner no longer owns KPI)
+    # In post-extraction phase, the runner has exported to KPI module, so
+    # LiveKpiInput/no_bare_params/next_action_wired checks are expected to fail.
+    # Only runtime import and exports are blocking in post-extraction.
     runner = repo_root / "benchmarks" / "live_sprint_measurement.py"
-    pre_pass, pre_checks = _run_pre_extraction_checks_inner(runner)
+    pre_pass, pre_checks = _run_pre_extraction_checks_inner(runner, post_extraction=True)
     for pc in pre_checks:
         checks.append({**pc, "phase": "pre"})
-    if not pre_pass:
+    # Only override if pre fails AND we haven't already assigned a more specific post verdict
+    if not pre_pass and verdict == Verdict.PRE_PASS:
         verdict = Verdict.FAIL_KPI_EXTRACTION_NOT_READY
 
     return {"verdict": verdict, "checks": checks, "phase": "post"}
@@ -354,26 +358,32 @@ def _run_post_extraction_checks(repo_root: Path) -> dict[str, Any]:
 # Pre-extraction checks
 # --------------------------------------------------------------------------
 
-def _run_pre_extraction_checks_inner(runner: Path) -> tuple[bool, list[dict[str, Any]]]:
-    """Core pre-extraction checks shared between standalone and post-extraction."""
+def _run_pre_extraction_checks_inner(runner: Path, post_extraction: bool = False) -> tuple[bool, list[dict[str, Any]]]:
+    """Core pre-extraction checks shared between standalone and post-extraction.
+
+    In post-extraction mode (post_extraction=True), the runner no longer owns
+    LiveKpiInput, _derive_live_kpi, or _derive_live_kpi_from_input — they live in
+    the extracted KPI module. Skip those checks so pre-extraction verdicts don't
+    override the more specific post-extraction verdicts (runtime import, exports).
+    """
     checks: list[dict[str, Any]] = []
 
-    # 1. LiveKpiInput exists
+    # 1. LiveKpiInput exists (runner must own it before extraction)
     has_input, msg = _check_live_kpi_input_exists(runner)
     checks.append({"check": "live_kpi_input_exists", "pass": not has_input, "detail": msg})
-    if has_input:
+    if has_input and not post_extraction:
         return False, checks
 
-    # 2. _derive_live_kpi wrapper exists and delegates
+    # 2. _derive_live_kpi wrapper exists and delegates (runner must own it before extraction)
     has_wrapper, msg = _check_kpi_compat_wrapper(runner)
     checks.append({"check": "kpi_compat_wrapper_exists", "pass": not has_wrapper, "detail": msg})
-    if has_wrapper:
+    if has_wrapper and not post_extraction:
         return False, checks
 
-    # 3. _derive_live_kpi_from_input uses inp.* not bare params
+    # 3. _derive_live_kpi_from_input uses inp.* not bare params (runner must own it before extraction)
     has_bare, msg = _check_kpi_from_input_bare_params(runner)
     checks.append({"check": "kpi_from_input_no_bare_params", "pass": not has_bare, "detail": msg})
-    if has_bare:
+    if has_bare and not post_extraction:
         return False, checks
 
     # 4. _derive_next_action imported from live_measurement_next_action, not locally owned
@@ -483,7 +493,7 @@ def format_markdown(result: dict) -> str:
         "## Verdict Reference",
         "",
         "```",
-        "KPI_EXTRACTION_PREAP_PASS       — pre-extraction checks pass; ready when next_action is wired",
+        "KPI_EXTRACTION_PREP_PASS       — pre-extraction checks pass; ready when next_action is wired",
         "FAIL_KPI_INPUT_MISSING          — LiveKpiInput not found",
         "FAIL_KPI_WRAPPER_MISSING        — _derive_live_kpi wrapper missing or broken",
         "FAIL_KPI_BARE_PARAM_USAGE       — _derive_live_kpi_from_input uses bare old params",
