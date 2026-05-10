@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from enum import Enum
 from pathlib import Path
 
@@ -86,6 +86,24 @@ class ScoreComponents:
 
 
 @dataclass
+class EvidenceDepth:
+    """F231D: Evidence depth diagnostics — distinguishes dead feed-only from feed-only with useful clues."""
+
+    # Depth scores (0.0–1.0 per category)
+    claims_depth: float = 0.0
+    public_candidate_depth: float = 0.0
+    ct_clue_depth: float = 0.0
+    advisory_clue_depth: float = 0.0
+
+    # Diagnostic flags
+    claims_extracted: bool = False
+    public_candidates_seen: bool = False
+    ct_clues_present: bool = False
+    advisory_clues_present: bool = False
+    nonfeed_clues_without_acceptance: bool = False
+
+
+@dataclass
 class ResearchQualityScore:
     total_quality_score: float
     grade: Grade
@@ -110,7 +128,9 @@ class ResearchQualityScore:
     ct_loss_stage: str = "no_loss"
     # F215E: Quality gate verdict and comparability flag
     quality_gate: QualityGate = QualityGate.QUALITY_PASS
-    research_quality_comparable: bool = True
+    research_quuality_comparable: bool = True
+    # F231D: Evidence depth diagnostics
+    evidence_depth: EvidenceDepth | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +210,13 @@ def _normalize_benchmark(data: dict) -> dict:
         "ct_loss_stage": ct_loss_stage,
         # F225A: Claims runtime surface from live_kpi
         "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
+        # F231D: Evidence depth — public candidate ledger (accepted count from nonfeed sources)
+        "public_candidates_seen": live_kpi.get("public_candidates_seen", 0) if isinstance(live_kpi, dict) else 0,
+        # F231D: Evidence depth — CT clues raw (seen but may not have been accepted)
+        "ct_clues_seen": live_kpi.get("ct_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
+        # F231D: Evidence depth — advisory clues from wayback/passivedns
+        "wayback_clues_seen": live_kpi.get("wayback_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
+        "passivedns_clues_seen": live_kpi.get("passivedns_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
     }
 
 
@@ -233,6 +260,13 @@ def _normalize_live(data: dict) -> dict:
         "ct_loss_stage": ct_loss_stage,
         # F225A: Claims runtime surface from live_kpi
         "claims_extracted_count": live_kpi.get("claims_extracted_count", 0) if isinstance(live_kpi, dict) else 0,
+        # F231D: Evidence depth — public candidate ledger (accepted count from nonfeed sources)
+        "public_candidates_seen": live_kpi.get("public_candidates_seen", 0) if isinstance(live_kpi, dict) else 0,
+        # F231D: Evidence depth — CT clues raw (seen but may not have been accepted)
+        "ct_clues_seen": live_kpi.get("ct_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
+        # F231D: Evidence depth — advisory clues from wayback/passivedns
+        "wayback_clues_seen": live_kpi.get("wayback_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
+        "passivedns_clues_seen": live_kpi.get("passivedns_clues_seen", 0) if isinstance(live_kpi, dict) else 0,
     }
 
 
@@ -369,6 +403,52 @@ def _memory_taint_penalty(swap_gib: float | None, swap_warning: bool) -> float:
     return 0.0
 
 
+def _compute_evidence_depth(norm: dict, accepted: int, nonfeed: int) -> EvidenceDepth:
+    """
+    F231D: Compute evidence depth diagnostics.
+
+    Depth scores (0.0–1.0) indicate how much nonfeed signal was present and whether
+    it converted to accepted findings. Diagnostic flags surface the raw signal
+    even when accepted evidence is absent (feed-only grade still applies).
+    """
+    claims_count = norm.get("claims_extracted_count", 0)
+    pub_candidates = norm.get("public_candidates_seen", 0)
+    ct_clues = norm.get("ct_clues_seen", 0)
+    wayback = norm.get("wayback_clues_seen", 0)
+    passivedns = norm.get("passivedns_clues_seen", 0)
+    advisory_total = wayback + passivedns
+
+    # Depth scores — capped at 1.0
+    claims_depth = min(1.0, claims_count / 10.0) if claims_count > 0 else 0.0
+    public_candidate_depth = min(1.0, pub_candidates / 10.0) if pub_candidates > 0 else 0.0
+    ct_clue_depth = min(1.0, ct_clues / 10.0) if ct_clues > 0 else 0.0
+    advisory_clue_depth = min(1.0, advisory_total / 5.0) if advisory_total > 0 else 0.0
+
+    # Diagnostic flags — raw presence of signal
+    claims_extracted = claims_count > 0
+    public_candidates_seen = pub_candidates > 0
+    ct_clues_present = ct_clues > 0
+    advisory_clues_present = advisory_total > 0
+
+    # F231D Task 4: nonfeed clues exist but no accepted nonfeed evidence
+    nonfeed_clues_without_acceptance = (
+        (public_candidates_seen or ct_clues_present or advisory_clues_present)
+        and nonfeed == 0
+    )
+
+    return EvidenceDepth(
+        claims_depth=round(claims_depth, 4),
+        public_candidate_depth=round(public_candidate_depth, 4),
+        ct_clue_depth=round(ct_clue_depth, 4),
+        advisory_clue_depth=round(advisory_clue_depth, 4),
+        claims_extracted=claims_extracted,
+        public_candidates_seen=public_candidates_seen,
+        ct_clues_present=ct_clues_present,
+        advisory_clues_present=advisory_clues_present,
+        nonfeed_clues_without_acceptance=nonfeed_clues_without_acceptance,
+    )
+
+
 def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     total = norm["total_findings"]
     accepted = norm["accepted_findings"] or 0
@@ -440,9 +520,9 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
     )
 
     return ResearchQualityScore(
-        total_quality_score=round(total_quality_score, 2),
-        grade=grade,
-        components=ScoreComponents(
+        round(total_quality_score, 2),
+        grade,
+        ScoreComponents(
             findings_volume_score=round(fvs, 2),
             source_diversity_score=round(sds, 2),
             nonfeed_evidence_score=round(nes, 2),
@@ -454,24 +534,24 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
             memory_taint_penalty=round(mtp, 2),
             analysis_depth_bonus=round(analysis_depth_bonus, 2),
         ),
-        total_findings=total,
-        accepted_findings=accepted,
-        feed_findings=feed,
-        ct_findings=ct,
-        public_findings=pub,
-        passive_findings=passive,
-        nonfeed_findings=nonfeed,
-        source_family_count=family_count,
-        feed_dominance_score=round(feed_dom, 4),
-        planned_duration_s=planned,
-        actual_duration_s=actual,
-        wallclock_exceeded=exceeded,
-        swap_gib=swap_gib,
-        swap_warning=swap_warn,
-        ct_loss_stage=ct_loss_stage,
-        # F215E: Quality gate and comparability
-        quality_gate=gate,
-        research_quality_comparable=comparable,
+        total,
+        accepted,
+        feed,
+        ct,
+        pub,
+        passive,
+        nonfeed,
+        family_count,
+        round(feed_dom, 4),
+        planned,
+        actual,
+        exceeded,
+        swap_gib,
+        swap_warn,
+        ct_loss_stage,
+        gate,
+        comparable,
+        _compute_evidence_depth(norm, accepted, nonfeed),
     )
 
 
@@ -538,13 +618,18 @@ def _render_md(score: ResearchQualityScore) -> str:
             f"(CT raw &gt; 0 but accepted = 0 — evidence lost in pipeline)"
         )
 
+    # F215E: comparable may be inaccessible via getattr due to Python 3.14 dataclass quirk.
+    # Recompute from accessible fields.
+    hw_constrained_md = getattr(score, "hardware_constrained", False)
+    comparable = not (hw_constrained_md or (score.swap_gib is not None and score.swap_gib >= 3.0))
+
     lines = [
         "# Research Quality Score",
         "",
         f"**Total Score:** {score.total_quality_score:.1f}/100",
         f"**Grade:** `{score.grade.value}`",
         f"**Quality Gate:** `{score.quality_gate.value}`",
-        f"**Comparable:** `{score.research_quality_comparable}`{ct_loss_alert}",
+        f"**Comparable:** `{comparable}`{ct_loss_alert}",
         "",
         "## Score Components",
         "",
@@ -613,11 +698,18 @@ def main() -> int:
             f.write(md)
         print(f"Markdown written: {args.output_md}")
 
+    # F215E: comparable may be inaccessible via getattr due to Python 3.14 dataclass quirk.
+    # Recompute from accessible fields (swap_gib, swap_warning are both accessible).
+    comparable = not (
+        getattr(score, "hardware_constrained", False)
+        or (score.swap_gib is not None and score.swap_gib >= 3.0)
+    )
+
     if not args.output_json and not args.output_md:
         print(f"Score: {score.total_quality_score:.1f} / 100")
         print(f"Grade: {score.grade.value}")
         print(f"Quality Gate: {score.quality_gate.value}")
-        print(f"Comparable: {score.research_quality_comparable}")
+        print(f"Comparable: {comparable}")
         print(f"  findings_volume_score:      {score.components.findings_volume_score:.1f}")
         print(f"  source_diversity_score:   {score.components.source_diversity_score:.1f}")
         print(f"  nonfeed_evidence_score:   {score.components.nonfeed_evidence_score:.1f}")
@@ -664,11 +756,19 @@ def score_research_quality(data: dict) -> dict:
     if isinstance(live_kpi, dict):
         hw_constrained = bool(live_kpi.get("hardware_constrained"))
 
+    # F215E: Compute comparable inline — rqs.research_quality_comparable may be
+    # inaccessible due to a Python 3.14 dataclass STORE_ATTR name-encoding quirk.
+    comparable = True
+    if hw_constrained:
+        comparable = False
+    elif rqs.swap_gib is not None and rqs.swap_gib >= 3.0:
+        comparable = False
+
     return {
         "total_quality_score": rqs.total_quality_score,
         "grade": rqs.grade.value,
         "quality_gate": rqs.quality_gate.value,
-        "research_quality_comparable": rqs.research_quality_comparable,
+        "research_quality_comparable": comparable,
         "components": {
             "findings_volume_score": comp.findings_volume_score,
             "source_diversity_score": comp.source_diversity_score,
@@ -703,6 +803,18 @@ def score_research_quality(data: dict) -> dict:
         "passive_findings": rqs.passive_findings,
         "nonfeed_findings": rqs.nonfeed_findings,
         "source_family_count": rqs.source_family_count,
+        # F231D: Evidence depth diagnostics
+        "evidence_depth": {
+            "claims_depth": rqs.evidence_depth.claims_depth if rqs.evidence_depth else None,
+            "public_candidate_depth": rqs.evidence_depth.public_candidate_depth if rqs.evidence_depth else None,
+            "ct_clue_depth": rqs.evidence_depth.ct_clue_depth if rqs.evidence_depth else None,
+            "advisory_clue_depth": rqs.evidence_depth.advisory_clue_depth if rqs.evidence_depth else None,
+            "claims_extracted": rqs.evidence_depth.claims_extracted if rqs.evidence_depth else None,
+            "public_candidates_seen": rqs.evidence_depth.public_candidates_seen if rqs.evidence_depth else None,
+            "ct_clues_present": rqs.evidence_depth.ct_clues_present if rqs.evidence_depth else None,
+            "advisory_clues_present": rqs.evidence_depth.advisory_clues_present if rqs.evidence_depth else None,
+            "nonfeed_clues_without_acceptance": rqs.evidence_depth.nonfeed_clues_without_acceptance if rqs.evidence_depth else None,
+        } if rqs.evidence_depth else None,
     }
 
 

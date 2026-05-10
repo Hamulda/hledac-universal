@@ -626,6 +626,28 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "public_acceptance_reject_reasons": public_acceptance_reject_reasons,
         "top_public_reject_reason": top_public_reject_reason,
         "public_rejected_url_sample": public_rejected_url_sample,
+        # F231A: PUBLIC Candidate Ledger
+        "public_candidate_ledger_summary": {
+            "discovered": inp.public_pipeline.get("public_candidates_discovered", 0) if inp.public_pipeline else 0,
+            "fetch_attempted": inp.public_pipeline.get("public_candidates_fetch_attempted", 0) if inp.public_pipeline else 0,
+            "fetch_success": inp.public_pipeline.get("public_candidates_fetch_success", 0) if inp.public_pipeline else 0,
+            "parse_success": inp.public_pipeline.get("public_candidates_parse_success", 0) if inp.public_pipeline else 0,
+            "pattern_matched": inp.public_pipeline.get("public_candidates_pattern_matched", 0) if inp.public_pipeline else 0,
+            "built": inp.public_pipeline.get("public_candidates_built", 0) if inp.public_pipeline else 0,
+            "store_attempted": inp.public_pipeline.get("public_candidates_store_attempted", 0) if inp.public_pipeline else 0,
+            "stored": inp.public_pipeline.get("public_candidates_stored", 0) if inp.public_pipeline else 0,
+            "rejected": inp.public_pipeline.get("public_candidates_rejected", 0) if inp.public_pipeline else 0,
+        },
+        "public_terminal_stage": inp.public_pipeline.get("public_terminal_stage", "") if inp.public_pipeline else "",
+        "public_stage_counters": {
+            "discovery_empty": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "discovery_empty") else 0,
+            "fetch_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "fetch_zero") else 0,
+            "parse_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "parse_zero") else 0,
+            "match_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "match_zero") else 0,
+            "build_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "build_zero") else 0,
+            "store_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "store_zero") else 0,
+            "accepted": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "accepted") else 0,
+        },
         "feed_dominance_score": feed_dominance_score,
         "feed_balance_recommendation": feed_balance_recommendation,
         "estimated_per_source_soft_cap": estimated_per_source_soft_cap,
@@ -734,6 +756,22 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "ct_candidates_accumulated": lane_verdict.get("ct_candidates_accumulated", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_candidates_stored": lane_verdict.get("ct_candidates_stored", 0) if isinstance(lane_verdict, dict) else 0,
         "ct_storage_rejected": lane_verdict.get("ct_storage_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        # F231B: CT expansion clue summary — domain expansion evidence visible even when accepted=0
+        "ct_expansion_clues_count": lane_verdict.get("ct_expansion_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_valid_public_domains": lane_verdict.get("ct_valid_public_domains", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_wildcard_domains": lane_verdict.get("ct_wildcard_domains", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_private_reserved_domains": lane_verdict.get("ct_private_reserved_domains", 0) if isinstance(lane_verdict, dict) else 0,
+        "ct_duplicate_candidates": lane_verdict.get("ct_duplicate_candidates", 0) if isinstance(lane_verdict, dict) else 0,
+        # F231C: Wayback advisory evidence surface
+        "wayback_advisory_clues_count": lane_verdict.get("wayback_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "wayback_changed_url_count": lane_verdict.get("wayback_changed_url_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "wayback_added_url_count": lane_verdict.get("wayback_added_url_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "wayback_digest_changed_count": lane_verdict.get("wayback_digest_changed_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "wayback_unchanged_rejected": lane_verdict.get("wayback_unchanged_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        # F231C: PassiveDNS advisory evidence surface
+        "passive_dns_advisory_clues_count": lane_verdict.get("passive_dns_advisory_clues_count", 0) if isinstance(lane_verdict, dict) else 0,
+        "passive_dns_private_ip_rejected": lane_verdict.get("passive_dns_private_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,
+        "passive_dns_empty_ip_rejected": lane_verdict.get("passive_dns_empty_ip_rejected", 0) if isinstance(lane_verdict, dict) else 0,
         "claims_extracted_count": (inp.claims_runtime_status or {}).get("claims_extracted_count", 0)
         if inp.claims_runtime_status
         else 0,

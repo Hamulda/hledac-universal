@@ -2994,3 +2994,133 @@ def _extract_ips_from_query(query: str) -> list[str]:
 def _looks_like_ip(s: str) -> bool:
     """Return True if string looks like an IP address."""
     return bool(re.match(r"\d{1,3}(?:\.\d{1,3}){3}$", s))
+
+
+def _looks_like_domain(value: str) -> bool:
+    """Return True if value looks like a domain name (no IP, has TLD)."""
+    if not value or len(value) > 253:
+        return False
+    if "." not in value:
+        return False
+    if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", value):
+        return False
+    parts = value.split(".")
+    if len(parts) < 2:
+        return False
+    tld = parts[-1]
+    if len(tld) < 1 or len(tld) > 63:
+        return False
+    if not re.match(r"^[a-z0-9.\-_]+$", tld):
+        return False
+    return True
+
+
+# ── Sprint R5: CT → PassiveDNS One-Hop Pivot Helper ──────────────────────────
+#
+# Pure, bounded, deterministic helper for selecting CT-accepted domains as
+# PassiveDNS pivot candidates. No network I/O, no side effects.
+#
+# Bounds:
+#   - Default max: 5 domains
+#   - Hard max: 10 domains (enforced by min(len(domains), max_pivots))
+#   - Deduplication via dict.fromkeys (preserves first-seen order)
+#   - Returns list of domain strings (no finding objects, no network)
+
+
+def select_ct_domains_for_passivedns_pivot(
+    ct_candidate_findings: list,
+    *,
+    max_pivots: int = 5,
+) -> list[str]:
+    """
+    Sprint R5: Extract deduplicated domains from CT-accepted CanonicalFinding
+    candidates for PassiveDNS one-hop pivot.
+
+    Pure function: deterministic output from deterministic input.
+    No network I/O, no side effects.
+
+    Args:
+        ct_candidate_findings: List of CanonicalFinding (or dict-like) objects
+            with source_type="ct" and payload_text containing domain lines.
+        max_pivots: Default cap on pivot domains (default=5, hard_max=10).
+
+    Returns:
+        Deduplicated list of domain strings (max 10), in first-seen order.
+
+    Invariants:
+        - pivot depth = 1 (caller enforces)
+        - no recursive pivoting
+        - no network I/O
+        - no new queue framework
+        - deterministic: same input always yields same output
+
+    Domain extraction:
+        - Parse "domain: <value>" lines from payload_text
+        - Fallback: query field if no domain line found
+        - Skip: empty/whitespace-only domains
+        - Order: first-seen (dict.fromkeys preserves insertion order)
+    """
+    if not ct_candidate_findings:
+        return []
+
+    # Hard cap at 10 regardless of max_pivots
+    _hard_max = 10
+    _effective_max = min(max_pivots, _hard_max)
+
+    seen: dict[str, str] = {}  # domain → domain (dedup, preserve first-seen order)
+
+    for finding in ct_candidate_findings:
+        domain = _extract_domain_from_ct_finding(finding)
+        if domain and domain not in seen:
+            seen[domain] = domain
+            if len(seen) >= _effective_max:
+                break
+
+    return list(seen.values())
+
+
+def _extract_domain_from_ct_finding(finding: Any) -> str | None:
+    """
+    Extract domain from a CT CanonicalFinding (or dict-like) object.
+
+    Strategy:
+        1. Try payload_text: parse "domain: <value>" lines
+        2. Fallback: query field
+
+    Returns:
+        Normalized lowercase domain string, or None if not extractable.
+    """
+    # Strategy 1: parse payload_text
+    payload: str | None = getattr(finding, "payload_text", None)
+    if payload and isinstance(payload, str):
+        for line in payload.splitlines():
+            line = line.strip()
+            if line.startswith("domain:"):
+                domain = line[len("domain:"):].strip()
+                if domain:
+                    return domain.lower()
+        # Fallback: first line that looks like a domain
+        for line in payload.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "." in line:
+                # Simple domain-like check
+                if len(line) <= 253 and " " not in line and line.startswith(("www.", "http", "//")) is False:
+                    # Could be a bare domain
+                    if re.match(r"^[a-z0-9.\-_]+$", line):
+                        return line.lower()
+
+    # Strategy 2: fallback to query field
+    query: str = getattr(finding, "query", "") or ""
+    if query:
+        # Try to extract domain from query using the same pattern
+        domains = _DOMAIN_OR_IP_RE.findall(query)
+        if domains:
+            # Return first valid-looking domain
+            for d in domains:
+                if d and "." in d and not _looks_like_ip(d):
+                    return d.lower()
+        # If query itself looks like a domain, return it
+        if _looks_like_domain(query.strip()):
+            return query.strip().lower()
+
+    return None

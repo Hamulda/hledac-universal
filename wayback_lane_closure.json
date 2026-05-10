@@ -1,0 +1,26 @@
+{
+  "sprint": "R3",
+  "lane": "WAYBACK",
+  "status": "PASS",
+  "goal": "Prove Wayback lane follows canonical path via probe tests",
+  "path": "WAYBACK result → wayback_results_to_findings() → async_ingest_findings_batch() → NonfeedCandidateLedger → source_family_outcomes → acquisition_report",
+  "tests_passed": 34,
+  "tests_total": 34,
+  "regression_passive_dns": 27,
+  "regression_total": 61,
+  "files_created": [
+    "tests/probe_r3_wayback_lane_closure/test_wayback_lane_closure.py"
+  ],
+  "files_modified": [],
+  "key_findings": [
+    "wayback lane already fully wired in acquisition_strategy.py:_run_wayback_lane",
+    "to_dict() keys: wayback_raw_count, passive_dns_raw_count — no raw_count key",
+    "normalize_source_family_outcome: wayback_raw_count→raw_count, produced_items→built_count",
+    "rejected_count not exposed in normalize output",
+    "error takes precedence over timeout in _derive_terminal → ATTEMPTED_ERROR"
+  ],
+  "assertion_fixes": [
+    "removed rejected_count assertion (not in normalize output)",
+    "changed ATTEMPTED_TIMEOUT to ATTEMPTED_ERROR (error takes precedence)"
+  ]
+}

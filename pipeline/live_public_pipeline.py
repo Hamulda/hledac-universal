@@ -352,6 +352,9 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     terminal_reason: str | None = None
     # F226B: PUBLIC acceptance uplift — per-page duplicate signal for public_surface findings
     public_surface_dup: bool = False
+    # F231A: PUBLIC Candidate Ledger — stage progression per URL
+    # build_attempted: page passed quality gate and entered finding-build phase
+    build_attempted: bool = False
 
 
 class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
@@ -504,6 +507,21 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     # Bounded URL samples (max 5 each)
     public_skipped_url_sample: tuple[str, ...] = ()  # skipped URL samples
     public_rejected_url_samples: tuple[str, ...] = ()  # rejected URL samples
+
+    # F231A: PUBLIC Candidate Ledger — stage progression summary
+    # discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected
+    public_candidates_discovered: int = 0
+    public_candidates_fetch_attempted: int = 0
+    public_candidates_fetch_success: int = 0
+    public_candidates_parse_success: int = 0
+    public_candidates_pattern_matched: int = 0
+    public_candidates_built: int = 0
+    public_candidates_store_attempted: int = 0
+    public_candidates_stored: int = 0
+    public_candidates_rejected: int = 0
+    public_rejection_summary: dict = {}  # {stage: count} where candidates were lost
+    # F231A: Canonical terminal stage — where PUBLIC evidence stream terminated
+    public_terminal_stage: str = ""  # discovery_empty | fetch_zero | parse_zero | match_zero | build_zero | store_zero | accepted
 
 
 # -----------------------------------------------------------------------------
@@ -2589,6 +2607,18 @@ async def async_run_live_public_pipeline(
             public_acceptance_ratio=0.0,
             public_skipped_url_sample=(),
             public_rejected_url_samples=(),
+            # F231A: PUBLIC Candidate Ledger — zeroed (UMA emergency abort)
+            public_candidates_discovered=0,
+            public_candidates_fetch_attempted=0,
+            public_candidates_fetch_success=0,
+            public_candidates_parse_success=0,
+            public_candidates_pattern_matched=0,
+            public_candidates_built=0,
+            public_candidates_store_attempted=0,
+            public_candidates_stored=0,
+            public_candidates_rejected=0,
+            public_rejection_summary={},
+            public_terminal_stage="uma_emergency",
         )
 
     effective_concurrency = fetch_concurrency
@@ -2629,6 +2659,18 @@ async def async_run_live_public_pipeline(
     _pub_build_success_count: int = 0
     _pub_build_failure_count: int = 0
     _pub_duplicate_count: int = 0
+
+    # F231A: PUBLIC Candidate Ledger — stage counters
+    # Tracks where PUBLIC candidates disappear: discovery→fetch→parse→match→build→store→accepted
+    _public_candidates_discovered: int = 0
+    _public_candidates_fetch_attempted: int = 0
+    _public_candidates_fetch_success: int = 0
+    _public_candidates_parse_success: int = 0
+    _public_candidates_pattern_matched: int = 0
+    _public_candidates_built: int = 0
+    _public_candidates_store_attempted: int = 0
+    _public_candidates_stored: int = 0
+    _public_candidates_rejected: int = 0
 
     # Sprint F217C: Deterministic bootstrap — generate before discovery attempt
     # Only runs when bootstrap is enabled; bootstrap URLs are prepended to duckduckgo hits.
@@ -2780,6 +2822,18 @@ async def async_run_live_public_pipeline(
             public_bootstrap_order="disabled",
             public_bootstrap_prevented_discovery_timeout=False,
             public_bootstrap_first_fetch_attempted=False,
+            # F231A: PUBLIC Candidate Ledger — zeroed (discovery_empty)
+            public_candidates_discovered=0,
+            public_candidates_fetch_attempted=0,
+            public_candidates_fetch_success=0,
+            public_candidates_parse_success=0,
+            public_candidates_pattern_matched=0,
+            public_candidates_built=0,
+            public_candidates_store_attempted=0,
+            public_candidates_stored=0,
+            public_candidates_rejected=0,
+            public_rejection_summary={},
+            public_terminal_stage="discovery_empty",
         )
 
     # P16: Academic discovery integration — run after DuckDuckGo discovery
@@ -3126,6 +3180,49 @@ async def async_run_live_public_pipeline(
     if public_discovery_deduped_count > 0 and public_findings_accepted == 0:
         public_stage_failure = "fetch_zero"
         public_stage_failure_reason = f"discovery returned {public_discovery_deduped_count} URLs but no findings were accepted"
+
+    # F231A: PUBLIC Candidate Ledger — derive from page results
+    # Tracks stage progression: discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected
+    # fetch_attempted = pages that passed quality gate and entered page processing
+    public_candidates_discovered = total_discovered
+    public_candidates_fetch_attempted = public_pages_fetched  # pages that entered fetch/parse
+    public_candidates_fetch_success = sum(
+        1 for p in all_page_results if p.fetched and p.error and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))
+    )
+    public_candidates_parse_success = sum(
+        1 for p in all_page_results if p.fetched and p.error not in ("fetch_text_none_or_empty", "html_extract_failed", None)
+    )
+    public_candidates_pattern_matched = sum(1 for p in all_page_results if p.fetched and p.matched_patterns > 0)
+    public_candidates_built = sum(
+        1 for p in all_page_results
+        if p.fetched and (p.matched_patterns > 0 or p.accepted_findings > 0)
+    )
+    public_candidates_store_attempted = sum(1 for p in all_page_results if p.fetched and p.matched_patterns > 0)
+    public_candidates_stored = sum(1 for p in all_page_results if p.stored_findings > 0)
+    public_candidates_rejected = sum(
+        1 for p in all_page_results
+        if p.fetched and p.matched_patterns > 0 and p.stored_findings == 0
+    )
+    # Build rejection summary by stage
+    _rej_sum: dict[str, int] = {}
+    if public_candidates_fetch_attempted == 0 and public_candidates_discovered > 0:
+        _rej_sum["fetch_zero"] = public_candidates_discovered - public_candidates_fetch_attempted
+    if public_candidates_pattern_matched == 0 and public_candidates_fetch_success > 0:
+        _rej_sum["match_zero"] = public_candidates_fetch_success - public_candidates_pattern_matched
+    if public_candidates_store_attempted > 0 and public_candidates_stored == 0:
+        _rej_sum["store_zero"] = public_candidates_store_attempted
+    public_rejection_summary = _rej_sum
+    # F231A: Derive canonical terminal stage
+    if not public_candidates_discovered:
+        public_terminal_stage = "discovery_empty"
+    elif public_candidates_fetch_attempted == 0:
+        public_terminal_stage = "fetch_zero"
+    elif public_candidates_pattern_matched == 0:
+        public_terminal_stage = "match_zero"
+    elif public_candidates_stored == 0:
+        public_terminal_stage = "store_zero"
+    else:
+        public_terminal_stage = "accepted"
 
     # Skipped breakdown
     # F208G-A: public_skipped_duplicate already computed as len(hits)-len(seen_urls) at line 2575
@@ -3994,6 +4091,18 @@ async def async_run_live_public_pipeline(
         public_rejected_storage_rejected=public_rejected_storage_rejected,
         public_skipped_url_sample=public_skipped_url_sample,
         public_rejected_url_samples=public_rejected_url_samples,
+        # F231A: PUBLIC Candidate Ledger — stage progression
+        public_candidates_discovered=public_candidates_discovered,
+        public_candidates_fetch_attempted=public_candidates_fetch_attempted,
+        public_candidates_fetch_success=public_candidates_fetch_success,
+        public_candidates_parse_success=public_candidates_parse_success,
+        public_candidates_pattern_matched=public_candidates_pattern_matched,
+        public_candidates_built=public_candidates_built,
+        public_candidates_store_attempted=public_candidates_store_attempted,
+        public_candidates_stored=public_candidates_stored,
+        public_candidates_rejected=public_candidates_rejected,
+        public_rejection_summary=public_rejection_summary,
+        public_terminal_stage=public_terminal_stage,
     )
 
 

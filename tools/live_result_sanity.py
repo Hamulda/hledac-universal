@@ -84,6 +84,16 @@ class QualitySurface:
     grade: str | None = None
     total_quality_score: float | None = None
     research_quality_comparable: bool | None = None
+    # F231D: Evidence depth diagnostics
+    claims_depth: float | None = None
+    public_candidate_depth: float | None = None
+    ct_clue_depth: float | None = None
+    advisory_clue_depth: float | None = None
+    claims_extracted: bool | None = None
+    public_candidates_seen: bool | None = None
+    ct_clues_present: bool | None = None
+    advisory_clues_present: bool | None = None
+    nonfeed_clues_without_acceptance: bool | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -278,6 +288,18 @@ def parse_quality(raw: dict[str, Any]) -> QualitySurface:
     surf.grade = raw.get("grade")
     surf.total_quality_score = raw.get("total_quality_score")
     surf.research_quality_comparable = raw.get("research_quality_comparable")
+    # F231D: Extract evidence depth diagnostics
+    ed = raw.get("evidence_depth", {})
+    if isinstance(ed, dict):
+        surf.claims_depth = ed.get("claims_depth")
+        surf.public_candidate_depth = ed.get("public_candidate_depth")
+        surf.ct_clue_depth = ed.get("ct_clue_depth")
+        surf.advisory_clue_depth = ed.get("advisory_clue_depth")
+        surf.claims_extracted = ed.get("claims_extracted")
+        surf.public_candidates_seen = ed.get("public_candidates_seen")
+        surf.ct_clues_present = ed.get("ct_clues_present")
+        surf.advisory_clues_present = ed.get("advisory_clues_present")
+        surf.nonfeed_clues_without_acceptance = ed.get("nonfeed_clues_without_acceptance")
     return surf
 
 

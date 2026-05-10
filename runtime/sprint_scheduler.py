@@ -137,6 +137,7 @@ from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_fro
 from hledac.universal.runtime.source_finding_bridge import (
     ct_results_to_findings,
     wayback_results_to_findings,
+    passive_dns_results_to_findings,
     REJECTION_UNSUPPORTED_SHAPE,
 )
 
@@ -764,6 +765,15 @@ class SprintSchedulerResult:
     ct_valid_domain_count: int = 0  # domains that passed private/reserved filtering
     ct_bridge_build_success_count: int = 0  # CanonicalFinding candidates successfully built
     ct_bridge_quality_rejected_count: int = 0  # rejected at storage quality gate
+    # Sprint F231B: CT expansion clue summary — domain expansion evidence visible even when accepted=0
+    ct_raw_domains_seen: int = 0
+    ct_unique_domains_seen: int = 0
+    ct_valid_public_domains: int = 0
+    ct_wildcard_domains: int = 0
+    ct_private_reserved_domains: int = 0
+    ct_duplicate_candidates: int = 0
+    ct_expansion_clues_count: int = 0
+    ct_candidate_examples: tuple[str, ...] = ()  # JSON-serialized quarantine entries
     # Sprint F216G: Quality Rejection Ledger — canonical ingest quality gate rejections
     # Bounded ledger: max 200 entries (source_family, reason, finding_id, url_sample)
     quality_rejection_ledger: tuple = ()  # tuple[QualityRejectionRecord, ...]
@@ -870,6 +880,16 @@ class SprintSchedulerResult:
     passive_dns_raw_count: int = 0
     passive_dns_candidates_built: int = 0
     passive_dns_accepted_count: int = 0
+    # Sprint F231C: Wayback advisory evidence surface
+    wayback_advisory_clues_count: int = 0
+    wayback_changed_url_count: int = 0
+    wayback_added_url_count: int = 0
+    wayback_digest_changed_count: int = 0
+    wayback_unchanged_rejected: int = 0
+    # Sprint F231C: PassiveDNS advisory evidence surface
+    passive_dns_advisory_clues_count: int = 0
+    passive_dns_private_ip_rejected: int = 0
+    passive_dns_empty_ip_rejected: int = 0
     # Sprint F207M-A: Nonfeed pre-dispatch telemetry
     nonfeed_predispatch_attempted: bool = False
     nonfeed_predispatch_skipped: dict[str, str] = field(default_factory=dict)
@@ -3256,6 +3276,25 @@ class SprintScheduler:
                         self._result.ct_valid_domain_count = _ct_telemetry.get("ct_bridge_valid_domain_count", 0)
                         self._result.ct_bridge_build_success_count = _ct_telemetry.get("ct_bridge_build_success_count", 0)
                         self._result.ct_bridge_quality_rejected_count = _ct_telemetry.get("ct_bridge_quality_rejected_count", 0)
+                        # F231B: CT expansion clue summary — domain expansion evidence visible even when accepted=0
+                        self._result.ct_raw_domains_seen = _ct_telemetry.get("ct_raw_domains_seen", 0)
+                        self._result.ct_unique_domains_seen = _ct_telemetry.get("ct_unique_domains_seen", 0)
+                        self._result.ct_valid_public_domains = _ct_telemetry.get("ct_valid_public_domains", 0)
+                        self._result.ct_wildcard_domains = _ct_telemetry.get("ct_wildcard_domains", 0)
+                        self._result.ct_private_reserved_domains = _ct_telemetry.get("ct_private_reserved_domains", 0)
+                        self._result.ct_duplicate_candidates = _ct_telemetry.get("ct_duplicate_candidates", 0)
+                        self._result.ct_expansion_clues_count = _ct_telemetry.get("ct_expansion_clues_count", 0)
+                        # Bounded examples: serialize up to MAX_EXPANSION_CLUE_EXAMPLES for report
+                        _ct_examples = _ct_telemetry.get("ct_candidate_examples", []) or []
+                        if _ct_examples:
+                            import json as _json
+                            _ex_samples: list[str] = []
+                            for _ex in _ct_examples[:5]:
+                                try:
+                                    _ex_samples.append(_json.dumps(_ex, ensure_ascii=True))
+                                except Exception:
+                                    pass
+                            self._result.ct_candidate_examples = tuple(_ex_samples)
                     # Sprint F216D: CT quarantine evidence for raw hits rejected by bridge
                     _ct_quarantine_count = _ct_telemetry.get("ct_quarantine_count", 0) if isinstance(_ct_telemetry, dict) else 0
                     _ct_quarantine_entries = _ct_telemetry.get("ct_quarantine_entries", []) if isinstance(_ct_telemetry, dict) else []
@@ -3357,10 +3396,17 @@ class SprintScheduler:
                         result = await miner.mine([str(_wayback_shaped)])
                     finally:
                         await miner.close()
-                    candidates, rejections = wayback_results_to_findings(
+                    candidates, rejections, wayback_telemetry = wayback_results_to_findings(
                         result, str(_wayback_shaped), query,
                         sprint_id=f"predispatch-wb-{int(_time.time())}"
                     )
+                    # Sprint F231C: Populate wayback advisory fields from bridge telemetry
+                    if wayback_telemetry:
+                        self._result.wayback_advisory_clues_count += wayback_telemetry.get("wayback_changed_count", 0)
+                        self._result.wayback_changed_url_count += wayback_telemetry.get("wayback_changed_url_count", 0)
+                        self._result.wayback_added_url_count += wayback_telemetry.get("wayback_added_count", 0)
+                        self._result.wayback_digest_changed_count += wayback_telemetry.get("wayback_digest_changed_count", 0)
+                        self._result.wayback_unchanged_rejected += wayback_telemetry.get("wayback_unchanged_rejected", 0)
                     _attempted_lanes.append("wayback")
                 except Exception as exc:
                     _skipped["wayback"] = f"{type(exc).__name__}:{exc}"
@@ -3378,6 +3424,14 @@ class SprintScheduler:
                 try:
                     from hledac.universal.security.passive_dns import call_lookup_passive_dns
                     ips, pdns_outcome = await call_lookup_passive_dns(str(_pdns_shaped))
+                    # Sprint F231C: Capture PassiveDNS advisory telemetry from bridge
+                    pdns_findings, pdns_rejections, pdns_telemetry = passive_dns_results_to_findings(
+                        ips, pdns_outcome, query, sprint_id=f"predispatch-pdns-{int(_time.time())}"
+                    )
+                    if pdns_telemetry:
+                        self._result.passive_dns_advisory_clues_count += pdns_telemetry.get("pdns_public_accepted", 0)
+                        self._result.passive_dns_private_ip_rejected += pdns_telemetry.get("pdns_private_rejected", 0)
+                        self._result.passive_dns_empty_ip_rejected += pdns_telemetry.get("pdns_empty_rejected", 0)
                     _attempted_lanes.append("passive_dns")
                 except Exception as exc:
                     _skipped["passive_dns"] = f"{type(exc).__name__}:{exc}"
@@ -5160,6 +5214,34 @@ class SprintScheduler:
         _pub_bootstrap_ord = getattr(public_result, 'public_bootstrap_order', 'disabled')
         _pub_bootstrap_prevented = getattr(public_result, 'public_bootstrap_prevented_discovery_timeout', False)
         _pub_bootstrap_fetch_att = getattr(public_result, 'public_bootstrap_first_fetch_attempted', False)
+        # F208G-A: Collect all public_* telemetry into _public_outcome for propagation
+        _pub_discovered = getattr(public_result, 'public_discovered', 0) or 0
+        _pub_fetch_candidate = getattr(public_result, 'public_fetch_candidate_count', 0) or 0
+        _pub_fetch_attempted = getattr(public_result, 'public_fetch_attempted', 0) or 0
+        _pub_fetch_success = getattr(public_result, 'public_fetch_success', 0) or 0
+        _pub_fetch_failed = getattr(public_result, 'public_fetch_failed', 0) or 0
+        _pub_acceptance_attempted = getattr(public_result, 'public_acceptance_attempted', 0) or 0
+        _pub_acceptance_accepted = getattr(public_result, 'public_acceptance_accepted', 0) or 0
+        _pub_acceptance_rejected = getattr(public_result, 'public_acceptance_rejected', 0) or 0
+        _pub_acceptance_reject_reasons = getattr(public_result, 'public_acceptance_reject_reasons', {}) or {}
+        _pub_terminal_classified = getattr(public_result, 'public_terminal_classified_count', 0) or 0
+        _pub_unclassified = getattr(public_result, 'public_unclassified_count', 0) or 0
+        _pub_terminal_reason_counts = getattr(public_result, 'public_terminal_reason_counts', {}) or {}
+        _pub_skipped_duplicate = getattr(public_result, 'public_skipped_duplicate', 0) or 0
+        _pub_skipped_scheme = getattr(public_result, 'public_skipped_unsupported_scheme', 0) or 0
+        _pub_skipped_mem = getattr(public_result, 'public_skipped_memory_gate', 0) or 0
+        _pub_skipped_quality = getattr(public_result, 'public_skipped_quality_gate', 0) or 0
+        _pub_skipped_browser = getattr(public_result, 'public_skipped_browser_unavailable', 0) or 0
+        _pub_skipped_xml = getattr(public_result, 'public_skipped_xml_or_feed', 0) or 0
+        _pub_skipped_timeout = getattr(public_result, 'public_skipped_timeout', 0) or 0
+        _pub_skipped_fetch_err = getattr(public_result, 'public_skipped_fetch_error', 0) or 0
+        _pub_skipped_url_sample = getattr(public_result, 'public_skipped_url_sample', ()) or ()
+        _pub_rejected_no_pattern = getattr(public_result, 'public_rejected_no_pattern_match', 0) or 0
+        _pub_rejected_low_info = getattr(public_result, 'public_rejected_low_information', 0) or 0
+        _pub_rejected_duplicate = getattr(public_result, 'public_rejected_duplicate', 0) or 0
+        _pub_rejected_storage = getattr(public_result, 'public_rejected_storage_rejected', 0) or 0
+        _pub_rejected_url_sample = getattr(public_result, 'public_rejected_url_samples', ()) or ()
+        _pub_accepted_url_sample = getattr(public_result, 'public_accepted_url_sample', ()) or ()
         self._public_outcome = {
             "lane": "PUBLIC",
             "attempted": True,
@@ -5176,6 +5258,34 @@ class SprintScheduler:
             "public_bootstrap_order": _pub_bootstrap_ord,
             "public_bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented,
             "public_bootstrap_first_fetch_attempted": _pub_bootstrap_fetch_att,
+            # F208G-A: PUBLIC Yield Taxonomy — full telemetry propagation
+            "public_discovered": _pub_discovered,
+            "public_fetch_candidate_count": _pub_fetch_candidate,
+            "public_fetch_attempted": _pub_fetch_attempted,
+            "public_fetch_success": _pub_fetch_success,
+            "public_fetch_failed": _pub_fetch_failed,
+            "public_acceptance_attempted": _pub_acceptance_attempted,
+            "public_acceptance_accepted": _pub_acceptance_accepted,
+            "public_acceptance_rejected": _pub_acceptance_rejected,
+            "public_acceptance_reject_reasons": _pub_acceptance_reject_reasons,
+            "public_terminal_classified_count": _pub_terminal_classified,
+            "public_unclassified_count": _pub_unclassified,
+            "public_terminal_reason_counts": _pub_terminal_reason_counts,
+            "public_skipped_duplicate": _pub_skipped_duplicate,
+            "public_skipped_unsupported_scheme": _pub_skipped_scheme,
+            "public_skipped_memory_gate": _pub_skipped_mem,
+            "public_skipped_quality_gate": _pub_skipped_quality,
+            "public_skipped_browser_unavailable": _pub_skipped_browser,
+            "public_skipped_xml_or_feed": _pub_skipped_xml,
+            "public_skipped_timeout": _pub_skipped_timeout,
+            "public_skipped_fetch_error": _pub_skipped_fetch_err,
+            "public_skipped_url_sample": _pub_skipped_url_sample,
+            "public_rejected_no_pattern_match": _pub_rejected_no_pattern,
+            "public_rejected_low_information": _pub_rejected_low_info,
+            "public_rejected_duplicate": _pub_rejected_duplicate,
+            "public_rejected_storage_rejected": _pub_rejected_storage,
+            "public_rejected_url_samples": _pub_rejected_url_sample,
+            "public_accepted_url_sample": _pub_accepted_url_sample,
         }
 
         log.debug(
@@ -6913,6 +7023,9 @@ class SprintScheduler:
 
         await runner.run_all_advisories()
 
+        # Sprint R5: CT → PassiveDNS one-hop pivot (after all other advisories)
+        await self._run_ct_to_passivedns_pivot_advisory()
+
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
     async def _run_pivot_planner_advisory(self) -> None:
@@ -6981,6 +7094,178 @@ class SprintScheduler:
             analyst_workbench=getattr(self, "_analyst_workbench", None),
         )
         await runner._run_analyst_brief_advisory(AdvisoryRunOutcome())
+
+    # ── Sprint R5: CT → PassiveDNS One-Hop Pivot Advisory ─────────────────────
+
+    async def _run_ct_to_passivedns_pivot_advisory(self) -> None:
+        """
+        Sprint R5: CT accepted domains → PassiveDNS one-hop pivot.
+
+        One-hop pivot from CT lane accepted findings to PassiveDNS lookup.
+        No recursive pivoting (pivot depth = 1).
+        No new queue framework.
+        No stealth/browser.
+
+        Flow:
+          1. Extract CT accepted domains from acquisition lane outcomes
+          2. Deduplicate (max 10 via dict.fromkeys)
+          3. Guard: skip if UMA critical/emergency
+          4. For each domain: call PassiveDNS (monkeypatched in tests)
+          5. Record FAMILY_PIVOT in NonfeedCandidateLedger
+          6. Record source_family_outcomes pivot_source=ct
+
+        GHOST_INVARIANTS:
+          - gather(return_exceptions=True)
+          - Manual CancelledError filter + error collection after gather
+          - CancelledError re-raised
+          - No MLX model load
+          - No asyncio.run() in async context
+          - Bounded: max 10 pivot domains
+          - Fail-soft: pivot error never crashes sprint
+        """
+        # Guard: skip under UMA critical/emergency
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                snap = await governor.evaluate()
+                uma_state = getattr(snap, "uma_state", "ok") or "ok"
+                if uma_state in ("critical", "emergency"):
+                    log.debug(
+                        f"[R5] CT→PDNS pivot skipped: uma_state={uma_state}"
+                    )
+                    return
+        except Exception:
+            pass  # Fail-soft: governor evaluation is best-effort
+
+        # Step 1: Get CT accepted findings from acquisition lane outcomes
+        ct_findings: list = []
+        try:
+            outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
+            for outcome in outcomes:
+                if getattr(outcome, "source_family", None) != "ct":
+                    continue
+                if not getattr(outcome, "attempted", False):
+                    continue
+                candidates = getattr(outcome, "candidate_findings", ()) or ()
+                accepted = getattr(outcome, "accepted_count", 0) or 0
+                if accepted > 0 and candidates:
+                    ct_findings.extend(candidates)
+        except Exception:
+            pass  # fail-soft
+
+        if not ct_findings:
+            log.debug("[R5] CT→PDNS pivot: no CT accepted findings")
+            return
+
+        # Step 2: Select deduplicated domains (max 10 hard cap, default 5)
+        from hledac.universal.runtime.acquisition_strategy import (
+            select_ct_domains_for_passivedns_pivot,
+        )
+        pivot_domains = select_ct_domains_for_passivedns_pivot(
+            ct_findings,
+            max_pivots=5,
+        )
+        if not pivot_domains:
+            log.debug("[R5] CT→PDNS pivot: no domains extracted from CT findings")
+            return
+
+        log.debug(f"[R5] CT→PDNS pivot: {len(pivot_domains)} domains: {pivot_domains[:3]}...")
+
+        # Step 3: Run PassiveDNS for each domain (bounded, fail-soft)
+        store = getattr(self, "_duckdb_store", None)
+        pdns_results: list = []
+        errors: list = []
+
+        from hledac.universal.security.passive_dns import (
+            call_lookup_passive_dns as _pdns_lookup,
+            PassiveDNSOutcome,
+        )
+
+        async def _run_pdns_for_domain(domain: str) -> tuple[str, list[str], PassiveDNSOutcome]:
+            """Run PassiveDNS for one domain, return (domain, ips, outcome)."""
+            try:
+                ips, outcome = await _pdns_lookup(domain)
+                return domain, ips, outcome
+            except Exception as exc:
+                return domain, [], None
+
+        try:
+            gather_results = await asyncio.gather(
+                *[_run_pdns_for_domain(d) for d in pivot_domains],
+                return_exceptions=True,
+            )
+
+            # Check gathered results
+            for i, result in enumerate(gather_results):
+                if isinstance(result, BaseException):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
+                    errors.append(f"domain_{i}_error:{result}")
+                    continue
+                domain, ips, outcome = result
+                if outcome is not None:
+                    pdns_results.append({
+                        "domain": domain,
+                        "ips": ips,
+                        "outcome": outcome,
+                        "pivot_source": "ct",
+                    })
+                else:
+                    errors.append(f"domain_{domain}_none")
+
+        except asyncio.CancelledError:
+            raise  # [I6] propagate CancelledError
+        except Exception:
+            pass  # fail-soft: PDNS errors never crash pivot
+
+        # Step 4: Record FAMILY_PIVOT in NonfeedCandidateLedger
+        ledger = getattr(self, "_nonfeed_ledger", None)
+        if ledger is not None:
+            for res in pdns_results:
+                try:
+                    domain = res.get("domain", "")
+                    ips = res.get("ips", []) or []
+                    outcome = res.get("outcome", None)
+                    if outcome and hasattr(outcome, "result_count"):
+                        count = getattr(outcome, "result_count", 0) or 0
+                        if count > 0:
+                            ledger.add_pivot_discovered(
+                                pivot_type="ct_to_passivedns",
+                                ioc_value=domain,
+                                source_hint=f"ct_domain:{domain}",
+                                reason=f"pdns_results={count}",
+                            )
+                except Exception:
+                    pass  # fail-soft
+
+        # Step 5: Record source_family_outcomes pivot source
+        # Append pivot-driven PDNS outcomes to _result for the diagnostic report
+        if pdns_results:
+            _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
+            for res in pdns_results:
+                outcome = res.get("outcome", None)
+                if outcome is None:
+                    continue
+                _sfos.append({
+                    "family": "passive_dns",
+                    "lane": "PASSIVE_DNS",
+                    "attempted": getattr(outcome, "attempted", True),
+                    "accepted": getattr(outcome, "result_count", 0) or 0,
+                    "terminal_state": "pivot_ct_domain",
+                    "raw_count": 0,
+                    "accepted_count": getattr(outcome, "result_count", 0) or 0,
+                    "error": getattr(outcome, "error", None),
+                    "timeout": getattr(outcome, "timeout", False),
+                    "skipped": False,
+                    "pivot_source": "ct",
+                    "pivot_domains": pivot_domains,
+                })
+            self._result.source_family_outcomes_list = _sfos  # type: ignore[attr-defined]
+
+        log.debug(
+            f"[R5] CT→PDNS pivot done: {len(pdns_results)} domains with results, "
+            f"errors={len(errors)}"
+        )
 
     # ── F206I: Source health summary for export teardown ─────────────────────
 
@@ -8211,6 +8496,57 @@ class SprintScheduler:
         except Exception as exc:
             self._result.export_paths.append(f"EXPORT_ERROR:cti_stix:{exc}")
 
+    # ── F208G-A: PUBLIC Yield Taxonomy — stage counters builder ────────────────
+
+    def _build_public_stage_counters(self) -> dict:
+        """
+        F208G-A: Build public_stage_counters dict from _public_pipeline_result.
+
+        This aggregates all F208G-A public_* telemetry fields from the stored
+        PipelineRunResult into a single dict for propagation to acquisition_report
+        and source_family_outcomes.
+
+        Returns an empty dict if _public_pipeline_result is None (PUBLIC skipped).
+        """
+        if self._public_pipeline_result is None:
+            return {}
+        pr = self._public_pipeline_result
+        return {
+            # Discovery/fetch overview
+            "public_discovered": getattr(pr, 'public_discovered', 0) or 0,
+            "public_fetch_candidate_count": getattr(pr, 'public_fetch_candidate_count', 0) or 0,
+            "public_fetch_attempted": getattr(pr, 'public_fetch_attempted', 0) or 0,
+            "public_fetch_success": getattr(pr, 'public_fetch_success', 0) or 0,
+            "public_fetch_failed": getattr(pr, 'public_fetch_failed', 0) or 0,
+            # Acceptance/rejection
+            "public_acceptance_attempted": getattr(pr, 'public_acceptance_attempted', 0) or 0,
+            "public_acceptance_accepted": getattr(pr, 'public_acceptance_accepted', 0) or 0,
+            "public_acceptance_rejected": getattr(pr, 'public_acceptance_rejected', 0) or 0,
+            "public_acceptance_reject_reasons": getattr(pr, 'public_acceptance_reject_reasons', {}) or {},
+            # Terminal classification
+            "public_terminal_classified_count": getattr(pr, 'public_terminal_classified_count', 0) or 0,
+            "public_unclassified_count": getattr(pr, 'public_unclassified_count', 0) or 0,
+            "public_terminal_reason_counts": getattr(pr, 'public_terminal_reason_counts', {}) or {},
+            # Skipped reason breakdown
+            "public_skipped_duplicate": getattr(pr, 'public_skipped_duplicate', 0) or 0,
+            "public_skipped_unsupported_scheme": getattr(pr, 'public_skipped_unsupported_scheme', 0) or 0,
+            "public_skipped_memory_gate": getattr(pr, 'public_skipped_memory_gate', 0) or 0,
+            "public_skipped_quality_gate": getattr(pr, 'public_skipped_quality_gate', 0) or 0,
+            "public_skipped_browser_unavailable": getattr(pr, 'public_skipped_browser_unavailable', 0) or 0,
+            "public_skipped_xml_or_feed": getattr(pr, 'public_skipped_xml_or_feed', 0) or 0,
+            "public_skipped_timeout": getattr(pr, 'public_skipped_timeout', 0) or 0,
+            "public_skipped_fetch_error": getattr(pr, 'public_skipped_fetch_error', 0) or 0,
+            "public_skipped_url_sample": getattr(pr, 'public_skipped_url_sample', ()) or (),
+            # Rejected reason breakdown
+            "public_rejected_no_pattern_match": getattr(pr, 'public_rejected_no_pattern_match', 0) or 0,
+            "public_rejected_low_information": getattr(pr, 'public_rejected_low_information', 0) or 0,
+            "public_rejected_duplicate": getattr(pr, 'public_rejected_duplicate', 0) or 0,
+            "public_rejected_storage_rejected": getattr(pr, 'public_rejected_storage_rejected', 0) or 0,
+            "public_rejected_url_samples": getattr(pr, 'public_rejected_url_samples', ()) or (),
+            # Accepted samples
+            "public_accepted_url_sample": getattr(pr, 'public_accepted_url_sample', ()) or (),
+        }
+
     async def _build_diagnostic_report(self, lifecycle) -> dict:
         """Build a diagnostic report dict for exporters."""
         # Sprint F350D: Use truthful sprint_id — NOT synthetic time-based run_id.
@@ -8666,6 +9002,8 @@ class SprintScheduler:
                 public_bootstrap_order=_pub_bootstrap_order,
                 public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented,
                 public_bootstrap_first_fetch_attempted=_pub_bootstrap_fetch_att,
+                # F208G-A: PUBLIC Yield Taxonomy — stage counters for acquisition_report
+                public_stage_counters=self._build_public_stage_counters(),
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only
@@ -9943,11 +10281,28 @@ class SprintScheduler:
                     "ct_bridge_valid_domain_count": getattr(self._result, 'ct_valid_domain_count', 0),
                     "ct_bridge_build_success_count": getattr(self._result, 'ct_bridge_build_success_count', 0),
                     "ct_bridge_quality_rejected_count": getattr(self._result, 'ct_bridge_quality_rejected_count', 0),
+                    # F231B: CT expansion clue summary — domain expansion evidence visible even when accepted=0
+                    "ct_expansion_clues_count": getattr(self._result, 'ct_expansion_clues_count', 0),
+                    "ct_valid_public_domains": getattr(self._result, 'ct_valid_public_domains', 0),
+                    "ct_wildcard_domains": getattr(self._result, 'ct_wildcard_domains', 0),
+                    "ct_private_reserved_domains": getattr(self._result, 'ct_private_reserved_domains', 0),
+                    "ct_duplicate_candidates": getattr(self._result, 'ct_duplicate_candidates', 0),
+                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     # Sprint F216G: Quality gate rejection summaries by category
                     "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),
                     "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),
                     "low_information_by_family": getattr(self._result, 'low_information_by_family', {}),
                     "quality_rejection_ledger_size": len(getattr(self._result, 'quality_rejection_ledger', ())),
+                    # F231C: Wayback advisory evidence surface
+                    "wayback_advisory_clues_count": getattr(self._result, 'wayback_advisory_clues_count', 0),
+                    "wayback_changed_url_count": getattr(self._result, 'wayback_changed_url_count', 0),
+                    "wayback_added_url_count": getattr(self._result, 'wayback_added_url_count', 0),
+                    "wayback_digest_changed_count": getattr(self._result, 'wayback_digest_changed_count', 0),
+                    "wayback_unchanged_rejected": getattr(self._result, 'wayback_unchanged_rejected', 0),
+                    # F231C: PassiveDNS advisory evidence surface
+                    "passive_dns_advisory_clues_count": getattr(self._result, 'passive_dns_advisory_clues_count', 0),
+                    "passive_dns_private_ip_rejected": getattr(self._result, 'passive_dns_private_ip_rejected', 0),
+                    "passive_dns_empty_ip_rejected": getattr(self._result, 'passive_dns_empty_ip_rejected', 0),
                 }
         except Exception:
             result["lane_verdict"] = None
@@ -10128,6 +10483,23 @@ class SprintScheduler:
                     "ct_bridge_valid_domain_count": getattr(self._result, 'ct_valid_domain_count', 0),
                     "ct_bridge_build_success_count": getattr(self._result, 'ct_bridge_build_success_count', 0),
                     "ct_bridge_quality_rejected_count": getattr(self._result, 'ct_bridge_quality_rejected_count', 0),
+                    # F231B: CT expansion clue summary — domain expansion evidence visible even when accepted=0
+                    "ct_expansion_clues_count": getattr(self._result, 'ct_expansion_clues_count', 0),
+                    "ct_valid_public_domains": getattr(self._result, 'ct_valid_public_domains', 0),
+                    "ct_wildcard_domains": getattr(self._result, 'ct_wildcard_domains', 0),
+                    "ct_private_reserved_domains": getattr(self._result, 'ct_private_reserved_domains', 0),
+                    "ct_duplicate_candidates": getattr(self._result, 'ct_duplicate_candidates', 0),
+                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
+                    # F231C: Wayback advisory evidence surface
+                    "wayback_advisory_clues_count": getattr(self._result, 'wayback_advisory_clues_count', 0),
+                    "wayback_changed_url_count": getattr(self._result, 'wayback_changed_url_count', 0),
+                    "wayback_added_url_count": getattr(self._result, 'wayback_added_url_count', 0),
+                    "wayback_digest_changed_count": getattr(self._result, 'wayback_digest_changed_count', 0),
+                    "wayback_unchanged_rejected": getattr(self._result, 'wayback_unchanged_rejected', 0),
+                    # F231C: PassiveDNS advisory evidence surface
+                    "passive_dns_advisory_clues_count": getattr(self._result, 'passive_dns_advisory_clues_count', 0),
+                    "passive_dns_private_ip_rejected": getattr(self._result, 'passive_dns_private_ip_rejected', 0),
+                    "passive_dns_empty_ip_rejected": getattr(self._result, 'passive_dns_empty_ip_rejected', 0),
                 }
         except Exception:
             result["lane_verdict"] = None

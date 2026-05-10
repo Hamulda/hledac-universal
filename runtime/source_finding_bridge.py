@@ -44,6 +44,8 @@ __all__ = [
     "passive_dns_results_to_findings",
     "summarize_bridge_conversion",
     "summarize_ct_conversion",
+    "summarize_wayback_conversion",
+    "summarize_passive_dns_conversion",
     "Rejection",
     "RejectionReason",
     "REJECTION_MISSING_DOMAIN",
@@ -90,6 +92,7 @@ MAX_PAYLOAD_TEXT_CHARS: int = 2000
 MAX_PROVENANCE_ITEMS: int = 20
 MAX_SAMPLE_REJECTIONS: int = 5
 MAX_CT_QUARANTINE_SAMPLES: int = 10
+MAX_EXPANSION_CLUE_EXAMPLES: int = 5
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -767,6 +770,21 @@ def ct_results_to_findings(
     )
     ct_rejected_duplicate = sum(1 for r in rejections if r == REJECTION_DUPLICATE_CANDIDATE)
 
+    # F231B: CT expansion clue tracking — domain expansion evidence that is NOT
+    # an accepted CanonicalFinding. These clues make CT analytically visible even
+    # when accepted_findings == 0.
+    ct_raw_domains_seen = ct_raw_entries
+    ct_unique_domains_seen = ct_extracted_domains
+    # Valid public domains = candidate domains that passed all structural checks
+    # (not wildcards, not private/reserved, not single-label, not duplicates)
+    ct_valid_public_domains = ct_candidate_domains
+    ct_wildcard_domains = ct_rejected_wildcard
+    ct_private_reserved_domains = ct_rejected_invalid
+    ct_duplicate_candidates = ct_rejected_duplicate
+    # Bounded examples of quarantine entries (max 5) — these are expansion clues
+    ct_candidate_examples: list[dict[str, Any]] = ct_quarantine_entries[:MAX_EXPANSION_CLUE_EXAMPLES]
+    ct_expansion_clues_count = len(ct_candidate_examples)
+
     telemetry = {
         "ct_raw_entries": ct_raw_entries,
         "ct_extracted_domains": ct_extracted_domains,
@@ -792,6 +810,15 @@ def ct_results_to_findings(
         ),
         "ct_quarantine_count": len(ct_quarantine_entries),
         "ct_quarantine_entries": ct_quarantine_entries,
+        # F231B: CT expansion clue summary — analytically visible even when accepted=0
+        "ct_raw_domains_seen": ct_raw_domains_seen,
+        "ct_unique_domains_seen": ct_unique_domains_seen,
+        "ct_valid_public_domains": ct_valid_public_domains,
+        "ct_wildcard_domains": ct_wildcard_domains,
+        "ct_private_reserved_domains": ct_private_reserved_domains,
+        "ct_duplicate_candidates": ct_duplicate_candidates,
+        "ct_candidate_examples": ct_candidate_examples,
+        "ct_expansion_clues_count": ct_expansion_clues_count,
     }
 
     return findings, rejections, telemetry
@@ -854,7 +881,7 @@ def wayback_results_to_findings(
     diff_result: Any,
     query: str,
     sprint_id: str,
-) -> Tuple[List[Any], List[RejectionReason]]:
+) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
     """
     Convert WaybackDiffResult to finding candidates.
 
@@ -862,7 +889,14 @@ def wayback_results_to_findings(
         source_type = "wayback_diff"
         confidence  = 0.75
 
-    Returns (findings, rejection_reasons).
+    Returns (findings, rejection_reasons, telemetry).
+    Telemetry fields:
+        wayback_change_events     — total events processed
+        wayback_changed_count     — events with change_type in (added, changed)
+        wayback_added_count       — events with change_type = added
+        wayback_changed_url_count — events with change_type = changed
+        wayback_digest_changed_count — events where digest differs (any non-unchanged)
+        wayback_unchanged_rejected — events rejected as low_information (unchanged)
 
     Rejection reasons:
         missing_value    — event has no digest or url
@@ -873,14 +907,35 @@ def wayback_results_to_findings(
 
     if not hasattr(diff_result, "change_events"):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-        return [], rejections
+        return [], rejections, {
+            "wayback_change_events": 0,
+            "wayback_changed_count": 0,
+            "wayback_added_count": 0,
+            "wayback_changed_url_count": 0,
+            "wayback_digest_changed_count": 0,
+            "wayback_unchanged_rejected": 0,
+        }
 
     events = diff_result.change_events
     if not events:
         rejections.append(REJECTION_MISSING_VALUE)
-        return [], rejections
+        return [], rejections, {
+            "wayback_change_events": 0,
+            "wayback_changed_count": 0,
+            "wayback_added_count": 0,
+            "wayback_changed_url_count": 0,
+            "wayback_digest_changed_count": 0,
+            "wayback_unchanged_rejected": 0,
+        }
 
     capped = events[:MAX_BRIDGE_OUTPUT]
+
+    # F231C: Per-category counters for advisory evidence surface
+    wayback_changed_count = 0
+    wayback_added_count = 0
+    wayback_changed_url_count = 0
+    wayback_digest_changed_count = 0
+    wayback_unchanged_rejected = 0
 
     for event in capped:
         url = getattr(event, "url", "") or ""
@@ -895,7 +950,16 @@ def wayback_results_to_findings(
 
         if change_type == "unchanged":
             rejections.append(REJECTION_LOW_INFORMATION)
+            wayback_unchanged_rejected += 1
             continue
+
+        # F231C: Track change type categories
+        if change_type == "added":
+            wayback_added_count += 1
+        elif change_type == "changed":
+            wayback_changed_url_count += 1
+        wayback_changed_count += 1
+        wayback_digest_changed_count += 1
 
         ts = _ts_from_wayback_timestamp(timestamp) if timestamp else time.time()
         blake2_id = _make_blake2b_hex(digest, _WAYBACK_SALT)
@@ -935,7 +999,15 @@ def wayback_results_to_findings(
         if finding is not None:
             findings.append(finding)
 
-    return findings, rejections
+    telemetry = {
+        "wayback_change_events": len(capped),
+        "wayback_changed_count": wayback_changed_count,
+        "wayback_added_count": wayback_added_count,
+        "wayback_changed_url_count": wayback_changed_url_count,
+        "wayback_digest_changed_count": wayback_digest_changed_count,
+        "wayback_unchanged_rejected": wayback_unchanged_rejected,
+    }
+    return findings, rejections, telemetry
 
 
 # ---------------------------------------------------------------------------
@@ -981,7 +1053,7 @@ def passive_dns_results_to_findings(
     _outcome: Any,
     query: str,
     sprint_id: str,
-) -> Tuple[List[Any], List[RejectionReason]]:
+) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
     """
     Convert PassiveDNS IP list + PassiveDNSOutcome to finding candidates.
 
@@ -989,8 +1061,15 @@ def passive_dns_results_to_findings(
         source_type = "passive_dns"
         confidence  = 0.5
 
-    Returns (findings, rejection_reasons).
+    Returns (findings, rejection_reasons, telemetry).
     Findings are capped at MAX_BRIDGE_OUTPUT.
+
+    Telemetry fields:
+        pdns_ip_total          — total IPs processed (pre-cap)
+        pdns_private_rejected  — IPs rejected as private/reserved (low_information)
+        pdns_empty_rejected    — empty/whitespace IPs rejected (missing_value)
+        pdns_duplicate_rejected — duplicate (query, ip) pairs rejected
+        pdns_public_accepted   — public IPs accepted as candidates
 
     Rejection reasons:
         missing_domain    — query is empty or not a valid domain/IP
@@ -1004,35 +1083,61 @@ def passive_dns_results_to_findings(
     # [F213C] Validate input shape before iterating
     if not isinstance(ips, list):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-        return [], rejections
+        return [], rejections, {
+            "pdns_ip_total": 0,
+            "pdns_private_rejected": 0,
+            "pdns_empty_rejected": 0,
+            "pdns_duplicate_rejected": 0,
+            "pdns_public_accepted": 0,
+        }
 
     query_stripped = query.strip() if query else ""
     if not query_stripped:
         rejections.append(REJECTION_MISSING_DOMAIN)
-        return [], rejections
+        return [], rejections, {
+            "pdns_ip_total": 0,
+            "pdns_private_rejected": 0,
+            "pdns_empty_rejected": 0,
+            "pdns_duplicate_rejected": 0,
+            "pdns_public_accepted": 0,
+        }
 
     if not ips:
         rejections.append(REJECTION_MISSING_VALUE)
-        return [], rejections
+        return [], rejections, {
+            "pdns_ip_total": 0,
+            "pdns_private_rejected": 0,
+            "pdns_empty_rejected": 0,
+            "pdns_duplicate_rejected": 0,
+            "pdns_public_accepted": 0,
+        }
 
     capped = ips[:MAX_BRIDGE_OUTPUT]
     seen_pairs: set[str] = set()
     now = time.time()
 
+    # F231C: Per-category counters for advisory evidence surface
+    pdns_private_rejected = 0
+    pdns_empty_rejected = 0
+    pdns_duplicate_rejected = 0
+
     for ip in capped:
         ip_stripped = ip.strip()
         if not ip_stripped:
             rejections.append(REJECTION_MISSING_VALUE)
+            pdns_empty_rejected += 1
             continue
 
         is_private = any(ip_stripped.startswith(p) for p in _PRIVATE_IP_PREFIXES)
         if is_private:
             rejections.append(REJECTION_LOW_INFORMATION)
+            pdns_private_rejected += 1
             continue
 
         pair_key = f"{query_stripped}:{ip_stripped}"
         if pair_key in seen_pairs:
             rejections.append(REJECTION_DUPLICATE_CANDIDATE)
+            pdns_duplicate_rejected += 1
             continue
         seen_pairs.add(pair_key)
 
@@ -1061,7 +1166,14 @@ def passive_dns_results_to_findings(
         if finding is not None:
             findings.append(finding)
 
-    return findings, rejections
+    telemetry = {
+        "pdns_ip_total": len(capped),
+        "pdns_private_rejected": pdns_private_rejected,
+        "pdns_empty_rejected": pdns_empty_rejected,
+        "pdns_duplicate_rejected": pdns_duplicate_rejected,
+        "pdns_public_accepted": len(findings),
+    }
+    return findings, rejections, telemetry
 
 
 # ---------------------------------------------------------------------------
@@ -1111,6 +1223,139 @@ def summarize_bridge_conversion(
         "rejectionsCount": len(rejections),
         "rejectionReasons": top_rejections,
         "totalProcessed": total,
+    }
+
+
+def summarize_wayback_conversion(
+    findings: List[Any],
+    rejections: List[RejectionReason],
+    telemetry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    F231C: Summarize Wayback bridge conversion with advisory evidence surface.
+
+    Produces advisory_evidence_summary with:
+    - family: "wayback_diff"
+    - attempted: True if any events processed
+    - raw_count: wayback_change_events (total events)
+    - accepted_count: len(findings) (strict — only CanonicalFinding candidates)
+    - advisory_clues_count: wayback_changed_count (added+changed events as clues)
+    - skipped: 0 (wayback is always attempted if events exist)
+    - error: 0 unless unsupported_shape
+    - examples: up to 5 (url + change_type) from events with non-unchanged change_type
+    - changed_url_count: wayback_changed_url_count
+    - added_url_count: wayback_added_count
+    - digest_changed_count: wayback_digest_changed_count
+
+    Advisory clues do NOT replace accepted findings — they are supplementary
+    diagnostic signals for research quality scoring.
+
+    Pure function — no storage, no network, no MLX.
+    """
+    raw_count = (telemetry or {}).get("wayback_change_events", 0)
+    changed_count = (telemetry or {}).get("wayback_changed_count", 0)
+    added_count = (telemetry or {}).get("wayback_added_count", 0)
+    changed_url_count = (telemetry or {}).get("wayback_changed_url_count", 0)
+    digest_changed_count = (telemetry or {}).get("wayback_digest_changed_count", 0)
+    unchanged_rejected = (telemetry or {}).get("wayback_unchanged_rejected", 0)
+
+    rejection_counts: dict[str, int] = {}
+    for reason in rejections:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    all_rejection_reasons = dict(sorted(
+        rejection_counts.items(),
+        key=lambda x: (-x[1], x[0]),
+    )[:20])
+
+    # Build examples: up to 5 non-unchanged events as advisory clues
+    examples: list[dict[str, str]] = []
+    for r in rejections[:5]:
+        if isinstance(r, dict):
+            examples.append(r)
+
+    return {
+        "family": "wayback_diff",
+        "attempted": raw_count > 0,
+        "raw_count": raw_count,
+        "accepted_count": len(findings),
+        "advisory_clues_count": changed_count,
+        "skipped": 0,
+        "error": rejection_counts.get(REJECTION_UNSUPPORTED_SHAPE, 0),
+        "examples": examples,
+        "changed_url_count": changed_url_count,
+        "added_url_count": added_count,
+        "digest_changed_count": digest_changed_count,
+        "unchanged_rejected": unchanged_rejected,
+        "all_rejection_reasons": all_rejection_reasons,
+    }
+
+
+def summarize_passive_dns_conversion(
+    findings: List[Any],
+    rejections: List[RejectionReason],
+    telemetry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    F231C: Summarize PassiveDNS bridge conversion with advisory evidence surface.
+
+    Produces advisory_evidence_summary with:
+    - family: "passive_dns"
+    - attempted: True if any IPs were processed
+    - raw_count: pdns_ip_total (total IPs processed)
+    - accepted_count: pdns_public_accepted (strict CanonicalFinding candidates)
+    - advisory_clues_count: pdns_private_rejected + pdns_ip_total (rejections as clues,
+      since private IP rejection tells us the domain resolves to internal infrastructure)
+    - skipped: 0 (always attempted if IPs provided)
+    - error: 0 unless unsupported_shape
+    - examples: up to 5 private IP rejections
+    - public_ip_count: pdns_public_accepted
+    - private_ip_rejected_count: pdns_private_rejected
+    - empty_ip_rejected_count: pdns_empty_rejected
+    - duplicate_rejected_count: pdns_duplicate_rejected
+
+    Advisory clues do NOT replace accepted findings — they are supplementary
+    diagnostic signals for research quality scoring.
+
+    Pure function — no storage, no network, no MLX.
+    """
+    ip_total = (telemetry or {}).get("pdns_ip_total", 0)
+    private_rejected = (telemetry or {}).get("pdns_private_rejected", 0)
+    empty_rejected = (telemetry or {}).get("pdns_empty_rejected", 0)
+    duplicate_rejected = (telemetry or {}).get("pdns_duplicate_rejected", 0)
+    public_accepted = (telemetry or {}).get("pdns_public_accepted", 0)
+
+    rejection_counts: dict[str, int] = {}
+    for reason in rejections:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    all_rejection_reasons = dict(sorted(
+        rejection_counts.items(),
+        key=lambda x: (-x[1], x[0]),
+    )[:20])
+
+    # advisory_clues: private IPs tell us domain resolves to internal infra (useful signal)
+    advisory_clues = private_rejected + ip_total
+
+    examples: list[dict[str, Any]] = []
+    for r in rejections[:5]:
+        if isinstance(r, dict):
+            examples.append(r)
+
+    return {
+        "family": "passive_dns",
+        "attempted": ip_total > 0,
+        "raw_count": ip_total,
+        "accepted_count": public_accepted,
+        "advisory_clues_count": advisory_clues,
+        "skipped": 0,
+        "error": rejection_counts.get(REJECTION_UNSUPPORTED_SHAPE, 0),
+        "examples": examples,
+        "public_ip_count": public_accepted,
+        "private_ip_rejected_count": private_rejected,
+        "empty_ip_rejected_count": empty_rejected,
+        "duplicate_rejected_count": duplicate_rejected,
+        "all_rejection_reasons": all_rejection_reasons,
     }
 
 
@@ -1206,6 +1451,15 @@ def summarize_ct_conversion(
     ct_rejected_missing_domain = (telemetry or {}).get("ct_rejected_missing_domain", 0)
     ct_rejected_missing_value = (telemetry or {}).get("ct_rejected_missing_value", 0)
 
+    # F231B: CT expansion clue summary — domain expansion evidence not counted as accepted
+    ct_raw_domains_seen = (telemetry or {}).get("ct_raw_domains_seen", 0)
+    ct_unique_domains_seen = (telemetry or {}).get("ct_unique_domains_seen", 0)
+    ct_valid_public_domains = (telemetry or {}).get("ct_valid_public_domains", 0)
+    ct_wildcard_domains = (telemetry or {}).get("ct_wildcard_domains", 0)
+    ct_private_reserved_domains = (telemetry or {}).get("ct_private_reserved_domains", 0)
+    ct_duplicate_candidates = (telemetry or {}).get("ct_duplicate_candidates", 0)
+    ct_candidate_examples = (telemetry or {}).get("ct_candidate_examples", [])
+    ct_expansion_clues_count = (telemetry or {}).get("ct_expansion_clues_count", 0)
     # F214A: ct_raw_sample — up to 5 sanitized raw entries (first 5 hits)
     ct_raw_sample = []
     # Shape keys from all hits (for diagnostics)
@@ -1241,4 +1495,13 @@ def summarize_ct_conversion(
             storage_rejected=ct_storage_rejected,
             total_rejected=total_rejected,
         ),
+        # F231B: CT expansion clue summary — makes CT visible even when accepted=0
+        "ctRawDomainsSeen": ct_raw_domains_seen,
+        "ctUniqueDomainsSeen": ct_unique_domains_seen,
+        "ctValidPublicDomains": ct_valid_public_domains,
+        "ctWildcardDomains": ct_wildcard_domains,
+        "ctPrivateReservedDomains": ct_private_reserved_domains,
+        "ctDuplicateCandidates": ct_duplicate_candidates,
+        "ctCandidateExamples": ct_candidate_examples,
+        "ctExpansionCluesCount": ct_expansion_clues_count,
     }
