@@ -936,6 +936,7 @@ async def _build_public_finding(
     hit_snippet: str,
     discovery_score: float | None,
     discovery_reason: str | None,
+    http_status_code: int = 0,
 ) -> tuple:
     """
     F226B: Build a public-surface CanonicalFinding from a non-pattern-maching page.
@@ -957,7 +958,7 @@ async def _build_public_finding(
     if not page_text or not page_text.strip():
         return ()
 
-    # Bounded payload from title + snippet + first chars of body
+    # Bounded payload from title + snippet + first chars of body + status
     payload_parts: list[str] = []
     if hit_title:
         payload_parts.append(f"title: {hit_title[:200]}")
@@ -967,6 +968,8 @@ async def _build_public_finding(
     body_preview = page_text[:500].strip()
     if body_preview:
         payload_parts.append(f"body: {body_preview}")
+    if http_status_code > 0:
+        payload_parts.append(f"status: {http_status_code}")
     if not payload_parts:
         return ()
 
@@ -1457,6 +1460,7 @@ async def _fetch_and_process_page(
                         hit_snippet=hit_snippet or "",
                         discovery_score=discovery_score,
                         discovery_reason=discovery_reason,
+                        http_status_code=getattr(result, "status_code", 0) or 0,
                     )
                     if _pub_tuple:
                         _public_findings.append(_pub_tuple[0])

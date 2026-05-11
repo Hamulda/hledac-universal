@@ -83,6 +83,17 @@ class LiveKpiInput:
 
 
 # ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+def _as_mapping(value: dict | None) -> dict:
+    """Coerce optional dict-like to dict, or {} for None/non-dict."""
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Compatibility wrapper (old flat param list)
 # ---------------------------------------------------------------------------
 
@@ -607,7 +618,36 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     if inp.acquisition_report and isinstance(inp.acquisition_report, dict):
         acquisition_report_schema_version = inp.acquisition_report.get("schema_version")
 
-    return {
+    # F231A: PUBLIC Candidate Ledger — null-safe with acquisition_report fallback
+    # F232E: When public_pipeline is None, derive from acquisition_report.public_stage_counters
+    _pp = inp.public_pipeline
+    _ar_psc: dict | None = None
+    if inp.acquisition_report and isinstance(inp.acquisition_report, dict):
+        _ar_psc = _as_mapping(inp.acquisition_report).get("public_stage_counters")
+    _ar_pts: str = ""
+    if _ar_psc and isinstance(_ar_psc, dict):
+        _ar_pts = _ar_psc.get("terminal_stage", "") or ""
+    # Determine terminal stage: public_pipeline wins if present, else acquisition_report
+    _public_terminal_stage: str = _ar_pts
+    if _pp and isinstance(_pp, dict):
+        _public_terminal_stage = _pp.get("public_terminal_stage") or _ar_pts or ""
+    _public_candidate_ledger_summary = {
+        "discovered": _pp.get("public_candidates_discovered", 0) if _pp else (_ar_psc.get("discovered", 0) if _ar_psc else 0),
+        "fetch_attempted": _pp.get("public_candidates_fetch_attempted", 0) if _pp else (_ar_psc.get("fetch_attempted", 0) if _ar_psc else 0),
+        "fetch_success": _pp.get("public_candidates_fetch_success", 0) if _pp else (_ar_psc.get("fetch_success", 0) if _ar_psc else 0),
+        "parse_success": _pp.get("public_candidates_parse_success", 0) if _pp else (_ar_psc.get("parse_success", 0) if _ar_psc else 0),
+        "pattern_matched": _pp.get("public_candidates_pattern_matched", 0) if _pp else 0,
+        "built": _pp.get("public_candidates_built", 0) if _pp else (_ar_psc.get("built", 0) if _ar_psc else 0),
+        "store_attempted": _pp.get("public_candidates_store_attempted", 0) if _pp else (_ar_psc.get("store_attempted", 0) if _ar_psc else 0),
+        "stored": _pp.get("public_candidates_stored", 0) if _pp else (_ar_psc.get("stored", 0) if _ar_psc else 0),
+        "rejected": _pp.get("public_candidates_rejected", 0) if _pp else (_ar_psc.get("rejected", 0) if _ar_psc else 0),
+    }
+    _public_surface_present = bool(
+        (_pp and isinstance(_pp, dict))
+        or (_ar_psc and isinstance(_ar_psc, dict))
+        or bool(_public_terminal_stage)
+    )
+    _result_dict = {
         "total_findings": total_findings,
         "accepted_findings": accepted_findings,
         "cycles_completed": cycles_completed,
@@ -626,27 +666,17 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "public_acceptance_reject_reasons": public_acceptance_reject_reasons,
         "top_public_reject_reason": top_public_reject_reason,
         "public_rejected_url_sample": public_rejected_url_sample,
-        # F231A: PUBLIC Candidate Ledger
-        "public_candidate_ledger_summary": {
-            "discovered": inp.public_pipeline.get("public_candidates_discovered", 0) if inp.public_pipeline else 0,
-            "fetch_attempted": inp.public_pipeline.get("public_candidates_fetch_attempted", 0) if inp.public_pipeline else 0,
-            "fetch_success": inp.public_pipeline.get("public_candidates_fetch_success", 0) if inp.public_pipeline else 0,
-            "parse_success": inp.public_pipeline.get("public_candidates_parse_success", 0) if inp.public_pipeline else 0,
-            "pattern_matched": inp.public_pipeline.get("public_candidates_pattern_matched", 0) if inp.public_pipeline else 0,
-            "built": inp.public_pipeline.get("public_candidates_built", 0) if inp.public_pipeline else 0,
-            "store_attempted": inp.public_pipeline.get("public_candidates_store_attempted", 0) if inp.public_pipeline else 0,
-            "stored": inp.public_pipeline.get("public_candidates_stored", 0) if inp.public_pipeline else 0,
-            "rejected": inp.public_pipeline.get("public_candidates_rejected", 0) if inp.public_pipeline else 0,
-        },
-        "public_terminal_stage": inp.public_pipeline.get("public_terminal_stage", "") if inp.public_pipeline else "",
+        "public_candidate_ledger_summary": _public_candidate_ledger_summary,
+        "public_surface_present": _public_surface_present,
+        "public_terminal_stage": _public_terminal_stage,
         "public_stage_counters": {
-            "discovery_empty": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "discovery_empty") else 0,
-            "fetch_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "fetch_zero") else 0,
-            "parse_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "parse_zero") else 0,
-            "match_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "match_zero") else 0,
-            "build_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "build_zero") else 0,
-            "store_zero": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "store_zero") else 0,
-            "accepted": 1 if (inp.public_pipeline.get("public_terminal_stage", "") == "accepted") else 0,
+            "discovery_empty": 1 if _public_terminal_stage == "discovery_empty" else 0,
+            "fetch_zero": 1 if _public_terminal_stage == "fetch_zero" else 0,
+            "parse_zero": 1 if _public_terminal_stage == "parse_zero" else 0,
+            "match_zero": 1 if _public_terminal_stage == "match_zero" else 0,
+            "build_zero": 1 if _public_terminal_stage == "build_zero" else 0,
+            "store_zero": 1 if _public_terminal_stage == "store_zero" else 0,
+            "accepted": 1 if _public_terminal_stage == "accepted" else 0,
         },
         "feed_dominance_score": feed_dominance_score,
         "feed_balance_recommendation": feed_balance_recommendation,
@@ -775,9 +805,9 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         # F231F: Evidence depth KPI alias fields — normalized names for research_quality_score
         # These allow research_quality_score to read actual F231A/B/C canonical field names
         # regardless of which naming convention the live KPI used.
-        "public_candidates_seen": _sum_alias_fields(inp.public_pipeline, [
+        "public_candidates_seen": _sum_alias_fields(_pp, [
             "public_candidates_discovered", "public_candidates_built", "public_candidates_stored",
-        ]) if inp.public_pipeline else 0,
+        ]) if _pp else 0,
         "ct_clues_seen": _sum_alias_fields(lane_verdict, [
             "ct_expansion_clues_count", "ct_valid_public_domains",
         ]) if isinstance(lane_verdict, dict) else 0,
@@ -811,6 +841,7 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "discovery_not_wired_providers": _derive_discovery_not_wired_providers(inp.acquisition_report),
         "missing_canonical_fields": ["source_family_outcomes"] if not _sfo_has_canonical else [],
     }
+    return _result_dict
 
 
 # ---------------------------------------------------------------------------

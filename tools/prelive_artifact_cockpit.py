@@ -200,6 +200,8 @@ class Verdict(str, Enum):
     READY_TO_RUN_NOW = "READY_TO_RUN_NOW"
     READY_DIAGNOSTIC_ONLY = "READY_DIAGNOSTIC_ONLY"
     READY_TO_RESTART_AND_RUN = "READY_TO_RESTART_AND_RUN"
+    # F232H: Feed baseline only — nonfeed capability blocked, feed can proceed
+    READY_FOR_FEED_BASELINE_ONLY = "READY_FOR_FEED_BASELINE_ONLY"
     BLOCKED_BY_ARTIFACTS = "BLOCKED_BY_ARTIFACTS"
     BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
     BLOCKED_BY_PROVIDER_SURFACE = "BLOCKED_BY_PROVIDER_SURFACE"
@@ -587,6 +589,10 @@ def merge_cockpit(
     # F221G: Feed-only detection + swap-tier READY gate
     # Priority: if nonfeed_diagnostic signal present → override swap verdict with nonfeed diagnostic.
     # Otherwise: fall through to normal swap-tier verdicts (clean / diagnostic / hard_block).
+    #
+    # F232H CRITICAL: provider_surface_ok=False AND nonfeed_signal → DO NOT allow RUN_NOW.
+    # The nonfeed signal path bypassed provider_surface_ok. We must re-check it here.
+    # F232H CRITICAL: fallback_schema_blocked AND nonfeed_signal → DO NOT allow RUN_NOW.
     elif gate_live_allowed and ready == total:
         suggested_cmd = decision_data.get("suggested_live_command", "")
         suggested_highswap_cmd = decision_data.get("suggested_highswap_diagnostic_command", "")
@@ -597,8 +603,26 @@ def merge_cockpit(
         )
 
         if nonfeed_signal:
+            # F232H: Even with nonfeed signal, provider_surface_ok=False blocks capability run
+            if not provider_surface_ok:
+                verdict = Verdict.BLOCKED_BY_PROVIDER_SURFACE
+                next_action = NextAction.FIX_PROVIDER_SURFACE
+                next_action_detail = "provider_surface_degraded: nonfeed capability blocked"
+                live_allowed = False
+                swap_policy_tier = "blocked"
+                swap_gate_reason = "provider_surface_ok=False blocks nonfeed capability"
+                log.append("verdict=BLOCKED_BY_PROVIDER_SURFACE (F232H: nonfeed_signal + provider_surface_degraded)")
+            # F232H: Fallback schema blocks nonfeed capability run
+            elif fallback_schema_blocked:
+                verdict = Verdict.BLOCKED_BY_UNKNOWN
+                next_action = NextAction.FIX_CONTRACT_GATE
+                next_action_detail = "fallback schema detected: nonfeed capability blocked"
+                live_allowed = False
+                swap_policy_tier = "blocked"
+                swap_gate_reason = "fallback_schema_blocked blocks nonfeed capability"
+                log.append("verdict=BLOCKED_BY_UNKNOWN (F232H: nonfeed_signal + fallback_schema_blocked)")
             # F220-like feed-only: route to nonfeed_diagnostic180 regardless of swap tier
-            if uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
+            elif uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
                 verdict = Verdict.READY_TO_RUN_NOW
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
                 next_action_detail = suggested_cmd or "nonfeed_diagnostic180 — F220-like feed-only detected"

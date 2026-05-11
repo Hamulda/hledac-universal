@@ -79,7 +79,7 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
 # Stage 3 (derived): runs last, depends on correlated signals from stage 2
 SIDECAR_STAGES: tuple[tuple[str, ...], ...] = (
     # Stage 1: light extraction — passive signal collection
-    ("leak_sentinel", "passive_fingerprint", "evidence_triage", "temporal_archaeology"),
+    ("leak_sentinel", "passive_fingerprint", "passive_tech_stack", "evidence_triage", "temporal_archaeology"),
     # Stage 2: correlation — combines signals into exposure/identity/attribution findings
     (
         "exposure_correlator",
@@ -875,6 +875,34 @@ async def _social_identity_surface_runner(
         pass  # Fail-soft
 
 
+async def _passive_tech_stack_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """R11 passive tech-stack extraction — deterministic, no active scan."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.intelligence.passive_fingerprint import (
+            create_passive_tech_stack_adapter,
+        )
+    except Exception:
+        return
+
+    try:
+        adapter = create_passive_tech_stack_adapter()
+        derived_findings = adapter.correlate(findings, query)
+        if not derived_findings:
+            return
+
+        results = await store.async_ingest_findings_batch(derived_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+    except Exception:
+        pass  # Fail-soft
+
+
 # ── Default Registry ───────────────────────────────────────────────────────────
 # Ordered list of (name, runner) pairs — bus registers these by default.
 DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
@@ -887,6 +915,7 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
     ("kill_chain_tagging", _kill_chain_tagging_runner),
     ("wayback_diff", _wayback_diff_runner),
     ("passive_fingerprint", _passive_fingerprint_runner),
+    ("passive_tech_stack", _passive_tech_stack_runner),
     ("rir_correlator", _rir_correlator_runner),
     ("embedding", _embedding_runner),
     ("social_identity_surface", _social_identity_surface_runner),

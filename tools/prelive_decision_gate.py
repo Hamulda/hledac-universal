@@ -27,9 +27,12 @@ from typing import Optional
 class Decision(str, Enum):
     READY_FOR_LIVE = "READY_FOR_LIVE"
     READY_FOR_LIVE_HARDWARE_TAINTED = "READY_FOR_LIVE_HARDWARE_TAINTED"
-    BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
-    BLOCKED_BY_CONTRACT = "BLOCKED_BY_CONTRACT"
+    # F232H: Feed baseline — nonfeed capability blocked but feed can proceed
+    READY_FOR_FEED_BASELINE_ONLY = "READY_FOR_FEED_BASELINE_ONLY"
+    # F232H: Provider surface degraded — nonfeed capability blocked
     BLOCKED_BY_PROVIDER_SURFACE = "BLOCKED_BY_PROVIDER_SURFACE"
+    BLOCKED_BY_CONTRACT = "BLOCKED_BY_CONTRACT"
+    BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
     BLOCKED_BY_UNKNOWN = "BLOCKED_BY_UNKNOWN"
 
 
@@ -661,6 +664,21 @@ class DecisionResult:
     f231_core_ready: bool = False
     f231_warnings: list[str] = field(default_factory=list)
     missing_f231_artifacts: list[str] = field(default_factory=list)
+    # F232H: nonfeed capability block reasons
+    nonfeed_capability_blocked: bool = False
+    nonfeed_block_reason: str = ""
+
+
+def _build_nonfeed_block_reason(f224_blocks: bool, f231_blocks: bool, profile: str) -> str:
+    """Build human-readable nonfeed block reason for telemetry."""
+    parts = []
+    if f224_blocks:
+        parts.append("F224 blocking artifacts missing")
+    if f231_blocks:
+        parts.append("F231 evidence lift pack missing")
+    if parts:
+        return f"nonfeed capability blocked for {profile}: {'; '.join(parts)}"
+    return ""
 
 
 def run_gate(
@@ -879,7 +897,16 @@ def run_gate(
     warnings.extend(f231_warnings)
 
     # --------------------------------------------------------------------------- #
-    # 14. UMA check — done last; memory decision overrides contract/other blocks
+    # 14. F224 / F231 pre-check for nonfeed profiles — before swap decision tree
+    # F232H: F224/F231 missing for nonfeed blocks READY_FOR_LIVE even on clean swap.
+    #        This must be checked BEFORE the swap tier decision, not after.
+    # --------------------------------------------------------------------------- #
+    is_nonfeed_blocking = profile in ("active300", "nonfeed_diagnostic")
+    _f224_blocks_nonfeed = not f224_core_ready and is_nonfeed_blocking
+    _f231_blocks_nonfeed = not f231_core_ready and is_nonfeed_blocking
+
+    # --------------------------------------------------------------------------- #
+    # 15. UMA check — done last; memory decision overrides contract/other blocks
     # F220F: Tiered macOS swap-aware policy (no longer hard-blocks on tiny swap)
     # --------------------------------------------------------------------------- #
     uma = _check_uma()
@@ -927,22 +954,41 @@ def run_gate(
             reasons.append(f"HARDWARE_TAINTED: {swap_gate_reason}")
             warnings.append("Swap elevated: results will be non-comparable (use --require-memory-ok for clean run)")
 
-    # Tier 1: Clean swap
+    # F232H: Clean swap with prior reasons — F224/F231 block nonfeed capability
+    # F232H: Fallback schema also blocks nonfeed capability runs
     elif reasons:
-        first_reason = reasons[0]
-        if "BLOCKED_BY_PROVIDER_SURFACE" in first_reason:
-            decision = Decision.BLOCKED_BY_PROVIDER_SURFACE
-        elif "BLOCKED_BY_CONTRACT" in first_reason:
+        # F232H: Elevate F224/F231 missing to BLOCKED_BY_CONTRACT for nonfeed
+        if _f224_blocks_nonfeed or _f231_blocks_nonfeed:
             decision = Decision.BLOCKED_BY_CONTRACT
-        elif "BLOCKED_BY_UNKNOWN" in first_reason:
-            decision = Decision.BLOCKED_BY_UNKNOWN
+            live_allowed = False
+            if _f224_blocks_nonfeed:
+                reasons.insert(0, f"BLOCKED_BY_CONTRACT: F224 blocking artifacts missing for {profile}")
+            if _f231_blocks_nonfeed:
+                reasons.insert(0, f"BLOCKED_BY_CONTRACT: F231 evidence lift pack missing for {profile}")
         else:
-            decision = Decision.BLOCKED_BY_UNKNOWN
-        live_allowed = False
+            first_reason = reasons[0]
+            if "BLOCKED_BY_PROVIDER_SURFACE" in first_reason:
+                decision = Decision.BLOCKED_BY_PROVIDER_SURFACE
+            elif "BLOCKED_BY_CONTRACT" in first_reason:
+                decision = Decision.BLOCKED_BY_CONTRACT
+            elif "BLOCKED_BY_UNKNOWN" in first_reason:
+                decision = Decision.BLOCKED_BY_UNKNOWN
+            else:
+                decision = Decision.BLOCKED_BY_UNKNOWN
+            live_allowed = False
     else:
-        decision = Decision.READY_FOR_LIVE
-        live_allowed = True
-        reasons.append("All required probe checks passed; UMA within limits")
+        # Clean swap with no prior reasons — BUT F224/F231 still block nonfeed
+        if _f224_blocks_nonfeed or _f231_blocks_nonfeed:
+            decision = Decision.BLOCKED_BY_CONTRACT
+            live_allowed = False
+            if _f224_blocks_nonfeed:
+                reasons.insert(0, f"BLOCKED_BY_CONTRACT: F224 blocking artifacts missing for {profile}")
+            if _f231_blocks_nonfeed:
+                reasons.insert(0, f"BLOCKED_BY_CONTRACT: F231 evidence lift pack missing for {profile}")
+        else:
+            decision = Decision.READY_FOR_LIVE
+            live_allowed = True
+            reasons.append("All required probe checks passed; UMA within limits")
 
     # --------------------------------------------------------------------------- #
     # 14. Build command suggestions
@@ -987,6 +1033,9 @@ def run_gate(
         f231_core_ready=f231_core_ready,
         f231_warnings=f231_warnings,
         missing_f231_artifacts=missing_f231,
+        # F232H: nonfeed capability block tracking
+        nonfeed_capability_blocked=_f224_blocks_nonfeed or _f231_blocks_nonfeed,
+        nonfeed_block_reason=_build_nonfeed_block_reason(_f224_blocks_nonfeed, _f231_blocks_nonfeed, profile),
     )
 
 
@@ -1149,6 +1198,9 @@ def main() -> int:
             "f231_core_ready": result.f231_core_ready,
             "f231_warnings": result.f231_warnings,
             "missing_f231_artifacts": result.missing_f231_artifacts,
+            # F232H: nonfeed capability block telemetry
+            "nonfeed_capability_blocked": result.nonfeed_capability_blocked,
+            "nonfeed_block_reason": result.nonfeed_block_reason,
         }
         args.write_report.parent.mkdir(parents=True, exist_ok=True)
         with open(args.write_report, "w", encoding="utf-8") as fh:

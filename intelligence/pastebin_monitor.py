@@ -20,13 +20,18 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
-    from ..coordinators.fetch_coordinator import FetchCoordinator
 
-# F206AE: migrate to FetchCoordinator.fetch() — circuit breaker bypass
-# pastebin_monitor creates its own aiohttp.ClientSession bypassing FetchCoordinator,
-# which means rate limiting and circuit breaker are not applied to paste scraping.
+# F206AE: migrate to async_fetch_public_text — circuit breaker bypass
+# pastebin_monitor raw aiohttp.ClientSession bypassed FetchCoordinator/transport_router.
+# Migration: _scrape_*() funcs route through async_fetch_public_text (route_transport,
+# circuit breaker, telemetry). _search_paste_gg still uses raw aiohttp (POST API not
+# supported by async_fetch_public_text).
 
 logger = logging.getLogger(__name__)
+
+# Import canonical fetch — route_transport, circuit breaker, telemetry
+from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+from hledac.universal.fetching.public_fetcher import FetchResult  # noqa: F401 — used in type annotations
 
 # ---- Secrets masking -------------------------------------------------------
 
@@ -104,49 +109,69 @@ _circuit = _CircuitState()
 
 # ---- Per-source scrapers ---------------------------------------------------
 
-async def _scrape_pastebin_raw(paste_id: str, session: "ClientSession") -> str | None:
-    """Stáhnout obsah pastebin.com/raw/{id}."""
+async def _scrape_pastebin_raw(paste_id: str) -> str | None:
+    """Stáhnout obsah pastebin.com/raw/{id} via canonical fetch."""
     url = f"https://pastebin.com/raw/{paste_id}"
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 404:
-                return None
-            resp.raise_for_status()
-            return await resp.text()
+        result: FetchResult = await async_fetch_public_text(
+            url,
+            timeout_s=10.0,
+            max_bytes=2 * 1024 * 1024,  # 2 MB cap
+        )
+        if result.status_code == 404:
+            return None
+        if result.error or result.text is None:
+            return None
+        return result.text
+    except asyncio.CancelledError:
+        raise
     except Exception:
         return None
 
 
-async def _scrape_paste_gg(paste_id: str, session: "ClientSession") -> str | None:
-    """Stáhnout obsah paste.gg/api/v1/pastes/{id}."""
-    import aiohttp
+async def _scrape_paste_gg(paste_id: str) -> str | None:
+    """Stáhnout obsah paste.gg/api/v1/pastes/{id} via canonical fetch."""
     url = f"https://paste.gg/api/v1/pastes/{paste_id}"
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 404:
-                return None
-            resp.raise_for_status()
-            data = await resp.json()
-            # paste.gg returns {"data": {"files": [{"content": "..."}]}}
-            data_data = data.get("data") or {}
-            files = data_data.get("files") or []
-            if files:
-                return files[0].get("content") or ""
-            return ""
+        result: FetchResult = await async_fetch_public_text(
+            url,
+            timeout_s=10.0,
+            max_bytes=2 * 1024 * 1024,
+        )
+        if result.status_code == 404:
+            return None
+        if result.error or result.text is None:
+            return None
+        data = re.sub(r"<!--[\s\S]*?-->", "", result.text)
+        import json
+        parsed = json.loads(data)
+        data_data = parsed.get("data") or {}
+        files = data_data.get("files") or []
+        if files:
+            return files[0].get("content") or ""
+        return ""
+    except asyncio.CancelledError:
+        raise
     except Exception:
         return None
 
 
-async def _scrape_rentry(raw_path: str, session: "ClientSession") -> str | None:
-    """Stáhnout obsah rentry.co/{raw_path}/raw."""
-    import aiohttp
+async def _scrape_rentry(raw_path: str) -> str | None:
+    """Stáhnout obsah rentry.co/{raw_path}/raw via canonical fetch."""
     url = f"https://rentry.co/{raw_path}/raw"
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 404:
-                return None
-            resp.raise_for_status()
-            return await resp.text()
+        result: FetchResult = await async_fetch_public_text(
+            url,
+            timeout_s=10.0,
+            max_bytes=2 * 1024 * 1024,
+        )
+        if result.status_code == 404:
+            return None
+        if result.error or result.text is None:
+            return None
+        return result.text
+    except asyncio.CancelledError:
+        raise
     except Exception:
         return None
 
@@ -194,9 +219,10 @@ async def run(query: str) -> list[PasteFinding]:
 
     Vrací list[PasteFinding] — fail-soft, prázdný list při chybách / circuit-break.
     Rate-limited na 1 req/s, circuit breaker po 5 po sobě jdoucích selháních.
-    Interně vytváří vlastní aiohttp.ClientSession (to match academic_discovery pattern).
+    F206AE: All paste content fetches now route through async_fetch_public_text
+    (route_transport, circuit breaker, telemetry). Only search discovery (HTML
+    parsing, paste.gg POST API) still uses raw aiohttp session.
     """
-    import aiohttp
     global _last_request
 
     findings: list[PasteFinding] = []
@@ -213,18 +239,17 @@ async def run(query: str) -> list[PasteFinding]:
         _last_request = time.time()
 
     try:
-        async with aiohttp.ClientSession() as session:
-            # Pastebin.com — search via their frontend (HTML, requires selectolax)
-            pb_findings = await _search_pastebin(query, session)
-            findings.extend(pb_findings)
+        # Pastebin.com — search via their frontend (HTML, requires selectolax)
+        pb_findings = await _search_pastebin(query, session=None)
+        findings.extend(pb_findings)
 
-            # paste.gg — key-based search API
-            gg_findings = await _search_paste_gg(query, session)
-            findings.extend(gg_findings)
+        # paste.gg — key-based search API
+        gg_findings = await _search_paste_gg(query, session=None)
+        findings.extend(gg_findings)
 
-            # rentry.co — title search (HTML)
-            rentry_findings = await _search_rentry(query, session)
-            findings.extend(rentry_findings)
+        # rentry.co — title search (HTML)
+        rentry_findings = await _search_rentry(query, session=None)
+        findings.extend(rentry_findings)
 
     except Exception as e:
         logger.warning(f"PastebinMonitor run() failed: {e}")
@@ -235,16 +260,19 @@ async def run(query: str) -> list[PasteFinding]:
 
 async def _search_pastebin(query: str, session: "ClientSession") -> list[PasteFinding]:
     """Search pastebin.com for query, scrape matching pastes."""
-    import aiohttp
     findings: list[PasteFinding] = []
 
     try:
-        # Pastebin search page
+        # Pastebin search page — GET via canonical fetch (route_transport, telemetry)
         search_url = f"https://pastebin.com/search?q={query}"
-        async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
-                return []
-            html = await resp.text()
+        search_result: FetchResult = await async_fetch_public_text(
+            search_url,
+            timeout_s=15.0,
+            max_bytes=2 * 1024 * 1024,
+        )
+        if search_result.status_code != 200 or search_result.error or search_result.text is None:
+            return []
+        html = search_result.text
 
         # Parse paste IDs from search results using selectolax
         try:
@@ -264,7 +292,7 @@ async def _search_pastebin(query: str, session: "ClientSession") -> list[PasteFi
 
         # Scrape up to 10 pastes
         for paste_id in paste_links[:10]:
-            text = await _scrape_pastebin_raw(paste_id, session)
+            text = await _scrape_pastebin_raw(paste_id)
             if text is None:
                 continue
 
@@ -286,26 +314,31 @@ async def _search_pastebin(query: str, session: "ClientSession") -> list[PasteFi
 
 
 async def _search_paste_gg(query: str, session: "ClientSession") -> list[PasteFinding]:
-    """Search paste.gg for query via their API."""
+    """Search paste.gg for query via their API.
+
+    Note: POST search API not supported by async_fetch_public_text (GET-only),
+    so uses a local aiohttp.ClientSession scoped to this function.
+    Per-paste content fetches (_scrape_paste_gg) DO route through canonical fetch.
+    """
     import aiohttp
     findings: list[PasteFinding] = []
 
     try:
-        # paste.gg anonymous search API
-        search_url = "https://paste.gg/api/v1/pastes/search"
-        async with session.post(
-            search_url,
-            json={"query": query, "limit": 10},
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as resp:
-            if resp.status != 200:
-                return []
-            data = await resp.json()
+        async with aiohttp.ClientSession() as s:
+            search_url = "https://paste.gg/api/v1/pastes/search"
+            async with s.post(
+                search_url,
+                json={"query": query, "limit": 10},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
 
         items = (data.get("data") or {}).get("pasties") or []
         for item in items[:10]:
             paste_id = item.get("id") or ""
-            text = await _scrape_paste_gg(paste_id, session)
+            text = await _scrape_paste_gg(paste_id)
             if text is None:
                 continue
 
@@ -327,16 +360,23 @@ async def _search_paste_gg(query: str, session: "ClientSession") -> list[PasteFi
 
 
 async def _search_rentry(query: str, session: "ClientSession") -> list[PasteFinding]:
-    """Search rentry.co for query via HTML parsing."""
+    """Search rentry.co for query via HTML parsing.
+
+    Note: HTML search discovery not supported by async_fetch_public_text (GET-only
+    for raw content, not HTML parsing workflows). Uses a local aiohttp.ClientSession
+    scoped to this function. Per-paste content fetches (_scrape_rentry) DO route
+    through canonical fetch.
+    """
     import aiohttp
     findings: list[PasteFinding] = []
 
     try:
-        search_url = f"https://rentry.co/search?query={query}"
-        async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status != 200:
-                return []
-            html = await resp.text()
+        async with aiohttp.ClientSession() as s:
+            search_url = f"https://rentry.co/search?query={query}"
+            async with s.get(search_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    return []
+                html = await resp.text()
 
         try:
             from selectolax.parser import HTMLParser
@@ -351,7 +391,7 @@ async def _search_rentry(query: str, session: "ClientSession") -> list[PasteFind
                 raw_paths.append(href.lstrip("/"))
 
         for raw_path in raw_paths[:10]:
-            text = await _scrape_rentry(raw_path, session)
+            text = await _scrape_rentry(raw_path)
             if text is None:
                 continue
 

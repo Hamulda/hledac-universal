@@ -424,9 +424,15 @@ def _scheduler_result_acquisition_payload(
         _acq_report["acquisition_profile_input"] = _acq_input
         _acq_report["acquisition_profile_effective"] = _acq_effective
         _acq_report["acquisition_profile_normalized"] = _acq_normalized
-    except Exception:
+    except Exception as _exc:
         # Fallback: emit explicit fallback acquisition_report
         # F219A: Even the fallback includes all schema fields (no silent truncation)
+        # F232F: Add fail-loud marker so downstream tools can detect fallback usage.
+        # Fallback is allowed only when canonical build fails — explicit marker
+        # allows gate/quality tools to detect and flag degraded reports.
+        _fallback_profile = (
+            _nd.get("acquisition_profile", "default") if _nd else "default"
+        )
         _acq_report = {
             "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
             "terminality": _term_rep,
@@ -435,14 +441,15 @@ def _scheduler_result_acquisition_payload(
             "prewindup_barrier": _pwb,
             "scheduler_exit": _se_dict,
             "windup_guard_observation": _wg_dict,
-            "fallback_reason": "canonical_owner_missing_scheduler_report",
-            "plan": None,
-            "nonfeed_plan_debug": None,
-            # F216B: Nonfeed diagnostic profile telemetry
-            "acquisition_profile": "default",
-            "feed_cap_reason": None,
-            "nonfeed_priority_enabled": False,
-            "nonfeed_profile_expected_lanes": [],
+            "fallback_reason": f"canonical_build_failed: {_exc}",
+            "acquisition_report_fallback_used": True,  # F232F: fail-loud marker
+            "plan": getattr(_plan, "plans", None) if _plan else None,
+            "nonfeed_plan_debug": _nd,  # F232F: preserve _nd when available
+            # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
+            "acquisition_profile": _fallback_profile,
+            "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
+            "nonfeed_priority_enabled": _nd.get("nonfeed_priority_enabled", False) if _nd else False,
+            "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
             # F217C: PUBLIC bootstrap telemetry
             "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
             "public_stage_counters": getattr(result, "public_stage_counters", None),

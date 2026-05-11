@@ -974,3 +974,281 @@ class PassiveFingerprintAdapter:
 def create_passive_fingerprint_adapter() -> PassiveFingerprintAdapter:
     """Factory for PassiveFingerprintAdapter."""
     return PassiveFingerprintAdapter()
+
+
+# ── R11: Passive Tech-Stack Detection ─────────────────────────────────────────
+# Deterministic tech-stack extraction from existing public findings.
+# NO live network, NO browser, NO bucket scan, NO deep_probe, NO MLX.
+# Bounds: MAX_TECH_STACK_FINDINGS=100, hard cap 200.
+
+
+_MAX_TECH_STACK_FINDINGS: int = 100
+_MAX_TECH_STACK_PER_FINDING: int = 10
+_MAX_EVIDENCE_SAMPLE: int = 150
+
+# Tech-stack patterns: (tech_name, category, evidence_kind, re.Pattern)
+_TECH_STACK_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
+    # S3 static — URL marker
+    ("Amazon S3", "cloud_hosting", "url_marker", re.compile(r"\.s3\.amazonaws\.com|s3\.amazonaws\.com/[^/]+/?$", re.I)),
+    ("Amazon S3", "cloud_hosting", "url_marker", re.compile(r"aws-s3-|amazon-s3-|s3-[\w]+-[\w]+\.amazonaws", re.I)),
+    # S3 console UI marker — url_marker (detected from URL not body text)
+    ("Amazon S3", "cloud_hosting", "url_marker", re.compile(r"s3\.console\.aws\.amazon\.com", re.I)),
+    # Vercel — HTML marker
+    ("Vercel", "platform", "html_marker", re.compile(r"vercel|__vc_row|__vc_pill", re.I)),
+    ("Vercel", "platform", "html_marker", re.compile(r"\"vercel\"[,\s]*\"now\"", re.I)),
+    # Vercel — header marker (x-vercel-* headers appear in status lines)
+    ("Vercel", "platform", "html_marker", re.compile(r"x-vercel-|vercel-config|now-preview", re.I)),
+    # Netlify — HTML marker
+    ("Netlify", "platform", "html_marker", re.compile(r"netlify|__nf标志", re.I)),
+    ("Netlify", "platform", "html_marker", re.compile(r"_netlify|netlify-cms", re.I)),
+    # Netlify — URL marker
+    ("Netlify", "platform", "url_marker", re.compile(r"\.netlify\.app|\.netlify\.com", re.I)),
+    # GitHub Pages — HTML + Jekyll markers
+    ("GitHub Pages", "hosting", "html_marker", re.compile(r"github\.io|GitHub Pages|jekyll|\.github\.io", re.I)),
+    ("GitHub Pages", "hosting", "html_marker", re.compile(r"_site/|jekyll-metadata", re.I)),
+    # Shopify — storefront markers
+    ("Shopify", "ecommerce", "html_marker", re.compile(r"shopify|myshopify|cdn\.shopify", re.I)),
+    ("Shopify", "ecommerce", "url_marker", re.compile(r"myshopify\.com|shopify\.com", re.I)),
+    # Cloudflare
+    ("Cloudflare", "cdn", "html_marker", re.compile(r"cf-ray|cf-cache-status|cloudflare", re.I)),
+    ("Cloudflare", "cdn", "html_marker", re.compile(r"_cf_|__cf", re.I)),
+    # Cloudflare Pages — url_marker (distinct from Cloudflare CDN)
+    ("Cloudflare Pages", "platform", "url_marker", re.compile(r"\.pages\.dev|pages\.cloudflare\.net", re.I)),
+    # Fastly
+    ("Fastly", "cdn", "html_marker", re.compile(r"fastly|FastlyHTTP|sucuri", re.I)),
+    ("Fastly", "cdn", "html_marker", re.compile(r"x-sucuri|x-fastly", re.I)),
+    # Akamai
+    ("Akamai", "cdn", "html_marker", re.compile(r"akamai|akamaihd\.net|Edgecastle", re.I)),
+    # KeyCDN
+    ("KeyCDN", "cdn", "html_marker", re.compile(r"keycdn|Cache-Language|X-KC", re.I)),
+    # CloudFront
+    ("CloudFront", "cdn", "html_marker", re.compile(r"CloudFront|aws-cloudfront|x-amz-cf", re.I)),
+    # Google Cloud CDN
+    ("Google Cloud CDN", "cdn", "html_marker", re.compile(r"Google Cloud|Cloud CDN|gstatic\.com|googletagmanager", re.I)),
+    # Azure CDN
+    ("Azure CDN", "cdn", "html_marker", re.compile(r"azure|azureedge\.net|msftncsi", re.I)),
+    # WordPress — full patterns (complement passive_fingerprint's coverage)
+    ("WordPress", "cms", "html_marker", re.compile(r"wp-content|wp-includes|wp-json", re.I)),
+    ("WordPress", "cms", "html_marker", re.compile(r"wordpress|xmlrpc\.php|wlwmanifest\.xml", re.I)),
+    ("WordPress", "cms", "html_marker", re.compile(r"/wp-admin/|wp-login\.php", re.I)),
+    # Drupal
+    ("Drupal", "cms", "html_marker", re.compile(r"drupalSettings|Drupal\.theme|drupal\.org", re.I)),
+    ("Drupal", "cms", "html_marker", re.compile(r"sites/default/files|csua_drupal", re.I)),
+    # Joomla
+    ("Joomla", "cms", "html_marker", re.compile(r"Joomla|joomla|/media/jui|com_content", re.I)),
+    # Next.js (full coverage — complement _HTML_PATTERNS)
+    ("Next.js", "framework", "html_marker", re.compile(r"__NEXT_DATA__|_next/static", re.I)),
+    ("Next.js", "framework", "html_marker", re.compile(r"next\.js|nextjs|_NEXT_", re.I)),
+    # Nuxt
+    ("Nuxt", "framework", "html_marker", re.compile(r"__NUXT__|_nuxt|nuxtjs|nuxt\.config", re.I)),
+    # React
+    ("React", "framework", "html_marker", re.compile(r"react|_react_event_id|fb-root", re.I)),
+    # Angular
+    ("Angular", "framework", "html_marker", re.compile(r"ng-app|angular|angularjs", re.I)),
+    # Vue
+    ("Vue", "framework", "html_marker", re.compile(r"vuejs|__vue__|data-v-|vue\.js", re.I)),
+    # nginx — server header patterns (complement passive_fingerprint's coverage)
+    ("nginx", "web_server", "html_marker", re.compile(r"nginx[\s/][\d.]+", re.I)),
+    # Apache
+    ("Apache", "web_server", "html_marker", re.compile(r"apache[\s/][\d.]+|apache2handler", re.I)),
+    # Cloudflare Pages (distinct from Cloudflare CDN)
+    ("Cloudflare Pages", "platform", "html_marker", re.compile(r"pages\.cloudflare\.net|\.pages\.dev", re.I)),
+    # Gatsby
+    ("Gatsby", "framework", "html_marker", re.compile(r"gatsby|__gatsby|__generated", re.I)),
+    # Squarespace
+    ("Squarespace", "cms", "html_marker", re.compile(r"squarespace|Squarespace", re.I)),
+    # Wix
+    ("Wix", "cms", "html_marker", re.compile(r"wix\.com|wixi|var wix|wixEvents", re.I)),
+    # Ghost CMS
+    ("Ghost", "cms", "html_marker", re.compile(r"Ghost|ghost\.org", re.I)),
+    # HubSpot
+    ("HubSpot", "marketing", "html_marker", re.compile(r"hubspot|hs-script|hs-cta", re.I)),
+    # Magento
+    ("Magento", "ecommerce", "html_marker", re.compile(r"mage-|magento", re.I)),
+    # PrestaShop
+    ("PrestaShop", "ecommerce", "html_marker", re.compile(r"prestashop|_PS_VERSION_|prestashop\.com", re.I)),
+    # Google Analytics (analytics/CDN marker)
+    ("Google Analytics", "analytics", "html_marker", re.compile(r"google-analytics\.com|ga\.js|analytics\.js|gtag", re.I)),
+    # Google Tag Manager
+    ("Google Tag Manager", "analytics", "html_marker", re.compile(r"googletagmanager\.com|GTM-[A-Z0-9]+", re.I)),
+    # Facebook Pixel
+    ("Facebook Pixel", "analytics", "html_marker", re.compile(r"fbq|facebook\.com|fb-messenger", re.I)),
+    # Hotjar
+    ("Hotjar", "analytics", "html_marker", re.compile(r"hotjar|hj\.com|hotjarTracking", re.I)),
+]
+
+
+def _extract_tech_stack_findings(
+    findings: list["CanonicalFinding"],
+    query: str,
+) -> list["CanonicalFinding"]:
+    """
+    R11: Extract tech-stack signals from existing public findings.
+    No live network, no deep_probe, no MLX.
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    candidates: list[CanonicalFinding] = []
+    seen: set[tuple[str, str]] = set()  # (tech, source_url) dedup
+    ts = time.time()
+
+    for finding in findings[:_MAX_TECH_STACK_FINDINGS * 2]:  # pre-cap scan
+        if len(candidates) >= _MAX_TECH_STACK_FINDINGS:
+            break
+
+        try:
+            payload = getattr(finding, "payload_text", None) or ""
+            source_url = ""
+            for prov in getattr(finding, "provenance", ()):
+                if prov.startswith("url:"):
+                    source_url = prov[4:300]
+                    break
+
+            # Extract text from payload
+            text_for_scan = ""
+            try:
+                if isinstance(payload, str) and payload.strip():
+                    if payload.startswith("{") or "\n" not in payload[:20]:
+                        data = json.loads(payload)
+                        text_parts = []
+                        for key in ("title", "snippet", "body", "html", "status"):
+                            val = data.get(key, "")
+                            if val:
+                                text_parts.append(str(val)[:500])
+                        text_for_scan = " ".join(text_parts)
+                    else:
+                        text_for_scan = payload[:2000]
+                else:
+                    text_for_scan = str(payload)[:2000]
+            except Exception:
+                text_for_scan = str(payload)[:2000]
+
+            # Also scan URL + provenance for url_marker patterns
+            url_for_scan = source_url or ""
+
+            # Match all patterns
+            for tech_name, category, evidence_kind, pattern in _TECH_STACK_PATTERNS:
+                if len(candidates) >= _MAX_TECH_STACK_FINDINGS:
+                    break
+
+                dedup_key = (tech_name, source_url)
+                if dedup_key in seen:
+                    continue
+
+                # Try HTML/content scan
+                if evidence_kind in ("html_marker", "payload_marker"):
+                    match = pattern.search(text_for_scan)
+                    if match:
+                        sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
+                        seen.add(dedup_key)
+                        fid = f"pts_{hashlib.sha1(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
+                        payload_out = {
+                            "technology": tech_name,
+                            "category": category,
+                            "evidence_kind": evidence_kind,
+                            "evidence_sample": sample,
+                            "source_finding_id": getattr(finding, "finding_id", "") or "",
+                            "source_url": source_url,
+                            "confidence": 0.75,
+                        }
+                        candidates.append(CanonicalFinding(
+                            finding_id=fid,
+                            query=query[:500],
+                            source_type="passive_tech_stack",
+                            confidence=0.75,
+                            ts=ts,
+                            provenance=("passive_tech_stack", tech_name, evidence_kind),
+                            payload_text=json.dumps(payload_out, ensure_ascii=False),
+                        ))
+
+                # Try URL scan for url_marker
+                if evidence_kind == "url_marker" and url_for_scan:
+                    match = pattern.search(url_for_scan)
+                    if match:
+                        dedup_key = (tech_name, source_url)
+                        if dedup_key in seen:
+                            continue
+                        sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
+                        seen.add(dedup_key)
+                        fid = f"pts_{hashlib.sha1(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
+                        payload_out = {
+                            "technology": tech_name,
+                            "category": category,
+                            "evidence_kind": evidence_kind,
+                            "evidence_sample": sample,
+                            "source_finding_id": getattr(finding, "finding_id", "") or "",
+                            "source_url": source_url,
+                            "confidence": 0.80,
+                        }
+                        candidates.append(CanonicalFinding(
+                            finding_id=fid,
+                            query=query[:500],
+                            source_type="passive_tech_stack",
+                            confidence=0.80,
+                            ts=ts,
+                            provenance=("passive_tech_stack", tech_name, evidence_kind),
+                            payload_text=json.dumps(payload_out, ensure_ascii=False),
+                        ))
+
+        except Exception:
+            continue
+
+    return candidates[:_MAX_TECH_STACK_FINDINGS]
+
+
+async def run_passive_tech_stack_sidecar(
+    findings: list["CanonicalFinding"],
+    store: Any,
+    query: str,
+) -> int:
+    """
+    R11 async sidecar runner for passive tech-stack extraction.
+
+    Returns count of stored findings.
+    Fail-soft: returns 0 on any error.
+    """
+    if not findings or store is None:
+        return 0
+
+    try:
+        derived_findings = _extract_tech_stack_findings(findings, query)
+        if not derived_findings:
+            return 0
+
+        results = await store.async_ingest_findings_batch(derived_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return 0
+
+
+class PassiveTechStackAdapter:
+    """R11: Bounded passive tech-stack extraction adapter."""
+
+    def __init__(self) -> None:
+        self._stats: dict[str, int] = {
+            "findings_scanned": 0,
+            "tech_stack_found": 0,
+        }
+
+    def correlate(self, findings: list["CanonicalFinding"], query: str) -> list["CanonicalFinding"]:
+        """Correlate tech-stack signals from findings."""
+        result = _extract_tech_stack_findings(findings, query)
+        self._stats["findings_scanned"] = len(findings)
+        self._stats["tech_stack_found"] = len(result)
+        return result
+
+    def get_stats(self) -> dict[str, int]:
+        return dict(self._stats)
+
+    def reset_stats(self) -> None:
+        self._stats["findings_scanned"] = 0
+        self._stats["tech_stack_found"] = 0
+
+
+def create_passive_tech_stack_adapter() -> PassiveTechStackAdapter:
+    """Factory for PassiveTechStackAdapter."""
+    return PassiveTechStackAdapter()

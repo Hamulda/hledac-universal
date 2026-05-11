@@ -276,6 +276,37 @@ def _normalize_benchmark(data: dict) -> dict:
     passive = int(branch_mix.get("passive_findings", 0))
     feed = int(branch_mix.get("feed_findings", 0))
 
+    # F232G: Priority resolution for accepted_findings
+    # a) runtime_truth.accepted_findings (canonical)
+    # b) runtime_accepted_findings top-level (product_value_summary surface)
+    # c) accepted_findings top-level
+    # d) findings_count top-level
+    # e) 0
+    rt_accepted = rt.get("accepted_findings") if isinstance(rt, dict) else None
+    accepted_findings = rt_accepted if rt_accepted is not None else (
+        data.get("runtime_accepted_findings")
+        or data.get("accepted_findings")
+        or data.get("findings_count")
+        or 0
+    )
+
+    # F232G: Priority resolution for total_findings
+    # a) runtime_truth.accepted_findings (if present, it's the canonical accepted count)
+    # b) runtime_accepted_findings top-level
+    # c) findings_count top-level
+    # d) accepted_findings (resolved above)
+    # e) 0
+    # When branch_mix exists, total = feed + ct + pub + passive
+    if branch_mix:
+        total_findings = feed + ct + pub + passive
+    else:
+        total_findings = (
+            data.get("runtime_accepted_findings")
+            or data.get("findings_count")
+            or accepted_findings
+            or 0
+        )
+
     # For hermetic/offline benchmarks, live_kpi may not exist
     live_kpi = data.get("live_kpi", {}) or None
 
@@ -283,8 +314,8 @@ def _normalize_benchmark(data: dict) -> dict:
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
     norm = {
-        "total_findings": data.get("findings_count", 0),
-        "accepted_findings": (rt.get("accepted_findings") if isinstance(rt, dict) else None) or data.get("accepted_findings") or data.get("findings_count") or 0,
+        "total_findings": total_findings,
+        "accepted_findings": accepted_findings,
         "feed_findings": feed,
         "ct_findings": ct,
         "public_findings": pub,
@@ -293,7 +324,7 @@ def _normalize_benchmark(data: dict) -> dict:
         "source_family_count": sum(1 for v in branch_mix.values() if v > 0) if branch_mix else 0,
         "feed_dominance_score": _coerce_feed_dominance_score(
             (live_kpi or {}).get("feed_dominance_score") if live_kpi else None,
-            data.get("findings_count") or 0,
+            total_findings,
             feed,
         ),
         "planned_duration_s": data.get("planned_duration_s") or data.get("requested_duration_s"),
@@ -327,9 +358,29 @@ def _normalize_live(data: dict) -> dict:
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
 
+    # F232G: Priority resolution for accepted_findings (same as benchmark)
+    rt_accepted = rt.get("accepted_findings") if isinstance(rt, dict) else None
+    accepted_findings = rt_accepted if rt_accepted is not None else (
+        data.get("runtime_accepted_findings")
+        or data.get("accepted_findings")
+        or data.get("findings_count")
+        or 0
+    )
+
+    # F232G: Priority resolution for total_findings
+    if branch_mix:
+        total_findings = feed + ct + pub + passive
+    else:
+        total_findings = (
+            data.get("runtime_accepted_findings")
+            or data.get("findings_count")
+            or accepted_findings
+            or 0
+        )
+
     norm = {
-        "total_findings": data.get("findings_count", 0),
-        "accepted_findings": data.get("accepted_findings") or data.get("findings_count") or 0,
+        "total_findings": total_findings,
+        "accepted_findings": accepted_findings,
         "feed_findings": feed,
         "ct_findings": ct,
         "public_findings": pub,
@@ -338,7 +389,7 @@ def _normalize_live(data: dict) -> dict:
         "source_family_count": (live_kpi or {}).get("source_family_count", sum(1 for v in branch_mix.values() if v > 0)) if live_kpi else 0,
         "feed_dominance_score": _coerce_feed_dominance_score(
             (live_kpi or {}).get("feed_dominance_score") if live_kpi else None,
-            data.get("findings_count") or 0,
+            total_findings,
             feed,
         ),
         "planned_duration_s": data.get("planned_duration_s") or data.get("duration_s"),

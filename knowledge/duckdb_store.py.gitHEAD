@@ -694,6 +694,24 @@ class DuckDBShadowStore:
         self._uma_state: Optional[str] = uma_state
         self._duckdb_settings: dict[str, str | int] = {}  # resolved at connection init
 
+    def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
+        """
+        Set or update UMA memory pressure state at runtime.
+
+        Can be called while the store is open to adjust DuckDB settings.
+        Resolves new settings and applies to all connections immediately.
+
+        Args:
+            uma_state: "WARN", "CRITICAL", "EMERGENCY", or None for normal.
+            swap_detected: True if system-level swap is active.
+        """
+        self._uma_state = uma_state
+        self._duckdb_settings = _resolve_duckdb_runtime_settings(uma_state, swap_detected)
+
+    def get_uma_state(self) -> Optional[str]:
+        """Return currently configured UMA state."""
+        return self._uma_state
+
         # Single-worker executor for all DB operations (thread-affine)
         # Named thread so tests can assert duckdb_worker via thread name
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(
@@ -783,24 +801,6 @@ class DuckDBShadowStore:
         # Lazy init — created on first async_initialize() call
         self._semantic_dedup_cache: Optional[Any] = None
 
-
-    def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
-        """
-        Set or update UMA memory pressure state at runtime.
-
-        Can be called while the store is open to adjust DuckDB settings.
-        Resolves new settings and applies to all connections immediately.
-
-        Args:
-            uma_state: "WARN", "CRITICAL", "EMERGENCY", or None for normal.
-            swap_detected: True if system-level swap is active.
-        """
-        self._uma_state = uma_state
-        self._duckdb_settings = _resolve_duckdb_runtime_settings(uma_state, swap_detected)
-
-    def get_uma_state(self) -> Optional[str]:
-        """Return currently configured UMA state."""
-        return self._uma_state
     # ---------------------------------------------------------------------------
     # Sprint 8QA: IOC Graph integration
     # ---------------------------------------------------------------------------
