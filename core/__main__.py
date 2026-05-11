@@ -65,6 +65,7 @@ from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, _P
 from hledac.universal.runtime.acquisition_strategy import (
     build_acquisition_report,
     normalize_source_family_outcome,
+    canonicalize_source_family_outcomes,
     ACQUISITION_REPORT_SCHEMA_VERSION,
 )
 from hledac.universal.export.sprint_exporter import export_sprint
@@ -276,6 +277,10 @@ def _scheduler_result_acquisition_payload(
             "duration_s": getattr(_o, "duration_s", None),
         }
         _sfo_list.append(normalize_source_family_outcome(_raw_dict["family"], _raw_dict))
+
+    # F235D: Canonicalize source family outcomes — dedup and merge same-family entries
+    # so no report contains both "CT" and "ct" as separate contradictory outcomes.
+    _sfo_list = canonicalize_source_family_outcomes(_sfo_list)
 
     # ── 2. Scheduler exit ─────────────────────────────────────────────────
     _se_dict: dict = {

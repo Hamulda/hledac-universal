@@ -82,6 +82,8 @@ __all__ = [
     "get_lane_plan",
     "lane_skip_reason",
     "normalize_source_family_outcome",
+    "normalize_source_family_name",
+    "canonicalize_source_family_outcomes",
     "normalize_terminal_state",
     "TERMINAL_STATES",
     "NON_TERMINAL_STATES",
@@ -1284,6 +1286,149 @@ class SourceFamilyOutcome:
         }
 
 
+# ── F235D: Source Family Canonicalization ────────────────────────────────────
+
+def normalize_source_family_name(value: str) -> str:
+    """Normalize a source family name to its canonical lowercase form.
+
+    Maps mixed-case variants to their canonical lowercase representation so that
+    "CT", "ct", "Ct" all resolve to "ct", preventing duplicate outcomes for the same
+    logical family in a single acquisition report.
+
+    Canonical families: feed, public, ct, wayback, passive_dns, academic, ipfs, pivot.
+    """
+    if not isinstance(value, str):
+        return "unknown"
+    _v = value.strip().lower()
+    # Explicit alias map for known variants
+    _alias_map = {
+        "ct": "ct",
+        "public": "public",
+        "feed": "feed",
+        "wayback": "wayback",
+        "passive_dns": "passive_dns",
+        "academic": "academic",
+        "ipfs": "ipfs",
+        "pivot": "pivot",
+        "blockchain": "blockchain",
+        # Legacy / uppercase variants
+        "ct_log": "ct",
+        "passivedns": "passive_dns",
+        "passive-dns": "passive_dns",
+    }
+    return _alias_map.get(_v, _v)
+
+
+_TERMINAL_PRIORITY = {
+    "ATTEMPTED_ACCEPTED": 0,
+    "ATTEMPTED_TIMEOUT": 1,
+    "ATTEMPTED_ERROR": 2,
+    "ATTEMPTED_NO_RESULTS": 3,
+    "SKIPPED_BY_MEMORY": 4,
+    "SKIPPED_BY_POLICY": 5,
+    "SKIPPED": 6,
+    "NEVER_SCHEDULED": 7,
+    "UNKNOWN": 8,
+}
+
+
+def _pick_best_terminal(outcomes: list[dict]) -> str:
+    """Pick the highest-priority terminal_state from a list of same-family outcomes."""
+    _best_ts = "UNKNOWN"
+    _best_prio = 99
+    for o in outcomes:
+        ts = o.get("terminal_state", "UNKNOWN")
+        prio = _TERMINAL_PRIORITY.get(ts, 99)
+        if prio < _best_prio:
+            _best_prio = prio
+            _best_ts = ts
+    return _best_ts
+
+
+def canonicalize_source_family_outcomes(outcomes: list[dict]) -> list[dict]:
+    """Deduplicate and merge source family outcomes that normalize to the same family.
+
+    When multiple outcomes normalize to the same family name (e.g., "CT" and "ct"),
+    they are merged into a single outcome using the merge rules:
+      - attempted = any(attempted=True)
+      - skipped   = all(skipped) only if no outcome was attempted; otherwise False
+      - timeout   = any(timeout=True)
+      - error     = prefer real provider/runtime error over synthetic "no_candidates"
+      - terminal_state = highest-priority from TERMINAL_PRIORITY table
+      - raw_count / built_count / accepted_count = max of all
+      - duration_s = max non-null duration
+    """
+    if not outcomes:
+        return []
+    # Group by normalized family name
+    _groups: dict[str, list[dict]] = {}
+    for o in outcomes:
+        if not isinstance(o, dict):
+            continue
+        fam_raw = o.get("family", "")
+        fam_norm = normalize_source_family_name(fam_raw)
+        _groups.setdefault(fam_norm, []).append(o)
+
+    # Merge each group
+    _result: list[dict] = []
+    for fam_norm, group in _groups.items():
+        if len(group) == 1:
+            # Still normalize family name to canonical form
+            merged = dict(group[0])
+            merged["family"] = fam_norm
+            _result.append(merged)
+            continue
+
+        # Merge multiple outcomes for same family
+        attempted = any(o.get("attempted", False) for o in group)
+        # skipped is True only if ALL were skipped and none attempted
+        skipped = all(o.get("skipped", False) for o in group) and not attempted
+        timeout = any(o.get("timeout", False) for o in group)
+
+        # Error: prefer real provider/runtime error over synthetic
+        errors = [o.get("error") for o in group if o.get("error")]
+        _real_errors = [e for e in errors if e not in ("no_candidates", "never_scheduled", "no_outcome_recorded")]
+        error = _real_errors[0] if _real_errors else (errors[0] if errors else None)
+
+        # Counts: max
+        raw_count = max(o.get("raw_count", 0) or 0 for o in group)
+        built_count = max(o.get("built_count", 0) or 0 for o in group)
+        accepted_count = max(o.get("accepted_count", 0) or 0 for o in group)
+
+        # duration_s: max non-null
+        durations = [o.get("duration_s") for o in group if o.get("duration_s") is not None]
+        duration_s = max(durations) if durations else None
+
+        # terminal_state: highest priority
+        terminal_state = _pick_best_terminal(group)
+
+        # skip_reason: if all same, keep it
+        skip_reasons = list({o.get("skip_reason") for o in group if o.get("skip_reason")})
+        skip_reason = skip_reasons[0] if len(skip_reasons) == 1 else None
+
+        # lane: prefer the one from the best-terminal-state outcome
+        best_ts = terminal_state
+        lane_candidates = [o.get("lane") for o in group if o.get("lane")]
+        lane = lane_candidates[0] if lane_candidates else fam_norm.upper()
+
+        _result.append({
+            "family": fam_norm,
+            "attempted": attempted,
+            "skipped": skipped,
+            "skip_reason": skip_reason,
+            "raw_count": raw_count,
+            "built_count": built_count,
+            "accepted_count": accepted_count,
+            "error": error,
+            "timeout": timeout,
+            "duration_s": duration_s,
+            "terminal_state": terminal_state,
+            "lane": lane,
+        })
+
+    return _result
+
+
 def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     """Normalize a raw lane or adapter outcome dict into SourceFamilyOutcome fields.
 
@@ -1296,6 +1441,9 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     Also handles the "missing family" case where no outcome was produced at all,
     returning a skipped/attempted=False outcome for documentation purposes.
     """
+    # Canonicalize family name to lowercase form (F235D)
+    _canonical_family = normalize_source_family_name(family)
+
     # F215C: Derive terminal_state from outcome fields.
     # Priority: never_scheduled/no_outcome_recorded > skipped > attempted outcomes
     def _derive_terminal(ts_raw: str | None, attempted: bool, skipped: bool,
@@ -1333,7 +1481,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     if raw is None:
         _ts = _derive_terminal(None, False, True, "no_outcome_recorded", None, False, 0)
         return SourceFamilyOutcome(
-            family=family,
+            family=_canonical_family,
             attempted=False,
             skipped=True,
             skip_reason="no_outcome_recorded",
@@ -1358,7 +1506,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
             _tag, _sig, _fb_use, _fb_waste, _qual = _verdict[:5]
             _ts = _derive_terminal(None, True, False, None, None, False, 0)
             return SourceFamilyOutcome(
-                family=family,
+                family=_canonical_family,
                 attempted=True,
                 skipped=False,
                 skip_reason=None,
@@ -1391,7 +1539,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
 
     _ts = _derive_terminal(_ts_raw, attempted, skipped, skip_reason, _error, _timeout, accepted_count)
     return SourceFamilyOutcome(
-        family=family,
+        family=_canonical_family,
         attempted=attempted,
         skipped=skipped,
         skip_reason=skip_reason,

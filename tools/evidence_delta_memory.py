@@ -601,10 +601,13 @@ def _get_ct_public_info(kpi: dict) -> tuple[bool, bool]:
     if isinstance(sfo, list):
         for entry in sfo:
             if isinstance(entry, dict):
-                fam = entry.get("family", "")
-                if fam == "CT":
+                # F235D: Normalize family name comparison — source_family_outcomes
+                # uses "family" key (SourceFamilyOutcome.to_dict()), canonicalized
+                # to lowercase. Use case-insensitive comparison.
+                fam = entry.get("family", "").lower()
+                if fam == "ct":
                     ct_att = entry.get("attempted", False)
-                elif fam == "PUBLIC":
+                elif fam == "public":
                     pub_att = entry.get("attempted", False)
 
     # F221E: Fallback for PUBLIC — public_terminal_stage indicates terminal attempts

@@ -11,6 +11,10 @@ Exit codes:
   3 = KPI/scoring mismatch
   4 = canonical acquisition fallback used
   5 = source-family outcome consistency failure
+  6 = duplicate normalized source families (CT/ct, PUBLIC/public)
+  7 = profile/priority mismatch for expected nonfeed_diagnostic run
+  8 = CT prelude contradiction
+  9 = public DISCOVERY_ERROR without concrete discovery_empty_reason/provider surface
 """
 
 from __future__ import annotations
@@ -46,6 +50,24 @@ def _branch_counts(data: dict) -> dict:
 
 def _branch_mix(data: dict) -> dict:
     return _get(data, "runtime_truth", "branch_mix", default={})
+
+
+def _all_source_family_outcomes(data: dict) -> list[dict]:
+    """Collect all source_family_outcomes from every location."""
+    outcomes = []
+    # top-level
+    sfo = _get(data, "source_family_outcomes")
+    if sfo:
+        outcomes.extend(sfo if isinstance(sfo, list) else [sfo])
+    # runtime_truth
+    rt_sfo = _get(data, "runtime_truth", "source_family_outcomes")
+    if rt_sfo:
+        outcomes.extend(rt_sfo if isinstance(rt_sfo, list) else [rt_sfo])
+    # acquisition_report
+    ar_sfo = _get(data, "acquisition_report", "source_family_outcomes")
+    if ar_sfo:
+        outcomes.extend(ar_sfo if isinstance(ar_sfo, list) else [ar_sfo])
+    return outcomes
 
 
 # ── Validation checks ─────────────────────────────────────────────────────────
@@ -109,6 +131,175 @@ def _check_acquisition_fallback(data: dict) -> tuple[bool, str]:
         return False, "acquisition_report_fallback_used=True (fallback was used)"
     # Missing/False is OK — canonical acquisition
     return True, f"acquisition_report_fallback_used={fallback} (canonical or not present)"
+
+
+def _check_duplicate_normalized_source_families(data: dict) -> tuple[bool, str]:
+    """Exit 6: duplicate normalized source families (CT/ct, PUBLIC/public).
+
+    After normalization (lowercase), source_family_outcomes must not contain
+    both 'CT' and 'ct' or both 'PUBLIC' and 'public' — they represent the same
+    family and duplication indicates a data-production bug.
+    """
+    outcomes = _all_source_family_outcomes(data)
+    if not outcomes:
+        return True, "no source_family_outcomes — skipping duplicate check"
+
+    # Collect family values as they appear (raw)
+    raw_families: list[str] = []
+    for entry in outcomes:
+        if isinstance(entry, dict):
+            fam = entry.get("family")
+        elif isinstance(entry, str):
+            fam = entry
+        else:
+            continue
+        if fam:
+            raw_families.append(fam)
+
+    # Normalize to lowercase for duplicate detection
+    normalized = {f.lower() for f in raw_families}
+    # Check for CT/ct or PUBLIC/public coexistence
+    conflicts = []
+    if "ct" in normalized and any(f for f in raw_families if f == "CT") and any(f for f in raw_families if f == "ct"):
+        conflicts.append("CT and ct both present")
+    if "public" in normalized and any(f for f in raw_families if f == "PUBLIC") and any(f for f in raw_families if f == "public"):
+        conflicts.append("PUBLIC and public both present")
+
+    if conflicts:
+        return False, f"duplicate families: {'; '.join(conflicts)} (raw_families={raw_families})"
+    return True, f"no duplicate normalized families — {raw_families}"
+
+
+def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
+    """Exit 7: profile/priority mismatch for expected nonfeed_diagnostic run.
+
+    When acquisition_prelude_missing_lanes contains 'CT' (or CT is absent from
+    outcomes due to failure), the run was expected to be nonfeed_diagnostic but
+    either acquisition_profile=default OR nonfeed_priority_enabled=False — both
+    indicate the nonfeed diagnostic intent was not properly propagated.
+    """
+    # Determine if this run expected nonfeed_diagnostic:
+    # - CT missing from prelude OR ct_terminal_stage indicates error
+    prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=[])
+    ct_terminal = (
+        _get(data, "runtime_truth", "ct_terminal_stage", default="")
+        or _get(data, "acquisition_report", "ct_terminal_stage", default="")
+    )
+    ct_status = _get(data, "acquisition_report", "ct_status", default="")
+    ct_provider = _get(data, "acquisition_report", "ct_provider_status", default="")
+
+    # CT was expected if it's in missing_lanes or had an error terminal state
+    ct_was_expected = (
+        "CT" in prelude_missing
+        or ct_terminal in ("ATTEMPTED_ERROR", "timeout", "provider_error", "DISCOVERY_ERROR")
+        or ct_status in ("ATTEMPTED_ERROR", "timeout")
+        or ct_provider in ("ATTEMPTED_ERROR", "timeout", "DISCOVERY_ERROR", "unavailable")
+    )
+
+    if not ct_was_expected:
+        return True, "CT not expected in this run — profile/priority mismatch N/A"
+
+    # CT was expected — check for profile=default or nonfeed_priority_enabled=False
+    acq_profile = _get(data, "acquisition_report", "acquisition_profile", default=None)
+    profile = _get(data, "acquisition_profile", default=None)
+    profiles = {p for p in [acq_profile, profile] if p is not None}
+
+    np_enabled_rt = _get(data, "runtime_truth", "nonfeed_priority_enabled", default=None)
+    np_enabled_ar = _get(data, "acquisition_report", "nonfeed_priority_enabled", default=None)
+    np_enabled_top = _get(data, "nonfeed_priority_enabled", default=None)
+    np_values = {v for v in [np_enabled_rt, np_enabled_ar, np_enabled_top] if v is not None}
+
+    failures = []
+    if profiles and "default" in profiles:
+        failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
+    if np_values and False in np_values:
+        failures.append(f"nonfeed_priority_enabled=False (should be True for CT-expected run)")
+
+    if failures:
+        return False, "; ".join(failures)
+    return True, "profile/priority OK for CT-expected nonfeed_diagnostic run"
+
+
+def _check_ct_prelude_contradiction(data: dict) -> tuple[bool, str]:
+    """Exit 8: CT prelude contradiction.
+
+    Fails when ALL of these are true:
+      - 'CT' is in acquisition_prelude_missing_lanes (CT was expected but not attempted)
+      - ct_attempted_error is present/true (CT lower-case error marker exists)
+      - ct_prelude_missing_but_final_attempted is False or absent
+    The contradiction: CT prelude says CT was missing from planned lanes,
+    but ct_attempted_error signals a final attempt was made — and the
+    ct_prelude_missing_but_final_attempted flag doesn't explain this.
+    """
+    prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=[])
+    ct_in_prelude_missing = "CT" in prelude_missing
+
+    ct_attempted_error = _get(data, "acquisition_report", "ct_attempted_error", default=None)
+    ct_attempted_error_top = _get(data, "ct_attempted_error", default=None)
+    ct_ae = ct_attempted_error or ct_attempted_error_top
+
+    ct_prelude_flag = _get(data, "acquisition_report", "ct_prelude_missing_but_final_attempted", default=None)
+    ct_prelude_flag_top = _get(data, "ct_prelude_missing_but_final_attempted", default=None)
+    ct_prelude_val = ct_prelude_flag if ct_prelude_flag is not None else ct_prelude_flag_top
+
+    # Condition: CT missing from prelude AND ct_attempted_error present AND flag says not attempted
+    if ct_in_prelude_missing and ct_ae and ct_prelude_val is False:
+        return False, (
+            f"CT prelude contradiction: CT in acquisition_prelude_missing_lanes={prelude_missing}, "
+            f"ct_attempted_error={ct_ae!r}, "
+            f"ct_prelude_missing_but_final_attempted=False (inconsistent)"
+        )
+    if ct_in_prelude_missing and ct_ae and ct_prelude_val is None:
+        return False, (
+            f"CT prelude contradiction: CT in acquisition_prelude_missing_lanes={prelude_missing}, "
+            f"ct_attempted_error={ct_ae!r}, "
+            f"ct_prelude_missing_but_final_attempted not set (should be True to explain CT error)"
+        )
+
+    return True, "CT prelude consistent"
+
+
+def _check_public_discovery_error_missing_reason(data: dict) -> tuple[bool, str]:
+    """Exit 9: public DISCOVERY_ERROR without concrete discovery_empty_reason/provider surface.
+
+    When public_terminal_stage == DISCOVERY_ERROR, the report must surface
+    either public_discovery_empty_reason or provider_errors (or both) so
+    the error is diagnosable — not silent.
+    """
+    public_terminal = (
+        _get(data, "runtime_truth", "public_terminal_stage", default="")
+        or _get(data, "acquisition_report", "public_terminal_stage", default="")
+        or _get(data, "public_terminal_stage", default="")
+    )
+
+    if public_terminal != "DISCOVERY_ERROR":
+        return True, f"public_terminal_stage={public_terminal!r} — not DISCOVERY_ERROR, check N/A"
+
+    # DISCOVERY_ERROR present — check for diagnostic surface
+    reason = _get(data, "acquisition_report", "public_discovery_empty_reason", default="")
+    if not reason:
+        reason = _get(data, "live_kpi", "public_discovery_empty_reason", default="")
+    if not reason:
+        reason = _get(data, "public_pipeline", "public_discovery_empty_reason", default="")
+
+    provider_errors = _get(data, "acquisition_report", "provider_errors", default=None)
+    if not provider_errors:
+        provider_errors = _get(data, "public_pipeline", "provider_errors", default=None)
+    if not provider_errors:
+        provider_errors = _get(data, "live_kpi", "provider_errors", default=None)
+
+    if not reason and not provider_errors:
+        return False, (
+            f"public_terminal_stage=DISCOVERY_ERROR but no public_discovery_empty_reason "
+            f"and no provider_errors surface — report is silent on why discovery failed"
+        )
+
+    surface = []
+    if reason:
+        surface.append(f"reason={reason!r}")
+    if provider_errors:
+        surface.append(f"provider_errors={provider_errors!r}")
+    return True, f"DISCOVERY_ERROR explained: {'; '.join(surface)}"
 
 
 def _check_public_query_variants(data: dict) -> tuple[bool, str]:
@@ -203,10 +394,29 @@ def _check_source_family_outcomes(data: dict) -> tuple[bool, str]:
     """
     source_families = _get(data, "runtime_truth", "source_family_outcomes", default=None)
     if source_families is None:
+        # Check top-level
+        source_families = _get(data, "source_family_outcomes", default=None)
+    if source_families is None:
+        # Check acquisition_report
+        source_families = _get(data, "acquisition_report", "source_family_outcomes", default=None)
+    if source_families is None:
         # Missing is OK — dry-run without terminal stages
         return True, "source_family_outcomes not in runtime_truth (dry-run)"
 
-    outcomes_set = set(source_families) if isinstance(source_families, (list, set)) else set()
+    # Build set of family names (raw)
+    outcomes_set: set[str] = set()
+    if isinstance(source_families, list):
+        for entry in source_families:
+            if isinstance(entry, dict):
+                fam = entry.get("family")
+            elif isinstance(entry, str):
+                fam = entry
+            else:
+                continue
+            if fam:
+                outcomes_set.add(fam)
+    elif isinstance(source_families, dict):
+        outcomes_set = set(source_families.keys())
 
     # Check public terminal stage -> PUBLIC outcome
     public_terminal = _get(data, "runtime_truth", "public_terminal_stage", default="")
@@ -232,7 +442,7 @@ def _check_source_family_outcomes(data: dict) -> tuple[bool, str]:
             f"CT not in source_family_outcomes={source_families}"
         )
 
-    return True, f"source_family_outcomes={source_families} consistent"
+    return True, f"source_family_outcomes={list(outcomes_set)} consistent"
 
 
 def _check_kpi_runtime_counts_match(data: dict) -> tuple[bool, str]:
@@ -361,7 +571,7 @@ def _check_schema_version(data: dict) -> tuple[bool, str]:
     WARN if absent (pre-F208 report).
     INFO if known but old version.
     """
-    KNOWN_VERSIONS = {"f208.v1", "f209.v1", "f214.v1", "f234.v1"}
+    KNOWN_VERSIONS = {"f208.v1", "f209.v1", "f214.v1", "f234.v1", "f208.v1-fallback"}
 
     acq = _get(data, "acquisition_report", default=None)
     if acq is None:
@@ -601,6 +811,10 @@ def validate_report(report_path: str) -> tuple[int, dict]:
       3 — KPI/scoring mismatch
       4 — canonical acquisition fallback used
       5 — source-family outcome consistency failure
+      6 — duplicate normalized source families (CT/ct, PUBLIC/public)
+      7 — profile/priority mismatch for expected nonfeed_diagnostic run
+      8 — CT prelude contradiction
+      9 — public DISCOVERY_ERROR without concrete discovery_empty_reason/provider surface
     """
     try:
         with open(report_path) as f:
@@ -609,6 +823,10 @@ def validate_report(report_path: str) -> tuple[int, dict]:
         return 1, {"error": f"failed to load JSON: {e}", "exit_code": 1}
 
     checks = [
+        ("duplicate_source_families", _check_duplicate_normalized_source_families),
+        ("profile_priority_mismatch", _check_profile_priority_mismatch),
+        ("ct_prelude_contradiction", _check_ct_prelude_contradiction),
+        ("public_discovery_error_reason", _check_public_discovery_error_missing_reason),
         ("acquisition_profile", _check_acquisition_profile),
         ("nonfeed_priority", _check_nonfeed_priority),
         ("acquisition_fallback", _check_acquisition_fallback),
@@ -636,6 +854,10 @@ def validate_report(report_path: str) -> tuple[int, dict]:
     kpi_failed = False
     fallback_used = False
     source_family_failed = False
+    duplicate_family_failed = False
+    profile_mismatch_failed = False
+    ct_prelude_contradiction_failed = False
+    public_discovery_error_failed = False
 
     for name, fn in checks:
         try:
@@ -646,25 +868,48 @@ def validate_report(report_path: str) -> tuple[int, dict]:
         results[name] = {"ok": ok, "detail": detail}
         if not ok:
             exit_code = 1  # at minimum, malformed
-            if name in ("acquisition_profile", "nonfeed_priority"):
+            if name in ("duplicate_source_families",):
+                exit_code = max(exit_code, 6)
+                duplicate_family_failed = True
+            elif name in ("profile_priority_mismatch",):
+                exit_code = max(exit_code, 7)
+                profile_mismatch_failed = True
+            elif name in ("ct_prelude_contradiction",):
+                exit_code = max(exit_code, 8)
+                ct_prelude_contradiction_failed = True
+            elif name in ("public_discovery_error_reason",):
+                exit_code = max(exit_code, 9)
+                public_discovery_error_failed = True
+            elif name in ("acquisition_profile", "nonfeed_priority"):
                 exit_code = max(exit_code, 2)
                 profile_failed = True
-            if name in ("kpi_runtime_counts_match", "quality_gate_not_zeroed"):
+            elif name in ("kpi_runtime_counts_match", "quality_gate_not_zeroed"):
                 exit_code = max(exit_code, 3)
                 kpi_failed = True
-            if name == "acquisition_fallback":
+            elif name == "acquisition_fallback":
                 exit_code = max(exit_code, 4)
                 fallback_used = True
-            if name == "source_family_outcomes":
+            elif name == "source_family_outcomes":
                 exit_code = max(exit_code, 5)
                 source_family_failed = True
 
+    # Exit priority: fallback(4) > duplicate family(6) > profile mismatch(7) >
+    # CT contradiction(8) > public reason missing(9) > KPI mismatch(3) >
+    # profile(2) > source family(5) > malformed(1)
     if fallback_used:
         exit_code = 4
-    elif source_family_failed:
-        exit_code = 5
+    elif duplicate_family_failed:
+        exit_code = 6
+    elif profile_mismatch_failed:
+        exit_code = 7
+    elif ct_prelude_contradiction_failed:
+        exit_code = 8
+    elif public_discovery_error_failed:
+        exit_code = 9
     elif profile_failed:
         exit_code = 2
+    elif source_family_failed:
+        exit_code = 5
     elif kpi_failed:
         exit_code = 3
 
@@ -705,6 +950,10 @@ def main() -> None:
         3: "KPI FAILED",
         4: "FALLBACK USED",
         5: "SOURCE FAMILY INCONSISTENCY",
+        6: "DUPLICATE SOURCE FAMILIES",
+        7: "PROFILE/PRIORITY MISMATCH",
+        8: "CT PRELUDE CONTRADICTION",
+        9: "PUBLIC DISCOVERY ERROR MISSING REASON",
     }
     print(f"Exit {exit_code}: {labels.get(exit_code, 'UNKNOWN')}")
     sys.exit(exit_code)

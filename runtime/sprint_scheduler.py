@@ -105,7 +105,9 @@ from hledac.universal.runtime.acquisition_strategy import (
     NonfeedMissionController,
     FeedDominanceBudget,
     normalize_source_family_outcome,
+    canonicalize_source_family_outcomes,
     build_acquisition_plan,
+    infer_mission_intent,
     is_lane_enabled,
     lane_skip_reason,
     get_lane_plan,
@@ -3068,7 +3070,9 @@ class SprintScheduler:
                 _outcomes.append(_normalized)
                 _seen.add(_lane_name)
 
-        return tuple(_outcomes)
+        # F235D: Canonicalize before returning — dedup merged families so
+        # terminality SSOT never sees CT+ct as separate contradictory entries.
+        return tuple(canonicalize_source_family_outcomes(_outcomes))
 
     # ── Sprint F207M-A: Nonfeed Pre-dispatch ────────────────────────────────
 
@@ -8394,7 +8398,11 @@ class SprintScheduler:
                     + self._result.lane_blockchain_accepted_findings
                 ),
                 feed_per_source=self._feed_accepted_per_source,
-                mission_intent=None,
+                mission_intent=mission_intent if mission_intent else (
+                    infer_mission_intent(self._acquisition_plan.query)
+                    if self._acquisition_plan and self._acquisition_plan.query
+                    else "unknown"
+                ),
                 nonfeed_unresolved=nonfeed_unresolved,
                 acquisition_profile=acquisition_profile,
             )

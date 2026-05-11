@@ -243,16 +243,26 @@ def _source_family_outcomes(data: dict) -> list[dict]:
 def _has_feed(data: dict) -> bool:
     sfo = _source_family_outcomes(data)
     for entry in sfo:
-        if isinstance(entry, dict) and entry.get("source_family") == "feed" and (entry.get("accepted", 0) or 0) > 0:
-            return True
+        # F235D: Normalize family field check — source_family_outcomes uses
+        # "family" key (SourceFamilyOutcome.to_dict()), not "source_family".
+        # Also handle case-insensitive match since normalize uses lowercase.
+        if isinstance(entry, dict):
+            fam = entry.get("family", entry.get("source_family", "")).lower()
+            if fam == "feed" and (entry.get("accepted", 0) or 0) > 0:
+                return True
     return False
 
 
 def _has_ct(data: dict) -> bool:
     sfo = _source_family_outcomes(data)
     for entry in sfo:
-        if isinstance(entry, dict) and entry.get("source_family") == "ct" and (entry.get("attempted", 0) or 0) > 0:
-            return True
+        # F235D: Normalize family field check — source_family_outcomes uses
+        # "family" key (SourceFamilyOutcome.to_dict()), not "source_family".
+        # Also handle case-insensitive match since normalize uses lowercase.
+        if isinstance(entry, dict):
+            fam = entry.get("family", entry.get("source_family", "")).lower()
+            if fam == "ct" and (entry.get("attempted", 0) or 0) > 0:
+                return True
     return False
 
 
