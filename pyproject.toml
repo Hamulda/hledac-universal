@@ -86,6 +86,7 @@ dependencies = [
     "pyobjc-framework-coreml>=12.1",
     "flashrank>=0.2.10",
     "transformers>=5.8.0",
+    "aiofiles>=25.1.0",
 ]
 
 # ------------------------------------------------------------------ optionals

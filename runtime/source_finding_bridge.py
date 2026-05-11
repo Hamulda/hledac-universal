@@ -761,6 +761,8 @@ def ct_results_to_findings(
                 payload_text=payload_text,
             )
             if finding is not None:
+                # NOTE M2: upstream limit in MAX_BRIDGE_OUTPUT (line 91) caps input at 500.
+                # findings list grows only from capped iteration — no additional guard needed.
                 findings.append(finding)
 
     # Tally per-category rejections from the rejection list
@@ -998,6 +1000,8 @@ def wayback_results_to_findings(
             payload_text=payload_text,
         )
         if finding is not None:
+            # NOTE M2: upstream limit in MAX_BRIDGE_OUTPUT (line 91) caps input at 500.
+            # findings list grows only from capped iteration — no additional guard needed.
             findings.append(finding)
 
     telemetry = {
@@ -1165,6 +1169,8 @@ def passive_dns_results_to_findings(
             payload_text=payload_text,
         )
         if finding is not None:
+            # NOTE M2: upstream limit in MAX_BRIDGE_OUTPUT (line 91) caps input at 500.
+            # findings list grows only from capped iteration — no additional guard needed.
             findings.append(finding)
 
     telemetry = {

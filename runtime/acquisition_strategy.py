@@ -930,6 +930,15 @@ def build_acquisition_report(
     ct_storage_accepted: bool = False,
     ct_terminal_stage: str = "",
     ct_prelude_missing_but_final_attempted: bool = False,
+    # F234: Critical 33 batch — runtime error/signal fields
+    ct_bridge_rejections_count: int = 0,
+    ct_storage_rejected: int = 0,
+    arrow_last_flush_error: str = "",
+    arrow_batch_dropped: int = 0,
+    prewindup_barrier_errors: dict | None = None,
+    return_guard_errors: dict | None = None,
+    wayback_unchanged_rejected: int = 0,
+    nonfeed_provider_failures: list | None = None,
     # F216G: Quality/duplicate/low-info rejection ledgers
     quality_rejection_summary_by_family: dict | None = None,
     duplicate_rejection_summary_by_family: dict | None = None,
@@ -1153,6 +1162,19 @@ def build_acquisition_report(
         "ct_storage_accepted": ct_storage_accepted,
         "ct_terminal_stage": ct_terminal_stage,
         "ct_prelude_missing_but_final_attempted": ct_prelude_missing_but_final_attempted,
+        # NOTE R3: Critical 33 batch — runtime error/signal fields
+        "ct_bridge_rejections_count": ct_bridge_rejections_count,
+        "ct_storage_rejected": ct_storage_rejected,
+        "arrow_last_flush_error": arrow_last_flush_error or "",
+        "arrow_batch_dropped": arrow_batch_dropped,
+        "prewindup_barrier_errors": (
+            sum(prewindup_barrier_errors.values()) if isinstance(prewindup_barrier_errors, dict) else int(prewindup_barrier_errors or 0)
+        ),
+        "return_guard_errors": (
+            sum(return_guard_errors.values()) if isinstance(return_guard_errors, dict) else int(return_guard_errors or 0)
+        ),
+        "wayback_unchanged_rejected": wayback_unchanged_rejected,
+        "nonfeed_provider_failures": nonfeed_provider_failures or [],
         # F216G: Quality/duplicate/low-info rejection ledgers
         "quality_rejection_summary_by_family": quality_rejection_summary_by_family or {},
         "duplicate_rejection_summary_by_family": duplicate_rejection_summary_by_family or {},

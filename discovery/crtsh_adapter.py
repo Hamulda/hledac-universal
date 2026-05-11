@@ -1117,6 +1117,8 @@ async def async_search_crtsh(
                 elapsed_s=time.monotonic() - start,
             )
         if resp.status >= 500:
+            # F219E: Enter cooldown on 5xx (explicit bounded cooldown for resilience)
+            _enter_cooldown(domain_candidate, f"http_{resp.status}", time.monotonic())
             return DiscoveryBatchResult(
                 hits=(),
                 error=f"http_{resp.status}",

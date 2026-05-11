@@ -202,9 +202,14 @@ class Verdict(str, Enum):
     READY_TO_RESTART_AND_RUN = "READY_TO_RESTART_AND_RUN"
     # F232H: Feed baseline only — nonfeed capability blocked, feed can proceed
     READY_FOR_FEED_BASELINE_ONLY = "READY_FOR_FEED_BASELINE_ONLY"
+    # F234P: Nonfeed capability can be proven
+    READY_FOR_NONFEED_CAPABILITY = "READY_FOR_NONFEED_CAPABILITY"
+    # F234P: Hardware memory blocks all capability
+    BLOCKED_BY_HARDWARE = "BLOCKED_BY_HARDWARE"
     BLOCKED_BY_ARTIFACTS = "BLOCKED_BY_ARTIFACTS"
     BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
     BLOCKED_BY_PROVIDER_SURFACE = "BLOCKED_BY_PROVIDER_SURFACE"
+    BLOCKED_BY_CONTRACT = "BLOCKED_BY_CONTRACT"
     BLOCKED_BY_UNKNOWN = "BLOCKED_BY_UNKNOWN"
 
 
@@ -280,6 +285,13 @@ class CockpitResult:
     f231_warnings: list[str] = field(default_factory=list)
     missing_f231_artifacts: list[str] = field(default_factory=list)
 
+    # F234P: Separated feed-baseline vs capability readiness
+    feed_baseline_allowed: bool = False
+    capability_live_allowed: bool = False
+    capability_blockers: list[str] = field(default_factory=list)
+    next_action_feed_baseline: str = ""
+    next_action_capability: str = ""
+
     def to_dict(self) -> dict:
         return {
             "verdict": self.verdict.value,
@@ -325,6 +337,12 @@ class CockpitResult:
             "f231_core_ready": self.f231_core_ready,
             "f231_warnings": self.f231_warnings,
             "missing_f231_artifacts": self.missing_f231_artifacts,
+            # F234P: Separated feed-baseline vs capability readiness
+            "feed_baseline_allowed": self.feed_baseline_allowed,
+            "capability_live_allowed": self.capability_live_allowed,
+            "capability_blockers": self.capability_blockers,
+            "next_action_feed_baseline": self.next_action_feed_baseline,
+            "next_action_capability": self.next_action_capability,
         }
 
 
@@ -522,6 +540,14 @@ def merge_cockpit(
     missing_f231_artifacts = decision_data.get("missing_f231_artifacts", [])
     log.append(f"f231_core_ready={f231_core_ready} missing_f231={len(missing_f231_artifacts)}")
 
+    # ---- 8. F234P: Separated feed-baseline vs capability readiness (from decision gate) ----
+    feed_baseline_allowed = decision_data.get("feed_baseline_allowed", False)
+    capability_live_allowed = decision_data.get("capability_live_allowed", False)
+    capability_blockers = decision_data.get("capability_blockers", [])
+    next_action_feed_baseline = decision_data.get("next_action_feed_baseline", "")
+    next_action_capability = decision_data.get("next_action_capability", "")
+    log.append(f"f234p feed_baseline_allowed={feed_baseline_allowed} capability_live_allowed={capability_live_allowed}")
+
     # ------------------------------------------------------------------------- #
     # Verdicts
     # ------------------------------------------------------------------------- #
@@ -561,6 +587,17 @@ def merge_cockpit(
         swap_policy_tier = "hard_block"
         swap_gate_reason = f"blocked by memory gate: swap={uma.swap_used_gib:.2f}GiB"
         log.append("verdict=BLOCKED_BY_MEMORY")
+
+    # F234P: Gate explicitly decided feed baseline can run but capability cannot
+    elif gate_decision == "READY_FOR_FEED_BASELINE_ONLY":
+        # Feed baseline can run; nonfeed capability is blocked
+        verdict = Verdict.READY_FOR_FEED_BASELINE_ONLY
+        next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
+        next_action_detail = "feed baseline ready; nonfeed capability blocked"
+        live_allowed = True
+        swap_policy_tier = "clean"
+        swap_gate_reason = "feed_baseline_only gate decision"
+        log.append("verdict=READY_FOR_FEED_BASELINE_ONLY (F234P: explicit feed baseline decision)")
 
     # D: Gate blocked by contract (non-provider-surface)
     # F225E: also blocks if F224 blocking artifacts missing for blocking profiles
@@ -622,8 +659,9 @@ def merge_cockpit(
                 swap_gate_reason = "fallback_schema_blocked blocks nonfeed capability"
                 log.append("verdict=BLOCKED_BY_UNKNOWN (F232H: nonfeed_signal + fallback_schema_blocked)")
             # F220-like feed-only: route to nonfeed_diagnostic180 regardless of swap tier
+            # F234P: Use READY_FOR_FEED_BASELINE_ONLY to distinguish from full capability
             elif uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
-                verdict = Verdict.READY_TO_RUN_NOW
+                verdict = Verdict.READY_FOR_FEED_BASELINE_ONLY
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
                 next_action_detail = suggested_cmd or "nonfeed_diagnostic180 — F220-like feed-only detected"
                 live_allowed = True
@@ -736,6 +774,12 @@ def merge_cockpit(
         f231_core_ready=f231_core_ready,
         f231_warnings=f231_warnings,
         missing_f231_artifacts=missing_f231_artifacts,
+        # F234P: Separated feed-baseline vs capability readiness
+        feed_baseline_allowed=feed_baseline_allowed,
+        capability_live_allowed=capability_live_allowed,
+        capability_blockers=capability_blockers,
+        next_action_feed_baseline=next_action_feed_baseline,
+        next_action_capability=next_action_capability,
     )
 
 
@@ -758,6 +802,26 @@ def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
 
     if result.next_action_detail:
         lines.append(f"**Next Action Detail:** {result.next_action_detail}")
+
+    # F234P: Separated feed-baseline vs capability readiness — impossible to misread
+    lines.extend([
+        "",
+        "## Feed Baseline vs Capability Readiness (F234P)",
+        "",
+        f"| Capability Axis | Status |",
+        f"|-----------------|--------|",
+        f"| **Feed Baseline Allowed** | {'✅ YES' if result.feed_baseline_allowed else '❌ NO'} |",
+        f"| **Nonfeed Capability Live Allowed** | {'✅ YES' if result.capability_live_allowed else '❌ NO'} |",
+    ])
+    if result.capability_blockers:
+        lines.append("")
+        lines.append("**Capability Blockers:**")
+        for b in result.capability_blockers:
+            lines.append(f"  - `{b}`")
+    if result.next_action_feed_baseline:
+        lines.append(f"**Next Action (Feed Baseline):** `{result.next_action_feed_baseline}`")
+    if result.next_action_capability:
+        lines.append(f"**Next Action (Capability):** `{result.next_action_capability}`")
 
     lines.extend([
         "",

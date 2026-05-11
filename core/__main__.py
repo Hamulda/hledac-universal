@@ -201,8 +201,18 @@ def _scheduler_result_acquisition_payload(
             )
         )
 
-    # Public family — if public findings were discovered
-    if getattr(result, "public_discovered", 0) > 0 or getattr(result, "public_accepted_findings", 0) > 0:
+    # Public family — DISCOVERY_TIMEOUT/ERROR/ZERO_RESULTS also emit an outcome
+    # even when raw_count=0 and accepted_count=0 (F234B)
+    _pub_has_outcome = (
+        getattr(result, "public_discovered", 0) > 0
+        or getattr(result, "public_accepted_findings", 0) > 0
+        or bool(getattr(result, "public_terminal_stage", ""))
+        or bool(getattr(result, "public_error", ""))
+        or (getattr(result, "public_stage_counters", None) is not None
+            and getattr(result, "public_stage_counters", {}) != {}
+            and getattr(result, "public_stage_counters", {}).get("fetch_attempted", 0) > 0)
+    )
+    if _pub_has_outcome:
         _pub_raw = {
             "family": "PUBLIC",
             "attempted": True,
@@ -211,24 +221,34 @@ def _scheduler_result_acquisition_payload(
             "raw_count": getattr(result, "public_discovered", 0),
             "built_count": 0,
             "accepted_count": getattr(result, "public_accepted_findings", 0),
-            "error": getattr(result, "public_error", None),
-            "timeout": False,
+            "error": getattr(result, "public_error", None) or getattr(result, "public_terminal_stage", "") or None,
+            "timeout": getattr(result, "public_terminal_stage", "") == "DISCOVERY_TIMEOUT",
             "duration_s": None,
         }
         _sfo_list.append(normalize_source_family_outcome("PUBLIC", _pub_raw))
 
-    # CT log family
-    if getattr(result, "ct_log_discovered", 0) > 0 or getattr(result, "ct_log_accepted_findings", 0) > 0:
+    # CT log family — planned/scheduled/error/timeout also emit outcome even when 0 (F234B)
+    _ct_has_outcome = (
+        getattr(result, "ct_log_discovered", 0) > 0
+        or getattr(result, "ct_log_accepted_findings", 0) > 0
+        or bool(getattr(result, "ct_terminal_stage", ""))
+        or bool(getattr(result, "ct_log_error", ""))
+        or getattr(result, "ct_planned", False)
+        or getattr(result, "ct_scheduled", False)
+        or getattr(result, "ct_request_attempted", False)
+        or bool(getattr(result, "ct_provider_status", ""))
+    )
+    if _ct_has_outcome:
         _ct_raw = {
             "family": "CT",
-            "attempted": True,
+            "attempted": getattr(result, "ct_request_attempted", False) or getattr(result, "ct_scheduled", False) or getattr(result, "ct_planned", False),
             "skipped": False,
             "skip_reason": None,
             "raw_count": getattr(result, "ct_log_discovered", 0),
             "built_count": 0,
             "accepted_count": getattr(result, "ct_log_accepted_findings", 0),
-            "error": getattr(result, "ct_log_error", None),
-            "timeout": False,
+            "error": getattr(result, "ct_log_error", None) or getattr(result, "ct_terminal_stage", "") or None,
+            "timeout": getattr(result, "ct_terminal_stage", "") == "request_timeout",
             "duration_s": None,
         }
         _sfo_list.append(normalize_source_family_outcome("CT", _ct_raw))
@@ -444,12 +464,19 @@ def _scheduler_result_acquisition_payload(
         _acq_report["acquisition_profile_input"] = _acq_input
         _acq_report["acquisition_profile_effective"] = _acq_effective
         _acq_report["acquisition_profile_normalized"] = _acq_normalized
+        # NOTE R1: surfaced from scheduler runtime — previously unread downstream.
+        # budget_violations > 0 indicates sprint exceeded resource budget.
+        # return_guard_block_reason non-empty indicates why sprint return was blocked.
+        _acq_report["budget_violations"] = getattr(result, "budget_violations", 0)
+        _acq_report["return_guard_block_reason"] = getattr(result, "return_guard_block_reason", "") or ""
+        # NOTE R2: ct_quarantine_count and ct_quarantine_samples surfaced from scheduler runtime.
+        # ct_quarantine_count > 0 indicates CT findings were quarantined before bridge.
+        # tuple -> list for JSON serialization.
+        _acq_report["ct_quarantine_count"] = getattr(result, "ct_quarantine_count", 0)
+        _acq_report["ct_quarantine_samples"] = list(
+            getattr(result, "ct_quarantine_samples", ()) or ()
+        )
     except Exception as _exc:
-        # Fallback: emit explicit fallback acquisition_report
-        # F219A: Even the fallback includes all schema fields (no silent truncation)
-        # F232F: Add fail-loud marker so downstream tools can detect fallback usage.
-        # Fallback is allowed only when canonical build fails — explicit marker
-        # allows gate/quality tools to detect and flag degraded reports.
         logger.exception(
             "[F234-FALLBACK] build_acquisition_report raised — "
             "falling back to default profile. "
@@ -457,62 +484,81 @@ def _scheduler_result_acquisition_payload(
             _acq_input,  # sentinel defined at line 327 (F234)
             _acq_effective,  # sentinel defined at line 327 (F234)
         )
-        _fallback_profile = (
-            _nd.get("acquisition_profile", "default") if _nd else "default"
-        )
-        _acq_report = {
-            "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
-            "terminality": _term_rep,
-            "source_family_outcomes": _sfo_list,
-            "return_guard": _rg_dict,
-            "prewindup_barrier": _pwb,
-            "scheduler_exit": _se_dict,
-            "windup_guard_observation": _wg_dict,
-            "fallback_reason": f"canonical_build_failed: {_exc}",
-            "acquisition_report_fallback_used": True,  # F232F: fail-loud marker
-            "plan": getattr(_plan, "plans", None) if _plan else None,
-            "nonfeed_plan_debug": _nd,  # F232F: preserve _nd when available
-            # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
-            "acquisition_profile": _fallback_profile,
-            "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
-            "nonfeed_priority_enabled": (
-                _nd.get("nonfeed_priority_enabled", False) if _nd else False
-            ),
-            "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
-            # F217C: PUBLIC bootstrap telemetry
-            "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
-            "public_stage_counters": getattr(result, "public_stage_counters", None),
-            # F217D: CT provider resilience telemetry
-            "ct_provider_status": getattr(result, "ct_provider_status", ""),
-            "ct_cache_used": getattr(result, "ct_cache_used", False),
-            "ct_cache_stale": getattr(result, "ct_cache_stale", False),
-            "ct_cache_age_s": getattr(result, "ct_cache_age_s", 0.0),
-            "ct_quarantine_count": getattr(result, "ct_quarantine_count", 0),
-            "ct_quarantine_samples": list(getattr(result, "ct_quarantine_samples", ()) or ()),
-            # F232: CT loss-stage telemetry
-            "ct_planned": getattr(result, "ct_planned", False),
-            "ct_scheduled": getattr(result, "ct_scheduled", False),
-            "ct_provider_selected": getattr(result, "ct_provider_selected", ""),
-            "ct_request_attempted": getattr(result, "ct_request_attempted", False),
-            "ct_request_timeout": getattr(result, "ct_request_timeout", False),
-            "ct_raw_count": getattr(result, "ct_raw_count", 0),
-            "ct_bridge_invoked": getattr(result, "ct_bridge_invoked", False),
-            "ct_candidates_built": getattr(result, "ct_candidates_built", 0),
-            "ct_storage_attempted": getattr(result, "ct_storage_attempted", False),
-            "ct_storage_accepted": getattr(result, "ct_storage_accepted", False),
-            "ct_terminal_stage": getattr(result, "ct_terminal_stage", ""),
-            "ct_prelude_missing_but_final_attempted": getattr(
-                result, "ct_prelude_missing_but_final_attempted", False
-            ),
-            # F216G: Quality/duplicate/low-info rejection ledgers
-            "quality_rejection_summary_by_family": None,
-            "duplicate_rejection_summary_by_family": None,
-            "low_information_by_family": None,
-            # F217E: Nonfeed candidate ledger summary
-            "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
-            # F216E: Feed dominance budget telemetry
-            "feed_dominance_budget": None,
-        }
+        try:
+            _fallback_profile = (
+                _nd.get("acquisition_profile", "default") if _nd else "default"
+            )
+            _acq_report = {
+                "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
+                "terminality": _term_rep,
+                "source_family_outcomes": _sfo_list,
+                "return_guard": _rg_dict,
+                "prewindup_barrier": _pwb,
+                "scheduler_exit": _se_dict,
+                "windup_guard_observation": _wg_dict,
+                "fallback_reason": f"canonical_build_failed: {_exc}",
+                "acquisition_report_fallback_used": True,  # F232F: fail-loud marker
+                "plan": getattr(_plan, "plans", None) if _plan else None,
+                "nonfeed_plan_debug": _nd,  # F232F: preserve _nd when available
+                # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
+                "acquisition_profile": _fallback_profile,
+                "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
+                "nonfeed_priority_enabled": (
+                    _nd.get("nonfeed_priority_enabled", False) if _nd else False
+                ),
+                "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
+                # F217C: PUBLIC bootstrap telemetry
+                "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
+                "public_stage_counters": getattr(result, "public_stage_counters", None),
+                # F217D: CT provider resilience telemetry
+                "ct_provider_status": getattr(result, "ct_provider_status", ""),
+                "ct_cache_used": getattr(result, "ct_cache_used", False),
+                "ct_cache_stale": getattr(result, "ct_cache_stale", False),
+                "ct_cache_age_s": getattr(result, "ct_cache_age_s", 0.0),
+                "ct_quarantine_count": getattr(result, "ct_quarantine_count", 0),
+                "ct_quarantine_samples": list(getattr(result, "ct_quarantine_samples", ()) or ()),
+                # F232: CT loss-stage telemetry
+                "ct_planned": getattr(result, "ct_planned", False),
+                "ct_scheduled": getattr(result, "ct_scheduled", False),
+                "ct_provider_selected": getattr(result, "ct_provider_selected", ""),
+                "ct_request_attempted": getattr(result, "ct_request_attempted", False),
+                "ct_request_timeout": getattr(result, "ct_request_timeout", False),
+                "ct_raw_count": getattr(result, "ct_raw_count", 0),
+                "ct_bridge_invoked": getattr(result, "ct_bridge_invoked", False),
+                "ct_candidates_built": getattr(result, "ct_candidates_built", 0),
+                "ct_storage_attempted": getattr(result, "ct_storage_attempted", False),
+                "ct_storage_accepted": getattr(result, "ct_storage_accepted", False),
+                "ct_terminal_stage": getattr(result, "ct_terminal_stage", ""),
+                "ct_prelude_missing_but_final_attempted": getattr(
+                    result, "ct_prelude_missing_but_final_attempted", False
+                ),
+                # F216G: Quality/duplicate/low-info rejection ledgers
+                "quality_rejection_summary_by_family": None,
+                "duplicate_rejection_summary_by_family": None,
+                "low_information_by_family": None,
+                # F217E: Nonfeed candidate ledger summary
+                "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
+                # F216E: Feed dominance budget telemetry
+                "feed_dominance_budget": None,
+                # NOTE R1: surfaced from scheduler runtime
+                "budget_violations": getattr(result, "budget_violations", 0),
+                "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",
+            }
+        except Exception as _fallback_exc:
+            logger.critical(
+                "FALLBACK ALSO FAILED — acquisition report unavailable: %s: %s",
+                type(_fallback_exc).__name__, _fallback_exc,
+            )
+            # NOTE S3: double-fallback failure — return minimal sentinel
+            # so downstream gate receives something rather than crashing.
+            _acq_report = {
+                "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",
+                "fallback_reason": f"double_fallback_failure: {_exc} -> {_fallback_exc}",
+                "acquisition_report_fallback_used": True,
+                "acquisition_report_double_fallback": True,
+                "acquisition_profile": "unavailable",
+                "error": str(_fallback_exc),
+            }
 
     return {
         "acquisition_report": _acq_report,

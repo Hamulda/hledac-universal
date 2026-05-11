@@ -667,6 +667,12 @@ class DecisionResult:
     # F232H: nonfeed capability block reasons
     nonfeed_capability_blocked: bool = False
     nonfeed_block_reason: str = ""
+    # F234P: Separated feed-baseline vs capability readiness
+    feed_baseline_allowed: bool = False
+    capability_live_allowed: bool = False
+    capability_blockers: list[str] = field(default_factory=list)
+    next_action_feed_baseline: str = ""
+    next_action_capability: str = ""
 
 
 def _build_nonfeed_block_reason(f224_blocks: bool, f231_blocks: bool, profile: str) -> str:
@@ -1012,6 +1018,48 @@ def run_gate(
         f"--allow-high-swap"
     )
 
+    # --------------------------------------------------------------------------- #
+    # F234P: Compute separated feed-baseline vs capability readiness
+    # --------------------------------------------------------------------------- #
+    _has_provider_surface_block = any(
+        "BLOCKED_BY_PROVIDER_SURFACE" in r for r in reasons
+    )
+    _has_contract_block = any("BLOCKED_BY_CONTRACT" in r for r in reasons)
+    _has_memory_block = any("BLOCKED_BY_MEMORY" in r for r in reasons)
+
+    # feed_baseline_allowed: can run feed baseline if feed prerequisites pass
+    # (provider surface OK, memory OK, required probes OK)
+    _feed_baseline_ok = (
+        not _has_provider_surface_block
+        and not _has_memory_block
+        and swap_policy_tier in ("clean", "diagnostic")
+        and not missing_required
+    )
+    feed_baseline_allowed = bool(_feed_baseline_ok)
+
+    # capability_live_allowed: nonfeed capability provable only if all blockers clear
+    _capability_blocked = (
+        _has_provider_surface_block
+        or _has_memory_block
+        or _f224_blocks_nonfeed
+        or _f231_blocks_nonfeed
+        or fallback_blocked
+    )
+    capability_live_allowed = not _capability_blocked
+
+    # capability_blockers: explicit list of what's blocking capability
+    capability_blockers = []
+    if _has_provider_surface_block:
+        capability_blockers.append("provider_surface_degraded")
+    if _f224_blocks_nonfeed:
+        capability_blockers.append("F224 blocking artifacts missing")
+    if _f231_blocks_nonfeed:
+        capability_blockers.append("F231 evidence lift pack missing")
+    if _has_memory_block:
+        capability_blockers.append("BLOCKED_BY_MEMORY")
+    if fallback_blocked:
+        capability_blockers.append("fallback_schema_blocked")
+
     return DecisionResult(
         decision=decision,
         live_allowed=live_allowed,
@@ -1036,6 +1084,12 @@ def run_gate(
         # F232H: nonfeed capability block tracking
         nonfeed_capability_blocked=_f224_blocks_nonfeed or _f231_blocks_nonfeed,
         nonfeed_block_reason=_build_nonfeed_block_reason(_f224_blocks_nonfeed, _f231_blocks_nonfeed, profile),
+        # F234P: Separated feed-baseline vs capability readiness
+        feed_baseline_allowed=feed_baseline_allowed,
+        capability_live_allowed=capability_live_allowed,
+        capability_blockers=capability_blockers,
+        next_action_feed_baseline=live_cmd if feed_baseline_allowed else (highswap_cmd if swap_policy_tier != "hard_block" else "restart required — memory pressure"),
+        next_action_capability=live_cmd if capability_live_allowed else ("restart required — memory pressure" if _has_memory_block else ("run missing probe lanes to restore capability" if _has_contract_block or _f224_blocks_nonfeed or _f231_blocks_nonfeed else "fix_provider_surface")),
     )
 
 
@@ -1201,6 +1255,12 @@ def main() -> int:
             # F232H: nonfeed capability block telemetry
             "nonfeed_capability_blocked": result.nonfeed_capability_blocked,
             "nonfeed_block_reason": result.nonfeed_block_reason,
+            # F234P: feed-baseline vs capability readiness axes
+            "feed_baseline_allowed": result.feed_baseline_allowed,
+            "capability_live_allowed": result.capability_live_allowed,
+            "capability_blockers": result.capability_blockers,
+            "next_action_feed_baseline": result.next_action_feed_baseline,
+            "next_action_capability": result.next_action_capability,
         }
         args.write_report.parent.mkdir(parents=True, exist_ok=True)
         with open(args.write_report, "w", encoding="utf-8") as fh:

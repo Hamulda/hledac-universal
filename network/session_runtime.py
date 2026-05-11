@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from typing import Dict, List, Tuple, Any, Optional
 
 import aiohttp
@@ -95,9 +94,16 @@ TOR_READ_TIMEOUT_S: float = 75.0
 # =============================================================================
 
 _session_instance: Optional[aiohttp.ClientSession] = None
-_session_lock: threading.Lock = threading.Lock()
-_session_closed: bool = False
+_session_lock: asyncio.Lock | None = None
 _uvloop_enabled: bool = False
+
+
+async def _get_session_lock() -> asyncio.Lock:
+    """Lazily create the async lock (must be called after event loop is running)."""
+    global _session_lock
+    if _session_lock is None:
+        _session_lock = asyncio.Lock()
+    return _session_lock
 _last_error: Optional[str] = None
 _last_close_error: Optional[str] = None
 
@@ -188,7 +194,7 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
 
     Lazily creates the session on first await.
     Subsequent awaits return the same instance until close is called.
-    Thread-safe via threading.Lock.
+    Thread-safe via asyncio.Lock.
 
     Returns:
         aiohttp.ClientSession: the shared session instance
@@ -199,7 +205,7 @@ async def async_get_aiohttp_session() -> aiohttp.ClientSession:
     """
     global _session_instance, _session_closed, _last_error
 
-    with _session_lock:
+    async with await _get_session_lock():
         if _session_instance is None or _session_instance.closed:
             connector = aiohttp.TCPConnector(
                 limit=25,               # total connection pool size
@@ -257,7 +263,7 @@ async def close_aiohttp_session_async() -> None:
     """
     global _session_instance, _session_closed, _last_error, _last_close_error
 
-    with _session_lock:
+    async with await _get_session_lock():
         if _session_instance is not None and not _session_instance.closed:
             sess = _session_instance
             _session_instance = None

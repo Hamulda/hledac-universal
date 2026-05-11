@@ -336,11 +336,64 @@ def _normalize_benchmark(data: dict) -> dict:
         "branch_mix": branch_mix,
         "live_kpi": live_kpi or {},
         "ct_loss_stage": ct_loss_stage,
+        # F216D: ct_quarantine_count propagated for diagnostic_flags surface
+        "ct_quarantine_count": data.get("acquisition_report", {}).get("ct_quarantine_count", 0)
+        if isinstance(data.get("acquisition_report"), dict)
+        else 0,
     }
     # F231M: Extract evidence depth inputs into norm
     if live_kpi:
         norm.update(_extract_evidence_depth_inputs(live_kpi))
     return norm
+
+
+# F235B: CT loss stage resolution from acquisition_report fallback
+def _resolve_ct_loss_stage_from_acquisition(data: dict, ct_findings: int) -> str:
+    """Resolve ct_loss_stage from acquisition_report when runtime_truth.lane_verdict.ct_loss_stage is missing.
+
+    Maps provider errors and terminal stages to canonical ct_loss_stage values.
+    """
+    acq = data.get("acquisition_report", {}) or {}
+    rt = data.get("runtime_truth", {}) or {}
+
+    # 1. ct_request_timeout -> request_timeout
+    ct_request_timeout = rt.get("ct_request_timeout", False)
+    if ct_request_timeout is True:
+        return "request_timeout"
+
+    # 2. Provider HTTP error (502, http_502, etc.) -> provider_http_error
+    ct_log_error = rt.get("ct_log_error", "") or ""
+    ct_provider_status = acq.get("ct_provider_status", "") or ""
+    for err_field in [ct_log_error, ct_provider_status]:
+        err_lower = str(err_field).lower()
+        if any(x in err_lower for x in ["502", "http_502", "http error", "provider http"]):
+            return "provider_http_error"
+
+    # 3. Provider unavailable -> provider_unavailable
+    ct_terminal_stage = rt.get("ct_terminal_stage", "") or acq.get("ct_terminal_stage", "") or ""
+    if ct_terminal_stage == "provider_unavailable":
+        return "provider_unavailable"
+
+    # 4. request_attempted=True + raw_count=0 -> provider_returned_zero
+    ct_request_attempted = rt.get("ct_request_attempted", False)
+    ct_raw_count = rt.get("ct_raw_count", 0)
+    if ct_request_attempted is True and ct_findings == 0 and ct_raw_count == 0:
+        return "provider_returned_zero"
+
+    # 5. Bridge invoked + candidates=0 -> bridge_no_candidates
+    ct_bridge_invoked = rt.get("ct_bridge_invoked", False)
+    ct_candidates_built = rt.get("ct_candidates_built", 0)
+    if ct_bridge_invoked is True and ct_candidates_built == 0:
+        return "bridge_no_candidates"
+
+    # 6. Storage attempted + accepted=0 -> storage_rejected
+    ct_storage_attempted = rt.get("ct_storage_attempted", False)
+    ct_storage_rejected = rt.get("ct_storage_rejected", 0)
+    if ct_storage_attempted is True and ct_storage_rejected > 0:
+        return "storage_rejected"
+
+    # 7. Fallback: no_loss if nothing matches
+    return "no_loss"
 
 
 def _normalize_live(data: dict) -> dict:
@@ -359,6 +412,10 @@ def _normalize_live(data: dict) -> dict:
 
     # F215B: CT loss stage from lane_verdict (runtime_truth.lane_verdict.ct_loss_stage)
     ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
+
+    # F235B: Fallback to acquisition_report if ct_loss_stage is no_loss/missing but provider error occurred
+    if ct_loss_stage in ("no_loss", "") or ct_loss_stage is None:
+        ct_loss_stage = _resolve_ct_loss_stage_from_acquisition(data, ct)
 
     # F232G: Priority resolution for accepted_findings (same as benchmark)
     rt_accepted = rt.get("accepted_findings") if isinstance(rt, dict) else None
@@ -401,6 +458,10 @@ def _normalize_live(data: dict) -> dict:
         "branch_mix": branch_mix,
         "live_kpi": live_kpi or {},
         "ct_loss_stage": ct_loss_stage,
+        # F216D: ct_quarantine_count propagated for diagnostic_flags surface
+        "ct_quarantine_count": data.get("acquisition_report", {}).get("ct_quarantine_count", 0)
+        if isinstance(data.get("acquisition_report"), dict)
+        else 0,
     }
     # F231M: Extract evidence depth inputs into norm
     if live_kpi:
@@ -827,7 +888,7 @@ def score_research_quality(data: dict) -> dict:
       - quality_gate: str — QUALITY_PASS | QUALITY_FAIL_FEED_ONLY | QUALITY_FAIL_HARDWARE_TAINTED | QUALITY_FAIL_NONFEED_ZERO | QUALITY_WARN_MULTISOURCE_SHALLOW
       - research_quality_comparable: bool — False when hardware_constrained or swap_gib >= 3.0
       - components: dict of component scores
-      - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained, claims_extracted)
+      - diagnostic_flags: dict (wallclock_exceeded, swap_gib, swap_warning, hardware_constrained, claims_extracted, ct_quarantine_count, ct_quarantine_without_loss)
       - feed_dominance_score: float (0-1, penalty applied)
       - swap_gib: float | None — post-sprint swap in GiB
       - swap_warning: bool — memory pressure signal
@@ -889,6 +950,10 @@ def score_research_quality(data: dict) -> dict:
             "ct_clues_present": ed.ct_clues_present if ed else False,
             "advisory_clues_present": ed.advisory_clues_present if ed else False,
             "nonfeed_clues_without_acceptance": ed.nonfeed_clues_without_acceptance if ed else False,
+            # F216D: CT quarantine diagnostic flag (findings rejected before bridge)
+            "ct_quarantine_count": norm.get("ct_quarantine_count", 0),
+            # F216D: Inconsistency detection — quarantine occurred but loss stage not updated
+            "ct_quarantine_without_loss": norm.get("ct_quarantine_count", 0) > 0 and norm.get("ct_loss_stage", "no_loss") == "no_loss",
         },
         # F215A: Surface contract — always present fields
         "feed_dominance_score": rqs.feed_dominance_score,

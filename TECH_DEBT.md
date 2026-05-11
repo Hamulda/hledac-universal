@@ -154,3 +154,11 @@ Top 3 by risk: D6 (PUBLIC lane budget leak), D7 (DuckDB per-finding upsert), B5-
 **Why it never failed:** `_embed_batch()` always returned `np.ndarray` via `_sync_embed_batch()`, but `_embed_fallback()` has the same pattern and the guard `if embs is not None` would silently skip on `AttributeError`. Both paths now use `len()` which works for both `List[List[float]]` and `np.ndarray`.
 **Found by:** LanceDB caller audit (May 2026)
 **Verified:** `python -m py_compile intelligence/streaming_embedder.py` — OK
+---
+
+### R3: nonfeed_provider_failures declared but never propagated to acquisition_report
+**File:** `runtime/sprint_scheduler.py:1070,2773`
+**Priority:** LOW (informational telemetry, never surfaced in report)
+**Issue:** `SprintSchedulerResult.nonfeed_provider_failures` is declared at line 1070 and assigned at line 2773, but the field is never extracted into the `acquisition_report` payload.
+**Action:** Propagate to acquisition_report when scheduler population is confirmed active.
+**Status:** PENDING

@@ -14,10 +14,13 @@ import asyncio
 import gc
 import inspect
 import logging
+import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable, Literal
+
+import aiofiles
 from enum import Enum, auto
 
 from hledac.universal import adjust_fetch_workers
@@ -1096,8 +1099,8 @@ Piš v češtině, buď konkrétní a stručný."""
 
         # Save to file
         try:
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(final_report)
+            async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
+                await f.write(final_report)
             logger.info(f"[GENERATE_REPORT] Saved to {output_path}")
         except Exception as e:
             logger.warning(f"[GENERATE_REPORT] Failed to save: {e}")

@@ -1333,6 +1333,8 @@ class SprintScheduler:
         # Default: max(2 * _ARROW_FLUSH_N, 2000) = 2000
         # Env override via HLEDAC_ARROW_BATCH_HARD_CAP
         self._ARROW_BATCH_HARD_CAP: int = self._resolve_arrow_batch_hard_cap()
+        # M1 8GB: 500 findings × ~5KB avg = ~2.5 MB ceiling for _all_findings.
+        _MAX_FINDINGS_PER_SPRINT: int = 500
         # Sprint F214OPT-D: Arrow flush failure telemetry
         self._arrow_batch_dropped_after_flush_failure: int = 0
         self._arrow_last_flush_error: Optional[str] = None
@@ -3189,8 +3191,14 @@ class SprintScheduler:
                                     1 for r in ingest_results
                                     if isinstance(r, dict) and r.get("accepted")
                                 )
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                log.warning(
+                                    "sprint %s: quality gate ingest failed — %s: %s",
+                                    getattr(self._result, "sprint_id", "?"),
+                                    type(_exc).__name__, _exc,
+                                )
+                                # NOTE S1: DuckDB ingest failure — findings not lost, only
+                                # acceptance count and rejection ledger may be stale.
                             # Sprint F216G: Record quality gate rejections from this ingest
                             self._record_quality_rejections_from_store(duckdb_store)
                             # Sprint F217E: Mirror quality rejections in ledger
@@ -4174,8 +4182,12 @@ class SprintScheduler:
                                     try:
                                         _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
                                         _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
-                                    except Exception:
-                                        pass
+                                    except Exception as _exc:
+                                        log.warning(
+                                            "sprint %s: wayback ledger write failed — %s: %s",
+                                            getattr(self._result, "sprint_id", "?"),
+                                            type(_exc).__name__, _exc,
+                                        )
                                 _nonfeed_prelude_accepted["WAYBACK"] = _wb_acc
                         elif _lane_name == "PASSIVE_DNS" and not _hardware_critical:
                             from hledac.universal.runtime.acquisition_strategy import build_lane_query
@@ -6022,7 +6034,7 @@ class SprintScheduler:
                 ))
                 # [F207K-A] Bounded accumulation of CanonicalFinding candidates from bridge
                 candidate_findings = getattr(outcome, "candidate_findings", ()) or ()
-                remaining = 500 - len(self._all_findings)
+                remaining = _MAX_FINDINGS_PER_SPRINT - len(self._all_findings)
                 if candidate_findings and remaining > 0:
                     for cf in candidate_findings[:remaining]:
                         try:
@@ -6030,20 +6042,22 @@ class SprintScheduler:
                             conf = getattr(cf, "confidence", 0.5) or 0.5
                             ts_val = getattr(cf, "ts", 0.0) or 0.0
                             desc = getattr(cf, "payload_text", f"bridge finding") or f"bridge finding"
-                            self._all_findings.append({
-                                "type": f"lane_{sf_type}",
-                                "source": sf_type,
-                                "matched_patterns": produced,
-                                "accepted_findings": accepted,
-                                "severity": "medium",
-                                "confidence": conf,
-                                "description": str(desc)[:200] if desc else f"bridge finding from {verdict_tag}",
-                                "ts": ts_val,
-                            })
+                            if len(self._all_findings) < _MAX_FINDINGS_PER_SPRINT:
+                                self._all_findings.append({
+                                    "type": f"lane_{sf_type}",
+                                    "source": sf_type,
+                                    "matched_patterns": produced,
+                                    "accepted_findings": accepted,
+                                    "severity": "medium",
+                                    "confidence": conf,
+                                    "description": str(desc)[:200] if desc else f"bridge finding from {verdict_tag}",
+                                    "ts": ts_val,
+                                })
                         except Exception:
                             continue
                 elif remaining > 0:
-                    self._all_findings.append({
+                    if len(self._all_findings) < _MAX_FINDINGS_PER_SPRINT:
+                        self._all_findings.append({
                         "type": f"lane_{verdict_tag}",
                         "source": verdict_tag,
                         "matched_patterns": produced,
@@ -6589,11 +6603,20 @@ class SprintScheduler:
                     payload = json.loads(finding.payload_text)
                     if isinstance(payload, dict) and "triage" in payload:
                         triage_count += 1
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    log.warning(
+                        "sprint %s: evidence triage parse failed — %s: %s",
+                        getattr(self._result, "sprint_id", "?"),
+                        type(_exc).__name__, _exc,
+                    )
             self._result.evidence_triage_findings_count = triage_count
-        except Exception:
-            pass  # Fail-soft: sidecar must never crash sprint
+        except Exception as _exc:
+            log.warning(
+                "sprint %s: evidence triage sidecar failed — %s: %s",
+                getattr(self._result, "sprint_id", "?"),
+                type(_exc).__name__, _exc,
+            )
+            # Fail-soft: sidecar must never crash sprint
 
     # ── F204D: Target Memory Update ───────────────────────────────────────────
 
@@ -7822,8 +7845,13 @@ class SprintScheduler:
                     if open_domains:
                         scorecard["cb_open_domains"] = open_domains
                     scorecard["cb_tracked_count"] = len(cb_states)
-            except Exception:
-                pass
+            except Exception as _exc:
+                log.warning(
+                    "sprint %s: scorecard cb_tracked_count failed — %s: %s",
+                    getattr(self._result, "sprint_id", "?"),
+                    type(_exc).__name__, _exc,
+                )
+                # NOTE S1: scorecard metric silently corrupted before this fix.
 
             # 2. Phase durations from timing fields already tracked in result
             phase_durations: dict = {}
@@ -8291,7 +8319,7 @@ class SprintScheduler:
                 "description": f"{result.matched_patterns} pattern hits from {feed_url}",
             }
             # Sprint 8VN: bounded accumulation — cap at 500 to prevent OOM
-            if len(self._all_findings) < 500:
+            if len(self._all_findings) < _MAX_FINDINGS_PER_SPRINT:
                 self._all_findings.append(finding_entry)
         # Sprint F160C: Update source economics from pipeline result signals
         # Uses signal_stage, feed_confidence_score, winning_source_breakdown
@@ -8984,19 +9012,55 @@ class SprintScheduler:
         """Build a diagnostic report dict for exporters."""
         # Sprint F350D: Use truthful sprint_id — NOT synthetic time-based run_id.
         # sprint_id is set during run() from lifecycle.sprint_id attribute.
+        # --- field cache: eliminate repeated hash lookups on self._result ---
+        r = self._result
+        _wg_call = getattr(r, "windup_guard_call_count", 0)
+        _wg_supplied = getattr(r, "windup_guard_callback_supplied_count", 0)
+        _wg_executed = getattr(r, "windup_guard_callback_executed_count", 0)
+        _wg_last_reason = getattr(r, "windup_guard_last_reason", "") or ""
+        _wg_last_phase = getattr(r, "windup_guard_last_phase", "") or ""
+        _wg_last_allowed = getattr(r, "windup_guard_last_allowed", None)
+        _wg_not_exec_reason = getattr(r, "windup_guard_last_callback_not_executed_reason", "") or ""
+        _rg_checked = getattr(r, "return_guard_checked", False)
+        _rg_satisfied = getattr(r, "return_guard_satisfied", False)
+        _rg_delayed = getattr(r, "return_guard_delayed_for_nonfeed", False)
+        _rg_block = getattr(r, "return_guard_block_reason", "") or ""
+        _rg_attempted = list(getattr(r, "return_guard_attempted_lanes", ()) or ())
+        _rg_skipped = dict(getattr(r, "return_guard_skipped_lanes", {}))
+        _rg_errors = dict(getattr(r, "return_guard_errors", {}))
+        _se_path = getattr(r, "scheduler_exit_path", None)
+        _se_reason = getattr(r, "scheduler_exit_reason", None)
+        _se_phase = getattr(r, "scheduler_exit_phase", None)
+        _se_cycle = getattr(r, "scheduler_exit_cycle", None)
+        _se_elapsed = getattr(r, "scheduler_exit_elapsed_s", None)
+        _se_guard_checked = getattr(r, "scheduler_exit_guard_checked", False)
+        _se_guard_required = list(getattr(r, "scheduler_exit_guard_required", ()) or ())
+        _se_guard_satisfied = getattr(r, "scheduler_exit_guard_satisfied", None)
+        _at_checked = getattr(r, "acquisition_terminality_checked", False)
+        _at_satisfied = getattr(r, "acquisition_terminality_satisfied", False)
+        _at_missing = list(getattr(r, "acquisition_terminality_missing_lanes", ()) or ())
+        _at_report = getattr(r, "acquisition_terminality_report", {}) or {}
+        _feed_active = getattr(r, "feed_budget_active", False)
+        _feed_reason = getattr(r, "feed_budget_reason", "") or ""
+        _feed_accepted_before = getattr(r, "feed_accepted_before_cap", 0)
+        _feed_suppressed = getattr(r, "feed_suppressed_by_budget", 0)
+        _feed_top = list(getattr(r, "top_feed_source_counts", ()) or ())
+        _feed_max_per = getattr(r, "max_per_source_applied", "") or ""
+        _exit_path = getattr(r, "scheduler_exit_path", None)
+
         run_id = self.sprint_id or f"8bk_sprint_{int(_time.time())}"
         report = {
             "run_id": run_id,
             "phase": lifecycle.current_phase.name,
-            "cycles_started": self._result.cycles_started,
-            "cycles_completed": self._result.cycles_completed,
-            "unique_entry_hashes": self._result.unique_entry_hashes_seen,
-            "duplicates_skipped": self._result.duplicate_entry_hashes_skipped,
-            "pattern_hits": self._result.total_pattern_hits,
-            "accepted_findings": self._result.accepted_findings,
-            "aborted": self._result.aborted,
-            "abort_reason": self._result.abort_reason,
-            "stop_requested": self._result.stop_requested,
+            "cycles_started": r.cycles_started,
+            "cycles_completed": r.cycles_completed,
+            "unique_entry_hashes": r.unique_entry_hashes_seen,
+            "duplicates_skipped": r.duplicate_entry_hashes_skipped,
+            "pattern_hits": r.total_pattern_hits,
+            "accepted_findings": r.accepted_findings,
+            "aborted": r.aborted,
+            "abort_reason": r.abort_reason,
+            "stop_requested": r.stop_requested,
             "lifecycle_snapshot": lifecycle.snapshot(),
             "entries_per_source": dict(self._entries_per_source),
             "hits_per_source": dict(self._hits_per_source),
@@ -9082,78 +9146,65 @@ class SprintScheduler:
                 "prewindup_barrier": self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None,
             }
         # Sprint F208H: Surface terminality fields at TOP LEVEL so validator can find them
-        report["acquisition_terminality_checked"] = getattr(
-            self._result, "acquisition_terminality_checked", False
-        )
-        report["acquisition_terminality_satisfied"] = getattr(
-            self._result, "acquisition_terminality_satisfied", False
-        )
-        report["acquisition_terminality_missing_lanes"] = list(
-            getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()
-        )
+        report["acquisition_terminality_checked"] = _at_checked
+        report["acquisition_terminality_satisfied"] = _at_satisfied
+        report["acquisition_terminality_missing_lanes"] = _at_missing
         # Sprint F207S-A: Windup guard callsite observation telemetry (top-level key)
         # F208M-B: callback_not_executed_reason added
         report["windup_guard_observation"] = {
-            "call_count": getattr(self._result, "windup_guard_call_count", 0),
-            "callback_supplied_count": getattr(self._result, "windup_guard_callback_supplied_count", 0),
-            "callback_executed_count": getattr(self._result, "windup_guard_callback_executed_count", 0),
-            "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
-            "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
-            "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
-            "callback_not_executed_reason": getattr(self._result, "windup_guard_last_callback_not_executed_reason", ""),
+            "call_count": _wg_call,
+            "callback_supplied_count": _wg_supplied,
+            "callback_executed_count": _wg_executed,
+            "last_reason": _wg_last_reason,
+            "last_phase": _wg_last_phase,
+            "last_allowed": _wg_last_allowed,
+            "callback_not_executed_reason": _wg_not_exec_reason,
         }
         # Sprint F207T-A: Return guard telemetry for mandatory nonfeed terminal state
         report["return_guard"] = {
-            "checked": getattr(self._result, "return_guard_checked", False),
-            "required_lanes": list(getattr(self._result, "return_guard_required_lanes", ())),
-            "satisfied": getattr(self._result, "return_guard_satisfied", False),
-            "delayed_for_nonfeed": getattr(self._result, "return_guard_delayed_for_nonfeed", False),
-            "block_reason": getattr(self._result, "return_guard_block_reason", ""),
-            "attempted_lanes": list(getattr(self._result, "return_guard_attempted_lanes", ())),
-            "skipped_lanes": dict(getattr(self._result, "return_guard_skipped_lanes", {})),
-            "errors": dict(getattr(self._result, "return_guard_errors", {})),
+            "checked": _rg_checked,
+            "required_lanes": _rg_attempted,
+            "satisfied": _rg_satisfied,
+            "delayed_for_nonfeed": _rg_delayed,
+            "block_reason": _rg_block,
+            "attempted_lanes": _rg_attempted,
+            "skipped_lanes": _rg_skipped,
+            "errors": _rg_errors,
         }
         # Sprint F207V-A: Scheduler exit path tracer
         report["scheduler_exit"] = {
-            "exit_path": getattr(self._result, "scheduler_exit_path", None),
-            "exit_reason": getattr(self._result, "scheduler_exit_reason", None),
-            "exit_phase": getattr(self._result, "scheduler_exit_phase", None),
-            "exit_cycle": getattr(self._result, "scheduler_exit_cycle", None),
-            "elapsed_s": getattr(self._result, "scheduler_exit_elapsed_s", None),
-            "guard_checked": getattr(self._result, "scheduler_exit_guard_checked", False),
-            "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
-            "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
+            "exit_path": _se_path,
+            "exit_reason": _se_reason,
+            "exit_phase": _se_phase,
+            "exit_cycle": _se_cycle,
+            "elapsed_s": _se_elapsed,
+            "guard_checked": _se_guard_checked,
+            "guard_required": _se_guard_required,
+            "guard_satisfied": _se_guard_satisfied,
         }
         # Sprint F216E: Feed dominance budget telemetry
         report["feed_dominance_budget"] = {
-            "active": getattr(self._result, "feed_budget_active", False),
-            "reason": getattr(self._result, "feed_budget_reason", ""),
-            "feed_accepted_before_cap": getattr(self._result, "feed_accepted_before_cap", 0),
-            "feed_suppressed_by_budget": getattr(self._result, "feed_suppressed_by_budget", 0),
-            "top_feed_source_counts": list(getattr(self._result, "top_feed_source_counts", ()) or ()),
-            "max_per_source_applied": getattr(self._result, "max_per_source_applied", ""),
+            "active": _feed_active,
+            "reason": _feed_reason,
+            "feed_accepted_before_cap": _feed_accepted_before,
+            "feed_suppressed_by_budget": _feed_suppressed,
+            "top_feed_source_counts": _feed_top,
+            "max_per_source_applied": _feed_max_per,
         }
         # Sprint F208B: Acquisition terminality consumer report
         # Merge terminality into the existing acquisition_strategy block
-        _term_rep = getattr(self._result, "acquisition_terminality_report", {}) or {}
         if "acquisition_strategy" in report:
-            report["acquisition_strategy"]["terminality"] = _term_rep
+            report["acquisition_strategy"]["terminality"] = _at_report
             # F208F: also surface individual terminality fields so live_sprint_measurement can find them
-            report["acquisition_strategy"]["acquisition_terminality_checked"] = getattr(
-                self._result, "acquisition_terminality_checked", False
-            )
-            report["acquisition_strategy"]["acquisition_terminality_satisfied"] = getattr(
-                self._result, "acquisition_terminality_satisfied", False
-            )
-            report["acquisition_strategy"]["acquisition_terminality_missing_lanes"] = list(
-                getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()
-            )
+            report["acquisition_strategy"]["acquisition_terminality_checked"] = _at_checked
+            report["acquisition_strategy"]["acquisition_terminality_satisfied"] = _at_satisfied
+            report["acquisition_strategy"]["acquisition_terminality_missing_lanes"] = _at_missing
         else:
             report["acquisition_strategy"] = {
-                "terminality": _term_rep,
-                "acquisition_terminality_checked": getattr(self._result, "acquisition_terminality_checked", False),
-                "acquisition_terminality_satisfied": getattr(self._result, "acquisition_terminality_satisfied", False),
-                "acquisition_terminality_missing_lanes": list(getattr(self._result, "acquisition_terminality_missing_lanes", ()) or ()),
+                "terminality": _at_report,
+                "acquisition_terminality_checked": _at_checked,
+                "acquisition_terminality_satisfied": _at_satisfied,
+                "acquisition_terminality_missing_lanes": _at_missing,
             }
         # Sprint F207A: Append multi-source acquisition lane outcomes
         if self._lane_outcomes:
@@ -9281,13 +9332,12 @@ class SprintScheduler:
             _sfo.get("ct", {}).get("terminal_state") or "NEVER_ATTEMPTED"
         )
         # Scheduler exit path at top level (validator check)
-        report["scheduler_exit_path"] = getattr(self._result, "scheduler_exit_path", None)
+        report["scheduler_exit_path"] = _exit_path
         # Return guard checked at top level (validator check)
-        report["return_guard_checked"] = getattr(self._result, "return_guard_checked", False)
+        report["return_guard_checked"] = _rg_checked
         # Windup guard fields at top level (validator check)
-        _wg_last_reason = getattr(self._result, "windup_guard_last_reason", "") or ""
         _wg_irrelevant = frozenset({"not_applicable", "no_lanes_ran", "disabled", "skipped"})
-        report["windup_guard_call_count"] = getattr(self._result, "windup_guard_call_count", 0)
+        report["windup_guard_call_count"] = _wg_call
         report["windup_guard_reason"] = _wg_last_reason
         report["windup_guard_not_applicable"] = (
             _wg_last_reason.lower() in _wg_irrelevant
@@ -9302,40 +9352,38 @@ class SprintScheduler:
             # Build windup guard observation dict
             # F208M-B: callback_not_executed_reason added
             _wg_obs = {
-                "call_count": getattr(self._result, "windup_guard_call_count", 0),
-                "callback_supplied_count": getattr(self._result, "windup_guard_callback_supplied_count", 0),
-                "callback_executed_count": getattr(self._result, "windup_guard_callback_executed_count", 0),
-                "last_reason": getattr(self._result, "windup_guard_last_reason", ""),
-                "last_phase": getattr(self._result, "windup_guard_last_phase", ""),
-                "last_allowed": getattr(self._result, "windup_guard_last_allowed", None),
-                "callback_not_executed_reason": getattr(self._result, "windup_guard_last_callback_not_executed_reason", ""),
+                "call_count": _wg_call,
+                "callback_supplied_count": _wg_supplied,
+                "callback_executed_count": _wg_executed,
+                "last_reason": _wg_last_reason,
+                "last_phase": _wg_last_phase,
+                "last_allowed": _wg_last_allowed,
+                "callback_not_executed_reason": _wg_not_exec_reason,
             }
             # Build return guard dict
             _rg_dict = {
-                "checked": getattr(self._result, "return_guard_checked", False),
-                "required_lanes": list(getattr(self._result, "return_guard_required_lanes", ())),
-                "satisfied": getattr(self._result, "return_guard_satisfied", False),
-                "delayed_for_nonfeed": getattr(self._result, "return_guard_delayed_for_nonfeed", False),
-                "block_reason": getattr(self._result, "return_guard_block_reason", ""),
-                "attempted_lanes": list(getattr(self._result, "return_guard_attempted_lanes", ())),
-                "skipped_lanes": dict(getattr(self._result, "return_guard_skipped_lanes", {})),
-                "errors": dict(getattr(self._result, "return_guard_errors", {})),
+                "checked": _rg_checked,
+                "required_lanes": _rg_attempted,
+                "satisfied": _rg_satisfied,
+                "delayed_for_nonfeed": _rg_delayed,
+                "block_reason": _rg_block,
+                "attempted_lanes": _rg_attempted,
+                "skipped_lanes": _rg_skipped,
+                "errors": _rg_errors,
             }
             # Build prewindup_barrier dict
             _pwb = self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None
             # Build scheduler_exit dict (same as report["scheduler_exit"])
             _se_dict = {
-                "exit_path": getattr(self._result, "scheduler_exit_path", None),
-                "exit_reason": getattr(self._result, "scheduler_exit_reason", None),
-                "exit_phase": getattr(self._result, "scheduler_exit_phase", None),
-                "exit_cycle": getattr(self._result, "scheduler_exit_cycle", None),
-                "elapsed_s": getattr(self._result, "scheduler_exit_elapsed_s", None),
-                "guard_checked": getattr(self._result, "scheduler_exit_guard_checked", False),
-                "guard_required": list(getattr(self._result, "scheduler_exit_guard_required", ())),
-                "guard_satisfied": getattr(self._result, "scheduler_exit_guard_satisfied", None),
+                "exit_path": _se_path,
+                "exit_reason": _se_reason,
+                "exit_phase": _se_phase,
+                "exit_cycle": _se_cycle,
+                "elapsed_s": _se_elapsed,
+                "guard_checked": _se_guard_checked,
+                "guard_required": _se_guard_required,
+                "guard_satisfied": _se_guard_satisfied,
             }
-            # Build terminality dict
-            _term_rep = getattr(self._result, "acquisition_terminality_report", {}) or {}
             # Build nonfeed_plan_debug
             _nd = None
             if self._acquisition_plan is not None and self._acquisition_plan.nonfeed_plan_debug is not None:
@@ -9412,7 +9460,7 @@ class SprintScheduler:
 
             report["acquisition_report"] = build_acquisition_report(
                 plan=self._acquisition_plan,
-                terminality=_term_rep,
+                terminality=_at_report,
                 nonfeed_plan_debug=_nd,
                 source_family_outcomes=_sfo_list,
                 return_guard=_rg_dict,
@@ -9437,6 +9485,15 @@ class SprintScheduler:
                 public_bootstrap_first_fetch_attempted=_pub_bootstrap_fetch_att,
                 # F208G-A: PUBLIC Yield Taxonomy — stage counters for acquisition_report
                 public_stage_counters=self._build_public_stage_counters(),
+                # NOTE R3: Critical 33 batch — runtime error/signal fields
+                ct_bridge_rejections_count=getattr(self._result, "ct_bridge_rejections_count", 0),
+                ct_storage_rejected=getattr(self._result, "ct_storage_rejected", 0),
+                arrow_last_flush_error=getattr(self._result, "arrow_last_flush_error", "") or "",
+                arrow_batch_dropped=getattr(self._result, "arrow_batch_dropped_after_flush_failure", 0),
+                prewindup_barrier_errors=getattr(self._result, "prewindup_barrier_errors", None) or {},
+                return_guard_errors=getattr(self._result, "return_guard_errors", None) or {},
+                wayback_unchanged_rejected=getattr(self._result, "wayback_unchanged_rejected", 0),
+                nonfeed_provider_failures=getattr(self._result, "nonfeed_provider_failures", None) or [],
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only
@@ -9920,7 +9977,9 @@ class SprintScheduler:
                     self._speculative_results[key] = result or {}
                     log.debug(f"Speculative hit: {key}")
                 except asyncio.CancelledError:
-                    pass
+                    # [I6] propagate — silent swallow would hide cancellation from
+                    # _bg_tasks gather teardown; cancellation must reach sprint owner
+                    raise
                 except Exception as e:
                     log.debug(f"Speculative miss {key}: {e}")
 
@@ -10742,6 +10801,12 @@ class SprintScheduler:
                     "passive_dns_advisory_clues_count": getattr(self._result, 'passive_dns_advisory_clues_count', 0),
                     "passive_dns_private_ip_rejected": getattr(self._result, 'passive_dns_private_ip_rejected', 0),
                     "passive_dns_empty_ip_rejected": getattr(self._result, 'passive_dns_empty_ip_rejected', 0),
+                    # F235C: Arrow flush error diagnostics
+                    "arrow_last_flush_error": getattr(self._result, 'arrow_last_flush_error', "") or "",
+                    "arrow_batch_dropped": getattr(self._result, 'arrow_batch_dropped_after_flush_failure', 0),
+                    # F235C: Prewindup/return guard error diagnostics
+                    "prewindup_barrier_errors": getattr(self._result, 'prewindup_barrier_errors', 0) or 0,
+                    "return_guard_errors": getattr(self._result, 'return_guard_errors', 0) or 0,
                 }
         except Exception:
             result["lane_verdict"] = None
@@ -10940,6 +11005,12 @@ class SprintScheduler:
                     "passive_dns_advisory_clues_count": getattr(self._result, 'passive_dns_advisory_clues_count', 0),
                     "passive_dns_private_ip_rejected": getattr(self._result, 'passive_dns_private_ip_rejected', 0),
                     "passive_dns_empty_ip_rejected": getattr(self._result, 'passive_dns_empty_ip_rejected', 0),
+                    # F235C: Arrow flush error diagnostics
+                    "arrow_last_flush_error": getattr(self._result, 'arrow_last_flush_error', "") or "",
+                    "arrow_batch_dropped": getattr(self._result, 'arrow_batch_dropped_after_flush_failure', 0),
+                    # F235C: Prewindup/return guard error diagnostics
+                    "prewindup_barrier_errors": getattr(self._result, 'prewindup_barrier_errors', 0) or 0,
+                    "return_guard_errors": getattr(self._result, 'return_guard_errors', 0) or 0,
                 }
         except Exception:
             result["lane_verdict"] = None

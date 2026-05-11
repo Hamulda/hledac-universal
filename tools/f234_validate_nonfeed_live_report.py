@@ -9,6 +9,8 @@ Exit codes:
   1 = report malformed / truth missing
   2 = profile propagation failed
   3 = KPI/scoring mismatch
+  4 = canonical acquisition fallback used
+  5 = source-family outcome consistency failure
 """
 
 from __future__ import annotations
@@ -87,6 +89,19 @@ def _check_nonfeed_priority(data: dict) -> tuple[bool, str]:
     return False, f"nonfeed_priority_enabled={np_enabled!r}, expected True or skip reason"
 
 
+def _check_acquisition_fallback(data: dict) -> tuple[bool, str]:
+    """Canonical acquisition fallback check (exit 4).
+
+    Rule: acquisition_report.acquisition_report_fallback_used is True -> exit 4
+    Rule: missing field is OK (not an error) — canonical runs may not have this key
+    """
+    fallback = _get(data, "acquisition_report", "acquisition_report_fallback_used", default=None)
+    if fallback is True:
+        return False, "acquisition_report_fallback_used=True (fallback was used)"
+    # Missing/False is OK — canonical acquisition
+    return True, f"acquisition_report_fallback_used={fallback} (canonical or not present)"
+
+
 def _check_public_query_variants(data: dict) -> tuple[bool, str]:
     """public_query_variants present for domain query."""
     # Check live_kpi for public_query_variants (set during live run)
@@ -155,6 +170,48 @@ def _check_ct_scheduled(data: dict) -> tuple[bool, str]:
     return True, "ct_scheduled not in runtime_truth (may be dry-run)"
 
 
+def _check_source_family_outcomes(data: dict) -> tuple[bool, str]:
+    """Source-family outcome consistency check (exit 5).
+
+    Rules:
+    - public_terminal_stage non-empty but PUBLIC not in source_family_outcomes -> exit 5
+    - ct_terminal_stage or ct_provider_status non-empty but CT not in source_family_outcomes -> exit 5
+    - Missing source_family_outcomes is OK (dry-run without terminal stages)
+    """
+    source_families = _get(data, "runtime_truth", "source_family_outcomes", default=None)
+    if source_families is None:
+        # Missing is OK — dry-run without terminal stages
+        return True, "source_family_outcomes not in runtime_truth (dry-run)"
+
+    outcomes_set = set(source_families) if isinstance(source_families, (list, set)) else set()
+
+    # Check public terminal stage -> PUBLIC outcome
+    public_terminal = _get(data, "runtime_truth", "public_terminal_stage", default="")
+    if public_terminal and "PUBLIC" not in outcomes_set:
+        return False, (
+            f"public_terminal_stage={public_terminal!r} present but "
+            f"PUBLIC not in source_family_outcomes={source_families}"
+        )
+
+    # Check ct_terminal_stage -> CT outcome
+    ct_terminal = _get(data, "runtime_truth", "ct_terminal_stage", default="")
+    if ct_terminal and "CT" not in outcomes_set:
+        return False, (
+            f"ct_terminal_stage={ct_terminal!r} present but "
+            f"CT not in source_family_outcomes={source_families}"
+        )
+
+    # Check ct_provider_status -> CT outcome
+    ct_provider = _get(data, "acquisition_report", "ct_provider_status", default="")
+    if ct_provider and "CT" not in outcomes_set:
+        return False, (
+            f"ct_provider_status={ct_provider!r} present but "
+            f"CT not in source_family_outcomes={source_families}"
+        )
+
+    return True, f"source_family_outcomes={source_families} consistent"
+
+
 def _check_kpi_runtime_counts_match(data: dict) -> tuple[bool, str]:
     """KPI/research_quality finding counts match runtime accepted findings.
 
@@ -210,6 +267,71 @@ def _check_kpi_runtime_counts_match(data: dict) -> tuple[bool, str]:
     return True, f"runtime_accepted={runtime_accepted} matches branch counts"
 
 
+def _check_runtime_budget_guard(data: dict) -> tuple[bool, str]:
+    """NOTE R1: budget_violations and return_guard_block_reason surfaced from scheduler runtime.
+
+    budget_violations > 0 indicates sprint exceeded resource budget.
+    return_guard_block_reason non-empty indicates why sprint return was blocked.
+    Both are advisory telemetry — non-zero values produce a warning but do not fail validation.
+    """
+    warnings: list[str] = []
+    bv = _get(data, "acquisition_report", "budget_violations", default=0)
+    if bv > 0:
+        warnings.append(f"budget_violations={bv}")
+    rg_block = _get(data, "acquisition_report", "return_guard_block_reason", default="")
+    if rg_block:
+        warnings.append(f"return_guard_blocked: {rg_block}")
+    # NOTE R2: ct_quarantine_count > 0 indicates CT findings quarantined before bridge.
+    ct_q = _get(data, "acquisition_report", "ct_quarantine_count", default=0)
+    if ct_q and ct_q > 0:
+        warnings.append(f"ct_quarantine_count={ct_q} — CT findings quarantined before bridge")
+    if ct_q > 0 and _get(data, "acquisition_report", "ct_loss_stage", default="") == "no_loss":
+        warnings.append("ct_quarantine > 0 but ct_loss_stage=no_loss — inconsistency")
+    if warnings:
+        return True, ", ".join(warnings)
+    return True, "no budget violations or guard blocks"
+
+
+_INFORMATIONAL_FIELDS = [
+    "ct_bridge_rejections_count",
+    "ct_storage_rejected",
+    "arrow_batch_dropped",
+    "prewindup_barrier_errors",
+    "return_guard_errors",
+    "wayback_unchanged_rejected",
+    "arrow_last_flush_error",
+    "nonfeed_provider_failures",
+]
+
+
+# NOTE R3: Critical 33 runtime error/signal field labels
+_R3_FIELD_LABELS = [
+    ("ct_bridge_rejections_count", "CT bridge rejections"),
+    ("ct_storage_rejected", "CT storage rejected"),
+    ("arrow_last_flush_error", "Arrow flush error"),
+    ("arrow_batch_dropped", "Arrow batch dropped after flush"),
+    ("prewindup_barrier_errors", "Pre-windup barrier errors"),
+    ("return_guard_errors", "Return guard errors"),
+    ("wayback_unchanged_rejected", "Wayback unchanged rejected"),
+]
+
+
+def _check_advisory_telemetry(data: dict) -> tuple[bool, str]:
+    """F235C / NOTE R3: informational fields — non-zero values produce a warning but do not fail validation."""
+    warnings: list[str] = []
+    for field in _INFORMATIONAL_FIELDS:
+        val = _get(data, "acquisition_report", field, default=0)
+        if val and val not in (0, "", None, []):
+            warnings.append(f"{field}={val}")
+    for field, label in _R3_FIELD_LABELS:
+        val = _get(data, "acquisition_report", field, default=None)
+        if val is not None and val not in (0, "", None, [], {}):
+            warnings.append(f"{label}: {val}")
+    if warnings:
+        return True, ", ".join(warnings)
+    return True, "no advisory telemetry flags"
+
+
 def _check_quality_gate_not_zeroed(data: dict) -> tuple[bool, str]:
     """quality_gate can be QUALITY_FAIL_FEED_ONLY but counts must not be zeroed.
 
@@ -257,6 +379,8 @@ def validate_report(report_path: str) -> tuple[int, dict]:
       1 — malformed / truth missing
       2 — profile propagation failed
       3 — KPI/scoring mismatch
+      4 — canonical acquisition fallback used
+      5 — source-family outcome consistency failure
     """
     try:
         with open(report_path) as f:
@@ -267,19 +391,25 @@ def validate_report(report_path: str) -> tuple[int, dict]:
     checks = [
         ("acquisition_profile", _check_acquisition_profile),
         ("nonfeed_priority", _check_nonfeed_priority),
+        ("acquisition_fallback", _check_acquisition_fallback),
         ("public_query_variants", _check_public_query_variants),
         ("public_discovery_empty_reason", _check_public_discovery_empty_reason),
         ("ct_terminal_stage", _check_ct_terminal_stage),
         ("ct_planned", _check_ct_planned),
         ("ct_scheduled", _check_ct_scheduled),
+        ("source_family_outcomes", _check_source_family_outcomes),
         ("kpi_runtime_counts_match", _check_kpi_runtime_counts_match),
         ("quality_gate_not_zeroed", _check_quality_gate_not_zeroed),
+        ("runtime_budget_guard", _check_runtime_budget_guard),
+        ("advisory_telemetry", _check_advisory_telemetry),
     ]
 
     results: dict[str, dict] = {}
     exit_code = 0
     profile_failed = False
     kpi_failed = False
+    fallback_used = False
+    source_family_failed = False
 
     for name, fn in checks:
         try:
@@ -296,8 +426,18 @@ def validate_report(report_path: str) -> tuple[int, dict]:
             if name in ("kpi_runtime_counts_match", "quality_gate_not_zeroed"):
                 exit_code = max(exit_code, 3)
                 kpi_failed = True
+            if name == "acquisition_fallback":
+                exit_code = max(exit_code, 4)
+                fallback_used = True
+            if name == "source_family_outcomes":
+                exit_code = max(exit_code, 5)
+                source_family_failed = True
 
-    if profile_failed:
+    if fallback_used:
+        exit_code = 4
+    elif source_family_failed:
+        exit_code = 5
+    elif profile_failed:
         exit_code = 2
     elif kpi_failed:
         exit_code = 3
@@ -332,7 +472,14 @@ def main() -> None:
         print(f"       {res['detail']}")
 
     print("=" * 60)
-    labels = {0: "VALID", 1: "MALFORMED", 2: "PROFILE FAILED", 3: "KPI FAILED"}
+    labels = {
+        0: "VALID",
+        1: "MALFORMED",
+        2: "PROFILE FAILED",
+        3: "KPI FAILED",
+        4: "FALLBACK USED",
+        5: "SOURCE FAMILY INCONSISTENCY",
+    }
     print(f"Exit {exit_code}: {labels.get(exit_code, 'UNKNOWN')}")
     sys.exit(exit_code)
 
