@@ -161,6 +161,7 @@ class AcquisitionLane:
     PIVOT_EXECUTOR = "PIVOT_EXECUTOR"
     ACADEMIC = "ACADEMIC"
     IPFS = "IPFS"
+    DOH = "DOH"
 
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
@@ -2413,7 +2414,8 @@ def _build_plan_impl(
         feed_cap_reason=feed_cap_reason,
         nonfeed_priority_enabled=nonfeed_priority_enabled,
         nonfeed_profile_expected_lanes=(
-            (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR)
+            (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS,
+             AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH)
             if is_nonfeed_diagnostic
             else _required_lanes if _intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else ()
         ),

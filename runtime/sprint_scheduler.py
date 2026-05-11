@@ -48,7 +48,7 @@ from hledac.universal.transport.circuit_breaker import (
     MAX_TRACKED_DOMAINS,
 )
 
-# Sprint F218D: Lane rejection bound
+from hledac.universal.intelligence.doh_lane import DOHAdapter
 MAX_LANE_REJECTIONS: int = 1000
 
 # E4: gc.callbacks for sprint-level GC telemetry — module-level state
@@ -888,6 +888,8 @@ class SprintSchedulerResult:
     lane_blockchain_accepted_findings: int = 0
     # R10: IPFS CID-only lane telemetry
     lane_ipfs_accepted_findings: int = 0
+    # Sprint F234A: DOH lane telemetry
+    lane_doh_accepted_findings: int = 0
     # Sprint F229: Wayback/PassiveDNS raw and candidate telemetry
     wayback_attempted: bool = False
     wayback_raw_count: int = 0
@@ -1413,6 +1415,8 @@ class SprintScheduler:
         self._exposure_adapter: Any = None
         # Sprint F202D: Leak sentinel adapter
         self._leak_sentinel_adapter: Any = None
+        # Sprint F234A: DOH adapter
+        self._doh_adapter: Any = None
         # Sprint F202I: Evidence triage adapter
         self._evidence_triage_adapter: Any = None
         # Sprint F203A: Sprint diff engine (lazy — imported inside sidecar method)
@@ -2299,6 +2303,10 @@ class SprintScheduler:
         # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
         await self._unload_hermes_at_teardown()
 
+        # F2 Audit: Release all lazy models (NER, GNN, ANE, MoE) via brain._lazy
+        from hledac.universal.brain import _lazy as lazy_module
+        lazy_module.unload_all()
+
         # Sprint 8UC B.4: Cancel all background speculative tasks
         for t in list(self._bg_tasks):
             t.cancel()
@@ -2544,6 +2552,7 @@ class SprintScheduler:
                 + r.lane_pdns_accepted_findings
                 + r.lane_blockchain_accepted_findings
                 + r.lane_ipfs_accepted_findings
+                + r.lane_doh_accepted_findings
             )
             if r.accepted_findings > 0 and nonfeed_accepted == 0:
                 return (
@@ -4141,7 +4150,7 @@ class SprintScheduler:
                     _enabled = getattr(_plan, "enabled", False)
                     _timeout = getattr(_plan, "timeout_s", 20.0)
                     _max_items = getattr(_plan, "max_items", 5)
-                    if _lane_name in ("WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR"):
+                    if _lane_name in ("WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"):
                         if _enabled:
                             _nonfeed_lanes_to_run.append((_lane_name, True, _timeout, _max_items))
                         else:
@@ -4222,6 +4231,52 @@ class SprintScheduler:
                                 _nonfeed_prelude_accepted["PIVOT_EXECUTOR"] = 0  # pivots are candidates, not stored
                             else:
                                 _nonfeed_prelude_skipped["PIVOT_EXECUTOR"] = "no_candidates"
+                        elif _lane_name == "DOH" and not _hardware_critical:
+                            # Sprint F234A: DOH lane — DNS-over-HTTPS passive DNS recon
+                            from hledac.universal.runtime.acquisition_strategy import build_lane_query
+                            from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
+                            _doh_query = build_lane_query(query, AcquisitionLane.DOH)
+                            if _doh_query and not isinstance(_doh_query, dict):
+                                if self._doh_adapter is None:
+                                    self._doh_adapter = DOHAdapter()
+                                _doh_session = None
+                                try:
+                                    import aiohttp
+                                    _doh_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+                                    _doh_findings = await self._doh_adapter.run(
+                                        domain=str(_doh_query),
+                                        session=_doh_session,
+                                    )
+                                    if _doh_findings:
+                                        _doh_cands, _doh_rejs, _doh_tel = doh_results_to_findings(
+                                            _doh_findings,
+                                            None,
+                                            query,
+                                            f"prelude-doh-{int(_time.time())}",
+                                        )
+                                        _nonfeed_prelude_attempted.append("DOH")
+                                        _nonfeed_prelude_terminal.append("DOH")
+                                        _doh_acc = 0
+                                        if _doh_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
+                                            try:
+                                                _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
+                                                _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                                            except Exception:
+                                                pass
+                                        _nonfeed_prelude_accepted["DOH"] = _doh_acc
+                                        # Sprint F234A: Update lane verdict counter directly
+                                        # (prelude path does not call _accumulate_lane_findings)
+                                        self._result.lane_doh_accepted_findings = _doh_acc
+                                    else:
+                                        _nonfeed_prelude_skipped["DOH"] = "no_findings"
+                                except Exception as _exc:
+                                    log.warning("sprint %s: DOH lane failed — %s: %s", getattr(self._result, "sprint_id", "?"), type(_exc).__name__, _exc)
+                                    _nonfeed_prelude_skipped["DOH"] = f"doh_error:{type(_exc).__name__}"
+                                finally:
+                                    if _doh_session:
+                                        await _doh_session.close()
+                            else:
+                                _nonfeed_prelude_skipped["DOH"] = "empty_query_or_disabled"
                 except asyncio.TimeoutError:
                     _nonfeed_prelude_errors["WAYBACK" if _lane_name == "WAYBACK" else _lane_name] = "prelude_timeout"
                     _nonfeed_prelude_skipped[_lane_name] = "prelude_timeout"
@@ -4669,6 +4724,7 @@ class SprintScheduler:
             or self._result.lane_pdns_accepted_findings > 0
             or self._result.lane_blockchain_accepted_findings > 0
             or self._result.lane_ipfs_accepted_findings > 0
+            or self._result.lane_doh_accepted_findings > 0
         )
 
         # Run sources under TaskGroup (bounded concurrency)
@@ -4949,6 +5005,7 @@ class SprintScheduler:
             or self._result.lane_pdns_accepted_findings > 0
             or self._result.lane_blockchain_accepted_findings > 0
             or self._result.lane_ipfs_accepted_findings > 0
+            or self._result.lane_doh_accepted_findings > 0
         )
 
         async def _run_feed_branch() -> None:
@@ -6004,6 +6061,8 @@ class SprintScheduler:
                 self._result.lane_blockchain_accepted_findings += accepted
             elif lane_name == AcquisitionLane.IPFS:
                 self._result.lane_ipfs_accepted_findings += accepted
+            elif lane_name == AcquisitionLane.DOH:
+                self._result.lane_doh_accepted_findings += accepted
 
             # Sprint F229: Populate wayback/pdns telemetry from AcquisitionLaneOutcome
             wayback_raw = getattr(outcome, "wayback_raw_count", 0) or 0
@@ -7482,6 +7541,16 @@ class SprintScheduler:
         # Sprint R5: CT → PassiveDNS one-hop pivot (after all other advisories)
         await self._run_ct_to_passivedns_pivot_advisory()
 
+        # Sprint F234: BGP advisory sidecar (fail-soft, non-blocking)
+        _bgp_task = asyncio.create_task(self._run_bgp_advisory_sidecar())
+        self._bg_tasks.add(_bgp_task)
+        _bgp_task.add_done_callback(self._bg_tasks.discard)
+
+        # Sprint F234: WaybackCDX deep advisory sidecar (fail-soft, non-blocking)
+        _wayback_task = asyncio.create_task(self._run_wayback_cdx_deep_sidecar())
+        self._bg_tasks.add(_wayback_task)
+        _wayback_task.add_done_callback(self._bg_tasks.discard)
+
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 
     async def _run_pivot_planner_advisory(self) -> None:
@@ -7722,6 +7791,215 @@ class SprintScheduler:
             f"[R5] CT→PDNS pivot done: {len(pdns_results)} domains with results, "
             f"errors={len(errors)}"
         )
+
+    # ── F234: BGP Advisory Sidecar ───────────────────────────────────────────
+
+    async def _run_bgp_advisory_sidecar(self) -> None:
+        """
+        Sprint F234: BGP IP-to-Org attribution advisory.
+
+        Advisory-only sidecar — runs after main sprint to enrich accepted
+        findings with BGP/ASN intelligence. Fail-soft throughout: errors
+        never crash the sprint.
+
+        Flow:
+          1. Extract domain/IP candidates from acquisition lane outcomes
+          2. Query BGPView.io for ASN, org, prefix data
+          3. Convert results to CanonicalFinding via BGPAdapter
+          4. Record as source_family="bgp_advisory" in source_family_outcomes
+        """
+        try:
+            from hledac.universal.intelligence.bgp_lane import BGPAdapter
+        except Exception:
+            return  # fail-soft: missing dependency
+
+        try:
+            # Get session provider for aiohttp session reuse
+            session_provider = getattr(self, "_aiohttp_session_provider", None)
+            if session_provider is None:
+                async def _session_provider():
+                    import aiohttp
+                    return aiohttp.ClientSession()
+
+            adapter = BGPAdapter(session_provider=session_provider)
+            try:
+                # Extract domains from acquisition lane outcomes
+                outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
+                domains: list[str] = []
+                for outcome in outcomes:
+                    if not getattr(outcome, "attempted", False):
+                        continue
+                    candidates = getattr(outcome, "candidate_findings", ()) or ()
+                    for c in candidates:
+                        ioc_type = getattr(c, "ioc_type", "") or ""
+                        ioc_value = getattr(c, "ioc_value", "") or ""
+                        if ioc_type in ("domain", "ip") and ioc_value:
+                            domains.append(ioc_value)
+
+                if not domains:
+                    return
+
+                # Deduplicate, cap at 20
+                seen = set()
+                unique_domains = []
+                for d in domains:
+                    if d not in seen and len(unique_domains) < 20:
+                        seen.add(d)
+                        unique_domains.append(d)
+
+                if not unique_domains:
+                    return
+
+                # Enrich via BGP org lookup
+                bgp_results = await adapter.enrich_org(unique_domains[0])
+                if not bgp_results:
+                    return
+
+                # Record findings
+                store = getattr(self, "_duckdb_store", None)
+                if store is not None:
+                    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                    findings: list[CanonicalFinding] = []
+                    for r in bgp_results:
+                        finding = CanonicalFinding(
+                            finding_id=f"bgp-{r.prefix or r.asn}",
+                            source_type="bgp_intelligence",
+                            confidence=0.75,
+                            query=self._query[:128],
+                            ts=_time.time(),
+                            payload_text=f"ASN={r.asn} org={r.asn_name} prefix={r.prefix} country={r.country_code}",
+                            provenance=(f"asn:{r.asn}", f"source:{r.source}"),
+                        )
+                        findings.append(finding)
+
+                    if findings:
+                        await store.async_ingest_findings_batch(findings)
+                        self._result.bgp_advisory_findings_produced = len(findings)
+
+                # Record source_family_outcomes
+                _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
+                _sfos.append({
+                    "family": "bgp_advisory",
+                    "lane": "BGP_ADVISORY",
+                    "attempted": True,
+                    "accepted": len(bgp_results),
+                    "terminal_state": "advisory_bgp",
+                    "raw_count": len(bgp_results),
+                    "accepted_count": len(bgp_results),
+                    "error": None,
+                    "timeout": False,
+                    "skipped": False,
+                })
+                self._result.source_family_outcomes_list = _sfos  # type: ignore[attr-defined]
+
+            finally:
+                await adapter.close()
+
+        except Exception:
+            pass  # fail-soft: advisory must never crash sprint
+
+    # ── F234: WaybackCDX Deep Advisory Sidecar ───────────────────────────────
+
+    async def _run_wayback_cdx_deep_sidecar(self) -> None:
+        """
+        Sprint F234: WaybackCDX deep search advisory.
+
+        Advisory-only sidecar — runs after main sprint to discover archived
+        URLs for accepted domains. Fail-soft throughout.
+
+        Flow:
+          1. Extract domains from acquisition lane outcomes
+          2. Query Wayback CDX for archived URLs (deep domain discovery)
+          3. Convert results to CanonicalFinding via WaybackCDXDeepSearch
+          4. Record as source_family="wayback_cdx_advisory" in source_family_outcomes
+        """
+        try:
+            from hledac.universal.intelligence.wayback_cdx import WaybackCDXDeepSearch
+        except Exception:
+            return  # fail-soft: missing dependency
+
+        try:
+            # Get session provider for aiohttp session reuse
+            session_provider = getattr(self, "_aiohttp_session_provider", None)
+            if session_provider is None:
+                async def _session_provider():
+                    import aiohttp
+                    return aiohttp.ClientSession()
+
+            searcher = WaybackCDXDeepSearch(session_provider=session_provider)
+            try:
+                # Extract domains from acquisition lane outcomes
+                outcomes = getattr(self._result, "acquisition_lane_outcomes", ()) or ()
+                domains: list[str] = []
+                for outcome in outcomes:
+                    if not getattr(outcome, "attempted", False):
+                        continue
+                    candidates = getattr(outcome, "candidate_findings", ()) or ()
+                    for c in candidates:
+                        ioc_type = getattr(c, "ioc_type", "") or ""
+                        ioc_value = getattr(c, "ioc_value", "") or ""
+                        if ioc_type == "domain" and ioc_value:
+                            domains.append(ioc_value)
+
+                if not domains:
+                    return
+
+                # Deduplicate, cap at 10
+                seen = set()
+                unique_domains = []
+                for d in domains:
+                    if d not in seen and len(unique_domains) < 10:
+                        seen.add(d)
+                        unique_domains.append(d)
+
+                if not unique_domains:
+                    return
+
+                # Run WaybackCDX deep search
+                result = await searcher.search(
+                    domains_or_urls=unique_domains,
+                    match_type="domain",
+                    limit_per_domain=100,
+                    concurrency=2,
+                )
+
+                if not result.results:
+                    return
+
+                # Convert to CanonicalFinding and ingest
+                findings = result.to_findings(query=self._query, sprint_id=self.sprint_id or "")
+                if not findings:
+                    return
+
+                store = getattr(self, "_duckdb_store", None)
+                if store is not None:
+                    ingested = await store.async_ingest_findings_batch(findings)
+                    stored = sum(1 for r in ingested if isinstance(r, dict) and r.get("accepted"))
+                    self._result.wayback_cdx_advisory_findings_produced = stored
+                else:
+                    stored = 0
+
+                # Record source_family_outcomes
+                _sfos = list(getattr(self._result, "source_family_outcomes_list", []) or [])
+                _sfos.append({
+                    "family": "wayback_cdx_advisory",
+                    "lane": "WAYBACK_CDX_ADVISORY",
+                    "attempted": True,
+                    "accepted": stored,
+                    "terminal_state": "advisory_wayback_cdx",
+                    "raw_count": len(result.results),
+                    "accepted_count": stored,
+                    "error": None,
+                    "timeout": False,
+                    "skipped": False,
+                })
+                self._result.source_family_outcomes_list = _sfos  # type: ignore[attr-defined]
+
+            finally:
+                await searcher.close()
+
+        except Exception:
+            pass  # fail-soft: advisory must never crash sprint
 
     # ── F206I: Source health summary for export teardown ─────────────────────
 
@@ -9439,6 +9717,7 @@ class SprintScheduler:
                 "CT": "ct", "WAYBACK": "wayback", "PASSIVE_DNS": "passive_dns",
                 "BLOCKCHAIN": "blockchain", "PUBLIC": "public",
                 "PIVOT_EXECUTOR": "pivot_executor",
+                "DOH": "doh",
             }
             _surf_wayback = _sfo_by_family.get("wayback", {})
             _surf_pdns = _sfo_by_family.get("passive_dns", {})
@@ -10764,6 +11043,7 @@ class SprintScheduler:
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
                     "ipfs_findings": self._result.lane_ipfs_accepted_findings,
+                    "doh_findings": self._result.lane_doh_accepted_findings,
                     # Sprint F214D: CT Bridge Loss Audit telemetry
                     "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
@@ -10785,7 +11065,6 @@ class SprintScheduler:
                     "ct_wildcard_domains": getattr(self._result, 'ct_wildcard_domains', 0),
                     "ct_private_reserved_domains": getattr(self._result, 'ct_private_reserved_domains', 0),
                     "ct_duplicate_candidates": getattr(self._result, 'ct_duplicate_candidates', 0),
-                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     # Sprint F216G: Quality gate rejection summaries by category
                     "quality_rejection_summary_by_family": getattr(self._result, 'quality_rejection_summary_by_family', {}),
                     "duplicate_rejection_summary_by_family": getattr(self._result, 'duplicate_rejection_summary_by_family', {}),
@@ -10973,6 +11252,7 @@ class SprintScheduler:
                     "pdns_findings": self._result.lane_pdns_accepted_findings,
                     "blockchain_findings": self._result.lane_blockchain_accepted_findings,
                     "ipfs_findings": self._result.lane_ipfs_accepted_findings,
+                    "doh_findings": self._result.lane_doh_accepted_findings,
                     # Sprint F214D: CT Bridge Loss Audit telemetry
                     "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     "ct_bridge_invoked": getattr(self._result, 'ct_bridge_invoked', False),
@@ -10994,7 +11274,6 @@ class SprintScheduler:
                     "ct_wildcard_domains": getattr(self._result, 'ct_wildcard_domains', 0),
                     "ct_private_reserved_domains": getattr(self._result, 'ct_private_reserved_domains', 0),
                     "ct_duplicate_candidates": getattr(self._result, 'ct_duplicate_candidates', 0),
-                    "ct_loss_stage": getattr(self._result, 'ct_loss_stage', 'no_loss'),
                     # F231C: Wayback advisory evidence surface
                     "wayback_advisory_clues_count": getattr(self._result, 'wayback_advisory_clues_count', 0),
                     "wayback_changed_url_count": getattr(self._result, 'wayback_changed_url_count', 0),
@@ -11029,6 +11308,8 @@ class SprintScheduler:
                 + self._result.lane_wayback_accepted_findings
                 + self._result.lane_pdns_accepted_findings
                 + self._result.lane_blockchain_accepted_findings
+                + self._result.lane_ipfs_accepted_findings
+                + self._result.lane_doh_accepted_findings
             )
             total_findings = feed_f + pub_f + lane_f
 
@@ -11322,6 +11603,7 @@ class SprintScheduler:
         self._result.lane_pdns_accepted_findings = 0
         self._result.lane_blockchain_accepted_findings = 0
         self._result.lane_ipfs_accepted_findings = 0
+        self._result.lane_doh_accepted_findings = 0
         # Sprint F229: Clear wayback/pdns telemetry
         self._result.wayback_attempted = False
         self._result.wayback_raw_count = 0

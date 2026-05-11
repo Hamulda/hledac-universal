@@ -47,6 +47,9 @@ class Verdict(str, Enum):
     FAIL_TERMINALITY_STALE_AFTER_PRELUDE    = "FAIL_TERMINALITY_STALE_AFTER_PRELUDE"
     # F210C: stale terminality snapshot — lane terminal/attempted in source_family_outcomes but still in missing_lanes
     FAIL_TERMINALITY_STALE_SNAPSHOT         = "FAIL_TERMINALITY_STALE_SNAPSHOT"
+    # F207K: public acceptance KPI — systemic rejection or low yield
+    FAIL_PUBLIC_ACCEPTANCE_KPI              = "FAIL_PUBLIC_ACCEPTANCE_KPI"
+    WARN_PUBLIC_ACCEPTANCE_KPI              = "WARN_PUBLIC_ACCEPTANCE_KPI"
 
 
 # ── Module-level aliases for all Verdict members (for hasattr() compatibility) ──
@@ -800,7 +803,154 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
             f"windup_guard_call_count={windup_count} with no explicit reason why not applicable",
             "windup_guard_call_count",
         ))
+
+    # ── F207K: Public acceptance KPI checks ──────────────────────────────
+    verdict_kpi, msg_kpi = _check_public_acceptance_kpi(data, _get_safe)
+    if verdict_kpi is not None and verdict_kpi in (Verdict.FAIL_PUBLIC_ACCEPTANCE_KPI, Verdict.WARN_PUBLIC_ACCEPTANCE_KPI):
+        failures_append(ValidationFailure(
+            verdict_kpi,
+            f"public_acceptance_kpi: {msg_kpi}",
+            "live_kpi.public_acceptance_*",
+        ))
+
+    verdict_fetch, msg_fetch = _check_public_fetch_telemetry(data, _get_safe)
+    if verdict_fetch is not None and verdict_fetch == Verdict.WARN_PUBLIC_ACCEPTANCE_KPI:
+        failures_append(ValidationFailure(
+            verdict_fetch,
+            f"public_fetch_telemetry: {msg_fetch}",
+            "live_kpi.public_fetch_*",
+        ))
+
     return failures
+# ── F207K: Public Acceptance KPI checks ───────────────────────────────────
+
+def _get_safe(data: dict, *keys, default=None):
+    """Chained safe dict getter."""
+    val = data
+    for k in keys:
+        if not isinstance(val, dict):
+            return default
+        val = val.get(k, default)
+        if val is default:
+            return default
+    return val
+
+
+def _check_public_acceptance_kpi(data: dict, _get=_get_safe) -> tuple[Verdict | None, str]:
+    """
+    Validates F207K public acceptance KPI fields.
+
+    FAIL: acceptance_rate < 1% with attempted > 100
+          (systemic rejection — likely misconfiguration)
+    WARN: acceptance_rate < 10% with attempted > 50
+          (low yield — possible quality gate too strict)
+    WARN: next_action not in VALID_NEXT_ACTIONS
+    INFO: public_acceptance_* absent (non-public report)
+    """
+    VALID_NEXT_ACTIONS = {
+        "PROCEED", "RETRY", "ABORT", "ESCALATE",
+        "DEGRADE", "SKIP_PUBLIC", "NONFEED_ONLY",
+        "fix_scheduler_return_guard_not_called",
+        "post_sleep_windup_break",
+        "fix_nonfeed_scheduler_order",
+        "run_active600_or_targeted_query",
+        "fix_prewindup_barrier_not_called",
+    }
+
+    kpi = _get(data, "live_kpi", default=None)
+    if kpi is None:
+        return None, "live_kpi absent"
+
+    attempted = _get(kpi, "public_acceptance_attempted", default=None)
+    accepted  = _get(kpi, "public_acceptance_accepted",  default=None)
+    rejected  = _get(kpi, "public_acceptance_rejected",  default=None)
+    reasons   = _get(kpi, "public_acceptance_reject_reasons", default={})
+    next_act  = _get(kpi, "next_action", default=None)
+
+    if attempted is None and accepted is None:
+        return None, "public_acceptance_* absent — non-public report"
+
+    issues = []
+
+    # Acceptance rate check
+    if attempted and attempted > 100:
+        rate = (accepted or 0) / attempted
+        if rate < 0.01:
+            issues.append(
+                f"CRITICAL: acceptance_rate={rate:.1%} "
+                f"(accepted={accepted}/{attempted}) — systemic rejection"
+            )
+        elif rate < 0.10:
+            issues.append(
+                f"LOW acceptance_rate={rate:.1%} "
+                f"(accepted={accepted}/{attempted})"
+            )
+
+    # Consistency check: accepted + rejected should not exceed attempted
+    if all(v is not None for v in [attempted, accepted, rejected]):
+        if (accepted + rejected) > attempted:
+            issues.append(
+                f"accepted({accepted})+rejected({rejected}) > attempted({attempted})"
+            )
+
+    # Top rejection reason
+    if reasons and isinstance(reasons, dict):
+        top_reason = max(reasons, key=lambda k: reasons[k])
+        top_count  = reasons[top_reason]
+        if top_count > (attempted or 0) * 0.5:
+            issues.append(
+                f"top reject reason={top_reason!r} "
+                f"accounts for {top_count}/{attempted} ({top_count/(attempted or 1):.0%})"
+            )
+
+    # next_action validation
+    if next_act and next_act not in VALID_NEXT_ACTIONS:
+        issues.append(f"unknown next_action={next_act!r}")
+
+    # Classify severity
+    critical = [i for i in issues if "CRITICAL" in i]
+    if critical:
+        return Verdict.FAIL_PUBLIC_ACCEPTANCE_KPI, " | ".join(critical)
+    if issues:
+        return Verdict.WARN_PUBLIC_ACCEPTANCE_KPI, " | ".join(issues)
+
+    return Verdict.PASS_MULTISOURCE_TERMINALITY, (
+        f"public_acceptance OK rate={((accepted or 0)/(attempted or 1)):.1%} "
+        f"next_action={next_act}"
+    )
+
+
+def _check_public_fetch_telemetry(data: dict, _get=_get_safe) -> tuple[Verdict | None, str]:
+    """
+    Validates public fetch attempted vs acceptance ratio.
+    Catches: fetch_attempted >> acceptance_attempted
+             (fetch succeeds but acceptance gate drops everything)
+    """
+    kpi = _get(data, "live_kpi", default=None)
+    if kpi is None:
+        return None, "live_kpi absent"
+
+    fetch_attempted  = _get(kpi, "public_fetch_attempted",       default=None)
+    accept_attempted = _get(kpi, "public_acceptance_attempted",  default=None)
+
+    if fetch_attempted is None or accept_attempted is None:
+        return None, "public fetch telemetry absent"
+
+    # If fetched >> accepted_attempted: pre-acceptance filter is very aggressive
+    if fetch_attempted > 0 and accept_attempted is not None:
+        pass_rate = accept_attempted / fetch_attempted
+        if pass_rate < 0.05:
+            return Verdict.WARN_PUBLIC_ACCEPTANCE_KPI, (
+                f"pre-acceptance filter drops {1-pass_rate:.0%} of fetched URLs "
+                f"(fetch={fetch_attempted}, acceptance_input={accept_attempted})"
+            )
+
+    return Verdict.PASS_MULTISOURCE_TERMINALITY, (
+        f"fetch telemetry OK fetch={fetch_attempted} "
+        f"acceptance_input={accept_attempted}"
+    )
+
+
 # ── Main validation ────────────────────────────────────────────────────────
 
 def validate_live_artifact(

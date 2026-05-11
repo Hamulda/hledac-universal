@@ -61,6 +61,8 @@ __all__ = [
     "MAX_BRIDGE_OUTPUT",
     "record_ct_storage_results",
     "academic_results_to_findings",
+    "doh_results_to_findings",
+    "summarize_doh_conversion",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1511,6 +1513,232 @@ def summarize_ct_conversion(
         "ctDuplicateCandidates": ct_duplicate_candidates,
         "ctCandidateExamples": ct_candidate_examples,
         "ctExpansionCluesCount": ct_expansion_clues_count,
+    }
+
+
+# ── F234A: DOH → CanonicalFinding ───────────────────────────────────────────
+
+
+_DOH_SOURCE_TYPE = "doh"
+_DOH_CONFIDENCE = 0.55  # DOH records are authoritative DNS, medium-high confidence
+
+
+def doh_results_to_findings(
+    findings: list,
+    _outcome: Any,
+    query: str,
+    sprint_id: str,
+) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
+    """
+    F234A: Convert DOHFinding list + DOHOutcome to finding candidates.
+
+    Each DOHFinding becomes one CanonicalFinding with:
+        source_type = "doh"
+        confidence  = 0.55
+
+    Derived intel fields (SPF/DKIM/DMARC/MX/CAA) are embedded in payload_text.
+
+    Returns (findings, rejection_reasons, telemetry).
+    Findings are capped at MAX_BRIDGE_OUTPUT.
+
+    Telemetry fields:
+        doh_total         — total DOHFinding records processed (pre-cap)
+        doh_accepted      — CanonicalFinding candidates accepted
+        doh_spf_found     — SPF policies extracted from TXT records
+        doh_dmarc_found   — DMARC policies extracted from TXT records
+        doh_dkim_found    — DKIM selectors inferred from domain names
+        doh_mx_found      — MX records with mail provider inference
+        doh_caa_found     — CAA records with CA restrictions
+        doh_a_count       — A record findings
+        doh_aaaa_count    — AAAA record findings
+
+    Non-raising — invalid records are skipped with rejection tracking.
+    Pure function — no network, no MLX.
+    """
+    import hashlib
+    import time as _time
+
+    capped = findings[:MAX_BRIDGE_OUTPUT]
+    now = _time.time()
+
+    accepted: list = []
+    rejections: list = []
+
+    # Derived intel counters
+    doh_spf_found = 0
+    doh_dmarc_found = 0
+    doh_dkim_found = 0
+    doh_mx_found = 0
+    doh_caa_found = 0
+    doh_a_count = 0
+    doh_aaaa_count = 0
+
+    seen_pairs: set[str] = set()
+
+    for f in capped:
+        try:
+            domain = getattr(f, "domain", "") or ""
+            record_type = getattr(f, "record_type", "") or ""
+            value = getattr(f, "value", "") or ""
+            provider = getattr(f, "provider", "")
+            spf = getattr(f, "spf_policy", None)
+            dmarc = getattr(f, "dmarc_policy", None)
+            dkim = getattr(f, "dkim_selector", None)
+            mail = getattr(f, "mail_provider", None)
+            caa = getattr(f, "ca_restriction", None)
+        except Exception:
+            rejections.append(REJECTION_UNSUPPORTED_SHAPE)
+            continue
+
+        if not domain or not value:
+            rejections.append(REJECTION_MISSING_DOMAIN if not domain else REJECTION_MISSING_VALUE)
+            continue
+
+        # Dedup: (domain, record_type, value)
+        pair_key = f"{domain}:{record_type}:{value}"
+        if pair_key in seen_pairs:
+            rejections.append(REJECTION_DUPLICATE_CANDIDATE)
+            continue
+        seen_pairs.add(pair_key)
+
+        blake2_id = _make_blake2b_hex(pair_key, _DOH_SOURCE_TYPE)
+        finding_id = f"doh-{blake2_id}-{sprint_id[:8]}"
+
+        provenance: Tuple[str, ...] = (
+            f"source_family:doh",
+            f"domain:{domain}",
+            f"record_type:{record_type}",
+            f"provider:{provider}",
+            f"sprint:{sprint_id[:16]}",
+        )
+
+        # Build enriched payload_text
+        lines = [
+            f"domain: {domain}",
+            f"record_type: {record_type}",
+            f"value: {value}",
+            f"provider: {provider}",
+        ]
+        if spf:
+            lines.append(f"spf_policy: {spf}")
+        if dmarc:
+            lines.append(f"dmarc_policy: {dmarc}")
+        if dkim:
+            lines.append(f"dkim_selector: {dkim}")
+        if mail:
+            lines.append(f"mail_provider: {mail}")
+        if caa:
+            lines.append(f"ca_restriction: {caa}")
+        payload_text = "\n".join(lines)
+
+        finding = _canonical_finding(
+            finding_id=finding_id,
+            source_type=_DOH_SOURCE_TYPE,
+            query=query,
+            confidence=_DOH_CONFIDENCE,
+            ts=now,
+            provenance=provenance,
+            payload_text=payload_text,
+        )
+        if finding is not None:
+            accepted.append(finding)
+
+        # Track derived intel
+        if record_type == "A":
+            doh_a_count += 1
+        elif record_type == "AAAA":
+            doh_aaaa_count += 1
+        if spf:
+            doh_spf_found += 1
+        if dmarc:
+            doh_dmarc_found += 1
+        if dkim:
+            doh_dkim_found += 1
+        if mail:
+            doh_mx_found += 1
+        if caa:
+            doh_caa_found += 1
+
+    telemetry = {
+        "doh_total": len(capped),
+        "doh_accepted": len(accepted),
+        "doh_spf_found": doh_spf_found,
+        "doh_dmarc_found": doh_dmarc_found,
+        "doh_dkim_found": doh_dkim_found,
+        "doh_mx_found": doh_mx_found,
+        "doh_caa_found": doh_caa_found,
+        "doh_a_count": doh_a_count,
+        "doh_aaaa_count": doh_aaaa_count,
+    }
+    return accepted, rejections, telemetry
+
+
+def summarize_doh_conversion(
+    findings: List[Any],
+    rejections: List[RejectionReason],
+    telemetry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    F234A: Summarize DOH bridge conversion with derived intel extraction report.
+
+    Produces advisory_evidence_summary with:
+    - family: "doh"
+    - attempted: True if any DOHFinding records were processed
+    - raw_count: doh_total (total records processed)
+    - accepted_count: doh_accepted (CanonicalFinding candidates accepted)
+    - advisory_clues_count: sum of derived intel signals (SPF + DMARC + DKIM + MX + CAA)
+    - derived_intel: breakdown of SPF/DMARC/DKIM/MX/CAA findings
+    - record_type_counts: A and AAAA record counts
+    - error: rejection_counts.get(unsupported_shape, 0)
+
+    Advisory clues supplement accepted findings with organizational intelligence
+    (mail providers, SPF policies, CA restrictions) without being counted as
+    primary findings.
+
+    Pure function — no storage, no network, no MLX.
+    """
+    t = telemetry or {}
+    doh_total = t.get("doh_total", 0)
+    doh_accepted = t.get("doh_accepted", 0)
+
+    rejection_counts: dict[str, int] = {}
+    for reason in rejections:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    all_rejection_reasons = dict(sorted(
+        rejection_counts.items(),
+        key=lambda x: (-x[1], x[0]),
+    )[:20])
+
+    # Advisory clues: derived intel signals (useful even when accepted=0)
+    advisory_clues = (
+        t.get("doh_spf_found", 0)
+        + t.get("doh_dmarc_found", 0)
+        + t.get("doh_dkim_found", 0)
+        + t.get("doh_mx_found", 0)
+        + t.get("doh_caa_found", 0)
+    )
+
+    return {
+        "family": "doh",
+        "attempted": doh_total > 0,
+        "raw_count": doh_total,
+        "accepted_count": doh_accepted,
+        "advisory_clues_count": advisory_clues,
+        "skipped": 0,
+        "error": rejection_counts.get(REJECTION_UNSUPPORTED_SHAPE, 0),
+        "all_rejection_reasons": all_rejection_reasons,
+        "derived_intel": {
+            "spf_policies": t.get("doh_spf_found", 0),
+            "dmarc_policies": t.get("doh_dmarc_found", 0),
+            "dkim_selectors": t.get("doh_dkim_found", 0),
+            "mail_providers": t.get("doh_mx_found", 0),
+            "ca_restrictions": t.get("doh_caa_found", 0),
+        },
+        "record_type_counts": {
+            "a": t.get("doh_a_count", 0),
+            "aaaa": t.get("doh_aaaa_count", 0),
+        },
     }
 
 

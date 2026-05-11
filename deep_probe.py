@@ -22,6 +22,7 @@ import re
 import hashlib
 import time
 from collections import deque
+from abc import ABC, abstractmethod
 from typing import List, Dict, Set, Optional, Tuple, Any
 from dataclasses import dataclass
 from urllib.parse import urlparse, urljoin, parse_qs, urlencode
@@ -234,17 +235,18 @@ class ShadowWalkerAlgorithm:
 
         # Generate predictions based on patterns
         for pattern in patterns:
-            # Use new method if available
+            # Use new method if available (backward compat)
             if hasattr(pattern, 'generate_predictions_with_scores'):
                 predicted_paths = pattern.generate_predictions_with_scores()
+                for path, confidence in predicted_paths:
+                    full_url = urljoin(base_url, path)
+                    predictions.append((full_url, confidence))
             else:
-                # Fallback for backward compatibility
-                old_preds = pattern.generate_predictions()
-                predicted_paths = [(p, 0.5) for p in old_preds]
-
-            for path, confidence in predicted_paths:
-                full_url = urljoin(base_url, path)
-                predictions.append((full_url, confidence))
+                # New ABC interface: (base_url) -> list[str]
+                paths = pattern.generate_predictions(base_url)
+                for path in paths:
+                    full_url = urljoin(base_url, path)
+                    predictions.append((full_url, 0.7))  # default confidence
 
         # Apply reranking if query and embedder provided
         if query and embedder:
@@ -378,12 +380,31 @@ class PathPatternAnalyzer:
 
         return None
 
-class PathPattern:
-    """Base class for path patterns."""
+class PathPatternBase(ABC):
+    """Abstract base class for path patterns."""
 
-    def generate_predictions(self) -> List[Tuple[str, float]]:
-        """Generate path predictions with confidence scores."""
+    @abstractmethod
+    def generate_predictions(self, base_url: str) -> list[str]:
+        """Generate path predictions."""
+        ...
+
+    @property
+    @abstractmethod
+    def pattern_type(self) -> str:
+        """Return the pattern type identifier."""
+        ...
+
+
+class PathPattern(PathPatternBase):
+    """Base class for path patterns — kept for backward compat."""
+
+    def generate_predictions(self, base_url: str) -> list[str]:
         raise NotImplementedError("PathPattern.generate_predictions must be implemented by subclass")
+
+    @property
+    def pattern_type(self) -> str:
+        return "base"
+
 
 class DatePathPattern(PathPattern):
     """Pattern for date-based paths."""
@@ -391,21 +412,21 @@ class DatePathPattern(PathPattern):
     def __init__(self, years: List[int]):
         self.years = years
 
-    def generate_predictions(self) -> List[Tuple[str, float]]:
+    def generate_predictions(self, base_url: str) -> list[str]:
         predictions = []
         if not self.years:
             return predictions
-
-        # Predict next year
         next_year = max(self.years) + 1
-        predictions.append((f"/{next_year}/", 0.8))
-
-        # Predict previous year
+        predictions.append(f"/{next_year}/")
         prev_year = min(self.years) - 1
         if prev_year >= 1900:
-            predictions.append((f"/{prev_year}/", 0.6))
-
+            predictions.append(f"/{prev_year}/")
         return predictions
+
+    @property
+    def pattern_type(self) -> str:
+        return "date"
+
 
 class SequentialPathPattern(PathPattern):
     """Pattern for sequential number paths."""
@@ -413,42 +434,26 @@ class SequentialPathPattern(PathPattern):
     def __init__(self, numbers: List[int]):
         self.numbers = numbers
 
-    def generate_predictions(self) -> List[Tuple[str, float]]:
+    def generate_predictions(self, base_url: str) -> list[str]:
         predictions = []
         if len(self.numbers) < 2:
             return predictions
-
-        # Calculate step
         diffs = [self.numbers[i+1] - self.numbers[i] for i in range(len(self.numbers)-1)]
         avg_step = sum(diffs) / len(diffs)
-
-        # Predict next number
         next_num = int(self.numbers[-1] + avg_step)
-        predictions.append((f"/{next_num}/", 0.7))
-
+        predictions.append(f"/{next_num}/")
         return predictions
 
     def generate_predictions_with_scores(self) -> List[Tuple[str, float]]:
-        """
-        Generate multiple prediction candidates with confidence scores.
-
-        Returns:
-            List of (url_path, confidence_score) tuples
-        """
+        """Generate multiple prediction candidates with confidence scores."""
         predictions = []
         if len(self.numbers) < 2:
             return predictions
-
-        # Calculate step
         diffs = [self.numbers[i+1] - self.numbers[i] for i in range(len(self.numbers)-1)]
         avg_step = sum(diffs) / len(diffs)
-
-        # Generate multiple candidates (not just next)
-        for offset in range(1, 6):  # next 5 numbers
+        for offset in range(1, 6):
             next_num = int(self.numbers[-1] + avg_step * offset)
             predictions.append((f"/{next_num}/", 0.7 - offset * 0.1))
-
-        # Also try step variations
         if len(diffs) >= 2:
             min_step = max(1, int(min(diffs)))
             max_step = int(max(diffs)) + 1
@@ -458,8 +463,11 @@ class SequentialPathPattern(PathPattern):
                 if step != avg_step:
                     next_num = self.numbers[-1] + step
                     predictions.append((f"/{next_num}/", 0.5))
-
         return predictions
+
+    @property
+    def pattern_type(self) -> str:
+        return "sequential"
 
 
 class FilePathPattern(PathPattern):
@@ -468,15 +476,17 @@ class FilePathPattern(PathPattern):
     def __init__(self, extensions: List[str]):
         self.extensions = extensions
 
-    def generate_predictions(self) -> List[Tuple[str, float]]:
+    def generate_predictions(self, base_url: str) -> list[str]:
         predictions = []
         common_dirs = ['data', 'files', 'documents', 'reports', 'research']
-
         for ext in self.extensions:
             for dir_name in common_dirs:
-                predictions.append((f"/{dir_name}/file.{ext}", 0.5))
-
+                predictions.append(f"/{dir_name}/file.{ext}")
         return predictions
+
+    @property
+    def pattern_type(self) -> str:
+        return "file"
 
 class WaybackCDXClient:
     """Client for Wayback Machine CDX API."""

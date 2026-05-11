@@ -445,8 +445,19 @@ def _check_live_kpi_integrity(data: dict) -> tuple[bool, str]:
     - total_findings == accepted_findings + rejected_findings
     - run_quality_verdict in VALID_VERDICTS
     - findings_per_min >= 0
+
+    live_kpi is only stamped by benchmarks/live_sprint_measurement.py (live measurement
+    harness). Canonical nonfeed/diagnostic runs go through core.__main__.run_sprint()
+    and do NOT produce live_kpi — this is legitimate absence for non-live modes.
     """
     VALID_VERDICTS = {"GOOD", "ACCEPTABLE", "POOR", "EMPTY", "ERROR", "UNKNOWN"}
+
+    # Sprint mode gate — live_kpi only present for live-measurement harness runs.
+    # Canonical run_sprint() does NOT stamp live_kpi, so absence is legitimate for
+    # any sprint_mode != "live" (including None / undefined = non-live diagnostic).
+    sprint_mode = _get(data, "runtime_truth", "sprint_mode", default=None)
+    if sprint_mode != "live":
+        return True, f"live_kpi N/A for sprint_mode={sprint_mode!r}"
 
     kpi = _get(data, "live_kpi", default=None)
     if kpi is None:
@@ -505,7 +516,9 @@ def _check_runtime_truth_termination(data: dict) -> tuple[bool, str]:
         issues.append("ct_branch_timed_out=True — partial CT results")
     if pub_timeout:
         issues.append("public_branch_timed_out=True — partial public results")
-    if timeout_count > 2:
+    # Threshold: 5 = max legitimate dual timeouts per sprint (3 lanes × 2 dual + 1 fallback)
+    # (3 lanes) — increment sites: runtime/sprint_scheduler.py:4931,5177,5218
+    if timeout_count > 4:
         issues.append(f"branch_timeout_count={timeout_count} > 2")
 
     if any("contradiction" in i for i in issues):

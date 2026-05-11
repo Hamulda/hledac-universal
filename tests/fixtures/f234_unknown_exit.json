@@ -1,0 +1,37 @@
+{
+  "acquisition_report": {
+    "acquisition_profile": "nonfeed_diagnostic",
+    "schema_version": "f234.v1",
+    "acquisition_report_fallback_used": false,
+    "terminality": {
+      "checked": true,
+      "satisfied": true,
+      "missing_lanes": [],
+      "errors": []
+    },
+    "scheduler_exit": {
+      "exit_path": "totally_unknown_xyz",
+      "elapsed_s": 45
+    },
+    "return_guard": {
+      "checked": true,
+      "satisfied": true,
+      "block_reason": null
+    },
+    "source_family_outcomes": [
+      {"family": "ct", "attempted": 10, "accepted": 5, "skipped": 0}
+    ]
+  },
+  "runtime_truth": {
+    "accepted_findings": 5,
+    "nonfeed_priority_enabled": false,
+    "is_meaningful": true,
+    "branch_timeout_count": 0,
+    "ct_branch_timed_out": false,
+    "public_branch_timed_out": false,
+    "sprint_mode": "diagnostic",
+    "branch_mix": {"ct": 5},
+    "ct_planned": true,
+    "ct_scheduled": true
+  }
+}
