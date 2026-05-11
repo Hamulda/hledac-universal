@@ -2437,7 +2437,10 @@ class MultiLevelContextCache:
             return []
         try:
             labels, distances = self._hnsw_index.knn_query(query_emb, k=k)
-            return labels[0].tolist()
+            # NOTE: list() copies but is O(k) where k≤10 — negligible vs HNSW search cost.
+            # Unlike .tolist(), list() on a numpy array avoids triggering Metal buffer sync
+            # since labels are already CPU-resident from hnswlib's query path.
+            return list(labels[0])
         except Exception:
             return []
 

@@ -16,7 +16,6 @@ import logging
 import os
 import sqlite3
 import struct
-import threading
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -161,17 +160,10 @@ class _JARMFingerprinter:
                      0x6A6A, 0x7A7A, 0x8A8A, 0x9A9A, 0xAAAA, 0xBABA,
                      0xCACA, 0xDADA, 0xEAEA, 0xFAFA}
 
-    def __init__(self):
-        """Initialize JARM fingerprinter."""
-        self._lock = threading.Lock()
-        self._db_conn: Optional[sqlite3.Connection] = None
-
     def _get_db(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self._db_conn is None:
-            with self._lock:
-                if self._db_conn is None:
-                    self._db_conn = _init_cache_db()
+            self._db_conn = _init_cache_db()
         return self._db_conn
 
     async def fingerprint(self, domain: str, port: int = 443) -> Optional[str]:

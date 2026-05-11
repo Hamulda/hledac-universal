@@ -27,7 +27,9 @@ import argparse
 import importlib
 import json
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict  # noqa: F401
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -317,7 +319,17 @@ def format_json(report: DoctorReport, verbose: bool = False) -> str:
         "python_version": report.python_version,
         "platform": report.platform,
         "missing_by_extra": report.missing_by_extra,
-        "statuses": [asdict(s) for s in report.statuses] if verbose else [
+        "statuses": [
+            {
+                "name": s.name,
+                "available": s.available,
+                "category": s.category,
+                "version": s.version,
+                "install_hint": s.install_hint,
+                "extra": s.extra,
+            }
+            for s in report.statuses
+        ] if verbose else [
             {"name": s.name, "available": s.available, "category": s.category}
             for s in report.statuses
         ],

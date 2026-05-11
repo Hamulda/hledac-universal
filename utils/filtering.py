@@ -696,7 +696,9 @@ class PersistentFrontier:
             conn = sqlite3.connect(storage_file)
             cursor = conn.cursor()
 
-            cursor.execute('SELECT url FROM frontier')
+            cursor.execute('SELECT url FROM frontier LIMIT 50000')
+            # LIMIT 50000 — cold path (startup only).
+            # Add ORDER BY timestamp DESC when frontier table exceeds 100k rows.
             urls = [row[0] for row in cursor.fetchall()]
 
             self._frontier._exact_set = set(urls)

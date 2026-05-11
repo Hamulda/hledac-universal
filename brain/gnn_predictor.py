@@ -59,8 +59,10 @@ def neighbor_sampling(adj_list: List[List[int]], node_ids: List[int], k: int = 1
         neighbors = adj_list[node]
         if len(neighbors) < k:
             # opakujeme sousedy, abychom dosáhli k
+            # .tolist() required: downstream Python list for sampling with replacement
             sampled.append(np.random.choice(neighbors, size=k, replace=True).tolist())
         else:
+            # .tolist() required: downstream Python list for sampling without replacement
             sampled.append(np.random.choice(neighbors, size=k, replace=False).tolist())
     return sampled
 
@@ -467,6 +469,7 @@ class GNNPredictor:
             if query_idx is None:
                 return []
 
+            # .tolist() required: downstream Python list for sorting predictions
             query_scores = scores_matrix[query_idx].tolist()
 
             # Vyřaď existující hrany a samotný uzel

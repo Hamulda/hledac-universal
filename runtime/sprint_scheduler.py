@@ -618,7 +618,7 @@ class CTLossStage(Enum):
 # Config
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SprintSchedulerConfig:
     """Configuration for one sprint run."""
     sprint_duration_s: float = 1800.0          # 30 min
@@ -687,7 +687,7 @@ class EarlyExitClass:
     ABORTED_BY_ERROR = "aborted_by_error"
 
 
-@dataclass
+@dataclass(slots=True)
 class SprintSchedulerResult:
     """
     Outcome of one sprint run.
@@ -4769,6 +4769,10 @@ class SprintScheduler:
                     )
             except asyncio.TimeoutError:
                 log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
+                # TODO D6: PUBLIC lane timeout does not release per-lane budget.
+                # When PUBLIC times out, wall-clock continues to drain.
+                # Consider: per-lane asyncio.timeout() with explicit budget accounting
+                # and a shared lane_budget_pool that PUBLIC releases on timeout.
                 self._result.public_branch_timed_out = True
                 self._result.public_error = "terminal:timeout"
                 # Sprint F216A: Emit PUBLIC timeout event
@@ -5668,6 +5672,9 @@ class SprintScheduler:
         count = 0
         try:
             from hledac.universal.knowledge import graph_service
+            # TODO D7: per-finding DuckDB upsert (upsert_ioc() per finding).
+            # Batch upserts into groups of 100 findings before committing.
+            # DuckDB batch INSERT is ~10× faster than N individual upserts.
             for finding in findings:
                 fid = getattr(finding, "finding_id", None)
                 if not fid:
@@ -10062,6 +10069,9 @@ class SprintScheduler:
 
     def buffer_finding(self, finding: dict) -> None:
         """Buffer a finding into the Arrow batch."""
+        # TODO D1: list.append() without pre-allocation. For sprints with
+        # known capacity (sprint_duration_s × estimated_finding_rate), consider
+        # pre-allocating: buffer = [None] * estimated_capacity
         self._arrow_batch.append(finding)
         # Kick off async flush without awaiting
         try:
@@ -10134,6 +10144,8 @@ class SprintScheduler:
         """DuckDB vectorized query over Parquet files. Zero-copy style."""
         return self._get_duckdb_con().execute(sql).fetchdf().to_dict("records")
 
+    # TODO D1: f-string formatting per finding. Profile this path —
+    # if > 5% of sprint CPU, consider caching the format result.
     # ── Sprint 8VD §D: Polars lazy dedup + ranking ────────────────────────
 
     def deduplicate_and_rank_findings(self, sprint_id: str | None = None) -> str:

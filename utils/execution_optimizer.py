@@ -585,7 +585,16 @@ class ParallelExecutionOptimizer:
                 for task in batch
             ], return_exceptions=True)
 
-            results.extend(batch_results)
+            for r in batch_results:
+                if isinstance(r, asyncio.CancelledError):
+                    raise r  # propagate cancellation
+                elif isinstance(r, BaseException):
+                    logger.warning(
+                        "batch optimization task failed: %s: %s",
+                        type(r).__name__, r,
+                    )
+                else:
+                    results.append(r)
 
             batch_time = time.time() - batch_start
             performance_samples.append({
@@ -698,7 +707,16 @@ class ParallelExecutionOptimizer:
                 self._execute_with_semaphore(task)
                 for task in cpu_tasks
             ], return_exceptions=True)
-            results.extend(cpu_results)
+            for r in cpu_results:
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
+                elif isinstance(r, BaseException):
+                    logger.warning(
+                        "batch optimization task failed: %s: %s",
+                        type(r).__name__, r,
+                    )
+                else:
+                    results.append(r)
 
         # Execute memory tasks with limited concurrency
         if memory_tasks:
@@ -709,7 +727,16 @@ class ParallelExecutionOptimizer:
                 self._execute_with_semaphore(task)
                 for task in memory_tasks
             ], return_exceptions=True)
-            results.extend(memory_results)
+            for r in memory_results:
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
+                elif isinstance(r, BaseException):
+                    logger.warning(
+                        "batch optimization task failed: %s: %s",
+                        type(r).__name__, r,
+                    )
+                else:
+                    results.append(r)
 
         # Execute I/O tasks with high concurrency
         if io_tasks:
@@ -720,7 +747,16 @@ class ParallelExecutionOptimizer:
                 self._execute_with_semaphore(task)
                 for task in io_tasks
             ], return_exceptions=True)
-            results.extend(io_results)
+            for r in io_results:
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
+                elif isinstance(r, BaseException):
+                    logger.warning(
+                        "batch optimization task failed: %s: %s",
+                        type(r).__name__, r,
+                    )
+                else:
+                    results.append(r)
 
         return results
 
@@ -812,7 +848,16 @@ class ParallelExecutionOptimizer:
                 for task in batch
             ], return_exceptions=True)
 
-            results.extend(batch_results)
+            for r in batch_results:
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
+                elif isinstance(r, BaseException):
+                    logger.warning(
+                        "batch optimization task failed: %s: %s",
+                        type(r).__name__, r,
+                    )
+                else:
+                    results.append(r)
             task_index += batch_size
 
         return results

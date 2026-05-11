@@ -14,7 +14,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from enum import Enum
 from pathlib import Path
 
@@ -775,7 +777,9 @@ def main() -> int:
 
     norm = normalize_benchmark_json(data)
     score = compute_research_quality_score(norm)
-    result = asdict(score)
+    result = _safe_dataclass_to_dict(score)
+    result["grade"] = score.grade.value
+    result["quality_gate"] = score.quality_gate.value
 
     if args.output_json:
         with open(args.output_json, "w") as f:

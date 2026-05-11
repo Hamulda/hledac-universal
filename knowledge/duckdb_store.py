@@ -200,7 +200,7 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
 
 
 # Sprint F216G: Quality Rejection Ledger
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class QualityRejectionRecord:
     """
     Sprint F216G: Bounded per-finding quality gate rejection record.
@@ -3884,6 +3884,8 @@ class DuckDBShadowStore:
             conn = self._file_conn if self._db_path else self._persistent_conn
             if conn is None:
                 return {}
+            # LIMIT 1000: consistency check only needs recent rows.
+            # ORDERED BY rowid DESC: get most recent entries.
             rows = conn.execute(
                 """
                 SELECT
@@ -3895,6 +3897,8 @@ class DuckDBShadowStore:
                 FROM sprint_scorecard c
                 LEFT JOIN sprint_delta d ON c.sprint_id = d.sprint_id
                 WHERE c.sprint_id = ?
+                ORDER BY rowid DESC
+                LIMIT 1000
                 """,
                 [sprint_id],
             ).fetchall()

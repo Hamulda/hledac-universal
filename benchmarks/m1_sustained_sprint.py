@@ -30,7 +30,9 @@ import asyncio
 import json
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -305,7 +307,7 @@ def main() -> int:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w") as f:
-            json.dump(asdict(result), f, indent=2)
+            json.dump(_safe_dataclass_to_dict(result), f, indent=2)
         print(f"\n[Benchmark] Results written to {output_path}", file=sys.stderr)
 
     # Memory ceiling check

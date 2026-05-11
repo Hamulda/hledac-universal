@@ -98,6 +98,11 @@ import threading as _threading
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()
 
+# B4-3 VERIFIED: threading.Lock correct — _update_io_only_latch_with_lock is only
+# called from sync context (sample_uma_status). Even when sample_uma_status is invoked
+# from an async def, the function itself is synchronous and the lock protects against
+# concurrent sync access from multiple threads. Do NOT replace with asyncio.Lock().
+
 
 def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_detected: bool = False) -> bool:
     """

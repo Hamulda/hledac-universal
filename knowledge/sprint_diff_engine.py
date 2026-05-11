@@ -42,7 +42,7 @@ class SprintDiffResult:
     changed_entities: list[dict]
 
 
-@dataclass
+@dataclass(slots=True)
 class TargetProfileSummary:
     target_id: str
     first_seen: float

@@ -508,7 +508,7 @@ _embedding_depth_lock = threading.Lock()
 # F207L: Reentrant embedding session with refcounting — avoids cold start
 # ---------------------------------------------------------------------------
 _embed_refcount: int = 0
-_embed_refcount_lock = threading.Lock()
+_embed_refcount_lock = asyncio.Lock()
 
 
 class embedding_session:
@@ -528,22 +528,27 @@ class embedding_session:
     """
 
     async def __aenter__(self) -> None:
-        with _embed_refcount_lock:
-            global _embed_refcount
+        global _embed_refcount
+        async with _embed_refcount_lock:
             _embed_refcount += 1
-            if _embed_refcount == 1:
-                # First entry — load model via executor to avoid blocking
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, load_embedding_model)
+            first_entry = _embed_refcount == 1
+        if first_entry:
+            # Load outside the lock — lock guards refcount only, not executor
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, load_embedding_model)
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb) -> None:
-        with _embed_refcount_lock:
-            global _embed_refcount
+        global _embed_refcount
+        should_unload = False
+        async with _embed_refcount_lock:
             _embed_refcount -= 1
             if _embed_refcount <= 0:
                 _embed_refcount = 0
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, unload_embedding_model)
+                should_unload = True
+        if should_unload:
+            # Unload outside the lock — lock guards refcount only, not executor
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, unload_embedding_model)
 
 
 def is_embedding_context_active() -> bool:

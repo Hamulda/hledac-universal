@@ -2218,6 +2218,9 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
         # Fallback synthesis
         synthesis = f"## Synthesis for: {query}\n\n"
 
+        # TODO B5-2: O(n²) string concatenation in loop.
+        # Replace with: parts = []; parts.append(...); synthesis = "".join(parts)
+        # Low priority unless this path handles > 100 sources per sprint.
         for source, results in all_results.items():
             synthesis += f"\n### From {source}:\n"
             for i, result in enumerate(results[:3], 1):

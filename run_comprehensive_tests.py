@@ -15,7 +15,7 @@ import atexit
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 import threading
 import psutil
 
@@ -508,7 +508,29 @@ class TestSuiteRunner:
                 "total_skipped": sum(r.tests_skipped for r in self.results),
                 "total_errors": sum(r.tests_error for r in self.results),
             },
-            "suites": [asdict(r) for r in self.results],
+            "suites": [
+                {
+                    "name": r.name,
+                    "file": r.file,
+                    "status": r.status,
+                    "tests_total": r.tests_total,
+                    "tests_passed": r.tests_passed,
+                    "tests_failed": r.tests_failed,
+                    "tests_skipped": r.tests_skipped,
+                    "tests_error": r.tests_error,
+                    "duration": r.duration,
+                    "coverage": r.coverage,
+                    "output": r.output,
+                    "error_output": r.error_output,
+                    "html_report": r.html_report,
+                    "json_report": r.json_report,
+                    "exit_code": r.exit_code,
+                    "memory_peak_mb": r.memory_peak_mb,
+                    "start_time": r.start_time.isoformat() if r.start_time else None,
+                    "end_time": r.end_time.isoformat() if r.end_time else None,
+                }
+                for r in self.results
+            ],
             "memory": {
                 "snapshots": [
                     {

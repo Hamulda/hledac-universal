@@ -935,7 +935,7 @@ class SynthesisRunner:
                 "**/*135M*/config.json",
                 "**/SmolLM2*135M*/config.json",
             ]:
-                hits = list(d.glob(pat))
+                hits = await asyncio.to_thread(lambda: list(d.glob(pat)))
                 if hits:
                     self._cached_model_path = hits[0].parent
                     logger.info("[SYNTHESIS] Model found: %s", self._cached_model_path.name)
@@ -948,7 +948,8 @@ class SynthesisRunner:
         ]:
             try:
                 api_url = f"https://huggingface.co/api/models/{model_id}"
-                with urllib.request.urlopen(api_url, timeout=15) as r:
+                r = await asyncio.to_thread(urllib.request.urlopen, api_url, timeout=15)
+                with r:
                     data = _json.loads(r.read())
                     total = sum(f.get("size", 0) for f in data.get("siblings", []))
                 if total / 1e9 > max_gb:
@@ -960,12 +961,12 @@ class SynthesisRunner:
                 )
                 import mlx_lm
 
-                mlx_lm.utils.snapshot_download(model_id)  # type: ignore[attr-defined]
+                await asyncio.to_thread(mlx_lm.utils.snapshot_download, model_id)
                 logger.info("[SYNTHESIS] Download complete: %s", model_id)
                 # Re-scan disk
                 for d in search:
                     for pat in ["**/config.json"]:
-                        hits = list(d.glob(pat))
+                        hits = await asyncio.to_thread(lambda: list(d.glob(pat)))
                         if hits:
                             self._cached_model_path = hits[0].parent
                             return self._cached_model_path

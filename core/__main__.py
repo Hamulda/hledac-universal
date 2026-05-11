@@ -322,6 +322,11 @@ def _scheduler_result_acquisition_payload(
     _term_rep: dict = getattr(result, "acquisition_terminality_report", {}) or {}
 
     # ── 7. Try build_acquisition_report from acquisition_strategy ────────────
+    # F234: _acq_input is assigned at line 864 (after this block).
+    # Initialize sentinel here so any reference in this try block is safe.
+    _acq_input: str | None = None
+    _acq_effective: str | None = None
+    _acq_normalized: bool = False
     _acq_report: dict = {}
     try:
         _plan = getattr(scheduler, "_acquisition_plan", None)
@@ -445,6 +450,13 @@ def _scheduler_result_acquisition_payload(
         # F232F: Add fail-loud marker so downstream tools can detect fallback usage.
         # Fallback is allowed only when canonical build fails — explicit marker
         # allows gate/quality tools to detect and flag degraded reports.
+        logger.exception(
+            "[F234-FALLBACK] build_acquisition_report raised — "
+            "falling back to default profile. "
+            "acquisition_profile_input=%r acquisition_profile_effective=%r",
+            _acq_input,  # sentinel defined at line 327 (F234)
+            _acq_effective,  # sentinel defined at line 327 (F234)
+        )
         _fallback_profile = (
             _nd.get("acquisition_profile", "default") if _nd else "default"
         )
@@ -463,7 +475,9 @@ def _scheduler_result_acquisition_payload(
             # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
             "acquisition_profile": _fallback_profile,
             "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
-            "nonfeed_priority_enabled": _nd.get("nonfeed_priority_enabled", False) if _nd else False,
+            "nonfeed_priority_enabled": (
+                _nd.get("nonfeed_priority_enabled", False) if _nd else False
+            ),
             "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
             # F217C: PUBLIC bootstrap telemetry
             "public_terminal_stage": getattr(result, "public_terminal_stage", ""),

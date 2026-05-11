@@ -12,9 +12,11 @@ No runtime import side effects — only schema definitions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 import json
+
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 
 
 class RunMode(Enum):
@@ -219,7 +221,10 @@ class LiveMeasurementResult:
     resolved_output_md: str | None = None
 
     def to_dict(self) -> dict:
-        d = asdict(self)
+        # CHANGED: replaced asdict(self) with _safe_dataclass_to_dict(self)
+        # to prevent RecursionError when live_kpi or acquisition_report contain
+        # nested dataclass instances or arbitrary structured data at runtime.
+        d = _safe_dataclass_to_dict(self)
         d["mode"] = self.mode.value
         d["status"] = self.status.value
         # F208H: Alias for validator compatibility — maps internal status to live_run_status
@@ -339,12 +344,12 @@ class LiveMeasurementResult:
         # They are marked as DERIVED_CHECK to distinguish from canonical_report_snapshot fields.
         d["derived_checks"] = {
             "note": "These fields are DERIVED by the benchmark, not copied from canonical report.",
-            "live_kpi_lane_execution_counts": _lk.get("lane_execution_counts"),
-            "live_kpi_source_family_counts": _lk.get("source_family_counts"),
-            "live_kpi_nonfeed_attempted_families": _lk.get("nonfeed_attempted_families"),
-            "live_kpi_public_fetch_attempted": _lk.get("public_fetch_attempted"),
-            "live_kpi_nonfeed_accepted_findings": _lk.get("nonfeed_accepted_findings"),
-            "live_kpi_findings_per_min": _lk.get("findings_per_min"),
+            "live_kpi_lane_execution_counts": _lk.get("lane_execution_counts", {}),
+            "live_kpi_source_family_counts": _lk.get("source_family_counts", {}),
+            "live_kpi_nonfeed_attempted_families": _lk.get("nonfeed_attempted_families", []),
+            "live_kpi_public_fetch_attempted": _lk.get("public_fetch_attempted", False),
+            "live_kpi_nonfeed_accepted_findings": _lk.get("nonfeed_accepted_findings", 0),
+            "live_kpi_findings_per_min": _lk.get("findings_per_min", 0.0),
         }
         return d
 

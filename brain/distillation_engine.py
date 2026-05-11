@@ -345,7 +345,7 @@ class DistillationEngine:
 
                 await asyncio.to_thread(
                     lambda: cursor.execute(
-                        "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp"
+                        "SELECT query, chain, score, metadata, timestamp FROM examples ORDER BY timestamp DESC LIMIT 10000"
                     )
                 )
                 rows = await asyncio.to_thread(lambda: cursor.fetchall())

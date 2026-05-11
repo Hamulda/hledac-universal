@@ -212,7 +212,7 @@ class StreamingEmbedder:
             chunk = findings[i:i + batch_size]
             try:
                 ids, embs = await self._embed_batch(chunk)
-                if ids and embs is not None and embs.shape[0] == len(ids):
+                if ids and embs is not None and len(embs) == len(ids):
                     yield (ids, embs)
             except Exception as e:
                 logger.debug(f"[StreamingEmbed] batch error at offset {i}: {e}")
@@ -263,7 +263,7 @@ class StreamingEmbedder:
             embeddings = await loop.run_in_executor(
                 None, _sync_embed_batch, texts, len(texts)
             )
-            if embeddings.shape[0] > 0 and len(ids) == embeddings.shape[0]:
+            if len(embeddings) > 0 and len(ids) == len(embeddings):
                 yield (ids, embeddings)
 
     # -------------------------------------------------------------------------

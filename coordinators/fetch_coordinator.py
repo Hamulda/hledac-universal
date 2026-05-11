@@ -191,7 +191,7 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
         pass
 
 
-@dataclass
+@dataclass(slots=True)
 class FetchCoordinatorConfig:
     """Configuration for FetchCoordinator."""
     max_urls_per_step: int = 5
