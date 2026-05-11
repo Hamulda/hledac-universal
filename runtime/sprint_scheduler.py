@@ -1017,6 +1017,18 @@ class SprintSchedulerResult:
     feed_suppressed_by_nonfeed_budget: int = 0         # Feed findings suppressed by nonfeed budget
     feed_suppression_count: int = 0                    # Number of feed sources suppressed by nonfeed budget
     feed_suppression_reason: str = ""                  # Reason for nonfeed budget suppression
+    # Sprint F233D: Nonfeed Prelude Coverage Engine
+    # Bounded nonfeed prelude runs BEFORE FEED dominates for nonfeed_diagnostic missions.
+    # Covers: PUBLIC, CT, WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR lanes.
+    nonfeed_prelude_enabled: bool = False               # True when nonfeed_diagnostic profile active
+    nonfeed_prelude_expected_lanes: tuple[str, ...] = ()  # Expected lanes from nonfeed_plan_debug
+    nonfeed_prelude_attempted_lanes: tuple[str, ...] = ()  # Lanes actually attempted in prelude
+    nonfeed_prelude_terminal_lanes: tuple[str, ...] = ()  # Lanes that reached terminal state
+    nonfeed_prelude_missing_lanes: tuple[str, ...] = ()  # Required but not terminal (explicit)
+    nonfeed_prelude_accepted_by_lane: dict[str, int] = field(default_factory=dict)  # accepted count per lane
+    nonfeed_prelude_error_by_lane: dict[str, str] = field(default_factory=dict)  # error per lane
+    nonfeed_prelude_duration_s: float = 0.0
+    nonfeed_prelude_feed_blocked_until_complete: bool = False  # True = feed waits for prelude
     # Sprint F214OPT-D: Arrow batch hard cap telemetry
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
@@ -3760,6 +3772,10 @@ class SprintScheduler:
         _t0 = _time.monotonic()
         self._result.acquisition_prelude_checked = True
 
+        # Sprint F233D: Detect nonfeed_diagnostic before domain check
+        _nd_debug = getattr(self._acquisition_plan, "nonfeed_plan_debug", None) if self._acquisition_plan else None
+        _is_nonfeed_diagnostic = getattr(_nd_debug, "is_nonfeed_diagnostic", False) if _nd_debug else False
+
         # Determine memory state
         _uma = "ok"
         if self._governor is not None:
@@ -3768,6 +3784,14 @@ class SprintScheduler:
                 _uma = getattr(_snap, "uma_state", "ok")
             except Exception:
                 pass
+
+        _nonfeed_prelude_done = False
+        _nonfeed_prelude_accepted: dict[str, int] = {}
+        _nonfeed_prelude_skipped: dict[str, str] = {}
+        _nonfeed_prelude_errors: dict[str, str] = {}
+        _nonfeed_prelude_attempted: list[str] = []
+        _nonfeed_prelude_terminal: list[str] = []
+        _nonfeed_prelude_expected: list[str] = []
 
         _has_domain = False
         _domain_error = ""
@@ -4093,6 +4117,109 @@ class SprintScheduler:
                         pass  # fail-soft: ledger must never block sprint
                 # ── End F214D ─────────────────────────────────────────────────
 
+        # Sprint F233D: Nonfeed prelude extension for nonfeed_diagnostic profile
+        # Extends existing F209A prelude (PUBLIC+CT) to cover WAYBACK/PASSIVE_DNS/PIVOT
+        # before FEED cycles dominate. One bounded attempt per lane, no stealth/browser/MLX.
+        if _is_nonfeed_diagnostic and _has_domain and not _nonfeed_prelude_done:
+            _hardware_critical = _uma in ("critical", "emergency")
+            # Use acquisition plan to determine which nonfeed lanes are enabled
+            _nonfeed_expected: list[str] = []
+            _nonfeed_lanes_to_run: list[tuple[str, bool, float, int]] = []  # (lane, enabled, timeout_s, max_items)
+
+            if self._acquisition_plan is not None:
+                from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
+                for _plan in getattr(self._acquisition_plan, "plans", []):
+                    _lane_name = getattr(_plan.lane, "value", str(_plan.lane))
+                    _enabled = getattr(_plan, "enabled", False)
+                    _timeout = getattr(_plan, "timeout_s", 20.0)
+                    _max_items = getattr(_plan, "max_items", 5)
+                    if _lane_name in ("WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR"):
+                        if _enabled:
+                            _nonfeed_lanes_to_run.append((_lane_name, True, _timeout, _max_items))
+                        else:
+                            _nonfeed_prelude_skipped[_lane_name] = "plan_disabled"
+                        _nonfeed_expected.append(_lane_name)
+
+            _prelude_budget_s = max(30.0, _time.monotonic() - _t0) * 0.4  # max 40% of elapsed
+            _nonfeed_prelude_expected = _nonfeed_expected
+
+            # Run nonfeed lanes within remaining prelude budget
+            for _lane_name, _lane_enabled, _lane_timeout, _lane_max_items in _nonfeed_lanes_to_run:
+                if _time.monotonic() - _t0 >= _prelude_budget_s:
+                    _nonfeed_prelude_skipped[_lane_name] = "prelude_budget_exceeded"
+                    continue
+                try:
+                    async with asyncio.timeout(min(_lane_timeout, 20.0)):
+                        if _lane_name == "WAYBACK" and not _hardware_critical:
+                            from hledac.universal.runtime.acquisition_strategy import build_lane_query
+                            from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
+                            from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
+                            _wb_query = build_lane_query(query, AcquisitionLane.WAYBACK)
+                            if _wb_query and not isinstance(_wb_query, dict):
+                                _wb_miner = WaybackDiffMiner()
+                                try:
+                                    _wb_result = await _wb_miner.mine([str(_wb_query)])
+                                finally:
+                                    await _wb_miner.close()
+                                _wb_cands, _wb_rejs, _wb_tel = wayback_results_to_findings(
+                                    _wb_result, str(_wb_query), query,
+                                    sprint_id=f"prelude-wb-{int(_time.time())}"
+                                )
+                                if _wb_tel:
+                                    self._result.wayback_advisory_clues_count += _wb_tel.get("wayback_changed_count", 0)
+                                _nonfeed_prelude_attempted.append("WAYBACK")
+                                _nonfeed_prelude_terminal.append("WAYBACK")
+                                _wb_acc = 0
+                                if _wb_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
+                                    try:
+                                        _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
+                                        _wb_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                                    except Exception:
+                                        pass
+                                _nonfeed_prelude_accepted["WAYBACK"] = _wb_acc
+                        elif _lane_name == "PASSIVE_DNS" and not _hardware_critical:
+                            from hledac.universal.runtime.acquisition_strategy import build_lane_query
+                            from hledac.universal.security.passive_dns import call_lookup_passive_dns
+                            from hledac.universal.runtime.source_finding_bridge import passive_dns_results_to_findings
+                            _pdns_query = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
+                            if _pdns_query and not isinstance(_pdns_query, dict):
+                                _pdns_ips, _pdns_outcome = await call_lookup_passive_dns(str(_pdns_query))
+                                _pdns_cands, _pdns_rejs, _pdns_tel = passive_dns_results_to_findings(
+                                    _pdns_ips, _pdns_outcome, query,
+                                    sprint_id=f"prelude-pdns-{int(_time.time())}"
+                                )
+                                if _pdns_tel:
+                                    self._result.passive_dns_advisory_clues_count += _pdns_tel.get("pdns_public_accepted", 0)
+                                _nonfeed_prelude_attempted.append("PASSIVE_DNS")
+                                _nonfeed_prelude_terminal.append("PASSIVE_DNS")
+                                _pdns_acc = 0
+                                if _pdns_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
+                                    try:
+                                        _ing = await duckdb_store.async_ingest_findings_batch(list(_pdns_cands))
+                                        _pdns_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                                    except Exception:
+                                        pass
+                                _nonfeed_prelude_accepted["PASSIVE_DNS"] = _pdns_acc
+                        elif _lane_name == "PIVOT_EXECUTOR":
+                            # Pivot executor: check if pivot candidates exist from query
+                            from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
+                            _pivots = generate_pivot_candidates_from_query(query)
+                            if _pivots:
+                                _nonfeed_prelude_attempted.append("PIVOT_EXECUTOR")
+                                _nonfeed_prelude_terminal.append("PIVOT_EXECUTOR")
+                                _nonfeed_prelude_accepted["PIVOT_EXECUTOR"] = 0  # pivots are candidates, not stored
+                            else:
+                                _nonfeed_prelude_skipped["PIVOT_EXECUTOR"] = "no_candidates"
+                except asyncio.TimeoutError:
+                    _nonfeed_prelude_errors["WAYBACK" if _lane_name == "WAYBACK" else _lane_name] = "prelude_timeout"
+                    _nonfeed_prelude_skipped[_lane_name] = "prelude_timeout"
+                except Exception as _exc:
+                    _nonfeed_prelude_errors[_lane_name] = f"{type(_exc).__name__}:{_exc}"
+                    _nonfeed_prelude_skipped[_lane_name] = f"prelude_error:{type(_exc).__name__}"
+
+            # Mark nonfeed prelude complete so it runs exactly once per sprint
+            _nonfeed_prelude_done = True
+
         # Accumulate outcomes
         if _prelude_outcomes:
             self._lane_outcomes = tuple(_prelude_outcomes)
@@ -4113,6 +4240,24 @@ class SprintScheduler:
             self._result.ct_prelude_missing_but_final_attempted = getattr(
                 self._result, "ct_scheduled", False
             )
+
+        # Sprint F233D: Populate nonfeed_prelude telemetry
+        # nonfeed_prelude extends the existing acquisition_prelude for nonfeed_diagnostic missions
+        if _is_nonfeed_diagnostic:
+            self._result.nonfeed_prelude_enabled = True
+            self._result.nonfeed_prelude_expected_lanes = tuple(_nonfeed_prelude_expected)
+            self._result.nonfeed_prelude_attempted_lanes = tuple(_nonfeed_prelude_attempted)
+            self._result.nonfeed_prelude_terminal_lanes = tuple(_nonfeed_prelude_terminal)
+            self._result.nonfeed_prelude_missing_lanes = tuple(
+                k for k in _nonfeed_prelude_expected
+                if k not in _nonfeed_prelude_terminal
+                and k not in _nonfeed_prelude_skipped
+            )
+            self._result.nonfeed_prelude_accepted_by_lane = dict(_nonfeed_prelude_accepted)
+            self._result.nonfeed_prelude_error_by_lane = dict(_nonfeed_prelude_errors)
+            self._result.nonfeed_prelude_duration_s = self._result.acquisition_prelude_duration_s
+            # FEED is blocked until nonfeed prelude completes (prelude runs before feed cycle)
+            self._result.nonfeed_prelude_feed_blocked_until_complete = True
 
         log.debug(
             "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, "

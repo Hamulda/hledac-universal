@@ -191,6 +191,8 @@ def _extract_domain_from_query(query: str) -> str | None:
       - Plain domains: example.com, www.example.com, *.example.com
       - URLs: https://example.com/path, https://www.example.com/path
       - IP addresses: ignored (no domain bootstrap for IPs)
+      - Mixed OSINT queries with domain as first token: "mozilla.org certificate transparency"
+        (F233E: split on whitespace, try first token as domain)
       - Non-domain strings: returns None
 
     Returns:
@@ -200,52 +202,72 @@ def _extract_domain_from_query(query: str) -> str | None:
     if not query:
         return None
 
-    # Strip trailing slashes and path components from URL
-    q = query.rstrip("/")
-    if "/" in q and "://" in q:
-        # It's a full URL — extract just the host part
-        try:
-            import urllib.parse
-            parsed = urllib.parse.urlparse(q)
-            host = parsed.netloc or parsed.path.split("/")[0]
-        except Exception:
-            host = None
-        if host:
-            q = host
+    # Sprint F233E: Try to extract domain from mixed OSINT query.
+    # Strategy: try the query as-is first (pure domain or URL), then try
+    # the first whitespace-delimited token (for "mozilla.org certificate..." cases).
+    candidates = [query]
+    # Also add first token if query has whitespace
+    if " " in query or "\t" in query:
+        first_token = query.strip().split()[0]
+        if first_token and first_token != query:
+            candidates.append(first_token)
 
-    # Remove common port suffix
-    if ":" in q:
-        q = q.rsplit(":", 1)[0]
+    for candidate in candidates:
+        q = candidate
+        # Strip common prefix operators used in OSINT queries
+        for prefix in ("site:", "domain:", "url:"):
+            if q.lower().startswith(prefix):
+                q = q[len(prefix):]
+                break
 
-    # Strip www. prefix for base domain
-    if q.lower().startswith("www."):
-        q = q[4:]
+        # Strip trailing slashes and path components from URL
+        q = q.rstrip("/")
+        if "/" in q and "://" in q:
+            # It's a full URL — extract just the host part
+            try:
+                import urllib.parse
+                parsed = urllib.parse.urlparse(q)
+                host = parsed.netloc or parsed.path.split("/")[0]
+            except Exception:
+                host = None
+            if host:
+                q = host
 
-    # Remove wildcard prefix
-    if q.startswith("*."):
-        q = q[2:]
+        # Remove common port suffix
+        if ":" in q:
+            q = q.rsplit(":", 1)[0]
 
-    # Validate: must look like a domain (has TLD with 2+ chars)
-    # Must have at least one dot and a plausible TLD
-    if not q or "." not in q:
-        return None
+        # Strip www. prefix for base domain
+        if q.lower().startswith("www."):
+            q = q[4:]
 
-    # Reject if it looks like an IP address
-    import re as _re
-    if _re.match(r"^\d{1,3}(\.\d{1,3}){3}$", q):
-        return None
+        # Remove wildcard prefix
+        if q.startswith("*."):
+            q = q[2:]
 
-    # Reject if contains path-like characters (more than one / or unusual chars)
-    # Domain should only contain letters, digits, hyphens, dots
-    if not _re.match(r"^[a-zA-Z0-9.\-]+$", q):
-        return None
+        # Validate: must look like a domain (has TLD with 2+ chars)
+        # Must have at least one dot and a plausible TLD
+        if not q or "." not in q:
+            continue
 
-    # Reject single-char TLDs or obviously invalid
-    tld = q.rsplit(".", 1)[-1] if "." in q else ""
-    if len(tld) < 2:
-        return None
+        # Reject if it looks like an IP address
+        import re as _re
+        if _re.match(r"^\d{1,3}(\.\d{1,3}){3}$", q):
+            continue
 
-    return q.lower()
+        # Reject if contains path-like characters (more than one / or unusual chars)
+        # Domain should only contain letters, digits, hyphens, dots
+        if not _re.match(r"^[a-zA-Z0-9.\-]+$", q):
+            continue
+
+        # Reject single-char TLDs or obviously invalid
+        tld = q.rsplit(".", 1)[-1] if "." in q else ""
+        if len(tld) < 2:
+            continue
+
+        return q.lower()
+
+    return None
 
 
 # -----------------------------------------------------------------------------

@@ -1100,6 +1100,10 @@ def build_acquisition_report(
 
     return {
         "schema_version": ACQUISITION_REPORT_SCHEMA_VERSION,
+        # F233B: Explicit marker so downstream tools (exporter, parser, KPI) can
+        # distinguish canonical from fallback without inspecting schema_version suffix.
+        # Fallback path (in core.__main__._scheduler_result_acquisition_payload) sets this to True.
+        "acquisition_report_fallback_used": False,
         "plan": plan_dicts,
         "terminality": terminality,
         "nonfeed_plan_debug": nonfeed_debug_dict,

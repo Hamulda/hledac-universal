@@ -60,6 +60,9 @@ class OneButtonVerdict(str, Enum):
     DO_NOT_RUN_CONTRACT = "DO_NOT_RUN_CONTRACT"
     DO_NOT_RUN_MEMORY_HARD_BLOCK = "DO_NOT_RUN_MEMORY_HARD_BLOCK"
     DO_NOT_RUN_UNKNOWN = "DO_NOT_RUN_UNKNOWN"
+    # F233F: Split gate — nonfeed capability vs feed baseline
+    READY_FOR_NONFEED_CAPABILITY_RUN = "READY_FOR_NONFEED_CAPABILITY_RUN"
+    READY_FOR_FEED_BASELINE_ONLY = "READY_FOR_FEED_BASELINE_ONLY"
 
 
 # --------------------------------------------------------------------------- #
@@ -525,6 +528,14 @@ class OneButtonResult:
     live_command: dict = field(default_factory=dict)  # {command, expected_assertions}
     triage_verdict: Optional[str] = None
     triage_another_live_useful: Optional[bool] = None
+    # F233F: Split gate output contract
+    capability_live_allowed: bool = False  # nonfeed capability run allowed
+    feed_baseline_allowed: bool = False    # feed baseline run allowed
+    why_nonfeed_capability_blocked: str = ""  # reason if capability blocked
+    degraded_but_allowed: bool = False    # provider surface degraded but explicitly allowed
+    canonical_fallback_detected: bool = False  # canonical acquisition fallback detected
+    f232g_research_quality_present: bool = False  # F232G research_quality truth present
+    f233d_nonfeed_prelude_coverage: bool = False  # F233D nonfeed prelude coverage artifact present
 
     def to_dict(self) -> dict:
         return {
@@ -546,6 +557,14 @@ class OneButtonResult:
             "live_command": self.live_command,
             "triage_verdict": self.triage_verdict,
             "triage_another_live_useful": self.triage_another_live_useful,
+            # F233F: Split gate output contract
+            "capability_live_allowed": self.capability_live_allowed,
+            "feed_baseline_allowed": self.feed_baseline_allowed,
+            "why_nonfeed_capability_blocked": self.why_nonfeed_capability_blocked,
+            "degraded_but_allowed": self.degraded_but_allowed,
+            "canonical_fallback_detected": self.canonical_fallback_detected,
+            "f232g_research_quality_present": self.f232g_research_quality_present,
+            "f233d_nonfeed_prelude_coverage": self.f233d_nonfeed_prelude_coverage,
         }
 
 
@@ -705,62 +724,192 @@ def run_one_button_gate(
         "query": query,
     }
 
-    # 9. Decision tree
+    # --------------------------------------------------------------------------- #
+    # 7. F233F: Additional capability checks (nonfeed profile only)
+    # --------------------------------------------------------------------------- #
+    is_nonfeed_profile = profile in ("nonfeed_diagnostic", "nonfeed_diagnostic180", "active300")
+
+    # F232G: research_quality truth present (from F231D)
+    f232g_research_quality_present = False
+    if is_nonfeed_profile:
+        f231d_path = repo_root / "probe_f231d_research_quality_v2" / "research_quality_v2.json"
+        if f231d_path.exists():
+            try:
+                with open(f231d_path, "r", encoding="utf-8") as fh:
+                    f231d_data = json.load(fh)
+                    # research_quality must be explicitly True in the artifact
+                    if f231d_data.get("research_quality") is True:
+                        f232g_research_quality_present = True
+            except Exception:
+                pass
+
+    # F233D: nonfeed prelude coverage artifact (if F233D complete)
+    f233d_nonfeed_prelude_coverage = False
+    if is_nonfeed_profile:
+        f233d_path = repo_root / "probe_f233d_nonfeed_prelude_coverage" / "nonfeed_prelude_coverage.json"
+        if f233d_path.exists():
+            try:
+                with open(f233d_path, "r", encoding="utf-8") as fh:
+                    f233d_data = json.load(fh)
+                    if f233d_data.get("coverage_present") is True:
+                        f233d_nonfeed_prelude_coverage = True
+            except Exception:
+                pass
+
+    # Canonical acquisition fallback check (from decision gate data)
+    canonical_fallback_detected = bool(decision_data.get("fallback_schema_blocked", False)) if decision_data else False
+
+    # --------------------------------------------------------------------------- #
+    # 8. F233F: Compute capability vs feed split
+    # --------------------------------------------------------------------------- #
+    # Initialize F233F split output fields (default values)
+    capability_live_allowed = False
+    feed_baseline_allowed = False
+    why_nonfeed_capability_blocked = ""
+    degraded_but_allowed = False
+
+    # Conditions that block ANY live run (feed or capability)
+    any_run_blocked = False
+    any_run_block_reason = ""
+
     # Rule 1: Missing F221 artifacts → DO_NOT_RUN_FIX_ARTIFACTS
     if missing_f221:
+        any_run_blocked = True
+        any_run_block_reason = "missing_f221"
         verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
         live_allowed = False
+        capability_live_allowed = False
+        feed_baseline_allowed = False
         reasons.append(f"Missing required F221 probe artifacts: {', '.join(missing_f221)}")
         if missing_cross_sprint:
             reasons.append(f"Also missing cross-sprint artifacts: {', '.join(missing_cross_sprint)}")
 
-    # Rule 1b: Missing F223 required artifacts → DO_NOT_RUN_FIX_ARTIFACTS (Sprint F224E)
+    # Rule 1b: Missing F223 required artifacts → DO_NOT_RUN_FIX_ARTIFACTS
     elif missing_f223_required:
+        any_run_blocked = True
+        any_run_block_reason = "missing_f223"
         verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
         live_allowed = False
+        capability_live_allowed = False
+        feed_baseline_allowed = False
         reasons.append(f"Missing required F223 post-F223 probe artifacts: {', '.join(missing_f223_required)}")
 
-    # Rule 2: Fallback schema → DO_NOT_RUN_CONTRACT
+    # Rule 2: Fallback schema → DO_NOT_RUN_CONTRACT (blocks both)
     elif fallback_blocked:
+        any_run_blocked = True
+        any_run_block_reason = "fallback_schema"
         verdict = OneButtonVerdict.DO_NOT_RUN_CONTRACT
         live_allowed = False
+        capability_live_allowed = False
+        feed_baseline_allowed = False
+        canonical_fallback_detected = True
+        why_nonfeed_capability_blocked = "canonical_fallback_detected"
         reasons.append("Fallback acquisition schema detected in prelive reports")
 
-    # Rule 3: Provider surface broken → DO_NOT_RUN_PROVIDER_SURFACE
+    # Rule 3: Provider surface broken → DO_NOT_RUN_PROVIDER_SURFACE (blocks both)
     elif not provider_surface_ok:
+        any_run_blocked = True
+        any_run_block_reason = "provider_surface"
         verdict = OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE
         live_allowed = False
+        capability_live_allowed = False
+        feed_baseline_allowed = False
+        why_nonfeed_capability_blocked = "provider_surface_missing_or_failing"
         reasons.append("Provider surface missing or failing (public bootstrap / CT resilience)")
 
-    # Rule 4: UMA emergency/critical → DO_NOT_RUN_UNKNOWN (memory issue)
+    # Rule 4: UMA emergency/critical → DO_NOT_RUN_UNKNOWN
     elif uma_state in ("critical", "emergency"):
+        any_run_blocked = True
+        any_run_block_reason = "uma_critical"
         verdict = OneButtonVerdict.DO_NOT_RUN_UNKNOWN
         live_allowed = False
+        capability_live_allowed = False
+        feed_baseline_allowed = False
+        why_nonfeed_capability_blocked = f"uma_state={uma_state}"
         reasons.append(f"UMA state {uma_state} — restart required before any run")
         swap_policy_tier = "hard_block"
         swap_gate_reason = f"uma_state={uma_state}"
 
     # Rule 5: Swap > DIAGNOSTIC_SWAP_MAX_GIB → DO_NOT_RUN_MEMORY_HARD_BLOCK
     elif swap_gib > DIAGNOSTIC_SWAP_MAX_GIB:
+        any_run_blocked = True
+        any_run_block_reason = "swap_hard_block"
         verdict = OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK
         live_allowed = False
+        capability_live_allowed = False
+        feed_baseline_allowed = False
+        why_nonfeed_capability_blocked = f"swap={swap_gib:.3f}GiB_exceeds_hard_block_threshold"
         reasons.append(f"Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run")
         warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
 
-    # Rule 6: Diagnostic-tier swap (2.0 < swap <= 4.0 GiB) → RESTART_THEN_RUN
-    elif swap_policy_tier == "diagnostic":
-        verdict = OneButtonVerdict.RESTART_THEN_RUN
-        live_allowed = False
-        reasons.append(f"Swap elevated ({swap_gate_reason}) — restart recommended before live run")
-        warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
+    # --------------------------------------------------------------------------- #
+    # F233F: Feed baseline allowed (memory OK, basic contracts pass)
+    # feed_baseline_allowed is True when:
+    #   - swap <= DIAGNOSTIC_SWAP_MAX_GIB (not hard_block)
+    #   - No contract/provider_surface/f221/f223 blocks
+    # --------------------------------------------------------------------------- #
+    if not any_run_blocked:
+        # Feed baseline always allowed for nonfeed profiles when basic checks pass
+        feed_baseline_allowed = True
 
-    # Rule 7: All clear → RUN_NOW
-    else:
-        verdict = OneButtonVerdict.RUN_NOW
-        live_allowed = True
-        reasons.append(f"All checks passed. UMA ok (swap={swap_gib:.3f}GiB, state={uma_state})")
-        if f221_valid_count < len(f221_results):
-            warnings.append(f"Only {f221_valid_count}/{len(f221_results)} F221 artifacts valid")
+        # --------------------------------------------------------------------------- #
+        # F233F: Nonfeed capability requires ALL of:
+        #   - provider_surface_ok=True (explicit, not degraded)
+        #   - NOT canonical_fallback_detected
+        #   - f232g_research_quality_present=True (F232G truth)
+        #   - f233d_nonfeed_prelude_coverage=True (F233D complete, or skip if not yet)
+        # --------------------------------------------------------------------------- #
+        why_blocked_parts: list[str] = []
+
+        cap_provider_ok = provider_surface_ok
+        cap_no_fallback = not canonical_fallback_detected
+        cap_f232g_ok = f232g_research_quality_present
+        # F233D prelude: if artifact doesn't exist yet, treat as not-yet-required (pass-soft)
+        cap_f233d_ok = True  # F233D not yet written, so soft-fail
+
+        if not cap_provider_ok:
+            why_blocked_parts.append("provider_surface_degraded")
+        if not cap_no_fallback:
+            why_blocked_parts.append("canonical_fallback_detected")
+        if not cap_f232g_ok:
+            why_blocked_parts.append("f232g_research_quality_missing")
+
+        capability_live_allowed = cap_provider_ok and cap_no_fallback and cap_f232g_ok and cap_f233d_ok
+
+        if not capability_live_allowed:
+            why_nonfeed_capability_blocked = "; ".join(why_blocked_parts) if why_blocked_parts else "unknown_capability_block"
+
+        # --------------------------------------------------------------------------- #
+        # F233F: Determine verdict based on capability vs feed split
+        # --------------------------------------------------------------------------- #
+        # Rule 6: Diagnostic-tier swap (2.0 < swap <= 4.0 GiB) → RESTART_THEN_RUN
+        if swap_policy_tier == "diagnostic":
+            if capability_live_allowed:
+                verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
+                live_allowed = True  # capability allowed with taint
+            else:
+                verdict = OneButtonVerdict.RESTART_THEN_RUN
+                live_allowed = False  # feed baseline allowed but elevated swap
+            feed_baseline_allowed = True  # feed always allowed when we reach here
+            reasons.append(f"Swap elevated ({swap_gate_reason}) — restart recommended before clean run")
+            warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
+
+        # Rule 7: All clear — clean swap, no blocks
+        else:
+            if capability_live_allowed:
+                verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
+                live_allowed = True
+                reasons.append(f"All nonfeed capability checks passed. UMA ok (swap={swap_gib:.3f}GiB, state={uma_state})")
+                if not f232g_research_quality_present and is_nonfeed_profile:
+                    warnings.append("F232G research_quality not confirmed — capability run may be degraded")
+            else:
+                # Feed baseline allowed, capability blocked
+                verdict = OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY
+                live_allowed = True  # feed baseline is allowed
+                capability_live_allowed = False
+                reasons.append(f"Feed baseline ready. Nonfeed capability blocked: {why_nonfeed_capability_blocked}")
+                if f221_valid_count < len(f221_results):
+                    warnings.append(f"Only {f221_valid_count}/{len(f221_results)} F221 artifacts valid")
 
     # Last-live triage context
     if triage_verdict:
@@ -787,6 +936,14 @@ def run_one_button_gate(
         live_command=live_command,
         triage_verdict=triage_verdict,
         triage_another_live_useful=triage_another_live_useful,
+        # F233F: Split gate output contract
+        capability_live_allowed=capability_live_allowed,
+        feed_baseline_allowed=feed_baseline_allowed,
+        why_nonfeed_capability_blocked=why_nonfeed_capability_blocked,
+        degraded_but_allowed=not provider_surface_ok and live_allowed,
+        canonical_fallback_detected=canonical_fallback_detected,
+        f232g_research_quality_present=f232g_research_quality_present,
+        f233d_nonfeed_prelude_coverage=f233d_nonfeed_prelude_coverage,
     )
 
 
@@ -804,6 +961,9 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
         OneButtonVerdict.DO_NOT_RUN_CONTRACT: "❌",
         OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: "🚫",
         OneButtonVerdict.DO_NOT_RUN_UNKNOWN: "⚠️",
+        # F233F: new split verdicts
+        OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN: "✅",
+        OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY: "🟡",
     }
     icon = icon_map.get(result.verdict, "?")
 
@@ -919,6 +1079,37 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
     ps_icon = "✅" if result.provider_surface_ok else "❌"
     lines.append(f"- **OK:** {ps_icon} `{result.provider_surface_ok}`")
     lines.append(f"- **Fallback Schema Blocked:** `{result.fallback_schema_blocked}`")
+
+    # F233F: Split gate output contract
+    lines.extend(["", "---", "", "## F233F Gate: Capability vs Feed Split", ""])
+    lines.extend([
+        f"| Field | Value |",
+        f"|-------|-------|",
+        f"| Live Allowed | `{result.live_allowed}` |",
+        f"| Capability Live Allowed | `{result.capability_live_allowed}` |",
+        f"| Feed Baseline Allowed | `{result.feed_baseline_allowed}` |",
+        f"| Why Capability Blocked | `{result.why_nonfeed_capability_blocked}` |",
+        f"| Degraded But Allowed | `{result.degraded_but_allowed}` |",
+        f"| Canonical Fallback Detected | `{result.canonical_fallback_detected}` |",
+        f"| F232G Research Quality Present | `{result.f232g_research_quality_present}` |",
+        f"| F233D Nonfeed Prelude Coverage | `{result.f233d_nonfeed_prelude_coverage}` |",
+    ])
+
+    # F233F: Exact command per allowed run type
+    if result.capability_live_allowed:
+        lines.extend(["", "### Exact Command (Nonfeed Capability)", ""])
+        lines.append("```bash")
+        lines.append(f"{result.live_command.get('command', '')}")
+        lines.append("```")
+    elif result.feed_baseline_allowed:
+        lines.extend(["", "### Exact Command (Feed Baseline)", ""])
+        lines.append("_Nonfeed capability blocked. Feed baseline run:_")
+        lines.append("```bash")
+        lines.append(f"{result.live_command.get('command', '')}")
+        lines.append("```")
+    else:
+        lines.extend(["", "### Exact Command", ""])
+        lines.append("_No run type currently allowed._")
 
     if result.triage_verdict:
         lines.extend(["", "---", "", "## Last-Live Triage", ""])
@@ -1492,12 +1683,18 @@ def main() -> int:
         OneButtonVerdict.DO_NOT_RUN_CONTRACT: "❌",
         OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: "🚫",
         OneButtonVerdict.DO_NOT_RUN_UNKNOWN: "⚠️",
+        OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN: "✅",
+        OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY: "🟡",
     }
     icon = icon_map.get(result.verdict, "?")
     print(f"{'=' * 60}")
     print(f"  Verdict:      {icon} {result.verdict.value}")
     print(f"  Live Allowed: {result.live_allowed}")
+    print(f"  Capability Allowed: {result.capability_live_allowed}")
+    print(f"  Feed Baseline Allowed: {result.feed_baseline_allowed}")
     print(f"  Swap Tier:    {result.swap_policy_tier}")
+    if result.why_nonfeed_capability_blocked:
+        print(f"  Capability Blocked: {result.why_nonfeed_capability_blocked}")
     print(f"{'=' * 60}")
     if result.reasons:
         print("Reasons:")
