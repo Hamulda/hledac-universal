@@ -523,9 +523,24 @@ async def _run_live_sprint(query: str, profile: str, duration_s: int, aggressive
     try:
         logging.info('[LIVE] Starting sprint measurement_id=%s sprint_id=%s profile=%s duration=%ds', measurement_id, harness_sprint_id, profile, duration_s)
         _windup_lead_s = PROFILE_META.get(profile, {}).get('expected_windup_lead_s')
-        _acquisition_profile = _resolve_acquisition_profile(profile)
-        os.environ['HLEDAC_ACQUISITION_PROFILE'] = _acquisition_profile
-        await core_main.run_sprint(query=query, duration_s=float(duration_s), export_dir=export_dir, aggressive_mode=aggressive_mode, deep_probe_enabled=deep_probe, ui_mode=False, windup_lead_s=_windup_lead_s, acquisition_profile=_acquisition_profile)
+        # F232: Resolve benchmark alias to canonical acquisition profile BEFORE setting
+        # env or passing to run_sprint. The env var is a fallback read by
+        # build_acquisition_plan — setting it to the raw alias would corrupt
+        # NonfeedPlanDebug.acquisition_profile before run_sprint's own normalization.
+        # F232: Also save/restore to prevent profile leakage across runs in the
+        # same process (benchmark harness may run multiple measurements).
+        _resolved_profile = _resolve_acquisition_profile(profile)
+        _prior_env = os.environ.get('HLEDAC_ACQUISITION_PROFILE')
+        os.environ['HLEDAC_ACQUISITION_PROFILE'] = _resolved_profile
+        try:
+            await core_main.run_sprint(query=query, duration_s=float(duration_s), export_dir=export_dir, aggressive_mode=aggressive_mode, deep_probe_enabled=deep_probe, ui_mode=False, windup_lead_s=_windup_lead_s, acquisition_profile=_resolved_profile)
+        finally:
+            # F232: Restore prior env to prevent profile leakage.
+            # Uses finally=always-run so env is cleaned up even when run_sprint raises.
+            if _prior_env is not None:
+                os.environ['HLEDAC_ACQUISITION_PROFILE'] = _prior_env
+            else:
+                os.environ.pop('HLEDAC_ACQUISITION_PROFILE', None)
         end_time_iso = _now_iso()
         actual_duration_s = time.monotonic() - start_ts
         uma_post = await _capture_uma()

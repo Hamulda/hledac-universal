@@ -389,6 +389,21 @@ def _scheduler_result_acquisition_payload(
             ct_cache_age_s=getattr(result, "ct_cache_age_s", 0.0),
             ct_quarantine_count=getattr(result, "ct_quarantine_count", 0),
             ct_quarantine_samples=list(getattr(result, "ct_quarantine_samples", ()) or ()),
+            # F232: CT loss-stage telemetry
+            ct_planned=getattr(result, "ct_planned", False),
+            ct_scheduled=getattr(result, "ct_scheduled", False),
+            ct_provider_selected=getattr(result, "ct_provider_selected", ""),
+            ct_request_attempted=getattr(result, "ct_request_attempted", False),
+            ct_request_timeout=getattr(result, "ct_request_timeout", False),
+            ct_raw_count=getattr(result, "ct_raw_count", 0),
+            ct_bridge_invoked=getattr(result, "ct_bridge_invoked", False),
+            ct_candidates_built=getattr(result, "ct_candidates_built", 0),
+            ct_storage_attempted=getattr(result, "ct_storage_attempted", False),
+            ct_storage_accepted=getattr(result, "ct_storage_accepted", False),
+            ct_terminal_stage=getattr(result, "ct_terminal_stage", ""),
+            ct_prelude_missing_but_final_attempted=getattr(
+                result, "ct_prelude_missing_but_final_attempted", False
+            ),
             # F216G: Quality/duplicate/low-info rejection ledgers (from result if available)
             quality_rejection_summary_by_family=getattr(result, "quality_rejection_summary_by_family", None),
             duplicate_rejection_summary_by_family=getattr(result, "duplicate_rejection_summary_by_family", None),
@@ -460,6 +475,21 @@ def _scheduler_result_acquisition_payload(
             "ct_cache_age_s": getattr(result, "ct_cache_age_s", 0.0),
             "ct_quarantine_count": getattr(result, "ct_quarantine_count", 0),
             "ct_quarantine_samples": list(getattr(result, "ct_quarantine_samples", ()) or ()),
+            # F232: CT loss-stage telemetry
+            "ct_planned": getattr(result, "ct_planned", False),
+            "ct_scheduled": getattr(result, "ct_scheduled", False),
+            "ct_provider_selected": getattr(result, "ct_provider_selected", ""),
+            "ct_request_attempted": getattr(result, "ct_request_attempted", False),
+            "ct_request_timeout": getattr(result, "ct_request_timeout", False),
+            "ct_raw_count": getattr(result, "ct_raw_count", 0),
+            "ct_bridge_invoked": getattr(result, "ct_bridge_invoked", False),
+            "ct_candidates_built": getattr(result, "ct_candidates_built", 0),
+            "ct_storage_attempted": getattr(result, "ct_storage_attempted", False),
+            "ct_storage_accepted": getattr(result, "ct_storage_accepted", False),
+            "ct_terminal_stage": getattr(result, "ct_terminal_stage", ""),
+            "ct_prelude_missing_but_final_attempted": getattr(
+                result, "ct_prelude_missing_but_final_attempted", False
+            ),
             # F216G: Quality/duplicate/low-info rejection ledgers
             "quality_rejection_summary_by_family": None,
             "duplicate_rejection_summary_by_family": None,

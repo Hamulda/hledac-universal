@@ -783,6 +783,12 @@ class DuckDBShadowStore:
         # Lazy init — created on first async_initialize() call
         self._semantic_dedup_cache: Optional[Any] = None
 
+        # Sprint F233A: WAL LMDB — initialized lazily in async_initialize(), NOT in __init__.
+        # Added to __init__ so aclose() guards work correctly before first async_initialize():
+        #   if getattr(self, "_wal_lmdb", None) is not None: ...
+        # is safe even when the store was never async_initialize()d.
+        self._wal_lmdb: Optional[Any] = None
+
 
     def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
         """
@@ -5596,11 +5602,14 @@ class DuckDBShadowStore:
             pass
 
         # Sprint 8QA: cancel pending background tasks
-        if self._bg_tasks:
-            for t in self._bg_tasks:
+        # F233A fix: use getattr() instead of hasattr() — _bg_tasks is always set in __init__
+        # so hasattr always True; getattr correctly returns the empty set before first use
+        _bg = getattr(self, "_bg_tasks", None)
+        if _bg:
+            for t in _bg:
                 t.cancel()
-            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
-            self._bg_tasks.clear()
+            await asyncio.gather(*_bg, return_exceptions=True)
+            _bg.clear()
 
         # Sprint 8WA: close truth-write graph (IOCGraph with buffer_ioc/flush_buffers)
         # GUARD: flush_buffers is IOCGraph-only. DuckPGQGraph has no flush_buffers.
@@ -5649,17 +5658,21 @@ class DuckDBShadowStore:
         # existing one to allow async_initialize() to run again on the same store
         # instance after aclose().
         # Sprint 8L: close WAL LMDB to release lock files
-        if hasattr(self, "_wal_lmdb") and self._wal_lmdb is not None:
+        # F233A: _wal_lmdb is declared in __init__ so getattr() is safe
+        _wal = getattr(self, "_wal_lmdb", None)
+        if _wal is not None:
             try:
-                self._wal_lmdb.close()
+                _wal.close()
             except Exception:
                 pass
             self._wal_lmdb = None
 
         # Sprint 8AG: close dedup LMDB — mirrors _do_close() symmetry
-        if hasattr(self, "_dedup_lmdb") and self._dedup_lmdb is not None:
+        # F233A: _dedup_lmdb is declared in __init__ so getattr() is safe
+        _dedup = getattr(self, "_dedup_lmdb", None)
+        if _dedup is not None:
             try:
-                self._dedup_lmdb.close()
+                _dedup.close()
             except Exception:
                 pass
             self._dedup_lmdb = None

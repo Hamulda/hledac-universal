@@ -914,6 +914,19 @@ def build_acquisition_report(
     ct_cache_age_s: float = 0.0,
     ct_quarantine_count: int = 0,
     ct_quarantine_samples: list[str] | None = None,
+    # F232: CT loss-stage telemetry — full acquisition pipeline accounting
+    ct_planned: bool = False,
+    ct_scheduled: bool = False,
+    ct_provider_selected: str = "",
+    ct_request_attempted: bool = False,
+    ct_request_timeout: bool = False,
+    ct_raw_count: int = 0,
+    ct_bridge_invoked: bool = False,
+    ct_candidates_built: int = 0,
+    ct_storage_attempted: bool = False,
+    ct_storage_accepted: bool = False,
+    ct_terminal_stage: str = "",
+    ct_prelude_missing_but_final_attempted: bool = False,
     # F216G: Quality/duplicate/low-info rejection ledgers
     quality_rejection_summary_by_family: dict | None = None,
     duplicate_rejection_summary_by_family: dict | None = None,
@@ -1114,6 +1127,19 @@ def build_acquisition_report(
         "ct_cache_age_s": ct_cache_age_s,
         "ct_quarantine_count": ct_quarantine_count,
         "ct_quarantine_samples": ct_quarantine_samples or [],
+        # F232: CT loss-stage telemetry
+        "ct_planned": ct_planned,
+        "ct_scheduled": ct_scheduled,
+        "ct_provider_selected": ct_provider_selected,
+        "ct_request_attempted": ct_request_attempted,
+        "ct_request_timeout": ct_request_timeout,
+        "ct_raw_count": ct_raw_count,
+        "ct_bridge_invoked": ct_bridge_invoked,
+        "ct_candidates_built": ct_candidates_built,
+        "ct_storage_attempted": ct_storage_attempted,
+        "ct_storage_accepted": ct_storage_accepted,
+        "ct_terminal_stage": ct_terminal_stage,
+        "ct_prelude_missing_but_final_attempted": ct_prelude_missing_but_final_attempted,
         # F216G: Quality/duplicate/low-info rejection ledgers
         "quality_rejection_summary_by_family": quality_rejection_summary_by_family or {},
         "duplicate_rejection_summary_by_family": duplicate_rejection_summary_by_family or {},
@@ -1255,11 +1281,15 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
                                "not_enabled" in skip_reason.lower()):
                 return "SKIPPED_BY_POLICY"
             return "SKIPPED"
-        # Attempted outcomes
-        if error:
-            return "ATTEMPTED_ERROR"
+        # Attempted outcomes — timeout flag is authoritative when True.
+        # When error="timeout" but timeout=False, the error field says "timeout" but flag is False.
+        # Treat this as ATTEMPTED_TIMEOUT since error="timeout" signals a timeout event.
         if timeout:
             return "ATTEMPTED_TIMEOUT"
+        if error == "timeout":
+            return "ATTEMPTED_TIMEOUT"
+        if error:
+            return "ATTEMPTED_ERROR"
         if accepted_count > 0:
             return "ATTEMPTED_ACCEPTED"
         return "ATTEMPTED_NO_RESULTS"

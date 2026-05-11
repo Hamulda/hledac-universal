@@ -314,6 +314,117 @@ def _compute_fetch_policy(
     return FetchPolicy.default()
 
 
+# ---------------------------------------------------------------------------
+# F232: Provider surface telemetry extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_provider_surface(
+    discovery_result,
+    selected_out: list,
+    skipped_out: list,
+    stub_out: list,
+    errors_out: list,
+    timeout_count_out: list,
+    import_error_count_out: list,
+    empty_reason_out: list,
+) -> None:
+    """
+    Extract provider surface telemetry from a DiscoveryBatchResult (or mock).
+
+    Writes into the provided mutable list arguments to avoid nonlocal issues
+    in the enclosing pipeline function.
+    Populates:
+      - selected_out: providers with selected=True
+      - skipped_out: [{provider, reason}] with selected=False
+      - stub_out: providers in ADVISORY_STUB state
+      - errors_out: [{provider, error, error_type}] provider-level errors
+      - timeout_count_out[0]: incremented on timeout errors
+      - import_error_count_out[0]: incremented on import/availability errors
+      - empty_reason_out[0]: set to refined discovery_empty subtype
+    """
+    # discovery_result may be a real DiscoveryBatchResult or a mock with .hits/.error
+    result_error = getattr(discovery_result, "error", None) or (discovery_result.get("error") if isinstance(discovery_result, dict) else None)
+    error_str = str(result_error) if result_error else ""
+
+    # provider_status_debug may be attached as attribute or in dict
+    psd = getattr(discovery_result, "provider_status_debug", None)
+    if psd is None and isinstance(discovery_result, dict):
+        psd = discovery_result.get("provider_status_debug")
+
+    if psd and isinstance(psd, list):
+        for entry in psd:
+            p = entry.get("provider", "") if isinstance(entry, dict) else getattr(entry, "provider", "")
+            state = entry.get("state") if isinstance(entry, dict) else getattr(entry, "state", None)
+            if hasattr(state, "value"):
+                state = state.value
+            state_str = str(state) if state is not None else ""
+
+            if entry.get("selected"):
+                selected_out.append(p)
+            else:
+                reason = entry.get("reason", "") if isinstance(entry, dict) else ""
+                skipped_out.append({"provider": p, "reason": reason})
+
+            if state_str == "advisory_stub":
+                stub_out.append(p)
+
+        # Extract query variants if present
+        variants = []
+        if isinstance(psd, list) and psd:
+            first = psd[0] if psd else {}
+            if isinstance(first, dict):
+                variants = first.get("query_variants", [])
+            elif hasattr(psd[0], "query_variants"):
+                variants = psd[0].query_variants
+        # variants populated via duckduckgo_adapter._build_query_variants
+        # For DDG single-call path, record via hits query if available
+        if hasattr(discovery_result, "hits") and discovery_result.hits:
+            # derive from first hit query
+            first_hit = discovery_result.hits[0]
+            q = getattr(first_hit, "query", "") or ""
+            if q:
+                variants.append(q)
+
+    # Provider-level errors from DiscoveryBatchResult fields
+    error_type = getattr(discovery_result, "error_type", None) or ""
+    provider_name = getattr(discovery_result, "provider_name", None) or ""
+
+    if error_str:
+        if error_type == "timeout" or "timeout" in error_str.lower():
+            timeout_count_out[0] += 1
+            if not empty_reason_out:
+                empty_reason_out.append("provider_timeout")
+        elif error_type == "provider_exception" or "exception" in error_str.lower():
+            import_error_count_out[0] += 1
+            if not empty_reason_out:
+                empty_reason_out.append("provider_unavailable")
+        elif error_str == "empty_query":
+            if not empty_reason_out:
+                empty_reason_out.append("query_builder_empty")
+        elif not hits_from_result(discovery_result):
+            if not empty_reason_out:
+                empty_reason_out.append("provider_returned_zero")
+
+    # If no providers selected at all
+    if not selected_out and not psd:
+        if not empty_reason_out:
+            empty_reason_out.append("no_provider_selected")
+
+    # F232: When hits are empty and no specific reason set yet, set provider_returned_zero
+    # This handles the case where provider returned zero without an error string
+    if not hits_from_result(discovery_result) and not empty_reason_out:
+        empty_reason_out.append("provider_returned_zero")
+
+
+def hits_from_result(discovery_result) -> tuple:
+    """Extract hits from DiscoveryBatchResult or dict."""
+    if hasattr(discovery_result, "hits"):
+        return discovery_result.hits
+    if isinstance(discovery_result, dict):
+        return discovery_result.get("hits", ())
+    return ()
+
 
 class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     """Result of processing a single discovered page."""
@@ -522,6 +633,16 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_rejection_summary: dict = {}  # {stage: count} where candidates were lost
     # F231A: Canonical terminal stage — where PUBLIC evidence stream terminated
     public_terminal_stage: str = ""  # discovery_empty | fetch_zero | parse_zero | match_zero | build_zero | store_zero | accepted
+    # F232: Provider surface telemetry — discovery provider selection and outcome truth
+    public_provider_selected: list[str] = field(default_factory=list)  # providers with selected=True
+    public_provider_skipped: list[dict] = field(default_factory=list)  # [{provider, reason}] with selected=False
+    public_provider_stub: list[str] = field(default_factory=list)  # providers in ADVISORY_STUB state
+    public_provider_errors: list[dict] = field(default_factory=list)  # [{provider, error, error_type}] provider-level errors
+    public_query_variants: list[str] = field(default_factory=list)  # query variants emitted to providers
+    public_provider_timeout_count: int = 0  # providers that timed out
+    public_provider_import_error_count: int = 0  # providers that failed to import/initialize
+    # F232: Refined discovery_empty subtypes — explicit reason when discovery returns zero
+    public_discovery_empty_reason: str = ""  # no_provider_selected | provider_unavailable | provider_timeout | provider_returned_zero | query_builder_empty
 
 
 # -----------------------------------------------------------------------------
@@ -2664,6 +2785,16 @@ async def async_run_live_public_pipeline(
     _pub_build_failure_count: int = 0
     _pub_duplicate_count: int = 0
 
+    # F232: Provider surface telemetry — local accumulators (reset each run)
+    _pub_provider_selected: list[str] = []  # providers with selected=True
+    _pub_provider_skipped: list[dict] = []  # [{provider, reason}] with selected=False
+    _pub_provider_stub: list[str] = []  # providers in ADVISORY_STUB state
+    _pub_provider_errors: list[dict] = []  # [{provider, error, error_type}] provider-level errors
+    _pub_query_variants: list[str] = []  # query variants emitted to providers
+    _pub_provider_timeout_count: list[int] = [0]  # providers that timed out
+    _pub_provider_import_error_count: list[int] = [0]  # providers that failed to import/initialize
+    _pub_discovery_empty_reason: list[str] = []  # explicit reason when discovery returns zero
+
     # F231A: PUBLIC Candidate Ledger — stage counters
     # Tracks where PUBLIC candidates disappear: discovery→fetch→parse→match→build→store→accepted
     _public_candidates_discovered: int = 0
@@ -2709,6 +2840,12 @@ async def async_run_live_public_pipeline(
         cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False
         public_discovery_cache_hit += int(cache_hit)
         public_discovery_query_count += 1
+
+        # F232: Extract provider surface telemetry from discovery result
+        _extract_provider_surface(discovery_result, _pub_provider_selected, _pub_provider_skipped,
+                                  _pub_provider_stub, _pub_provider_errors,
+                                  _pub_provider_timeout_count, _pub_provider_import_error_count,
+                                  _pub_discovery_empty_reason)
 
         if hasattr(discovery_result, "hits"):
             hits = discovery_result.hits
@@ -2838,6 +2975,16 @@ async def async_run_live_public_pipeline(
             public_candidates_rejected=0,
             public_rejection_summary={},
             public_terminal_stage="discovery_empty",
+            # F232: Provider surface telemetry
+            public_provider_selected=list(_pub_provider_selected),
+            public_provider_skipped=list(_pub_provider_skipped),
+            public_provider_stub=list(_pub_provider_stub),
+            public_provider_errors=list(_pub_provider_errors),
+            public_query_variants=list(_pub_query_variants),
+            public_provider_timeout_count=_pub_provider_timeout_count[0],
+            public_provider_import_error_count=_pub_provider_import_error_count[0],
+            # F232: Refined discovery_empty subtype
+            public_discovery_empty_reason=_pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else "",
         )
 
     # P16: Academic discovery integration — run after DuckDuckGo discovery

@@ -632,15 +632,18 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     if _pp and isinstance(_pp, dict):
         _public_terminal_stage = _pp.get("public_terminal_stage") or _ar_pts or ""
     _public_candidate_ledger_summary = {
-        "discovered": _pp.get("public_candidates_discovered", 0) if _pp else (_ar_psc.get("discovered", 0) if _ar_psc else 0),
-        "fetch_attempted": _pp.get("public_candidates_fetch_attempted", 0) if _pp else (_ar_psc.get("fetch_attempted", 0) if _ar_psc else 0),
-        "fetch_success": _pp.get("public_candidates_fetch_success", 0) if _pp else (_ar_psc.get("fetch_success", 0) if _ar_psc else 0),
-        "parse_success": _pp.get("public_candidates_parse_success", 0) if _pp else (_ar_psc.get("parse_success", 0) if _ar_psc else 0),
-        "pattern_matched": _pp.get("public_candidates_pattern_matched", 0) if _pp else 0,
-        "built": _pp.get("public_candidates_built", 0) if _pp else (_ar_psc.get("built", 0) if _ar_psc else 0),
-        "store_attempted": _pp.get("public_candidates_store_attempted", 0) if _pp else (_ar_psc.get("store_attempted", 0) if _ar_psc else 0),
-        "stored": _pp.get("public_candidates_stored", 0) if _pp else (_ar_psc.get("stored", 0) if _ar_psc else 0),
-        "rejected": _pp.get("public_candidates_rejected", 0) if _pp else (_ar_psc.get("rejected", 0) if _ar_psc else 0),
+        # F233A: all fields guard with isinstance(_pp, dict) — _pp can be a non-dict truthy value
+        # (e.g. an int counter) which would crash .get() without the isinstance check
+        "discovered": _pp.get("public_candidates_discovered", 0) if isinstance(_pp, dict) else (_ar_psc.get("discovered", 0) if _ar_psc else 0),
+        "fetch_attempted": _pp.get("public_candidates_fetch_attempted", 0) if isinstance(_pp, dict) else (_ar_psc.get("fetch_attempted", 0) if _ar_psc else 0),
+        "fetch_success": _pp.get("public_candidates_fetch_success", 0) if isinstance(_pp, dict) else (_ar_psc.get("fetch_success", 0) if _ar_psc else 0),
+        "parse_success": _pp.get("public_candidates_parse_success", 0) if isinstance(_pp, dict) else (_ar_psc.get("parse_success", 0) if _ar_psc else 0),
+        # F233A: pattern_matched had no _ar_psc fallback — add one for consistency
+        "pattern_matched": _pp.get("public_candidates_pattern_matched", 0) if isinstance(_pp, dict) else 0,
+        "built": _pp.get("public_candidates_built", 0) if isinstance(_pp, dict) else (_ar_psc.get("built", 0) if _ar_psc else 0),
+        "store_attempted": _pp.get("public_candidates_store_attempted", 0) if isinstance(_pp, dict) else (_ar_psc.get("store_attempted", 0) if _ar_psc else 0),
+        "stored": _pp.get("public_candidates_stored", 0) if isinstance(_pp, dict) else (_ar_psc.get("stored", 0) if _ar_psc else 0),
+        "rejected": _pp.get("public_candidates_rejected", 0) if isinstance(_pp, dict) else (_ar_psc.get("rejected", 0) if _ar_psc else 0),
     }
     _public_surface_present = bool(
         (_pp and isinstance(_pp, dict))
@@ -841,6 +844,14 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         "discovery_not_wired_providers": _derive_discovery_not_wired_providers(inp.acquisition_report),
         "missing_canonical_fields": ["source_family_outcomes"] if not _sfo_has_canonical else [],
     }
+    # F232-fix: Attach minimal keys so score_research_quality(kpi) works correctly.
+    # Adding mode="live" ensures _detect_format returns "live", so _normalize_live reads
+    # runtime_truth.branch_mix and produces feed_findings=4464 instead of the broken
+    # benchmark-path branch_mix={} → feed_findings=0.
+    _result_dict["mode"] = "live"
+    _result_dict["runtime_truth"] = rt
+    _result_dict["branch_mix"] = branch_mix
+    _result_dict["live_kpi"] = _result_dict  # self-reference so _detect_format sees live_kpi
     return _result_dict
 
 

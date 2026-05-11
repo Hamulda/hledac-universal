@@ -789,6 +789,21 @@ class SprintSchedulerResult:
     ct_cache_used: bool = False  # True when stale cache was used
     ct_cache_stale: bool = False  # True when cache was already stale when used
     ct_cache_age_s: float = 0.0  # Seconds since cache was written (0 if not cached)
+    # Sprint F232: CT loss-stage telemetry — full pipeline accounting from plan to storage
+    ct_planned: bool = False  # True when CT was in the acquisition plan
+    ct_scheduled: bool = False  # True when CT lane was actually scheduled
+    ct_provider_selected: str = ""  # Provider name (e.g. "crtsh") or ""
+    ct_request_attempted: bool = False  # True when HTTP request was made
+    ct_request_timeout: bool = False  # True when request timed out
+    ct_raw_count: int = 0  # Raw entries from adapter (already exists, ensure populated)
+    ct_bridge_invoked: bool = False  # True when ct_results_to_findings was called
+    ct_candidates_built: int = 0  # Candidates produced by bridge
+    ct_storage_attempted: bool = False  # True when storage was attempted
+    ct_storage_accepted: bool = False  # True when findings were accepted to storage
+    ct_terminal_stage: str = ""  # Final stage reached: planned|scheduled|provider_selected|
+                                  #   request_attempted|request_timeout|bridge_invoked|
+                                  #   candidates_built|storage_attempted|storage_accepted|skipped|error
+    ct_prelude_missing_but_final_attempted: bool = False  # CT missing at prelude but ran later
     # Sprint F166B: Pre-loop starvation tracking
     # Set when ACTIVE phase is first observed (loop guard entry)
     entered_active_at_monotonic: float | None = None
@@ -1877,6 +1892,9 @@ class SprintScheduler:
                 # F223A: Explicit acquisition profile override from config
                 acquisition_profile=self._config.acquisition_profile,
             )
+            # F232: ct_planned — CT was in the acquisition plan (enabled)
+            from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
+            self._result.ct_planned = is_lane_enabled(self._acquisition_plan, "CT")
             # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
             # F216F: Generate pivot candidates from query and fill telemetry
@@ -4090,6 +4108,11 @@ class SprintScheduler:
         # Missing lanes = required but not in terminal_lanes
         _missing = [r for r in _required if r not in _terminal_lanes]
         self._result.acquisition_prelude_missing_lanes = tuple(_missing)
+        # F232: ct_prelude_missing_but_final_attempted — CT missing at prelude but ran later
+        if "CT" in _missing:
+            self._result.ct_prelude_missing_but_final_attempted = getattr(
+                self._result, "ct_scheduled", False
+            )
 
         log.debug(
             "[F209A] Acquisition prelude done: required=%s, terminal=%s, missing=%s, "
@@ -4936,7 +4959,11 @@ class SprintScheduler:
 
         async def _run_ct_branch() -> None:
             """CT log discovery branch with remaining-time-aware asyncio.timeout."""
+            # F232: CT loss-stage telemetry — mark CT as scheduled when branch is invoked
+            self._result.ct_scheduled = True
             if self._ct_log_client is None or duckdb_store is None:
+                # F232: ct_terminal_stage — skipped because provider/store unavailable
+                self._result.ct_terminal_stage = "skipped"
                 return
             branch_timeout = self._branch_timeout_s("CT", remaining_s)
             if branch_timeout <= 0:
@@ -4944,11 +4971,14 @@ class SprintScheduler:
                 self._result.ct_log_error = "terminal:remaining_too_low"
                 return
             try:
+                # F232: ct_request_attempted — HTTP request was made
+                self._result.ct_request_attempted = True
                 async with _asyncio.timeout(branch_timeout):
                     await self._run_ct_log_discovery_in_cycle(query=query, store=duckdb_store)
             except _asyncio.TimeoutError:
                 log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
                 self._result.ct_branch_timed_out = True
+                self._result.ct_request_timeout = True
                 self._result.ct_log_error = "terminal:timeout"
             except _asyncio.CancelledError:
                 log.debug("[aggressive] CT branch cancelled")
@@ -4977,6 +5007,8 @@ class SprintScheduler:
                 log.debug("[aggressive] Branch(es) did not complete within %ss", outer_timeout)
                 self._result.public_branch_timed_out = True
                 self._result.ct_branch_timed_out = True
+                self._result.ct_request_timeout = True
+                self._result.ct_terminal_stage = "request_timeout"
                 self._result.branch_timeout_count += 2
                 self._result.public_error = "terminal:envelope_timeout"
                 self._result.ct_log_error = "terminal:envelope_timeout"
@@ -5385,7 +5417,12 @@ class SprintScheduler:
         Fail-soft: errors are accumulated but never raise or abort the sprint.
         """
         if self._ct_log_client is None or store is None:
+            # F232: ct_terminal_stage — provider unavailable
+            self._result.ct_terminal_stage = "provider_unavailable"
             return
+
+        # F232: ct_provider_selected — provider is available
+        self._result.ct_provider_selected = "crtsh"
 
         import re
 
@@ -5395,7 +5432,11 @@ class SprintScheduler:
         )
         domain = matches[0].lstrip("www.") if matches else query.strip()
         if not domain:
+            self._result.ct_terminal_stage = "no_domain"
             return
+
+        # F232: ct_terminal_stage — domain extracted, about to request
+        self._result.ct_terminal_stage = "request_attempted"
 
         session = None
         try:
@@ -5403,6 +5444,15 @@ class SprintScheduler:
             session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
             ct_result = await self._ct_log_client.pivot_domain(domain, session)
             findings = self._ct_log_client.to_canonical_findings(ct_result, query)
+            # F232: ct_bridge_invoked — bridge (to_canonical_findings) was called
+            self._result.ct_bridge_invoked = True
+            self._result.ct_raw_count = getattr(ct_result, "raw_count", len(findings))
+            self._result.ct_candidates_built = len(findings)
+            # F232: ct_terminal_stage — bridge produced candidates
+            if findings:
+                self._result.ct_terminal_stage = "candidates_built"
+            else:
+                self._result.ct_terminal_stage = "no_candidates"
             self._result.ct_log_discovered = len(findings)
             if findings:
                 # Sprint F195C: Enrich findings before storage (fail-safe — never crashes)
@@ -5411,9 +5461,18 @@ class SprintScheduler:
                 await self._enrich_findings_multimodal(findings)
                 # Sprint F198A: Accumulate findings to cross-sprint graph (fail-soft)
                 self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
+                # F232: ct_storage_attempted — storage was attempted
+                self._result.ct_storage_attempted = True
                 results = await store.async_ingest_findings_batch(findings)
                 stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
                 self._result.ct_log_stored = stored
+                # F232: ct_storage_accepted — at least one finding was accepted
+                self._result.ct_storage_accepted = stored > 0
+                # F232: ct_terminal_stage — final stage
+                if stored > 0:
+                    self._result.ct_terminal_stage = "storage_accepted"
+                else:
+                    self._result.ct_terminal_stage = "storage_rejected"
                 # Sprint F194A: ct_log_accepted_findings tracks accepted CT findings
                 # for canonical truth accounting (additive to feed/public accepted_findings)
                 self._result.ct_log_accepted_findings = stored
@@ -5432,6 +5491,7 @@ class SprintScheduler:
                     await self._run_target_memory_update(accepted_findings, store, query)
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
+            self._result.ct_terminal_stage = "error"
             logging.getLogger(__name__).warning("CT log discovery failed: %s", exc)
         finally:
             if session is not None:

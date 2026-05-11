@@ -681,6 +681,13 @@ _DOMAIN_LIKE_RE: re.Pattern = re.compile(
 )
 """Regex to detect domain-like query strings suitable for variant expansion."""
 
+# Sprint F232: Domain token extraction for mixed queries
+# Matches domain tokens inside longer queries (e.g., "mozilla.org certificate transparency")
+_DOMAIN_TOKEN_RE: re.Pattern = re.compile(
+    r"\b([a-zA-Z0-9][a-zA-Z0-9.\-]*\.[a-zA-Z]{2,})\b"
+)
+"""Extract domain-like tokens from mixed queries."""
+
 
 def _query_looks_like_domain(query: str) -> bool:
     """
@@ -698,27 +705,62 @@ def _query_looks_like_domain(query: str) -> bool:
     return bool(_DOMAIN_LIKE_RE.match(q))
 
 
+def _extract_domain_token(query: str) -> str | None:
+    """
+    Sprint F232: Extract the first domain-like token from a mixed query.
+
+    For "mozilla.org certificate transparency subdomains april 2026" returns "mozilla.org".
+    For "example.com" returns "example.com".
+    For "site:example.com" returns "example.com" (strips the site: prefix).
+    For "plain text query" returns None.
+    """
+    q = query.strip()
+    if not q:
+        return None
+    # Strip site: prefix if present
+    if q.lower().startswith("site:"):
+        q = q[5:].strip()
+    # Try exact domain match first
+    if _DOMAIN_LIKE_RE.match(q):
+        return q
+    # Scan for domain token inside longer query
+    match = _DOMAIN_TOKEN_RE.search(q)
+    if match:
+        return match.group(1)
+    return None
+
+
 def _build_query_variants(query: str) -> list[str]:
     """
-    Sprint F213B: Generate bounded query variants for domain-like queries.
+    Sprint F213B + F232: Generate bounded query variants for domain-aware queries.
 
-    When query looks like a domain, returns up to 4 variants:
-      1. site:<domain>
-      2. "<domain>" security
-      3. "<domain>" infrastructure
-      4. "<domain>" subdomain
+    - Pure domain query ("example.com") → 4 site/subscription/infrastructure/subdomain variants
+    - Mixed query ("mozilla.org certificate transparency") → extract domain token + CT-aware variants
 
-    Otherwise returns [query] (single variant, no expansion).
+    Returns [query] (single variant, no expansion) when no domain token found.
     """
-    if not _query_looks_like_domain(query):
+    # Fast path: already a clean domain
+    if _query_looks_like_domain(query):
+        domain = query.strip()
+        variants = [
+            f"site:{domain}",
+            f'"{domain}" security',
+            f'"{domain}" infrastructure',
+            f'"{domain}" subdomain',
+        ]
+        return variants[:_MAX_QUERY_VARIANTS]
+
+    # F232: extract domain token from mixed query
+    domain = _extract_domain_token(query)
+    if domain is None:
         return [query]
 
-    domain = query.strip()
+    # Build CT-aware variants for extracted domain
     variants = [
         f"site:{domain}",
-        f'"{domain}" security',
-        f'"{domain}" infrastructure',
-        f'"{domain}" subdomain',
+        f'"{domain}" certificate transparency',
+        f'"{domain}" subdomains',
+        f'"{domain}" SSL certificate',
     ]
     return variants[:_MAX_QUERY_VARIANTS]
 
