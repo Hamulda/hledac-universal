@@ -23,7 +23,20 @@ if _universal not in sys.path:
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from runtime.acquisition_strategy import normalize_acquisition_profile, build_acquisition_plan
+import types as _types
+_hledac_stub = _types.ModuleType('hledac')
+_hledac_stub.__path__ = [_project_root, _universal]
+_hledac_stub.__file__ = f'{_project_root}/hledac/__init__.py'
+_hledac_stub.__package__ = 'hledac'
+_hledac_stub.__spec__ = None
+sys.modules['hledac'] = _hledac_stub
+# Also create hledac.universal namespace explicitly (Python doesn't auto-create sub-packages)
+_hledac_universal_stub = _types.ModuleType('hledac.universal')
+_hledac_universal_stub.__path__ = [_universal]
+_hledac_universal_stub.__package__ = 'hledac.universal'
+sys.modules['hledac.universal'] = _hledac_universal_stub
+
+from hledac.universal.runtime.acquisition_strategy import normalize_acquisition_profile, build_acquisition_plan
 
 __all__ = ["run_preflight"]
 
@@ -123,7 +136,7 @@ def check_acquisition_plan_ct_public_truth() -> tuple[bool, str]:
 def check_duckdb_shadow_aclose_before_init() -> tuple[bool, str]:
     """DuckDBShadowStore aclose() before initialize() does not crash."""
     try:
-        from knowledge.duckdb_store import DuckDBShadowStore
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         store = DuckDBShadowStore()
         # aclose should be safe even before async_initialize — Sprint F233A fix
@@ -152,7 +165,7 @@ def check_research_quality_replay_fixture() -> tuple[bool, str]:
       - feed_findings=4464, public_findings=0, ct_findings=0
     """
     try:
-        from tools.research_quality_score import score_research_quality
+        from hledac.universal.tools.research_quality_score import score_research_quality
 
         # Replay fixture mimicking F232 live run KPI state
         kpi_state = {
