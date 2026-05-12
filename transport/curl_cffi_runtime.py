@@ -31,7 +31,17 @@ _curl_cffi_lock = asyncio.Lock()
 _curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
 
 # Preferred profile fallback order
-_PROFILE_FALLBACK_ORDER = ["chrome136", "chrome120", "chrome110", "safari17_0"]
+# Targets: academia (Safari 17 Apple Silicon), government (Firefox 133+), mobile/android (Chrome Android 99+)
+_PROFILE_FALLBACK_ORDER = [
+    "chrome136",
+    "chrome124",
+    "chrome120",
+    "chrome110",
+    "safari17_0",
+    "firefox135",
+    "firefox133",
+    "chrome99_android",
+]
 
 
 def is_curl_cffi_available() -> tuple[bool, str]:

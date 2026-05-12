@@ -29,6 +29,7 @@ import io
 import json
 import math
 import os
+import re
 import sqlite3
 import struct
 import zipfile
@@ -50,6 +51,66 @@ def _exif_to_float(val):
     if isinstance(val, tuple):
         return val[0] / val[1]
     return float(val)
+
+
+# =============================================================================
+# FOCA BOUNDS (Sprint FOCADI-16)
+# =============================================================================
+
+# URL regex for macro C2 detection
+_URL_PATTERN = re.compile(rb"https?://[^\s<>'\"]+", re.IGNORECASE)
+
+
+def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
+    """Extract C2 URLs from VBA macros in Office documents.
+
+    Uses olevba if available, otherwise falls back to raw ZIP/bytes scanning.
+    """
+    try:
+        import olevba
+
+        # Try olevba first
+        for name in zf.namelist():
+            if "vbaProject.bin" in name:
+                try:
+                    vba_data = zf.read(name)
+                    vba_parser = olevba.VBALogicalLinesExtractor(vba_data)
+                    for _, vba_line in vba_parser.extract_macros():
+                        if vba_line:
+                            urls = _URL_PATTERN.findall(vba_line.encode("utf-8", errors="ignore") if isinstance(vba_line, str) else vba_line)
+                            for url in urls[:MAX_MACRO_URLS]:
+                                if len(metadata.macro_urls) >= MAX_MACRO_URLS:
+                                    break
+                                metadata.macro_urls.append(url.decode("utf-8", errors="ignore"))
+                    metadata.has_macros = True
+                except Exception:
+                    pass
+                break
+
+    except ImportError:
+        # Fallback: scan raw bytes for URLs without olevba
+        for name in zf.namelist():
+            if "vbaProject.bin" in name or name.startswith("ppt/macros/"):
+                metadata.has_macros = True
+                try:
+                    vba_data = zf.read(name)
+                    urls = _URL_PATTERN.findall(vba_data)
+                    for url in urls[:MAX_MACRO_URLS]:
+                        if len(metadata.macro_urls) >= MAX_MACRO_URLS:
+                            break
+                        metadata.macro_urls.append(url.decode("utf-8", errors="ignore"))
+                except Exception:
+                    pass
+                break
+
+
+MAX_SPEAKER_NOTES: int = 50
+MAX_HIDDEN_SLIDES: int = 100
+MAX_EMBEDDED_FONTS: int = 100
+MAX_INTERNAL_PATHS: int = 500
+MAX_RECEIVED_HEADERS: int = 20
+MAX_EMAIL_HEADERS: int = 200
+MAX_MACRO_URLS: int = 50
 
 
 # =============================================================================
@@ -366,6 +427,109 @@ class ArchiveMetadata:
         }
 
 
+# =============================================================================
+# FOCA METADATA CLASSES (Sprint FOCADI-16)
+# =============================================================================
+
+@dataclass
+class PPTXMetadata:
+    """Presentation metadata (PPTX/ODP) - FOCA-style forensics."""
+    author: Optional[str] = None
+    last_modified_by: Optional[str] = None
+    title: Optional[str] = None
+    subject: Optional[str] = None
+    company: Optional[str] = None
+    template_path: Optional[str] = None
+    slide_count: Optional[int] = None
+    has_macros: Optional[bool] = None
+    macro_urls: List[str] = field(default_factory=list)
+    speaker_notes: List[str] = field(default_factory=list)
+    hidden_slides: List[Dict[str, Any]] = field(default_factory=list)
+    macro_analysis: Dict[str, Any] = field(default_factory=dict)
+    embedded_fonts: List[Dict[str, str]] = field(default_factory=list)
+    internal_paths: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "author": self.author,
+            "last_modified_by": self.last_modified_by,
+            "title": self.title,
+            "subject": self.subject,
+            "company": self.company,
+            "template_path": self.template_path,
+            "slide_count": self.slide_count,
+            "has_macros": self.has_macros,
+            "macro_urls": self.macro_urls,
+            "speaker_notes": self.speaker_notes,
+            "hidden_slides": self.hidden_slides,
+            "macro_analysis": self.macro_analysis,
+            "embedded_fonts": self.embedded_fonts,
+            "internal_paths": self.internal_paths,
+        }
+
+
+@dataclass
+class EmailMetadata:
+    """Email header forensics - FOCA-style infrastructure analysis."""
+    from_addr: Optional[str] = None
+    reply_to: Optional[str] = None
+    subject: Optional[str] = None
+    date: Optional[str] = None
+    message_id_domain: Optional[str] = None
+    originating_ip: Optional[str] = None
+    dkim_domain: Optional[str] = None
+    spf_result: Optional[str] = None
+    received_chain: List[Dict[str, Any]] = field(default_factory=list)
+    headers: Dict[str, str] = field(default_factory=dict)
+    has_attachments: bool = False
+    attachment_count: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "from_addr": self.from_addr,
+            "reply_to": self.reply_to,
+            "subject": self.subject,
+            "date": self.date,
+            "message_id_domain": self.message_id_domain,
+            "originating_ip": self.originating_ip,
+            "dkim_domain": self.dkim_domain,
+            "spf_result": self.spf_result,
+            "received_chain": self.received_chain,
+            "headers": self.headers,
+            "has_attachments": self.has_attachments,
+            "attachment_count": self.attachment_count,
+        }
+
+
+@dataclass
+class CADMetadata:
+    """CAD/technical drawing metadata (DXF, DWG, SVG) - FOCA-style."""
+    author: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    autocad_version: Optional[str] = None
+    insertion_base: Optional[Dict[str, float]] = None
+    coordinate_extents: Optional[Dict[str, Any]] = None
+    viewBox: Optional[str] = None
+    width: Optional[str] = None
+    height: Optional[str] = None
+    internal_paths: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "author": self.author,
+            "title": self.title,
+            "description": self.description,
+            "autocad_version": self.autocad_version,
+            "insertion_base": self.insertion_base,
+            "coordinate_extents": self.coordinate_extents,
+            "viewBox": self.viewBox,
+            "width": self.width,
+            "height": self.height,
+            "internal_paths": self.internal_paths,
+        }
+
+
 @dataclass
 class GenericMetadata:
     """Generic file metadata from filesystem."""
@@ -456,6 +620,9 @@ class MetadataResult:
     audio: Optional[AudioMetadata] = None
     video: Optional[VideoMetadata] = None
     archive: Optional[ArchiveMetadata] = None
+    pptx: Optional[PPTXMetadata] = None
+    email: Optional[EmailMetadata] = None
+    cad: Optional[CADMetadata] = None
     steganalysis: Optional[SteganalysisMetadata] = None
     timeline: List[TimelineEvent] = field(default_factory=list)
     attribution: Optional[AttributionData] = None
@@ -476,6 +643,9 @@ class MetadataResult:
             "audio": self.audio.to_dict() if self.audio else None,
             "video": self.video.to_dict() if self.video else None,
             "archive": self.archive.to_dict() if self.archive else None,
+            "pptx": self.pptx.to_dict() if self.pptx else None,
+            "email": self.email.to_dict() if self.email else None,
+            "cad": self.cad.to_dict() if self.cad else None,
             "steganalysis": self.steganalysis.to_dict() if self.steganalysis else None,
             "timeline": [e.to_dict() for e in self.timeline],
             "attribution": self.attribution.to_dict() if self.attribution else None,
@@ -910,6 +1080,22 @@ class UniversalMetadataExtractor:
                 # Archive files
                 elif ext in {".zip", ".tar", ".gz", ".bz2", ".7z", ".rar"}:
                     result.archive = await self._extract_archive_metadata(file_path)
+
+                # PPTX/ODP presentation files
+                elif ext in {".pptx", ".odp"}:
+                    result.pptx = await self._extract_pptx_metadata(file_path)
+
+                # SVG vector graphics
+                elif ext == ".svg":
+                    result.cad = await self._extract_svg_metadata(file_path)
+
+                # DXF/DWG CAD files
+                elif ext == ".dxf":
+                    result.cad = await self._extract_dxf_metadata(file_path)
+
+                # Email files
+                elif ext in {".eml", ".msg"}:
+                    result.email = await self._extract_email_metadata(file_path)
 
                 # Build timeline and attribution
                 result.timeline = self._build_timeline(result)
@@ -1848,6 +2034,306 @@ class UniversalMetadataExtractor:
 
                 metadata.uncompressed_size = total_size
                 metadata.files = files
+
+        except Exception:
+            pass
+
+        return metadata
+
+    async def _extract_pptx_metadata(self, file_path: str) -> Optional[PPTXMetadata]:
+        """Extract metadata from PPTX/ODP presentation files.
+
+        Args:
+            file_path: Path to presentation file
+
+        Returns:
+            PPTXMetadata object or None
+        """
+        import zipfile
+        from xml.etree import ElementTree as ET
+
+        ext = Path(file_path).suffix.lower()
+        metadata = PPTXMetadata()
+
+        try:
+            with zipfile.ZipFile(file_path, "r") as zf:
+                # Core metadata from docProps/core.xml
+                if "docProps/core.xml" in zf.namelist():
+                    core_xml = zf.read("docProps/core.xml")
+                    root = ET.fromstring(core_xml)
+                    ns = {"dc": "http://purl.org/dc/elements/1.1/",
+                          "cp": "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"}
+
+                    metadata.title = root.find(".//dc:title", ns).text if root.find(".//dc:title", ns) is not None else None
+                    metadata.author = root.find(".//dc:creator", ns).text if root.find(".//dc:creator", ns) is not None else None
+                    subject_el = root.find(".//dc:subject", ns)
+                    if subject_el is not None:
+                        metadata.subject = subject_el.text
+
+                # Extended metadata from docProps/app.xml
+                if "docProps/app.xml" in zf.namelist():
+                    app_xml = zf.read("docProps/app.xml")
+                    root = ET.fromstring(app_xml)
+                    ns = {"xp": "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"}
+
+                    company_el = root.find(".//xp:Company", ns)
+                    if company_el is not None:
+                        metadata.company = company_el.text
+                    template_el = root.find(".//xp:Template", ns)
+                    if template_el is not None:
+                        metadata.template_path = template_el.text
+                    last_mod_el = root.find(".//xp:LastModifiedBy", ns)
+                    if last_mod_el is not None:
+                        metadata.last_modified_by = last_mod_el.text
+
+                # Count slides from presentation.xml
+                if "ppt/presentation.xml" in zf.namelist():
+                    pres_xml = zf.read("ppt/presentation.xml")
+                    root = ET.fromstring(pres_xml)
+                    # Count sldId elements
+                    slides = root.findall(".//{http://schemas.openxmlformats.org/presentationml/2006/main}sldId")
+                    metadata.slide_count = len(slides) if slides else 0
+
+                # Speaker notes
+                for name in zf.namelist():
+                    if name.startswith("ppt/notesSlides/") and name.endswith(".xml"):
+                        if len(metadata.speaker_notes) >= MAX_SPEAKER_NOTES:
+                            break
+                        try:
+                            notes_xml = zf.read(name)
+                            root = ET.fromstring(notes_xml)
+                            # Extract text from notes
+                            texts = []
+                            for elem in root.iter():
+                                if elem.text and elem.text.strip():
+                                    texts.append(elem.text.strip())
+                            if texts:
+                                metadata.speaker_notes.append(" ".join(texts[:5]))
+                        except Exception:
+                            pass
+
+                # Hidden slides
+                for name in zf.namelist():
+                    if len(metadata.hidden_slides) >= MAX_HIDDEN_SLIDES:
+                        break
+                    if name == "ppt/presentation.xml":
+                        try:
+                            pres_xml = zf.read(name)
+                            root = ET.fromstring(pres_xml)
+                            ns = {"p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+                                  "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+                            # Hide show attributes
+                            for sld in root.findall(".//p:sld", ns):
+                                show = sld.get("show")
+                                if show == "0":
+                                    idx = sld.get("id")
+                                    metadata.hidden_slides.append({"id": idx, "hidden": True})
+                        except Exception:
+                            pass
+
+                # Check for macros and extract URLs (C2 detection)
+                _extract_macro_urls(zf, metadata)
+
+                # Embedded fonts
+                for name in zf.namelist():
+                    if len(metadata.embedded_fonts) >= MAX_EMBEDDED_FONTS:
+                        break
+                    if name.startswith("ppt/font/") and name.endswith(".xml"):
+                        try:
+                            font_xml = zf.read(name)
+                            root = ET.fromstring(font_xml)
+                            font_name = root.get("name")
+                            if font_name:
+                                metadata.embedded_fonts.append({"name": font_name, "file": name})
+                        except Exception:
+                            pass
+
+                # Internal paths (bounded)
+                metadata.internal_paths = [n for n in zf.namelist() if n.startswith("ppt/")][:MAX_INTERNAL_PATHS]
+
+        except Exception:
+            pass
+
+        return metadata
+
+    async def _extract_svg_metadata(self, file_path: str) -> Optional[CADMetadata]:
+        """Extract metadata from SVG vector graphics.
+
+        Args:
+            file_path: Path to SVG file
+
+        Returns:
+            CADMetadata object or None
+        """
+        from xml.etree import ElementTree as ET
+
+        metadata = CADMetadata()
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            root = ET.fromstring(content)
+            ns = {"svg": "http://www.w3.org/2000/svg"}
+
+            # Extract SVG attributes
+            metadata.width = root.get("width")
+            metadata.height = root.get("height")
+            metadata.viewBox = root.get("viewBox")
+
+            # Extract title and description
+            title_el = root.find(".//svg:title", ns)
+            if title_el is not None and title_el.text:
+                metadata.title = title_el.text
+
+            desc_el = root.find(".//svg:desc", ns)
+            if desc_el is not None and desc_el.text:
+                metadata.description = desc_el.text
+
+            # Extract author from metadata
+            for elem in root.iter():
+                if elem.tag.endswith("}meta") or elem.tag == "metadata":
+                    for child in elem:
+                        if "creator" in child.tag.lower():
+                            metadata.author = child.text
+                        elif "title" in child.tag.lower() and not metadata.title:
+                            metadata.title = child.text
+
+        except Exception:
+            pass
+
+        return metadata
+
+    async def _extract_dxf_metadata(self, file_path: str) -> Optional[CADMetadata]:
+        """Extract metadata from DXF CAD files.
+
+        Args:
+            file_path: Path to DXF file
+
+        Returns:
+            CADMetadata object or None
+        """
+        metadata = CADMetadata()
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            # DXF is text-based, parse HEADER section
+            in_header = False
+            for line in content.split("\n"):
+                line = line.strip()
+                if line == "SECTION" and "HEADER" in content[content.find(line) + len(line):content.find(line) + len(line) + 20]:
+                    in_header = True
+                elif line == "ENDSEC":
+                    in_header = False
+                elif in_header:
+                    if line == "$ACADVER":
+                        continue
+                    # Extract variables
+                    if line.startswith("$"):
+                        var_name = line[1:]
+                        # Next line is usually the value
+                        idx = content.find(line)
+                        next_pos = content.find("\n", idx + len(line))
+                        if next_pos > 0:
+                            value = content[idx + len(line) + 1:next_pos].strip()
+                            if var_name == "TITLE":
+                                metadata.title = value
+                            elif var_name == "AUTHOR":
+                                metadata.author = value
+                            elif var_name == "DESCRIPTION":
+                                metadata.description = value
+
+        except Exception:
+            pass
+
+        return metadata
+
+    async def _extract_email_metadata(self, file_path: str) -> Optional[EmailMetadata]:
+        """Extract metadata from email files (EML/MSG).
+
+        Args:
+            file_path: Path to email file
+
+        Returns:
+            EmailMetadata object or None
+        """
+        import re
+        from email.parser import Parser
+        from email.policy import default
+
+        ext = Path(file_path).suffix.lower()
+        metadata = EmailMetadata()
+
+        try:
+            if ext == ".eml":
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+
+                msg = Parser().parsestr(content)
+
+                metadata.from_addr = msg.get("From")
+                metadata.reply_to = msg.get("Reply-To")
+                metadata.subject = msg.get("Subject")
+                metadata.date = msg.get("Date")
+
+                # Extract Message-ID domain
+                msg_id = msg.get("Message-ID")
+                if msg_id:
+                    match = re.search(r"@([^>]+)", msg_id)
+                    if match:
+                        metadata.message_id_domain = match.group(1)
+
+                # Extract X-Originating-IP
+                for header in msg.keys():
+                    if header.lower() == "x-originating-ip":
+                        metadata.originating_ip = msg.get(header)
+                    elif header.lower() == "dkim-signature":
+                        match = re.search(r"d=([^;\s]+)", msg.get(header))
+                        if match:
+                            metadata.dkim_domain = match.group(1)
+                    elif header.lower() == "authentication-results":
+                        if "spf=pass" in msg.get(header, "").lower():
+                            metadata.spf_result = "pass"
+                        elif "spf=fail" in msg.get(header, "").lower():
+                            metadata.spf_result = "fail"
+
+                # Parse Received headers (bounded)
+                received_headers = []
+                for i in range(MAX_RECEIVED_HEADERS):
+                    received = msg.get(f"Received-{i}" if i > 0 else "Received")
+                    if received:
+                        received_headers.append({"header": received, "index": i})
+                    else:
+                        break
+                metadata.received_chain = received_headers
+
+                # Store headers (bounded)
+                all_headers = dict(msg.items())
+                metadata.headers = dict(list(all_headers.items())[:MAX_EMAIL_HEADERS])
+
+                # Check attachments
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_disposition = part.get("Content-Disposition", "")
+                        if "attachment" in content_disposition:
+                            metadata.has_attachments = True
+                            metadata.attachment_count += 1
+
+            elif ext == ".msg":
+                # MSG files are OLE compound - basic parsing
+                try:
+                    import olefile
+                    if olefile.isOleFile(file_path):
+                        ole = olefile.OleFileIO(file_path)
+                        if ole.exists("__substg1.0_0042001F"):  # Subject
+                            metadata.subject = ole.openstream("__substg1.0_0042001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")
+                        if ole.exists("__substg1.0_0C1F001F"):  # Sender email
+                            metadata.from_addr = ole.openstream("__substg1.0_0C1F001F").read().decode("utf-16-le", errors="ignore").rstrip("\x00")
+                        ole.close()
+                except ImportError:
+                    pass
 
         except Exception:
             pass

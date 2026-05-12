@@ -181,7 +181,8 @@ Fetch-->>Caller : FetchResult(success/error, status, headers, content, telemetry
 - Lazy availability check with module-level caching.
 - Bounded LRU cache (max 3 profiles) with O(1) eviction via deque.
 - Thread-safe creation guarded by asyncio.Lock; evicted sessions closed asynchronously after lock release.
-- Preferred fallback order: chrome136 → chrome120 → chrome110 → safari17_0.
+- Preferred fallback order: chrome136 → chrome124 → chrome120 → chrome110 → safari17_0 → firefox135 → firefox133 → chrome99_android.
+- Targets: academia (Safari 17 Apple Silicon), government (Firefox 133+), mobile/android (Chrome Android 99+).
 - Telemetry endpoint exposes availability, cache state, and capacity.
 
 ```mermaid
@@ -299,7 +300,7 @@ Common issues and resolutions:
 
 Operational checks:
 - Environment variable: HLEDAC_ENABLE_CURL_CFFI must equal "1".
-- Profiles: Supported profiles include chrome136, chrome120, chrome110, safari17_0.
+- Profiles: Supported profiles include chrome136, chrome124, chrome120, chrome110, safari17_0, firefox135, firefox133, chrome99_android.
 - Telemetry: Use runtime status to confirm availability and cache usage.
 
 **Section sources**
@@ -321,7 +322,7 @@ The curl_cffi transport provides a robust, stealth-oriented HTTP(S) lane that in
   - headers: HTTP headers to send.
   - timeout_s: Request timeout in seconds.
   - max_bytes: Hard cap on response body size.
-  - profile: TLS impersonation profile (e.g., chrome110, chrome120, chrome136, safari17_0).
+  - profile: TLS impersonation profile (e.g., chrome110, chrome120, chrome124, chrome136, safari17_0, firefox124, firefox133, firefox135, chrome99_android).
 - Routing policy arguments:
   - use_stealth: Force escalation.
   - use_js: Prevent escalation (JS handled elsewhere).

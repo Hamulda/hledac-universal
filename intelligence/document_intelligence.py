@@ -603,8 +603,37 @@ class OfficeDocumentAnalyzer:
     Analyzer for Microsoft Office and OpenDocument files.
     """
 
+    def __init__(self):
+        # FOCA metadata extractor — lazy to avoid blocking import on M1
+        self._foca_extractor: Any = None
+        self._foca_initialized = False
+
+    async def close(self) -> None:
+        """Close FOCA extractor and release resources (fail-safe)."""
+        if self._foca_extractor is not None:
+            try:
+                await self._foca_extractor.close()
+            except Exception as e:
+                logger.debug(f"FOCA extractor close error: {e}")
+            self._foca_extractor = None
+            self._foca_initialized = False
+
+    async def _get_foca_extractor(self) -> Any:
+        """Lazily initialize FOCA metadata extractor (M1-safe async)."""
+        if self._foca_initialized:
+            return self._foca_extractor
+        self._foca_initialized = True
+        try:
+            from forensics.metadata_extractor import UniversalMetadataExtractor
+            self._foca_extractor = UniversalMetadataExtractor()
+            await self._foca_extractor.initialize()
+        except Exception as e:
+            logger.warning(f"FOCA extractor unavailable: {e}")
+            self._foca_extractor = None
+        return self._foca_extractor
+
     def analyze(self, file_path: Union[str, bytes]) -> DocumentAnalysis:
-        """Analyze Office document."""
+        """Analyze Office document (sync)."""
         if isinstance(file_path, str):
             with open(file_path, "rb") as f:
                 content = f.read()
@@ -613,12 +642,61 @@ class OfficeDocumentAnalyzer:
 
         # Check if it's a ZIP-based format (modern Office)
         if content[:4] == b"PK\x03\x04":
-            return self._analyze_ooxml(content)
+            return self._analyze_ooxml(content, file_path if isinstance(file_path, str) else None)
         else:
             # Legacy binary format (OLE)
             return self._analyze_ole(content)
 
-    def _analyze_ooxml(self, content: bytes) -> DocumentAnalysis:
+    async def analyze_async(self, file_path: Union[str, bytes]) -> DocumentAnalysis:
+        """Analyze Office document with FOCA enrichment (async, M1-safe)."""
+        if isinstance(file_path, str):
+            with open(file_path, "rb") as f:
+                content = f.read()
+        else:
+            content = file_path
+
+        # Check if it's a ZIP-based format (modern Office)
+        if content[:4] == b"PK\x03\x04":
+            return await self._analyze_ooxml_async(content, file_path if isinstance(file_path, str) else None)
+        else:
+            # Legacy binary format (OLE)
+            return self._analyze_ole(content)
+
+    async def _analyze_ooxml_async(self, content: bytes, file_path: Optional[str]) -> DocumentAnalysis:
+        """Analyze OOXML with FOCA metadata enrichment."""
+        # Base analysis via ZIP parsing
+        analysis = self._analyze_ooxml(content, file_path)
+
+        # FOCA enrichment: call UniversalMetadataExtractor and merge results
+        if file_path:
+            try:
+                extractor = await self._get_foca_extractor()
+                if extractor is not None:
+                    foca_result = await extractor.extract(file_path)
+                    if foca_result and foca_result.success:
+                        self._merge_foca_metadata(analysis, foca_result)
+            except Exception as e:
+                logger.debug(f"FOCA enrichment skipped for {file_path}: {e}")
+
+        return analysis
+
+    def _merge_foca_metadata(self, analysis: DocumentAnalysis, foca_result: Any) -> None:
+        """Merge FOCA metadata into DocumentAnalysis return value.
+
+        FOCA data goes into metadata.raw_metadata['foca'] — different seam from TriageFacets.
+        """
+        foca_data = {}
+        if foca_result.pptx:
+            foca_data["pptx"] = foca_result.pptx.to_dict()
+        if foca_result.email:
+            foca_data["email"] = foca_result.email.to_dict()
+        if foca_result.cad:
+            foca_data["cad"] = foca_result.cad.to_dict()
+
+        if foca_data:
+            analysis.metadata.raw_metadata["foca"] = foca_data
+
+    def _analyze_ooxml(self, content: bytes, file_path: Optional[str]) -> DocumentAnalysis:
         """Analyze Office Open XML format (docx, xlsx, pptx)."""
         embedded_objects = []
         hyperlinks = []

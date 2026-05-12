@@ -206,6 +206,7 @@ def deserialize_envelope(payload_text: str | None) -> FindingEnvelope | None:
     # Require audit_reason at minimum — absence means this is not a real envelope
     audit_reason = data.get("audit_reason", "")
     if not isinstance(audit_reason, str) or not audit_reason:
+        logger.debug("[ENVELOPE] payload_text has no audit_reason — treating as legacy finding")
         return None
 
     return FindingEnvelope(

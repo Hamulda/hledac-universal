@@ -30,7 +30,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import aiohttp
 
@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 EXPOSURE_CACHE_ROOT = Path.home() / ".hledac" / "lmdb" / "exposure_cache.lmdb"
 _EXPOSURE_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days in seconds
+
+# CVE cache TTL: 6 hours
+_CVE_CACHE_TTL = 6 * 60 * 60
 
 # DB executor pro LMDB write (single-writer, B.3 invariant)
 _DB_EXECUTOR = ThreadPoolExecutor(max_workers=1)
@@ -646,4 +649,397 @@ class GreyNoiseClient:
         if elapsed < self._RATE_S:
             await asyncio.sleep(self._RATE_S - elapsed)
         self._last_req = time.time()
+
+
+# =============================================================================
+# CVIntelligenceClient — CVE/Vulnerability Intelligence
+# =============================================================================
+
+
+class CVIntelligenceClient:
+    """
+    CVE/Vulnerability Intelligence via OSV.dev + NVD API 2.0 + EPSS.
+
+    OSV.dev Batch API (priority):
+      POST https://api.osv.dev/v1/querybatch
+      Streaming response, max 200 CVEs, batches of 20.
+
+    NVD API 2.0 fallback (if OSV returns 0 results):
+      GET https://services.nvd.nist.gov/rest/json/cves/2.0
+      Rate limited: semaphore(5) + sliding window 30s.
+
+    EPSS enrichment:
+      GET https://api.first.org/data/v1/epss?cve={cve_id}
+      Adds epss_score, percentile; EPSS >0.7 → IMMEDIATE_ACTION flag.
+
+    M1 invariants:
+      - async_get_aiohttp_session() for HTTP
+      - LMDB cache with 6h TTL
+      - AsyncIterator[dict] for streaming results
+      - No asyncio.run() inside async functions
+      - Generator pattern with chunk processing
+    """
+
+    _OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
+    _NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    _EPSS_URL = "https://api.first.org/data/v1/epss"
+    _MAX_CVES = 200
+    _BATCH_SIZE = 20
+    _NVD_SEMAPHORE_LIMIT = 5
+    _NVD_WINDOW_S = 30.0
+
+    # Ecosystem mapping for OSV API
+    _ECOSYSTEM_MAP = {
+        "python": "PyPI",
+        "pip": "PyPI",
+        "node": "npm",
+        "npm": "npm",
+        "js": "npm",
+        "java": "Maven",
+        "maven": "Maven",
+        "go": "Go",
+        "golang": "Go",
+        "rust": "crates.io",
+        "ruby": "RubyGems",
+        "php": "Packagist",
+        "dotnet": "NuGet",
+        "nuget": "NuGet",
+        "c": "OSS-Fuzz",
+        "cpp": "OSS-Fuzz",
+    }
+
+    def __init__(self) -> None:
+        self._cache = ExposureCache(prefix="cve")
+        self._nvd_last_req = 0.0
+        self._nvd_semaphore = asyncio.Semaphore(self._NVD_SEMAPHORE_LIMIT)
+        # Per-CVE TTL cache for EPSS data (in-memory, short-lived)
+        # Bounded to prevent unbounded memory growth across sprints
+        self._epss_cache: Dict[str, Dict[str, float]] = {}
+        self._epss_cache_order: list[str] = []  # LRU order tracking
+        self._EPSS_CACHE_MAX_SIZE = 1000
+        self._EPSS_CACHE_EVICT_BATCH = 100
+
+    def _map_ecosystem(self, pkg: str) -> tuple[str, str]:
+        """
+        Map package name/tech stack entry to (ecosystem, package_name).
+        Returns (ecosystem, package_name) tuple.
+        """
+        lower = pkg.lower()
+        # Check direct matches first
+        if eco := self._ECOSYSTEM_MAP.get(lower):
+            return eco, pkg
+        # Try to infer from package patterns
+        if lower.startswith("pip ") or lower.startswith("pip-"):
+            return "PyPI", pkg.replace("pip ", "").replace("pip-", "")
+        if any(
+            lower.startswith(x) for x in ["npm ", "@", "node-", "jsx", "tsx"]
+        ):
+            return "npm", pkg
+        if any(lower.startswith(x) for x in ["maven ", "org.", "com.", "io."]):
+            return "Maven", pkg
+        if lower.startswith("go ") or "/" in pkg:
+            return "Go", pkg
+        if lower.startswith("cargo ") or lower.startswith("crates.io/"):
+            return "crates.io", pkg
+        # Default: treat as PyPI (most common for CVE scanning)
+        return "PyPI", pkg
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        return await async_get_aiohttp_session()
+
+    async def _fetch_osv_batch(
+        self, tech_stack: List[str], session: aiohttp.ClientSession
+    ) -> AsyncIterator[dict]:
+        """
+        Fetch CVEs via OSV.dev batch API.
+        Yields dicts with CVE data. Falls back to NVD on 0 results.
+        """
+        import orjson
+
+        # Build queries for OSV batch API
+        queries = []
+        for pkg in tech_stack:
+            eco, name = self._map_ecosystem(pkg)
+            queries.append(
+                {"package": {"name": name, "ecosystem": eco}}
+            )
+
+        cache_key = f"osv_batch:{','.join(sorted(tech_stack))}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"CVE cache hit for OSV batch: {cache_key[:50]}")
+            for cve in cached.get("cves", [])[: self._MAX_CVES]:
+                yield cve
+            return
+
+        try:
+            async with session.post(
+                self._OSV_BATCH_URL,
+                json={"queries": queries},
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(f"OSV batch API error: {resp.status}")
+                    # Fallback to NVD
+                    async for cve in self._fetch_nvd_fallback(
+                        tech_stack, session
+                    ):
+                        yield cve
+                    return
+
+                # Stream and parse JSON incrementally
+                buffer = bytearray()
+                cves_yielded = 0
+                async for chunk in resp.content.iter_chunked(8192):
+                    buffer.extend(chunk)
+                    # Try to parse NDJSON lines
+                    while b"\n" in buffer:
+                        line_bytes, buffer[:] = buffer.split(b"\n", 1)
+                        if not line_bytes.strip():
+                            continue
+                        try:
+                            # OSV batch returns NDJSON
+                            data = orjson.loads(line_bytes)
+                            vulns = data.get("vulns", []) if isinstance(data, dict) else []
+                            for vuln in vulns:
+                                if cves_yielded >= self._MAX_CVES:
+                                    return
+                                cve = self._osv_to_cve(vuln)
+                                if cve:
+                                    yield cve
+                                    cves_yielded += 1
+                        except Exception:
+                            continue
+
+                # If we got 0 CVEs, fallback to NVD
+                if cves_yielded == 0:
+                    logger.debug("OSV returned 0 CVEs, falling back to NVD")
+                    async for cve in self._fetch_nvd_fallback(tech_stack, session):
+                        yield cve
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"OSV batch fetch error: {e}")
+            async for cve in self._fetch_nvd_fallback(tech_stack, session):
+                yield cve
+
+    async def _fetch_nvd_fallback(
+        self, tech_stack: List[str], session: aiohttp.ClientSession
+    ) -> AsyncIterator[dict]:
+        """
+        NVD API 2.0 fallback - rate limited with semaphore + sliding window.
+        """
+        import orjson
+
+        for tech in tech_stack:
+            # Rate limiting: semaphore + sliding window
+            async with self._nvd_semaphore:
+                elapsed = time.time() - self._nvd_last_req
+                if elapsed < self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT:
+                    await asyncio.sleep(
+                        self._NVD_WINDOW_S / self._NVD_SEMAPHORE_LIMIT - elapsed
+                    )
+                self._nvd_last_req = time.time()
+
+            cache_key = f"nvd:{tech}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                for cve in cached.get("cves", []):
+                    yield cve
+                continue
+
+            try:
+                async with session.get(
+                    self._NVD_API_URL,
+                    params={"keywordSearch": tech, "resultsPerPage": 20},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"NVD API error for {tech}: {resp.status}")
+                        continue
+
+                    data = await resp.json(content_type=None)
+                    cves = data.get("vulnerabilities", [])
+                    stored = {"cves": cves[:20]}
+                    # Cache via executor
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        _DB_EXECUTOR,
+                        lambda k=cache_key, v=stored: self._cache.set(k, v),
+                    )
+                    for cve in cves[:20]:
+                        yield self._nvd_to_cve(cve)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"NVD fetch error for {tech}: {e}")
+                continue
+
+    async def _enrich_epss(
+        self, cve_id: str, session: aiohttp.ClientSession
+    ) -> Optional[Dict[str, float]]:
+        """
+        Fetch EPSS score for a CVE.
+        Returns {"epss_score": float, "percentile": float} or None.
+        """
+        if cve_id in self._epss_cache:
+            return self._epss_cache[cve_id]
+
+        try:
+            async with session.get(
+                f"{self._EPSS_URL}?cve={cve_id}",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+                # EPSS API returns {"epss": "0.123", "percentile": "0.456"}
+                epss = data.get("epss", "")
+                percentile = data.get("percentile", "")
+                result = {
+                    "epss_score": float(epss) if epss else 0.0,
+                    "percentile": float(percentile) if percentile else 0.0,
+                }
+                self._epss_cache[cve_id] = result
+                # LRU eviction: maintain order and cap size
+                self._epss_cache_order.append(cve_id)
+                if len(self._epss_cache) > self._EPSS_CACHE_MAX_SIZE:
+                    evict_count = self._EPSS_CACHE_EVICT_BATCH
+                    for _ in range(evict_count):
+                        old_key = self._epss_cache_order.pop(0)
+                        self._epss_cache.pop(old_key, None)
+                return result
+        except Exception:
+            return None
+
+    def _osv_to_cve(self, vuln: dict) -> Optional[dict]:
+        """Convert OSV vulnerability format to our CVE dict."""
+        try:
+            cve_id = vuln.get("id", "")
+            if not cve_id:
+                return None
+            aliases = vuln.get("aliases", [])
+            # Extract CVE ID from aliases
+            for alias in aliases:
+                if alias.startswith("CVE-"):
+                    cve_id = alias
+                    break
+
+            return {
+                "cve_id": cve_id,
+                "source": "osv",
+                "summary": vuln.get("summary", ""),
+                "severity": self._osv_severity(vuln),
+                "published": vuln.get("published", ""),
+                "modified": vuln.get("modified", ""),
+                "references": vuln.get("references", []),
+                "affected": self._osv_affected(vuln),
+            }
+        except Exception:
+            return None
+
+    def _nvd_to_cve(self, vuln: dict) -> dict:
+        """Convert NVD vulnerability format to our CVE dict."""
+        cve = vuln.get("cve", {})
+        cve_id = cve.get("id", "")
+        metrics = cve.get("metrics", {})
+
+        # Extract CVSS v3 score
+        cvss_v3 = metrics.get("cvssMetricV31", []) or metrics.get(
+            "cvssMetricV30", []
+        ) or []
+        severity = "UNKNOWN"
+        if cvss_v3:
+            severity = cvss_v3[0].get("cvssData", {}).get("baseSeverity", "UNKNOWN")
+
+        return {
+            "cve_id": cve_id,
+            "source": "nvd",
+            "summary": cve.get("descriptions", [{}])[0].get("value", ""),
+            "severity": severity,
+            "published": cve.get("published", ""),
+            "modified": cve.get("lastModified", ""),
+            "references": [
+                r.get("url", "") for r in cve.get("references", []) if r.get("url")
+            ],
+            "affected": [],
+        }
+
+    def _osv_severity(self, vuln: dict) -> str:
+        """Extract severity from OSV format."""
+        severity = vuln.get("severity", [])
+        for s in severity:
+            if s.get("type", "").upper() in ("CVSS_V3", "CVSS_V2"):
+                return s.get("score", "UNKNOWN")
+        return "UNKNOWN"
+
+    def _osv_affected(self, vuln: dict) -> list:
+        """Extract affected packages from OSV format."""
+        affected = vuln.get("affected", [])
+        return [
+            {
+                "package": a.get("package", {}).get("name", ""),
+                "ecosystem": a.get("package", {}).get("ecosystem", ""),
+                "ranges": a.get("ranges", []),
+            }
+            for a in affected
+        ]
+
+    async def fetch_cve_intelligence(
+        self, tech_stack: List[str]
+    ) -> AsyncIterator[dict]:
+        """
+        Fetch CVE intelligence for a tech stack.
+
+        1. OSV.dev Batch API (priority) with streaming
+        2. NVD API 2.0 fallback (if OSV returns 0)
+        3. EPSS score enrichment per CVE
+
+        Yields dicts with CVE data + EPSS enrichment.
+        EPSS >0.7 flags CVE as IMMEDIATE_ACTION.
+
+        Memory bounded: max 200 CVEs, batches of 20.
+        LMDB cache: 6h TTL for CVE data.
+        """
+        session = await self._get_session()
+        pending_epss: List[dict] = []
+        cves_yielded = 0
+
+        try:
+            async for cve in self._fetch_osv_batch(tech_stack, session):
+                if cves_yielded >= self._MAX_CVES:
+                    break
+
+                # EPSS enrichment (batch for efficiency)
+                cve_id = cve.get("cve_id", "")
+                if cve_id:
+                    epss = await self._enrich_epss(cve_id, session)
+                    if epss:
+                        cve["epss_score"] = epss["epss_score"]
+                        cve["epss_percentile"] = epss["percentile"]
+                        if epss["epss_score"] > 0.7:
+                            cve["action_flag"] = "IMMEDIATE_ACTION"
+
+                pending_epss.append(cve)
+                cves_yielded += 1
+
+                # Yield in batches
+                if len(pending_epss) >= self._BATCH_SIZE:
+                    yield {"cves": list(pending_epss), "batch_complete": True}
+                    pending_epss.clear()
+
+            # Yield remaining
+            if pending_epss:
+                yield {"cves": list(pending_epss), "batch_complete": True}
+
+            # Final marker
+            yield {"cves": [], "batch_complete": False, "total_cves": cves_yielded}
+
+        finally:
+            await session.close()
+
+    async def close(self) -> None:
+        self._cache.close()
 

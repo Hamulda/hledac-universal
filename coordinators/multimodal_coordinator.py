@@ -20,9 +20,16 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
-import numpy as np
+try:
+    import numpy as np
+    from numpy.typing import NDArray
+    HAS_NUMPY = True
+except ImportError:
+    np = None
+    NDArray = "NDArray"  # type: ignore[misc]
+    HAS_NUMPY = False
 
 from .base import UniversalCoordinator, OperationType, DecisionResponse, OperationResult
 
@@ -64,7 +71,7 @@ class ModalityInput:
 class ModalityOutput:
     """Output from modality processing."""
     modality: ModalityType
-    embedding: Optional[np.ndarray] = None
+    embedding: Optional[Any] = None
     features: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
@@ -73,7 +80,7 @@ class ModalityOutput:
 @dataclass
 class FusedRepresentation:
     """Fused multimodal representation."""
-    fused_embedding: np.ndarray
+    fused_embedding: Any
     modalities: List[ModalityType]
     weights: Dict[ModalityType, float]
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -82,8 +89,8 @@ class FusedRepresentation:
 @dataclass
 class ContrastiveExample:
     """Example for contrastive learning."""
-    text_embedding: np.ndarray
-    image_embedding: np.ndarray
+    text_embedding: Any
+    image_embedding: Any
     label: int  # 1 for positive pair, 0 for negative
 
 
@@ -147,10 +154,12 @@ class MLXMultimodalEncoder:
         self.audio_encoder = AudioEncoder(self.embedding_dim)
         self.text_encoder = TextEncoder(self.embedding_dim)
     
-    def encode_vision(self, image: np.ndarray) -> np.ndarray:
+    def encode_vision(self, image: Any) -> Any:
         """Encode image to embedding."""
         if not self.mlx_available:
             # Fallback to numpy
+            if not HAS_NUMPY:
+                raise ImportError("numpy required for vision encoding — pip install 'hledac[dev]'")
             return self._fallback_vision_encode(image)
         
         try:
@@ -170,9 +179,11 @@ class MLXMultimodalEncoder:
             logger.warning(f"MLX vision encoding failed: {e}, using fallback")
             return self._fallback_vision_encode(image)
     
-    def encode_audio(self, audio: np.ndarray) -> np.ndarray:
+    def encode_audio(self, audio: Any) -> Any:
         """Encode audio to embedding."""
         if not self.mlx_available:
+            if not HAS_NUMPY:
+                raise ImportError("numpy required for audio encoding — pip install 'hledac[dev]'")
             return self._fallback_audio_encode(audio)
         
         try:
@@ -188,10 +199,10 @@ class MLXMultimodalEncoder:
             logger.warning(f"MLX audio encoding failed: {e}, using fallback")
             return self._fallback_audio_encode(audio)
     
-    def encode_text(self, text: str) -> np.ndarray:
+    def encode_text(self, text: str) -> Any:
         """Encode text to embedding."""
         if not self.mlx_available:
-            return self._fallback_text_encode(text)
+            return self._generate_text_embedding(text)
         
         try:
             # Simple tokenization (in practice, use proper tokenizer)
@@ -701,26 +712,28 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             confidence=confidence
         )
     
-    def _generate_image_embedding_fallback(self, image: np.ndarray) -> np.ndarray:
+    def _generate_image_embedding_fallback(self, image: Any) -> Any:
         """Generate image embedding using numpy fallback."""
+        if not HAS_NUMPY:
+            raise ImportError("numpy required for image embedding — pip install 'hledac[dev]'")
         # Simple histogram-based features
         features = []
-        
+
         if image.ndim == 3:
             for i in range(min(3, image.shape[2])):
                 hist = np.histogram(image[..., i], bins=16, range=(0, 255))[0]
                 features.extend(hist / (hist.sum() + 1e-8))
-        
+
         # Project to embedding dimension
         embedding = np.zeros(self.embedding_dim)
         feature_array = np.array(features[:self.embedding_dim])
         embedding[:len(feature_array)] = feature_array
-        
+
         # Normalize
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
-        
+
         return embedding.astype(np.float32)
 
     async def _process_audio(self, content: Any) -> ModalityOutput:
@@ -755,8 +768,10 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             confidence=confidence
         )
     
-    def _generate_audio_embedding_fallback(self, audio: np.ndarray) -> np.ndarray:
+    def _generate_audio_embedding_fallback(self, audio: Any) -> Any:
         """Generate audio embedding using numpy fallback."""
+        if not HAS_NUMPY:
+            raise ImportError("numpy required for audio embedding — pip install 'hledac[dev]'")
         # Simple time-domain features
         features = [
             np.mean(np.abs(audio)),
@@ -764,21 +779,21 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             np.max(np.abs(audio)),
             np.mean(audio ** 2),  # Energy
         ]
-        
+
         # Simple spectral features
         if len(audio) > 0:
             fft = np.abs(np.fft.fft(audio[:min(len(audio), 1024)]))
             features.extend(fft[:20])
-        
+
         # Project to embedding dimension
         embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.05
         embedding[:len(features)] = np.array(features[:self.embedding_dim])
-        
+
         # Normalize
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
-        
+
         return embedding
 
     async def _process_document(self, content: Any) -> ModalityOutput:
@@ -799,36 +814,39 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             confidence=0.70
         )
 
-    def _generate_text_embedding(self, text: str) -> np.ndarray:
+    def _generate_text_embedding(self, text: str) -> Any:
         """Generate text embedding using MLX if available."""
         if self.mlx_encoder:
             try:
                 return self.mlx_encoder.encode_text(text)
             except Exception as e:
                 logger.warning(f"MLX text encoding failed: {e}, using fallback")
-        
+
+        if not HAS_NUMPY:
+            raise ImportError("numpy required for text embedding — pip install 'hledac[dev]'")
+
         # Fallback: Simple bag-of-words based embedding
         words = set(text.lower().split())
         vocab = list(words) if words else ['empty']
-        
+
         # Create embedding using hash
         embedding = np.zeros(self.embedding_dim, dtype=np.float32)
         for word in vocab:
             word_hash = hashlib.sha256(word.encode()).hexdigest()
             for i in range(self.embedding_dim):
                 embedding[i] += int(word_hash[i % 64], 16) / 16.0
-        
+
         # Normalize
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
-        
+
         return embedding
-    
+
     async def align_vision_text(
         self,
         texts: List[str],
-        images: List[np.ndarray]
+        images: List[Any]
     ) -> Dict[str, Any]:
         """
         Align vision and text using contrastive learning.

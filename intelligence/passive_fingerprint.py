@@ -79,6 +79,18 @@ class FingerprintResult:
     elapsed_ms: float
 
 
+@dataclass(frozen=True)
+class TechStack:
+    """R11: Tech stack signals extracted from HTTP headers, cookies, and HTML."""
+    cloud_provider: str | None
+    cdn_provider: str | None
+    waf_detected: str | None
+    waf_confidence: float
+    cms: str | None
+    cms_version: str | None
+    raw_signals: dict[str, str]
+
+
 # ── Fingerprint Patterns ──────────────────────────────────────────────────────
 
 # HTTP Server Header Patterns
@@ -526,6 +538,227 @@ def extract_html_signals(payload_text: str | None) -> HtmlSignals:
     return signals
 
 
+# ── Tech Stack Extraction ──────────────────────────────────────────────────────
+
+
+def _extract_tech_stack(
+    headers: dict[str, str],
+    html_head: str,
+    cookies: list[str],
+) -> TechStack:
+    """
+    R11: Extract tech stack signals from HTTP response data.
+
+    Detects:
+      - Cloud providers: AWS (x-amz-*), GCP (x-goog-*), Azure (x-ms-*),
+        Cloudflare (cf-ray), Fastly, Akamai
+      - WAF: Cloudflare WAF (403 + 1020), AWS WAF, Imperva (incap_ses),
+        Akamai, F5 BIG-IP
+      - CMS: WordPress, Drupal, Joomla, Typo3 (with version from readme/changelog)
+
+    Uses ahocorasick for O(n) multi-pattern matching when available,
+    falls back to regex for single patterns.
+
+    Args:
+        headers: HTTP response headers (lowercase keys)
+        html_head: HTML <head> content (truncated)
+        cookies: list of cookie strings
+
+    Returns:
+        TechStack with detected signals and confidence scores.
+    """
+    raw_signals: dict[str, str] = {}
+    cloud_provider: str | None = None
+    cdn_provider: str | None = None
+    waf_detected: str | None = None
+    waf_confidence: float = 0.0
+    cms: str | None = None
+    cms_version: str | None = None
+
+    # ── Cloud Provider Detection ────────────────────────────────────────────────
+    for header_key, header_value in headers.items():
+        # AWS
+        if header_key.startswith("x-amz-"):
+            cloud_provider = "AWS"
+            raw_signals["aws_header"] = f"{header_key}: {header_value[:50]}"
+            break
+        # GCP
+        if header_key.startswith("x-goog-"):
+            cloud_provider = "GCP"
+            raw_signals["gcp_header"] = f"{header_key}: {header_value[:50]}"
+            break
+        # Azure
+        if header_key.startswith("x-ms-"):
+            cloud_provider = "Azure"
+            raw_signals["azure_header"] = f"{header_key}: {header_value[:50]}"
+            break
+
+    # Cloudflare Ray (also CDN)
+    cf_ray = headers.get("cf-ray") or headers.get("cf-ray-legacy", "")
+    if cf_ray:
+        cdn_provider = "Cloudflare"
+        raw_signals["cf-ray"] = cf_ray[:32]
+        # Check for Cloudflare WAF 403 + 1020 error
+        status_val = headers.get("status", "") or headers.get(":status", "")
+        if "403" in str(status_val):
+            error_page = html_head.lower()
+            if "error 1020" in error_page or "cloudflare" in error_page and "access denied" in error_page:
+                waf_detected = "Cloudflare WAF"
+                waf_confidence = 0.95
+                raw_signals["waf_signal"] = "cf_403_1020"
+
+    # Fastly
+    if not cdn_provider:
+        via = headers.get("via", "")
+        server = headers.get("server", "")
+        if "fastly" in via.lower() or "fastly" in server.lower():
+            cdn_provider = "Fastly"
+            raw_signals["fastly"] = f"via={via[:30]}, server={server[:30]}"
+
+    # Akamai
+    if not cdn_provider:
+        for hk, hv in headers.items():
+            if "akamai" in hk.lower() or "akamai" in hv.lower():
+                cdn_provider = "Akamai"
+                raw_signals["akamai"] = f"{hk}: {hv[:30]}"
+                break
+
+    # ── WAF Detection ───────────────────────────────────────────────────────────
+    # Imperva (incap_ses cookie)
+    if not waf_detected:
+        for cookie in cookies:
+            if "incap_ses" in cookie.lower() or "visid_incap_" in cookie.lower():
+                waf_detected = "Imperva"
+                waf_confidence = 0.90
+                raw_signals["waf_signal"] = f"imperva_cookie: {cookie[:60]}"
+                break
+
+    # AWS WAF
+    if not waf_detected:
+        awswaf_cookie = headers.get("aws-waf-request", "") or headers.get("aws-alb", "")
+        if awswaf_cookie or "aws-waf" in str(cookies).lower():
+            waf_detected = "AWS WAF"
+            waf_confidence = 0.85
+            raw_signals["waf_signal"] = "aws_waf_detected"
+
+    # F5 BIG-IP
+    if not waf_detected:
+        for hk, hv in headers.items():
+            if "bigip" in hk.lower() or "ftm" in hk.lower() or "bigip" in hv.lower():
+                waf_detected = "F5 BIG-IP"
+                waf_confidence = 0.80
+                raw_signals["waf_signal"] = f"f5_header: {hk}"
+                break
+
+    # Akamai WAF (X-Sucuri-*)
+    if not waf_detected:
+        for hk, hv in headers.items():
+            if "sucuri" in hk.lower() or "x-sucuri" in hk.lower():
+                waf_detected = "Akamai WAF"
+                waf_confidence = 0.75
+                raw_signals["waf_signal"] = f"akamai_waf: {hk}"
+                break
+
+    # ── CMS Detection ───────────────────────────────────────────────────────────
+    html_lower = html_head.lower()[:5000]  # truncate head for performance
+
+    # ahocorasick O(n) matching when available, else regex fallback
+    try:
+        import ahocorasick  # lazy import
+
+        # Build automaton for CMS patterns
+        cms_patterns = [
+            ("wordpress", "wordpress"),
+            ("drupal", "drupal"),
+            ("joomla", "joomla"),
+            ("typo3", "typo3"),
+            ("magento", "magento"),
+            ("prestashop", "prestashop"),
+            ("shopify", "shopify"),
+            ("wix", "wix"),
+            ("squarespace", "squarespace"),
+            ("ghost", "ghost cms"),
+            ("hubspot", "hubspot"),
+        ]
+        automaton = ahocorasick.Automaton()
+        for pattern, name in cms_patterns:
+            automaton.add_word(pattern, name)
+        automaton.make_automaton()
+
+        found_cms: set[str] = set()
+        for _, name in automaton.iter(html_lower):
+            found_cms.add(name)
+
+        if len(found_cms) == 1:
+            cms = next(iter(found_cms))
+        elif len(found_cms) > 1:
+            # Prefer most specific
+            priority = ["typo3", "magento", "prestashop", "drupal", "joomla", "wordpress", "shopify", "ghost cms", "hubspot", "wix", "squarespace"]
+            for p in priority:
+                if p in found_cms:
+                    cms = p
+                    break
+            if not cms:
+                cms = sorted(found_cms)[0]
+
+        raw_signals["cms_ahocorasick"] = ",".join(sorted(found_cms)) if found_cms else ""
+
+    except ImportError:
+        # Regex fallback for single-pattern search
+        cms_re = re.compile(
+            r"wordpress|drupal|joomla|typo3|magento|prestashop|shopify|wix|squarespace|ghost|hubspot",
+            re.I,
+        )
+        matches = cms_re.findall(html_lower[:5000])
+        if matches:
+            unique_matches = list(dict.fromkeys(m.lower() for m in matches))
+            if unique_matches:
+                cms_map: dict[str, str] = {
+                    "wordpress": "WordPress",
+                    "drupal": "Drupal",
+                    "joomla": "Joomla",
+                    "typo3": "Typo3",
+                    "magento": "Magento",
+                    "prestashop": "PrestaShop",
+                    "shopify": "Shopify",
+                    "wix": "Wix",
+                    "squarespace": "Squarespace",
+                    "ghost": "Ghost CMS",
+                    "hubspot": "HubSpot",
+                }
+                cms = cms_map.get(unique_matches[0], unique_matches[0].title())
+                raw_signals["cms_regex"] = ",".join(unique_matches[:3])
+
+    # CMS version from readme/changelog in full html_head
+    if cms:
+        cms_lower = cms.lower()
+        version_patterns: dict[str, re.Pattern] = {
+            "wordpress": re.compile(r"wordpress.*?([\d.]+)", re.I),
+            "drupal": re.compile(r"drupal.*?([\d.]+(?:\.\d+)?)", re.I),
+            "joomla": re.compile(r"joomla.*?([\d.]+)", re.I),
+            "typo3": re.compile(r"typo3.*?([\d.]+)", re.I),
+            "magento": re.compile(r"magento.*?([\d.]+)", re.I),
+            "prestashop": re.compile(r"prestashop.*?([\d.]+)", re.I),
+        }
+        pattern = version_patterns.get(cms_lower)
+        if pattern:
+            # Search in readme/changelog section
+            version_matches = pattern.findall(html_lower[:10000])
+            if version_matches:
+                cms_version = version_matches[0]
+                raw_signals["cms_version"] = cms_version or ""
+
+    return TechStack(
+        cloud_provider=cloud_provider,
+        cdn_provider=cdn_provider,
+        waf_detected=waf_detected,
+        waf_confidence=waf_confidence,
+        cms=cms,
+        cms_version=cms_version,
+        raw_signals=raw_signals,
+    )
+
+
 # ── Fingerprint Matching ──────────────────────────────────────────────────────
 
 
@@ -765,6 +998,65 @@ def extract_fingerprints(finding: "CanonicalFinding") -> list[ServiceFingerprint
                 confidence=fp.confidence,
                 evidence_ids=(fid,),
                 facets=fp.facets,
+            ))
+
+    # 5. Tech stack signals (cloud, WAF, CMS) from HTTP headers and HTML
+    http_signals_for_tech: HttpSignals = extract_http_signals(payload)
+    if http_signals_for_tech["all_headers"] or http_signals_for_tech["html_content"]:
+        headers_dict: dict[str, str] = {}
+        for h in http_signals_for_tech["all_headers"]:
+            if ": " in h:
+                k, v = h.split(": ", 1)
+                headers_dict[k.lower()] = v
+        # Extract <head> content from html_content for CMS detection
+        html_text = http_signals_for_tech["html_content"]
+        html_head = ""
+        if html_text:
+            head_match = re.search(r"<head[^>]*>(.*?)</head>", html_text, re.I | re.S)
+            if head_match:
+                html_head = head_match.group(1)
+        tech_stack = _extract_tech_stack(headers_dict, html_head, [])
+        # Convert TechStack to ServiceFingerprints
+        if tech_stack.cloud_provider:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=tech_stack.cloud_provider.lower(),
+                product=tech_stack.cloud_provider,
+                version="",
+                confidence=0.85,
+                evidence_ids=(fid,),
+                facets={"source": "tech_stack_cloud", **tech_stack.raw_signals},
+            ))
+        if tech_stack.cdn_provider:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=tech_stack.cdn_provider.lower(),
+                product=tech_stack.cdn_provider,
+                version="",
+                confidence=0.85,
+                evidence_ids=(fid,),
+                facets={"source": "tech_stack_cdn", **tech_stack.raw_signals},
+            ))
+        if tech_stack.waf_detected:
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=tech_stack.waf_detected.lower().replace(" ", "-"),
+                product=tech_stack.waf_detected,
+                version="",
+                confidence=tech_stack.waf_confidence,
+                evidence_ids=(fid,),
+                facets={"source": "tech_stack_waf", **tech_stack.raw_signals},
+            ))
+        if tech_stack.cms:
+            cms_product = tech_stack.cms if tech_stack.cms_version is None else f"{tech_stack.cms} {tech_stack.cms_version}"
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid,
+                service_name=tech_stack.cms.lower().replace(" ", "-"),
+                product=cms_product,
+                version=tech_stack.cms_version or "",
+                confidence=0.75,
+                evidence_ids=(fid,),
+                facets={"source": "tech_stack_cms", **tech_stack.raw_signals},
             ))
 
     # Deduplicate by (service_name, product) and cap at MAX_FINGERPRINTS_PER_FINDING
@@ -1206,6 +1498,9 @@ async def run_passive_tech_stack_sidecar(
 
     Returns count of stored findings.
     Fail-soft: returns 0 on any error.
+
+    When tech_stack signals (CMS, web server, framework) are detected,
+    CVE lookup is triggered as asyncio.create_task() for significant technologies.
     """
     if not findings or store is None:
         return 0
@@ -1215,6 +1510,9 @@ async def run_passive_tech_stack_sidecar(
         if not derived_findings:
             return 0
 
+        # Trigger CVE lookup for high-signal tech (CMS, web servers, frameworks)
+        _trigger_cve_lookup_tasks(derived_findings, store)
+
         results = await store.async_ingest_findings_batch(derived_findings)
         stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
         return stored
@@ -1223,6 +1521,120 @@ async def run_passive_tech_stack_sidecar(
         raise
     except Exception:
         return 0
+
+
+def _trigger_cve_lookup_tasks(
+    findings: list["CanonicalFinding"],
+    store: Any,
+) -> None:
+    """
+    Fire background CVE lookup tasks for high-signal technologies.
+
+    Triggers asyncio.create_task() for: WordPress, Drupal, Joomla, Typo3,
+    nginx, Apache, Next.js, React, Vue, Angular, Gatsby.
+
+    CVE results are stored via store.async_ingest_findings_batch().
+    Fail-safe: any error is logged and swallowed.
+    """
+    # Techs with significant CVE history — trigger lookup
+    _CVE_TRIGGER_TECHS = {
+        "WordPress", "Drupal", "Joomla", "Typo3",
+        "nginx", "Apache", "Next.js", "React", "Vue",
+        "Angular", "Gatsby", "Laravel", "Django", "Flask",
+        "Magento", "PrestaShop", "Ghost", "HubSpot",
+    }
+
+    detected_techs: set[str] = set()
+    for finding in findings:
+        try:
+            payload_str = getattr(finding, "payload_text", "") or ""
+            if payload_str.startswith("{"):
+                payload = json.loads(payload_str)
+                tech = payload.get("technology", "")
+                if tech in _CVE_TRIGGER_TECHS:
+                    detected_techs.add(tech)
+        except Exception:
+            continue
+
+    if not detected_techs:
+        return
+
+    # Fire background tasks — do not await
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # No running loop, skip
+
+    for tech in detected_techs:
+        cve_id = f"CVE-{tech.upper()}-LATEST"
+        task = loop.create_task(
+            _cve_lookup_background(tech, cve_id, store),
+        )
+        # Fire-and-forget: store task reference only if caller tracks it
+        logger.debug(f"[TechStack] CVE lookup triggered for {tech}")
+
+
+async def _cve_lookup_background(
+    tech: str,
+    cve_id: str,
+    store: Any,
+) -> None:
+    """
+    Background CVE lookup task — searches GitHub for PoC/exploit samples.
+
+    Stores results as CanonicalFinding with source_type="cve_lookup".
+    Fail-soft: logs and returns on any error.
+    """
+    try:
+        from hledac.universal.intelligence.exposure_clients import GitHubCodeSearchClient as _GitHubCodeSearchCVEClient
+        from pathlib import Path
+
+        cache_dir = Path("/tmp/cve_gh_cache")
+        client = _GitHubCodeSearchCVEClient(cache_dir)
+
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            results = await client.search_cve(cve_id, session)
+
+        if not results:
+            return
+
+        # Build CanonicalFinding list from CVE results
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+        ts = time.time()
+        cve_findings: list[CanonicalFinding] = []
+        for r in results[:5]:  # cap at 5 results per tech
+            url_val = r["url"]
+            fid_input = f"{cve_id}:{url_val}"
+            fid = f"cve_gh_{hashlib.sha1(fid_input.encode()).hexdigest()[:16]}"
+            payload = {
+                "technology": tech,
+                "cve_id": cve_id,
+                "repo": r.get("repo", ""),
+                "url": r.get("url", ""),
+                "path": r.get("path", ""),
+                "stars": r.get("stars", 0),
+                "source": "github_code_search",
+            }
+            cve_findings.append(CanonicalFinding(
+                finding_id=fid,
+                query=f"{tech} {cve_id}",
+                source_type="cve_lookup",
+                confidence=0.6,
+                ts=ts,
+                provenance=("cve_lookup", tech),
+                payload_text=json.dumps(payload, ensure_ascii=False),
+            ))
+
+        if cve_findings:
+            await store.async_ingest_findings_batch(cve_findings)
+            logger.info(f"[TechStack] {len(cve_findings)} CVE results stored for {tech}")
+
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.debug(f"[TechStack] CVE lookup failed for {tech}: {e}")
 
 
 class PassiveTechStackAdapter:

@@ -1,6 +1,6 @@
 {
   "command": [
-    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/bin/python",
+    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/bin/python3",
     "-m",
     "hledac.universal",
     "--sprint",
@@ -10,16 +10,16 @@
   "env_flags": {
     "HLEDAC_ENABLE_TEMPORAL_STORE": "1",
     "HLEDAC_ENABLE_CURL_CFFI": "0",
-    "HLEDAC_ENABLE_HTTPX_H2": "1"
+    "HLEDAC_ENABLE_HTTPX_H2": "0"
   },
-  "python_executable": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/bin/python",
+  "python_executable": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/bin/python3",
   "cwd": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
-  "started_at": "2026-04-29T16:18:34.452735+00:00",
-  "duration_requested_s": 360.0,
-  "duration_actual_s": 196.22959000000083,
-  "exit_code": 0,
+  "started_at": "2026-05-12T14:56:52.806986+00:00",
+  "duration_requested_s": 360,
+  "duration_actual_s": 0.03197483401163481,
+  "exit_code": 1,
   "stdout_tail": "",
-  "stderr_tail": "c.sans.edu/rssfeed.xml=0, https://krebsonsecurity.com/feed/=0, https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml=0, https://www.bleepingcomputer.com/feed/=0, https://www.cisa.gov/feeds/hns.xml=0, https://www.welivesecurity.com/feed/=0\nINFO:hledac.universal.core.__main__:[REPORT] /Users/vojtechhamada/.hledac/reports/8sa_1777479520767_fdb9fc_report.json\nINFO:hledac.universal.core.__main__:[EXPORT] fully_enriched → sprint_id=8sa_1777479520767_fdb9fc\nINFO:hledac.security.stealth_engine:Initialized Stealth Engine in active mode\nINFO:hledac.security.stealth_engine:Activated 3 evasion techniques\nINFO:hledac.security.stealth_engine:Stealth engine initialized successfully\nINFO:hledac.universal.coordinators.security_coordinator:SecurityCoordinator: StealthEngine initialized\nINFO:hledac.universal.coordinators.security_coordinator:SecurityCoordinator: ThreatIntelligence initialized\nINFO:hledac.security.quantum_resistant_crypto:Initialized QuantumResistantCrypto with KEM=Kyber768, SIG=Dilithium3\nWARNING:hledac.security.quantum_resistant_crypto:PQ signature Dilithium3 not available, using classical fallback\nINFO:hledac.security.quantum_resistant_crypto:Generated signature keypair with algorithm Dilithium3\nWARNING:hledac.security.quantum_resistant_crypto:Post-quantum cryptography not available - using hybrid classical fallback\nINFO:hledac.security.quantum_resistant_crypto:Quantum-resistant cryptography initialized successfully\nINFO:hledac.universal.coordinators.security_coordinator:SecurityCoordinator: QuantumResistantCrypto initialized\nINFO:hledac.security.zkp_research_engine:Initialized ZKP Research Engine with protocol schnorr\nINFO:hledac.security.zkp_research_engine:Generated keypair for protocol schnorr\nINFO:hledac.security.zkp_research_engine:ZKP engine initialized successfully with functional test\nINFO:hledac.universal.coordinators.security_coordinator:SecurityCoordinator: ZKPResearchEngine initialized\nINFO:hledac.universal.coordinators.base:Coordinator 'universal_security_coordinator' initialized successfully\nINFO:hledac.universal.export.sprint_exporter:[EXPORT] JSON report → /Users/vojtechhamada/.hledac/reports/8sa_1777479520767_fdb9fc_report.json\nINFO:hledac.universal.brain.hypothesis_engine:HypothesisEngine initialized (max_hypotheses=20, memory_limit=500.0MB, adversarial_verification=False)\nINFO:hledac.universal.export.sprint_exporter:[EXPORT] 3 enhanced seeds (query_suggestion, source_revisit, focus_recommendation) → /Users/vojtechhamada/.hledac/reports/8sa_1777479520767_fdb9fc_next_seeds.json\nINFO:hledac.universal.core.__main__:[EXPORT] finish layer → seeds=/Users/vojtechhamada/.hledac/reports/8sa_1777479520767_fdb9fc_next_seeds.json\nERROR:hledac.security.stealth_engine:Background monitoring failed: (pid=3207)\nINFO:hledac.security.stealth_engine:Evasion technique traffic_shaping cancelled\nINFO:hledac.security.stealth_engine:Evasion technique resource_masking cancelled\nINFO:hledac.security.stealth_engine:Evasion technique timing_jitter cancelled\n",
+  "stderr_tail": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/.venv/bin/python3: No module named hledac.universal.__main__; 'hledac.universal' is a package and cannot be directly executed\n",
   "report_paths_found": [],
   "temporal_summary_present": false,
   "temporal_priority_hints_present": false,
@@ -34,5 +34,5 @@
   "cycles_started": 0,
   "cycles_completed": 0,
   "errors": [],
-  "status": "COMPLETED"
+  "status": "FAILED"
 }

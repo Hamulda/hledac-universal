@@ -16,6 +16,7 @@ from __future__ import annotations
 import atexit
 import asyncio
 import logging
+import os
 import random
 import re
 import time
@@ -57,6 +58,7 @@ logger = logging.getLogger(__name__)
 # P4: Tor + stealth constants
 # ---------------------------------------------------------------------------
 TOR_SOCKS_PROXY: Final[str] = "socks5://127.0.0.1:9050"
+I2P_SOCKS_PROXY: Final[str] = os.environ.get("I2P_PROXY_URL", "socks5://127.0.0.1:7654")
 TOR_CIRCUIT_RENEWAL_REQUEST_COUNT: Final[int] = 10
 TOR_STEALTH_TIMEOUT_SCALE: Final[float] = 2.0  # Tor requests need longer timeouts
 JITTER_MIN_S: Final[float] = 0.1
@@ -701,8 +703,7 @@ async def _get_i2p_session() -> "aiohttp.ClientSession":
             from aiohttp_socks import ProxyConnector
         except ImportError:
             raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")
-        # I2P default SOCKS port is 7654
-        connector = ProxyConnector.from_url("socks5://127.0.0.1:7654", rdns=True)
+        connector = ProxyConnector.from_url(I2P_SOCKS_PROXY, rdns=True)
         _i2p_session = aiohttp.ClientSession(connector=connector)
         _i2p_session_locally_created = True
     _session_source_telemetry["i2p"] = "local_i2p"
@@ -2008,6 +2009,7 @@ __all__ = [
     "_close_tor_session",
     "TOR_SOCKS_PROXY",
     "TOR_CIRCUIT_RENEWAL_REQUEST_COUNT",
+    "I2P_SOCKS_PROXY",
     # P10: I2P + Freenet helpers
     "_is_i2p_url",
     "_is_freenet_url",

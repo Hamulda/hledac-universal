@@ -62,6 +62,15 @@ class PromptBandit:
                 self._counts = defaultdict(int, data.get('counts', {}))
                 self._rewards = defaultdict(float, data.get('rewards', {}))
 
+                # Sprint F234: Load UCB1 state for arm selection continuity
+                arm_counts_data = data.get('arm_counts', {})
+                arm_rewards_data = data.get('arm_rewards', {})
+                if arm_counts_data:
+                    self._arm_counts = defaultdict(int, arm_counts_data)
+                if arm_rewards_data:
+                    self._arm_rewards = defaultdict(float, arm_rewards_data)
+                self._total_pulls = data.get('total_pulls', 0)
+
                 # A a b načteme jako numpy array
                 for k, v in data.get('A', {}).items():
                     self._A[int(k)] = np.array(v, dtype=np.float64)
@@ -89,6 +98,10 @@ class PromptBandit:
                     json.dump({
                         'counts': dict(self._counts),
                         'rewards': dict(self._rewards),
+                        # Sprint F234: Persist UCB1 state for arm selection continuity across boots
+                        'arm_counts': dict(self._arm_counts),
+                        'arm_rewards': dict(self._arm_rewards),
+                        'total_pulls': self._total_pulls,
                         'A': A_json,
                         'b': b_json,
                         'n_variants': self._n_variants

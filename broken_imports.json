@@ -1,0 +1,1969 @@
+[
+  {
+    "file": "brain/model_manager.py",
+    "line": 26,
+    "import_statement": "from hledac.universal import adjust_fetch_workers",
+    "missing_module": "hledac.universal.adjust_fetch_workers",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "context_optimization/context_cache.py",
+    "line": 53,
+    "import_statement": "from hledac.core.mlx_embeddings import MLXEmbeddingManager",
+    "missing_module": "hledac.core.mlx_embeddings.MLXEmbeddingManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "context_optimization/context_cache.py",
+    "line": 232,
+    "import_statement": "from hledac.core.mlx_embeddings import get_embedding_manager",
+    "missing_module": "hledac.core.mlx_embeddings.get_embedding_manager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "context_optimization/context_compressor.py",
+    "line": 46,
+    "import_statement": "from hledac.core.mlx_embeddings import MLXEmbeddingManager",
+    "missing_module": "hledac.core.mlx_embeddings.MLXEmbeddingManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "context_optimization/context_compressor.py",
+    "line": 218,
+    "import_statement": "from hledac.core.mlx_embeddings import get_embedding_manager",
+    "missing_module": "hledac.core.mlx_embeddings.get_embedding_manager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "context_optimization/dynamic_context_manager.py",
+    "line": 51,
+    "import_statement": "from hledac.core.mlx_embeddings import MLXEmbeddingManager",
+    "missing_module": "hledac.core.mlx_embeddings.MLXEmbeddingManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "context_optimization/dynamic_context_manager.py",
+    "line": 223,
+    "import_statement": "from hledac.core.mlx_embeddings import get_embedding_manager",
+    "missing_module": "hledac.core.mlx_embeddings.get_embedding_manager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/benchmark_coordinator.py",
+    "line": 40,
+    "import_statement": "from hledac.models import SearchResult",
+    "missing_module": "hledac.models.SearchResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/benchmark_coordinator.py",
+    "line": 45,
+    "import_statement": "from hledac.runtime.unified_orchestrator import AgentProtocol",
+    "missing_module": "hledac.runtime.unified_orchestrator.AgentProtocol",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 154,
+    "import_statement": "from hledac.cortex.director import GhostDirector",
+    "missing_module": "hledac.cortex.director.GhostDirector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 166,
+    "import_statement": "from hledac.tools.preserved_logic.parallel_execution_optimizer import ParallelExecutionOptimizer",
+    "missing_module": "hledac.tools.preserved_logic.parallel_execution_optimizer.ParallelExecutionOptimizer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 180,
+    "import_statement": "from hledac.distributed_computing.ray_cluster import RayClusterManager",
+    "missing_module": "hledac.distributed_computing.ray_cluster.RayClusterManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 699,
+    "import_statement": "from hledac.cortex.director import DirectorAction",
+    "missing_module": "hledac.cortex.director.DirectorAction",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 778,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import SpeculativeEngine",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.SpeculativeEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 778,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import DecodingMode",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.DecodingMode",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 778,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import SpeculationConfig",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.SpeculationConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 853,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import SpeculativeEngine",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.SpeculativeEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 900,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import SpeculativeEngine",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.SpeculativeEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 900,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import DecodingMode",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.DecodingMode",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/execution_coordinator.py",
+    "line": 900,
+    "import_statement": "from hledac.speculative_decoding.speculative_engine import SpeculationConfig",
+    "missing_module": "hledac.speculative_decoding.speculative_engine.SpeculationConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/memory_coordinator.py",
+    "line": 1623,
+    "import_statement": "from hledac.tools.preserved_logic.fast_filter import FastFilter",
+    "missing_module": "hledac.tools.preserved_logic.fast_filter.FastFilter",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/memory_coordinator.py",
+    "line": 1770,
+    "import_statement": "from hledac.tools.preserved_logic.fast_lang import LanguageDetector",
+    "missing_module": "hledac.tools.preserved_logic.fast_lang.LanguageDetector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/memory_coordinator.py",
+    "line": 1817,
+    "import_statement": "from hledac.tools.preserved_logic.fast_lang import LanguageDetector",
+    "missing_module": "hledac.tools.preserved_logic.fast_lang.LanguageDetector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/memory_coordinator.py",
+    "line": 1861,
+    "import_statement": "from hledac.tools.preserved_logic.fast_lang import LanguageDetector",
+    "missing_module": "hledac.tools.preserved_logic.fast_lang.LanguageDetector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 180,
+    "import_statement": "from hledac.monitoring.advanced_monitoring import AdvancedMonitoring",
+    "missing_module": "hledac.monitoring.advanced_monitoring.AdvancedMonitoring",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 194,
+    "import_statement": "from hledac.core.watchdog import Watchdog",
+    "missing_module": "hledac.core.watchdog.Watchdog",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 750,
+    "import_statement": "from hledac.tools.audit.security_auditor import SecurityAuditor",
+    "missing_module": "hledac.tools.audit.security_auditor.SecurityAuditor",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 810,
+    "import_statement": "from hledac.tools.diagnostics.codebase_integrity_validator import CodebaseIntegrityValidator",
+    "missing_module": "hledac.tools.diagnostics.codebase_integrity_validator.CodebaseIntegrityValidator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 810,
+    "import_statement": "from hledac.tools.diagnostics.codebase_integrity_validator import ValidationConfig",
+    "missing_module": "hledac.tools.diagnostics.codebase_integrity_validator.ValidationConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 865,
+    "import_statement": "from hledac.tools.audit.syntax_verifier import SyntaxVerifier",
+    "missing_module": "hledac.tools.audit.syntax_verifier.SyntaxVerifier",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 865,
+    "import_statement": "from hledac.tools.audit.syntax_verifier import VerificationConfig",
+    "missing_module": "hledac.tools.audit.syntax_verifier.VerificationConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 1093,
+    "import_statement": "from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine",
+    "missing_module": "hledac.tools.preserved_logic.monitoring.diagnostics_engine.DiagnosticsEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 1093,
+    "import_statement": "from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticResult",
+    "missing_module": "hledac.tools.preserved_logic.monitoring.diagnostics_engine.DiagnosticResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/monitoring_coordinator.py",
+    "line": 1179,
+    "import_statement": "from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine",
+    "missing_module": "hledac.tools.preserved_logic.monitoring.diagnostics_engine.DiagnosticsEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/performance_coordinator.py",
+    "line": 36,
+    "import_statement": "from hledac.config import get_settings",
+    "missing_module": "hledac.config.get_settings",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/performance_coordinator.py",
+    "line": 41,
+    "import_statement": "from hledac.core.resilience import AgentExecutionError",
+    "missing_module": "hledac.core.resilience.AgentExecutionError",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/performance_coordinator.py",
+    "line": 41,
+    "import_statement": "from hledac.core.resilience import CircuitBreakerOpen",
+    "missing_module": "hledac.core.resilience.CircuitBreakerOpen",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/research_coordinator.py",
+    "line": 273,
+    "import_statement": "from hledac.core.unified_ai_orchestrator import UnifiedAIOrchestrator",
+    "missing_module": "hledac.core.unified_ai_orchestrator.UnifiedAIOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/research_coordinator.py",
+    "line": 287,
+    "import_statement": "from hledac.deep_research.evidence_network_analyzer import EvidenceNetworkAnalyzer",
+    "missing_module": "hledac.deep_research.evidence_network_analyzer.EvidenceNetworkAnalyzer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/research_coordinator.py",
+    "line": 299,
+    "import_statement": "from hledac.advanced_rag.rag_orchestrator import RAGOrchestrator",
+    "missing_module": "hledac.advanced_rag.rag_orchestrator.RAGOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/research_coordinator.py",
+    "line": 780,
+    "import_statement": "from hledac.msqes import MultiSourceQueryExpansionEngine",
+    "missing_module": "hledac.msqes.MultiSourceQueryExpansionEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/research_coordinator.py",
+    "line": 780,
+    "import_statement": "from hledac.msqes import search_academic",
+    "missing_module": "hledac.msqes.search_academic",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/research_coordinator.py",
+    "line": 855,
+    "import_statement": "from hledac.advanced_web.stealth_browser import StealthBrowser",
+    "missing_module": "hledac.advanced_web.stealth_browser.StealthBrowser",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 139,
+    "import_statement": "from hledac.security.stealth_engine import StealthEngine",
+    "missing_module": "hledac.security.stealth_engine.StealthEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 153,
+    "import_statement": "from hledac.security.threat_intelligence import ThreatIntelligence",
+    "missing_module": "hledac.security.threat_intelligence.ThreatIntelligence",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 167,
+    "import_statement": "from hledac.security.quantum_resistant_crypto import QuantumResistantCrypto",
+    "missing_module": "hledac.security.quantum_resistant_crypto.QuantumResistantCrypto",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 181,
+    "import_statement": "from hledac.security.zkp_research_engine import ZKPResearchEngine",
+    "missing_module": "hledac.security.zkp_research_engine.ZKPResearchEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 886,
+    "import_statement": "from hledac.network.anonymity.anonymity_manager import AnonymityManager",
+    "missing_module": "hledac.network.anonymity.anonymity_manager.AnonymityManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 940,
+    "import_statement": "from hledac.stealth_osint.archive_resurrector import ArchiveResurrector",
+    "missing_module": "hledac.stealth_osint.archive_resurrector.ArchiveResurrector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 990,
+    "import_statement": "from hledac.stealth_osint.data_leak_hunter import DataLeakHunter",
+    "missing_module": "hledac.stealth_osint.data_leak_hunter.DataLeakHunter",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1048,
+    "import_statement": "from hledac.stealth_osint.stealth_web_scraper import StealthWebScraper",
+    "missing_module": "hledac.stealth_osint.stealth_web_scraper.StealthWebScraper",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1104,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import PersonalPrivacyManager",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.PersonalPrivacyManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1104,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import PrivacyLevel",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.PrivacyLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1104,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import ConnectionType",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.ConnectionType",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1174,
+    "import_statement": "from hledac.advanced_web.fingerprint_manager import FingerprintManager",
+    "missing_module": "hledac.advanced_web.fingerprint_manager.FingerprintManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1234,
+    "import_statement": "from hledac.stealth_osint.data_leak_hunter import DataLeakHunter",
+    "missing_module": "hledac.stealth_osint.data_leak_hunter.DataLeakHunter",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1328,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import PersonalPrivacyManager",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.PersonalPrivacyManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1328,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import VPNConfig",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.VPNConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1328,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import VPNDriver",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.VPNDriver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1328,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import PrivacyLevel",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.PrivacyLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1380,
+    "import_statement": "from hledac.privacy_protection.personal_privacy_manager import VPNDriver",
+    "missing_module": "hledac.privacy_protection.personal_privacy_manager.VPNDriver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1432,
+    "import_statement": "from hledac.privacy_protection.anonymous_communication import TorMailer",
+    "missing_module": "hledac.privacy_protection.anonymous_communication.TorMailer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1432,
+    "import_statement": "from hledac.privacy_protection.anonymous_communication import EmailConfig",
+    "missing_module": "hledac.privacy_protection.anonymous_communication.EmailConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1495,
+    "import_statement": "from hledac.privacy_protection.anonymous_communication import SecureChannelManager",
+    "missing_module": "hledac.privacy_protection.anonymous_communication.SecureChannelManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1537,
+    "import_statement": "from hledac.privacy_protection.anonymous_communication import PGPManager",
+    "missing_module": "hledac.privacy_protection.anonymous_communication.PGPManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/security_coordinator.py",
+    "line": 1737,
+    "import_statement": "from hledac.supreme.security.ram_disk_vault import RamDiskVault",
+    "missing_module": "hledac.supreme.security.ram_disk_vault.RamDiskVault",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/validation_coordinator.py",
+    "line": 126,
+    "import_statement": "from hledac.tools.preserved_logic.engine_core.data_validator import DataValidator",
+    "missing_module": "hledac.tools.preserved_logic.engine_core.data_validator.DataValidator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/validation_coordinator.py",
+    "line": 138,
+    "import_statement": "from hledac.tools.preserved_logic.content_cleaner import ContentCleaner",
+    "missing_module": "hledac.tools.preserved_logic.content_cleaner.ContentCleaner",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "coordinators/validation_coordinator.py",
+    "line": 345,
+    "import_statement": "from hledac.tools.preserved_logic.content_cleaner import OutputFormat",
+    "missing_module": "hledac.tools.preserved_logic.content_cleaner.OutputFormat",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "debug_import.py",
+    "line": 6,
+    "import_statement": "import hledac.universal",
+    "missing_module": "hledac.universal",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "dht/local_graph.py",
+    "line": 9,
+    "import_statement": "from hledac.universal.security import encrypt_aes_gcm",
+    "missing_module": "hledac.universal.security.encrypt_aes_gcm",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "dht/local_graph.py",
+    "line": 9,
+    "import_statement": "from hledac.universal.security import decrypt_aes_gcm",
+    "missing_module": "hledac.universal.security.decrypt_aes_gcm",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "execution/ghost_executor.py",
+    "line": 542,
+    "import_statement": "from hledac.network.ghost_network_driver import GhostNetworkDriver",
+    "missing_module": "hledac.network.ghost_network_driver.GhostNetworkDriver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "execution/ghost_executor.py",
+    "line": 566,
+    "import_statement": "from hledac.outdated.stealth_toolkit.stealth_orchestrator import StealthOrchestrator as _SO",
+    "missing_module": "hledac.outdated.stealth_toolkit.stealth_orchestrator.StealthOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "execution/ghost_executor.py",
+    "line": 845,
+    "import_statement": "from hledac.fact_checking import quick_fact_check",
+    "missing_module": "hledac.fact_checking.quick_fact_check",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "execution/ghost_executor.py",
+    "line": 899,
+    "import_statement": "from hledac.osint import HiddenSourcesCrawler",
+    "missing_module": "hledac.osint.HiddenSourcesCrawler",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "federated/model_store.py",
+    "line": 51,
+    "import_statement": "from hledac.universal.security import encrypt_aes_gcm",
+    "missing_module": "hledac.universal.security.encrypt_aes_gcm",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "federated/model_store.py",
+    "line": 61,
+    "import_statement": "from hledac.universal.security import decrypt_aes_gcm",
+    "missing_module": "hledac.universal.security.decrypt_aes_gcm",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/archive_discovery.py",
+    "line": 45,
+    "import_statement": "from hledac.security.temporal_anonymizer import TemporalAnonymizer",
+    "missing_module": "hledac.security.temporal_anonymizer.TemporalAnonymizer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/archive_discovery.py",
+    "line": 46,
+    "import_statement": "from hledac.security.zero_attribution_engine import ZeroAttributionEngine",
+    "missing_module": "hledac.security.zero_attribution_engine.ZeroAttributionEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/blockchain_analyzer.py",
+    "line": 72,
+    "import_statement": "from hledac.core.http import fetch_json",
+    "missing_module": "hledac.core.http.fetch_json",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/blockchain_analyzer.py",
+    "line": 72,
+    "import_statement": "from hledac.core.http import safe_fetch",
+    "missing_module": "hledac.core.http.safe_fetch",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/data_leak_hunter.py",
+    "line": 39,
+    "import_statement": "from hledac.security.temporal_anonymizer import TemporalAnonymizer",
+    "missing_module": "hledac.security.temporal_anonymizer.TemporalAnonymizer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/data_leak_hunter.py",
+    "line": 40,
+    "import_statement": "from hledac.security.zero_attribution_engine import ZeroAttributionEngine",
+    "missing_module": "hledac.security.zero_attribution_engine.ZeroAttributionEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/data_leak_hunter.py",
+    "line": 817,
+    "import_statement": "from hledac.security.key_manager import KeyManager",
+    "missing_module": "hledac.security.key_manager.KeyManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/stealth_crawler.py",
+    "line": 1801,
+    "import_statement": "from hledac.security.temporal_anonymizer import TemporalAnonymizer",
+    "missing_module": "hledac.security.temporal_anonymizer.TemporalAnonymizer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/stealth_crawler.py",
+    "line": 1802,
+    "import_statement": "from hledac.security.zero_attribution_engine import ZeroAttributionEngine",
+    "missing_module": "hledac.security.zero_attribution_engine.ZeroAttributionEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 36,
+    "import_statement": "from hledac.advanced_web.automation_orchestrator import AutomationOrchestrator",
+    "missing_module": "hledac.advanced_web.automation_orchestrator.AutomationOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 36,
+    "import_statement": "from hledac.advanced_web.automation_orchestrator import AutomationWorkflow",
+    "missing_module": "hledac.advanced_web.automation_orchestrator.AutomationWorkflow",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 37,
+    "import_statement": "from hledac.stealth_web_v2.intelligent_scraper import IntelligentScraper",
+    "missing_module": "hledac.stealth_web_v2.intelligent_scraper.IntelligentScraper",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 37,
+    "import_statement": "from hledac.stealth_web_v2.intelligent_scraper import ScrapingTarget",
+    "missing_module": "hledac.stealth_web_v2.intelligent_scraper.ScrapingTarget",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 37,
+    "import_statement": "from hledac.stealth_web_v2.intelligent_scraper import ScrapingConfig",
+    "missing_module": "hledac.stealth_web_v2.intelligent_scraper.ScrapingConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 38,
+    "import_statement": "from hledac.intelligence.osint_reporting_generator import OSINTReportingGenerator",
+    "missing_module": "hledac.intelligence.osint_reporting_generator.OSINTReportingGenerator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 38,
+    "import_statement": "from hledac.intelligence.osint_reporting_generator import ReportConfig",
+    "missing_module": "hledac.intelligence.osint_reporting_generator.ReportConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 38,
+    "import_statement": "from hledac.intelligence.osint_reporting_generator import ReportType",
+    "missing_module": "hledac.intelligence.osint_reporting_generator.ReportType",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 39,
+    "import_statement": "from hledac.social_engineering.osint_aggregator import OSINTAggregator",
+    "missing_module": "hledac.social_engineering.osint_aggregator.OSINTAggregator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "intelligence/web_intelligence.py",
+    "line": 39,
+    "import_statement": "from hledac.social_engineering.osint_aggregator import OSINTConfig",
+    "missing_module": "hledac.social_engineering.osint_aggregator.OSINTConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "knowledge/lancedb_store.py",
+    "line": 270,
+    "import_statement": "from hledac.core.mlx_embeddings import get_embedding_manager",
+    "missing_module": "hledac.core.mlx_embeddings.get_embedding_manager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "knowledge/rag_engine.py",
+    "line": 767,
+    "import_statement": "from hledac.ultra_context.infinite_context_engine import InfiniteContextEngine",
+    "missing_module": "hledac.ultra_context.infinite_context_engine.InfiniteContextEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "knowledge/rag_engine.py",
+    "line": 776,
+    "import_statement": "from hledac.ultra_context.spr_compressor import SPRCompressor",
+    "missing_module": "hledac.ultra_context.spr_compressor.SPRCompressor",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "knowledge/rag_engine.py",
+    "line": 776,
+    "import_statement": "from hledac.ultra_context.spr_compressor import SPRConfig",
+    "missing_module": "hledac.ultra_context.spr_compressor.SPRConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 42,
+    "import_statement": "from hledac.neuromorphic.common.neural_events import NeuralEvent",
+    "missing_module": "hledac.neuromorphic.common.neural_events.NeuralEvent",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 42,
+    "import_statement": "from hledac.neuromorphic.common.neural_events import SpikeData",
+    "missing_module": "hledac.neuromorphic.common.neural_events.SpikeData",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 42,
+    "import_statement": "from hledac.neuromorphic.common.neural_events import EventType",
+    "missing_module": "hledac.neuromorphic.common.neural_events.EventType",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 42,
+    "import_statement": "from hledac.neuromorphic.common.neural_events import NeuronType",
+    "missing_module": "hledac.neuromorphic.common.neural_events.NeuronType",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 45,
+    "import_statement": "from hledac.neuromorphic.common.processing_result import ProcessingResult",
+    "missing_module": "hledac.neuromorphic.common.processing_result.ProcessingResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 45,
+    "import_statement": "from hledac.neuromorphic.common.processing_result import ProcessingMetrics",
+    "missing_module": "hledac.neuromorphic.common.processing_result.ProcessingMetrics",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 45,
+    "import_statement": "from hledac.neuromorphic.common.processing_result import ProcessingStatus",
+    "missing_module": "hledac.neuromorphic.common.processing_result.ProcessingStatus",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/coordination_layer.py",
+    "line": 678,
+    "import_statement": "from hledac.hermes3.context_manager import ContextManager",
+    "missing_module": "hledac.hermes3.context_manager.ContextManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/ghost_layer.py",
+    "line": 200,
+    "import_statement": "from hledac.cortex.director import GhostDirector",
+    "missing_module": "hledac.cortex.director.GhostDirector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/ghost_layer.py",
+    "line": 217,
+    "import_statement": "from hledac.supreme.security.ram_disk_vault import RamDiskVault",
+    "missing_module": "hledac.supreme.security.ram_disk_vault.RamDiskVault",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/ghost_layer.py",
+    "line": 233,
+    "import_statement": "from hledac.supreme.security.loot_manager import LootManager",
+    "missing_module": "hledac.supreme.security.loot_manager.LootManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/layer_manager.py",
+    "line": 222,
+    "import_statement": "from hledac.cortex.director import GhostDirector",
+    "missing_module": "hledac.cortex.director.GhostDirector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/research_layer.py",
+    "line": 121,
+    "import_statement": "from hledac.cortex.director import GhostDirector",
+    "missing_module": "hledac.cortex.director.GhostDirector",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/research_layer.py",
+    "line": 138,
+    "import_statement": "from hledac.research.depth_maximizer import ResearchDepthMaximizer",
+    "missing_module": "hledac.research.depth_maximizer.ResearchDepthMaximizer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/research_layer.py",
+    "line": 155,
+    "import_statement": "from hledac.cortex.hunter import Hunter",
+    "missing_module": "hledac.cortex.hunter.Hunter",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/security_layer.py",
+    "line": 145,
+    "import_statement": "from hledac.crypto.string_obfuscator import StringObfuscator",
+    "missing_module": "hledac.crypto.string_obfuscator.StringObfuscator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/security_layer.py",
+    "line": 158,
+    "import_statement": "from hledac.research_security.research_obfuscation import ResearchObfuscator",
+    "missing_module": "hledac.research_security.research_obfuscation.ResearchObfuscator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/security_layer.py",
+    "line": 171,
+    "import_statement": "from hledac.research_security.secure_destruction import SecureDestructor",
+    "missing_module": "hledac.research_security.secure_destruction.SecureDestructor",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/security_layer.py",
+    "line": 171,
+    "import_statement": "from hledac.research_security.secure_destruction import DestructionConfig",
+    "missing_module": "hledac.research_security.secure_destruction.DestructionConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/stealth_layer.py",
+    "line": 1997,
+    "import_statement": "from hledac.advanced_web.stealth_browser import StealthBrowser",
+    "missing_module": "hledac.advanced_web.stealth_browser.StealthBrowser",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/stealth_layer.py",
+    "line": 1997,
+    "import_statement": "from hledac.advanced_web.stealth_browser import BrowserConfig",
+    "missing_module": "hledac.advanced_web.stealth_browser.BrowserConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "layers/stealth_layer.py",
+    "line": 2019,
+    "import_statement": "from hledac.advanced_web.detection_evader import DetectionEvader",
+    "missing_module": "hledac.advanced_web.detection_evader.DetectionEvader",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "legacy/autonomous_orchestrator.py",
+    "line": 5451,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "legacy/autonomous_orchestrator.py",
+    "line": 5789,
+    "import_statement": "from hledac.universal.intelligence.path_discovery import ShadowWalkerAlgorithm",
+    "missing_module": "hledac.universal.intelligence.path_discovery.ShadowWalkerAlgorithm",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "legacy/persistent_layer.py",
+    "line": 772,
+    "import_statement": "from hledac.tools.preserved_logic.semantic_filter import SemanticFilter",
+    "missing_module": "hledac.tools.preserved_logic.semantic_filter.SemanticFilter",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 1821,
+    "import_statement": "from hledac.universal.layers import get_temporal_signal_layer",
+    "missing_module": "hledac.universal.layers.get_temporal_signal_layer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 2182,
+    "import_statement": "from hledac.universal.brain.modernbert_engine import ModernBertEngine",
+    "missing_module": "hledac.universal.brain.modernbert_engine.ModernBertEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 2632,
+    "import_statement": "from hledac.universal.layers import reset_temporal_signal_layer",
+    "missing_module": "hledac.universal.layers.reset_temporal_signal_layer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 2643,
+    "import_statement": "from hledac.universal.layers import is_temporal_store_enabled",
+    "missing_module": "hledac.universal.layers.is_temporal_store_enabled",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 2643,
+    "import_statement": "from hledac.universal.layers import load_temporal_signal_snapshot",
+    "missing_module": "hledac.universal.layers.load_temporal_signal_snapshot",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 3552,
+    "import_statement": "from hledac.universal.layers import get_temporal_signal_summary",
+    "missing_module": "hledac.universal.layers.get_temporal_signal_summary",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 3559,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "pipeline/live_public_pipeline.py",
+    "line": 3567,
+    "import_statement": "from hledac.universal.layers import save_temporal_signal_snapshot",
+    "missing_module": "hledac.universal.layers.save_temporal_signal_snapshot",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "policy/nym_policy.py",
+    "line": 11,
+    "import_statement": "from hledac.universal.transport import Transport",
+    "missing_module": "hledac.universal.transport.Transport",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "policy/nym_policy.py",
+    "line": 11,
+    "import_statement": "from hledac.universal.transport import TransportResolver",
+    "missing_module": "hledac.universal.transport.TransportResolver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "policy/nym_policy.py",
+    "line": 11,
+    "import_statement": "from hledac.universal.transport import TransportContext",
+    "missing_module": "hledac.universal.transport.TransportContext",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "runtime/sprint_scheduler.py",
+    "line": 1173,
+    "import_statement": "from hledac.universal.export import render_diagnostic_markdown_to_path",
+    "missing_module": "hledac.universal.export.render_diagnostic_markdown_to_path",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "runtime/sprint_scheduler.py",
+    "line": 1173,
+    "import_statement": "from hledac.universal.export import render_jsonld_to_path",
+    "missing_module": "hledac.universal.export.render_jsonld_to_path",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "runtime/sprint_scheduler.py",
+    "line": 1173,
+    "import_statement": "from hledac.universal.export import render_stix_bundle_to_path",
+    "missing_module": "hledac.universal.export.render_stix_bundle_to_path",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "runtime/sprint_scheduler.py",
+    "line": 1173,
+    "import_statement": "from hledac.universal.export import render_cti_stix_bundle_to_path",
+    "missing_module": "hledac.universal.export.render_cti_stix_bundle_to_path",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "security/secure_enclave.py",
+    "line": 170,
+    "import_statement": "from hledac.ultra_context.secure_enclave_manager import SecureEnclaveManager",
+    "missing_module": "hledac.ultra_context.secure_enclave_manager.SecureEnclaveManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "smoke_runner.py",
+    "line": 76,
+    "import_statement": "import hledac.universal",
+    "missing_module": "hledac.universal",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "smoke_runner.py",
+    "line": 77,
+    "import_statement": "from hledac.universal import FETCH_SEMAPHORE",
+    "missing_module": "hledac.universal.FETCH_SEMAPHORE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "smoke_runner.py",
+    "line": 77,
+    "import_statement": "from hledac.universal import AdaptiveSemaphore",
+    "missing_module": "hledac.universal.AdaptiveSemaphore",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "smoke_runner.py",
+    "line": 77,
+    "import_statement": "from hledac.universal import adjust_fetch_workers",
+    "missing_module": "hledac.universal.adjust_fetch_workers",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/e2e_autonomous_loop.py",
+    "line": 12,
+    "import_statement": "from hledac.universal.budget_manager import BudgetManager",
+    "missing_module": "hledac.universal.budget_manager.BudgetManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/e2e_autonomous_loop.py",
+    "line": 12,
+    "import_statement": "from hledac.universal.budget_manager import BudgetConfig",
+    "missing_module": "hledac.universal.budget_manager.BudgetConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/e2e_autonomous_loop.py",
+    "line": 45,
+    "import_statement": "import hledac.universal.budget_manager as mod",
+    "missing_module": "hledac.universal.budget_manager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_0b/__init__.py",
+    "line": 199,
+    "import_statement": "from hledac.universal.context_cache import ContextCache",
+    "missing_module": "hledac.universal.context_cache.ContextCache",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_8bh/test_sprint_8bh.py",
+    "line": 348,
+    "import_statement": "from hledac.universal.export import render_diagnostic_markdown_to_path",
+    "missing_module": "hledac.universal.export.render_diagnostic_markdown_to_path",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_8tf/test_model_control_split_8tfr.py",
+    "line": 231,
+    "import_statement": "import hledac.universal",
+    "missing_module": "hledac.universal",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_e2e_readiness/test_e2e_readiness.py",
+    "line": 170,
+    "import_statement": "from hledac.universal.layers import get_temporal_signal_summary",
+    "missing_module": "hledac.universal.layers.get_temporal_signal_summary",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_e2e_readiness/test_e2e_readiness.py",
+    "line": 170,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_e2e_readiness/test_e2e_readiness.py",
+    "line": 192,
+    "import_statement": "from hledac.universal.layers import is_temporal_store_enabled",
+    "missing_module": "hledac.universal.layers.is_temporal_store_enabled",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 641,
+    "import_statement": "from hledac.universal.runtime.intelligence_dispatcher import IntelligenceDispatcher",
+    "missing_module": "hledac.universal.runtime.intelligence_dispatcher.IntelligenceDispatcher",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 641,
+    "import_statement": "from hledac.universal.runtime.intelligence_dispatcher import IntelligenceTier",
+    "missing_module": "hledac.universal.runtime.intelligence_dispatcher.IntelligenceTier",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 659,
+    "import_statement": "from hledac.universal.runtime.intelligence_dispatcher import IntelligenceDispatcher",
+    "missing_module": "hledac.universal.runtime.intelligence_dispatcher.IntelligenceDispatcher",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 659,
+    "import_statement": "from hledac.universal.runtime.intelligence_dispatcher import IntelligenceTier",
+    "missing_module": "hledac.universal.runtime.intelligence_dispatcher.IntelligenceTier",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 684,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 692,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 700,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 717,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import MemoryWatchdog",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.MemoryWatchdog",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 717,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 739,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import MemoryWatchdog",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.MemoryWatchdog",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 739,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 768,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import MemoryWatchdog",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.MemoryWatchdog",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 768,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f192g/test_f192g_grey_runtime_seams.py",
+    "line": 860,
+    "import_statement": "from hledac.universal.runtime.memory_watchdog import PressureLevel",
+    "missing_module": "hledac.universal.runtime.memory_watchdog.PressureLevel",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f201a/test_smoke_concurrency_contract.py",
+    "line": 24,
+    "import_statement": "from hledac.universal import FETCH_SEMAPHORE",
+    "missing_module": "hledac.universal.FETCH_SEMAPHORE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f201a/test_smoke_concurrency_contract.py",
+    "line": 24,
+    "import_statement": "from hledac.universal import AdaptiveSemaphore",
+    "missing_module": "hledac.universal.AdaptiveSemaphore",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f201a/test_smoke_concurrency_contract.py",
+    "line": 24,
+    "import_statement": "from hledac.universal import adjust_fetch_workers",
+    "missing_module": "hledac.universal.adjust_fetch_workers",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f201a/test_smoke_concurrency_contract.py",
+    "line": 135,
+    "import_statement": "from hledac.universal import FETCH_SEMAPHORE",
+    "missing_module": "hledac.universal.FETCH_SEMAPHORE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f201a/test_smoke_concurrency_contract.py",
+    "line": 140,
+    "import_statement": "from hledac.universal import AdaptiveSemaphore",
+    "missing_module": "hledac.universal.AdaptiveSemaphore",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f201a/test_smoke_concurrency_contract.py",
+    "line": 146,
+    "import_statement": "from hledac.universal import adjust_fetch_workers",
+    "missing_module": "hledac.universal.adjust_fetch_workers",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f204f/test_production_cti_export.py",
+    "line": 318,
+    "import_statement": "from hledac.universal.export import __all__ as all_exports",
+    "missing_module": "hledac.universal.export.__all__",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f205d/test_dead_code_archive_manifest.py",
+    "line": 144,
+    "import_statement": "from hledac.universal.orchestrator import FullyAutonomousOrchestrator",
+    "missing_module": "hledac.universal.orchestrator.FullyAutonomousOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import ct_results_to_findings",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.ct_results_to_findings",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import wayback_results_to_findings",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.wayback_results_to_findings",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import passive_dns_results_to_findings",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.passive_dns_results_to_findings",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import REJECTION_MISSING_DOMAIN",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.REJECTION_MISSING_DOMAIN",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import REJECTION_MISSING_VALUE",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.REJECTION_MISSING_VALUE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import REJECTION_LOW_INFORMATION",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.REJECTION_LOW_INFORMATION",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import REJECTION_DUPLICATE_CANDIDATE",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.REJECTION_DUPLICATE_CANDIDATE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import REJECTION_UNSUPPORTED_SHAPE",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.REJECTION_UNSUPPORTED_SHAPE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f207j_nonfeed_finding_bridge/test_nonfeed_finding_bridge.py",
+    "line": 29,
+    "import_statement": "from hledac.universal.probe_f207j_nonfeed_finding_bridge import MAX_BRIDGE_OUTPUT",
+    "missing_module": "hledac.universal.probe_f207j_nonfeed_finding_bridge.MAX_BRIDGE_OUTPUT",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f208n_uuid7_compat/__init__.py",
+    "line": 20,
+    "import_statement": "from hledac.universal.utils import get_uuid7_compat_status",
+    "missing_module": "hledac.universal.utils.get_uuid7_compat_status",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f208n_uuid7_compat/__init__.py",
+    "line": 56,
+    "import_statement": "from hledac.universal.utils import get_uuid7_compat_status",
+    "missing_module": "hledac.universal.utils.get_uuid7_compat_status",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f208n_uuid7_compat/__init__.py",
+    "line": 62,
+    "import_statement": "from hledac.universal.utils import get_uuid7_compat_status",
+    "missing_module": "hledac.universal.utils.get_uuid7_compat_status",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f208n_uuid7_compat/__init__.py",
+    "line": 67,
+    "import_statement": "from hledac.universal.utils import get_uuid7_compat_status",
+    "missing_module": "hledac.universal.utils.get_uuid7_compat_status",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f208n_uuid7_compat/__init__.py",
+    "line": 77,
+    "import_statement": "from hledac.universal.utils import get_uuid7_compat_status",
+    "missing_module": "hledac.universal.utils.get_uuid7_compat_status",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f208n_uuid7_compat/__init__.py",
+    "line": 115,
+    "import_statement": "from hledac.universal.utils import get_uuid7_compat_status",
+    "missing_module": "hledac.universal.utils.get_uuid7_compat_status",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f214t_safe_rendering/test_safe_render.py",
+    "line": 145,
+    "import_statement": "import hledac.universal",
+    "missing_module": "hledac.universal",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_f214teardown/test_async_cleanup_awaited.py",
+    "line": 157,
+    "import_statement": "import hledac.universal",
+    "missing_module": "hledac.universal",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 20,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import CANONICAL_SPRINT_OWNER",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.CANONICAL_SPRINT_OWNER",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 26,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import ACTIVE_RUNTIME_FILES",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.ACTIVE_RUNTIME_FILES",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 26,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import LEGACY_RUNTIME_FILES",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.LEGACY_RUNTIME_FILES",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 34,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import CANONICAL_SPRINT_OWNER",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.CANONICAL_SPRINT_OWNER",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 34,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import LEGACY_RUNTIME_FILES",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.LEGACY_RUNTIME_FILES",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 34,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import DEPRECATED_FACADE_FILES",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.DEPRECATED_FACADE_FILES",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_r0_nonfeed_reality_lock/test_nonfeed_reality_lock.py",
+    "line": 223,
+    "import_statement": "from hledac.universal.runtime.runtime_authority_manifest import ACTIVE_RUNTIME_FILES",
+    "missing_module": "hledac.universal.runtime.runtime_authority_manifest.ACTIVE_RUNTIME_FILES",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 35,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 40,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 49,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 66,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 90,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 109,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 133,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 157,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 199,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 229,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 237,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 264,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 358,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/probe_temporal_priority_hints/test_temporal_priority_hints.py",
+    "line": 388,
+    "import_statement": "from hledac.universal.layers import build_temporal_priority_hints",
+    "missing_module": "hledac.universal.layers.build_temporal_priority_hints",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import SafeHTTPClient",
+    "missing_module": "hledac.common.safe_utils.SafeHTTPClient",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import SafeHTTPConfig",
+    "missing_module": "hledac.common.safe_utils.SafeHTTPConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import parse_json_safe",
+    "missing_module": "hledac.common.safe_utils.parse_json_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import clean_text_safe",
+    "missing_module": "hledac.common.safe_utils.clean_text_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import extract_links_safe",
+    "missing_module": "hledac.common.safe_utils.extract_links_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import validate_url_safe",
+    "missing_module": "hledac.common.safe_utils.validate_url_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 153,
+    "import_statement": "from hledac.common.safe_utils import sanitize_filename_safe",
+    "missing_module": "hledac.common.safe_utils.sanitize_filename_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 265,
+    "import_statement": "from hledac.common.safe_utils import SafeConfig",
+    "missing_module": "hledac.common.safe_utils.SafeConfig",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 355,
+    "import_statement": "from hledac.common.safe_utils import read_file_safe",
+    "missing_module": "hledac.common.safe_utils.read_file_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/profiling/simple_bottleneck_profiler.py",
+    "line": 355,
+    "import_statement": "from hledac.common.safe_utils import write_file_safe",
+    "missing_module": "hledac.common.safe_utils.write_file_safe",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/run_sprint_5a_r3_benchmark.py",
+    "line": 22,
+    "import_statement": "from hledac.universal.knowledge.evidence_log import EvidencePacketStorage",
+    "missing_module": "hledac.universal.knowledge.evidence_log.EvidencePacketStorage",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_autonomous_orchestrator.py",
+    "line": 9546,
+    "import_statement": "from hledac.universal.orchestrator import FullyAutonomousOrchestrator as Orch",
+    "missing_module": "hledac.universal.orchestrator.FullyAutonomousOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_autonomous_orchestrator.py",
+    "line": 9943,
+    "import_statement": "from hledac.universal.coordinators import UniversalResearchCoordinator",
+    "missing_module": "hledac.universal.coordinators.UniversalResearchCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_autonomous_orchestrator.py",
+    "line": 9943,
+    "import_statement": "from hledac.universal.coordinators import UniversalExecutionCoordinator",
+    "missing_module": "hledac.universal.coordinators.UniversalExecutionCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_autonomous_orchestrator.py",
+    "line": 9943,
+    "import_statement": "from hledac.universal.coordinators import UniversalSecurityCoordinator",
+    "missing_module": "hledac.universal.coordinators.UniversalSecurityCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint54.py",
+    "line": 388,
+    "import_statement": "from hledac.universal.loops.fetch_loop import SELECTOLAX_AVAILABLE",
+    "missing_module": "hledac.universal.loops.fetch_loop.SELECTOLAX_AVAILABLE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 199,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 212,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 233,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 249,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 272,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 289,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 301,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint58a.py",
+    "line": 315,
+    "import_statement": "from hledac.universal.rl.marl_coordinator import MARLCoordinator",
+    "missing_module": "hledac.universal.rl.marl_coordinator.MARLCoordinator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint62c.py",
+    "line": 2,
+    "import_statement": "from hledac.universal.hypothesis import BetaBinomial",
+    "missing_module": "hledac.universal.hypothesis.BetaBinomial",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 31,
+    "import_statement": "from hledac.universal.transport import TransportResolver",
+    "missing_module": "hledac.universal.transport.TransportResolver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 39,
+    "import_statement": "from hledac.universal.transport import TransportContext",
+    "missing_module": "hledac.universal.transport.TransportContext",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 54,
+    "import_statement": "from hledac.universal.transport import TransportResolver",
+    "missing_module": "hledac.universal.transport.TransportResolver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 54,
+    "import_statement": "from hledac.universal.transport import TransportContext",
+    "missing_module": "hledac.universal.transport.TransportContext",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 54,
+    "import_statement": "from hledac.universal.transport import InMemoryTransport",
+    "missing_module": "hledac.universal.transport.InMemoryTransport",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 73,
+    "import_statement": "from hledac.universal.transport import TransportResolver",
+    "missing_module": "hledac.universal.transport.TransportResolver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 73,
+    "import_statement": "from hledac.universal.transport import TransportContext",
+    "missing_module": "hledac.universal.transport.TransportContext",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint64_transport_resolver.py",
+    "line": 92,
+    "import_statement": "from hledac.universal.transport import InMemoryTransport",
+    "missing_module": "hledac.universal.transport.InMemoryTransport",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint65_no_toggles.py",
+    "line": 93,
+    "import_statement": "from hledac.universal.transport import TransportResolver",
+    "missing_module": "hledac.universal.transport.TransportResolver",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint65_no_toggles.py",
+    "line": 93,
+    "import_statement": "from hledac.universal.transport import TransportContext",
+    "missing_module": "hledac.universal.transport.TransportContext",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint65_no_toggles.py",
+    "line": 100,
+    "import_statement": "from hledac.universal.transport import TransportContext",
+    "missing_module": "hledac.universal.transport.TransportContext",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_action_registry.py",
+    "line": 11,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_autonomous_loop_smoke.py",
+    "line": 14,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_autonomous_loop_smoke.py",
+    "line": 69,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_autonomous_loop_smoke.py",
+    "line": 110,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_autonomous_loop_smoke.py",
+    "line": 265,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_autonomous_loop_smoke.py",
+    "line": 427,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_decision_logic.py",
+    "line": 164,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint68/test_decision_logic.py",
+    "line": 168,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint7e.py",
+    "line": 405,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint7e.py",
+    "line": 420,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint7g.py",
+    "line": 28,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint7g.py",
+    "line": 138,
+    "import_statement": "from hledac.security.quantum_resistant_crypto import QuantumResistantCrypto",
+    "missing_module": "hledac.security.quantum_resistant_crypto.QuantumResistantCrypto",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint81/test_phase4.py",
+    "line": 19,
+    "import_statement": "from hledac.core.mlx_embeddings import MLXEmbeddingManager",
+    "missing_module": "hledac.core.mlx_embeddings.MLXEmbeddingManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint81/test_phase4.py",
+    "line": 24,
+    "import_statement": "from hledac.core.mlx_embeddings import MLXEmbeddingManager",
+    "missing_module": "hledac.core.mlx_embeddings.MLXEmbeddingManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint82j_benchmark.py",
+    "line": 305,
+    "import_statement": "from hledac.universal.utils import ActionResult",
+    "missing_module": "hledac.universal.utils.ActionResult",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint8aj_paths.py",
+    "line": 205,
+    "import_statement": "from hledac.universal.autonomy.agent_meta_optimizer import AgentMetaOptimizer",
+    "missing_module": "hledac.universal.autonomy.agent_meta_optimizer.AgentMetaOptimizer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 40,
+    "import_statement": "from hledac.universal.knowledge import KnowledgeGraphLayer",
+    "missing_module": "hledac.universal.knowledge.KnowledgeGraphLayer",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 40,
+    "import_statement": "from hledac.universal.knowledge import GraphRAGOrchestrator",
+    "missing_module": "hledac.universal.knowledge.GraphRAGOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 40,
+    "import_statement": "from hledac.universal.knowledge import KnowledgeGraphBuilder",
+    "missing_module": "hledac.universal.knowledge.KnowledgeGraphBuilder",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 40,
+    "import_statement": "from hledac.universal.knowledge import ContextGraph",
+    "missing_module": "hledac.universal.knowledge.ContextGraph",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 40,
+    "import_statement": "from hledac.universal.knowledge import RAGEngine",
+    "missing_module": "hledac.universal.knowledge.RAGEngine",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 138,
+    "import_statement": "from hledac.universal.orchestrator import FullyAutonomousOrchestrator",
+    "missing_module": "hledac.universal.orchestrator.FullyAutonomousOrchestrator",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 138,
+    "import_statement": "from hledac.universal.orchestrator import _ResearchManager",
+    "missing_module": "hledac.universal.orchestrator._ResearchManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "tests/test_sprint_f193a_legacy_boundary.py",
+    "line": 138,
+    "import_statement": "from hledac.universal.orchestrator import _SecurityManager",
+    "missing_module": "hledac.universal.orchestrator._SecurityManager",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "text/text_analyzer_facade.py",
+    "line": 84,
+    "import_statement": "from hledac.universal.text import UNICODE_ANALYZER_AVAILABLE",
+    "missing_module": "hledac.universal.text.UNICODE_ANALYZER_AVAILABLE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "text/text_analyzer_facade.py",
+    "line": 109,
+    "import_statement": "from hledac.universal.text import ENCODING_DETECTOR_AVAILABLE",
+    "missing_module": "hledac.universal.text.ENCODING_DETECTOR_AVAILABLE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "text/text_analyzer_facade.py",
+    "line": 119,
+    "import_statement": "from hledac.universal.text import HASH_IDENTIFIER_AVAILABLE",
+    "missing_module": "hledac.universal.text.HASH_IDENTIFIER_AVAILABLE",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "utils/config.py",
+    "line": 1,
+    "import_statement": "from hledac.config import *",
+    "missing_module": "hledac.config.*",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "utils/content_expander.py",
+    "line": 1,
+    "import_statement": "from hledac.services.content_expander import *",
+    "missing_module": "hledac.services.content_expander.*",
+    "suggestion": "check spelling"
+  },
+  {
+    "file": "utils/deduplication.py",
+    "line": 371,
+    "import_statement": "from hledac.core.mlx_embeddings import get_embedding_manager",
+    "missing_module": "hledac.core.mlx_embeddings.get_embedding_manager",
+    "suggestion": "check spelling"
+  }
+]

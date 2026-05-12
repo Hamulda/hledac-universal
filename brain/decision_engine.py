@@ -13,9 +13,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from .hermes3_engine import Hermes3Engine
@@ -250,7 +251,6 @@ class DecisionEngine:
 
     def _select_bandit_action(self, input_type: str, candidates: List[str]) -> str:
         """Select module using UCB1 multi-armed bandit."""
-        import math
         total = self._bandit_total_trials.get(input_type, 0) + 1  # +1 for optimism
         best_score = -float('inf')
         best_action = None

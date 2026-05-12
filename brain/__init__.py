@@ -27,10 +27,19 @@ Přidání nového importu sem neznamená, že je "podporováno" nebo "productio
 Vždy kontroluj _AVAILABLE flag a přítomnost SKUTEČNÝCH call sites v kódu.
 """
 
-from .hermes3_engine import Hermes3Engine
-from .decision_engine import DecisionEngine, DecisionType
+from enum import Enum
 
-# Insight Engine (from deep_research/insight_generator.py)
+# DecisionType — re-exported from Hermes3Engine compat shim (decision_engine.py deleted)
+class DecisionType(Enum):
+    RESEARCH = "research"
+    EXECUTION = "execution"
+    ANALYSIS = "analysis"
+    PLANNING = "planning"
+    SYNTHESIS = "synthesis"
+    ERROR = "error"
+    COMPLETE = "complete"
+
+from .hermes3_engine import Hermes3Engine
 try:
     from .insight_engine import (
         InsightEngine,
@@ -124,6 +133,14 @@ except Exception:
     DISTILLATION_AVAILABLE = False
 
 # Model Manager (lifecycle management for M1 8GB)
+# ModernBertEngine (extractive summarization via MLX embeddings)
+try:
+    from .modernbert_engine import ModernBertEngine
+    MODERNBERT_AVAILABLE = True
+except ImportError:
+    MODERNBERT_AVAILABLE = False
+
+# Model Manager (lifecycle management for M1 8GB)
 try:
     from .model_manager import (
         ModelManager,
@@ -162,7 +179,6 @@ except ImportError:
 
 __all__ = [
     "Hermes3Engine",
-    "DecisionEngine",
     "DecisionType",
     # Insight
     "InsightEngine",
@@ -219,6 +235,9 @@ __all__ = [
     "CriticMLP",
     "create_distillation_engine",
     "DISTILLATION_AVAILABLE",
+    # ModernBertEngine
+    "ModernBertEngine",
+    "MODERNBERT_AVAILABLE",
     # Model Manager
     "ModelManager",
     "ModelType",

@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Callable, Literal
 import aiofiles
 from enum import Enum, auto
 
-from hledac.universal import adjust_fetch_workers
+from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
 from hledac.universal.brain.quantization_selector import QuantizationSelector
 

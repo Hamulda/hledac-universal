@@ -162,15 +162,9 @@ async def run_windup(
         )
         synthesis_meta = runner.last_synthesis_meta
 
-        # RL feedback: record synthesis outcome via bandit rewards
-        if synthesis_meta:
-            bandit_arm = synthesis_meta.get("bandit_arm_used")
-            bandit_rewards = synthesis_meta.get("bandit_arm_rewards", {})
-            if bandit_arm and bandit_rewards:
-                for arm, reward in bandit_rewards.items():
-                    scheduler.record_pivot_outcome(
-                        f"synthesis_{arm}", int(reward * 10), 5.0
-                    )
+        # Sprint F234: Bandit update already handled by synthesis_runner.synthesize_findings()
+        # windup_engine.py is DORMANT — this path never executes in production.
+        # See DSPY_OPTIMIZATION_MAP.md for architecture context.
 
         await runner.close()
     except Exception as e:

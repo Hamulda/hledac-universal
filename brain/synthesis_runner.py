@@ -109,22 +109,46 @@ def _infer_ioc_type(text: str) -> str:
 
 _DSPY_PROMPTS: dict | None = None
 _PROMPT_BANDIT = None
+_DSPY_OPTIMIZER = None
+
+
+def _get_dspy_optimizer():
+    """Lazy init DSPyOptimizer — starts background optimization loop on first call."""
+    global _DSPY_OPTIMIZER
+    if _DSPY_OPTIMIZER is not None:
+        return _DSPY_OPTIMIZER
+    try:
+        from brain.dspy_optimizer import DSPyOptimizer
+        _DSPY_OPTIMIZER = DSPyOptimizer(brain_manager=None)
+        # Sprint F234: Start background optimization loop (non-blocking)
+        import asyncio
+        asyncio.create_task(_DSPY_OPTIMIZER.start(), name="dspy_optimizer")
+    except Exception:
+        _DSPY_OPTIMIZER = None
+    return _DSPY_OPTIMIZER
 
 
 def _get_dspy_prompts() -> dict:
     """
-    Lazy load DSPy optimalizované prompty.
+    Lazy load DSPy optimalizované prompty from optimizer cache.
     Fallback: prázdný dict (synthesis použije hardcoded templates).
     """
     global _DSPY_PROMPTS
     if _DSPY_PROMPTS is not None:
         return _DSPY_PROMPTS
+    prompts: dict = {}
     try:
-        from brain.dspy_optimizer import load_optimized_prompts
-        _DSPY_PROMPTS = load_optimized_prompts()
+        # Sprint F234: Try optimizer first, then fallback to load_optimized_prompts
+        dspy_opt = _get_dspy_optimizer()
+        if dspy_opt is not None and dspy_opt._optimized_prompts:
+            prompts = dspy_opt._optimized_prompts
+        else:
+            from brain.dspy_optimizer import load_optimized_prompts
+            prompts = load_optimized_prompts()
     except Exception:
-        _DSPY_PROMPTS = {}
-    return _DSPY_PROMPTS
+        prompts = {}
+    _DSPY_PROMPTS = prompts
+    return prompts
 
 
 def _get_prompt_bandit():
@@ -139,6 +163,7 @@ def _get_prompt_bandit():
             alpha=1.0,
             lambda_reg=0.01,
             context_dim=9,
+            persist_path=str(Path.home() / '.hledac' / 'prompt_bandit.json'),
         )
     except Exception:
         _PROMPT_BANDIT = None
@@ -308,7 +333,8 @@ class SynthesisRunner:
                  "_last_synthesis_engine", "_last_arm", "_bandit_rewards",
                  "_stix_status", "_stix_reason", "_stix_backend",
                  "_lifecycle_gate_source", "_lifecycle_gate_mode", "_lifecycle_adapter",
-                 "_stix_graph", "_last_synthesis_outcome")
+                 "_stix_graph", "_last_synthesis_outcome",
+                 "_compression_threshold", "_compressor")
 
     def __init__(self, lifecycle: "ModelLifecycle") -> None:
         self._lifecycle = lifecycle
@@ -340,6 +366,11 @@ class SynthesisRunner:
         self._stix_graph: Any = None
         # Sprint F151A: Last synthesis outcome — structured seam for all exit paths
         self._last_synthesis_outcome: SynthesisOutcome | None = None
+
+        # F234: Context compression — opt-in threshold (0 = disabled)
+        # Default 0 means compression is disabled unless explicitly enabled
+        self._compression_threshold: int = 0
+        self._compressor: Optional[Any] = None
 
     def inject_graph(self, graph: Any) -> None:
         """Inject IOCGraph instance from 8QA for STIX context injection."""
@@ -386,6 +417,27 @@ class SynthesisRunner:
         """Sprint 8TD: Set prompt modifier from bandit arm selection."""
         self._prompt_modifier = modifier
         logger.info(f"SynthesisRunner: prompt modifier set ({len(modifier)} chars)")
+
+    # ------------------------------------------------------------------
+    # F234: Context compression threshold (opt-in)
+    # ------------------------------------------------------------------
+
+    def set_compression_threshold(self, token_threshold: int) -> None:
+        """
+        F234: Enable context compression when prompt exceeds token_threshold.
+
+        Args:
+            token_threshold: Min prompt length (in chars, ~4x tokens) to trigger
+                           compression. 0 = disabled (default).
+        """
+        self._compression_threshold = token_threshold
+        if token_threshold > 0 and self._compressor is None:
+            try:
+                from context_optimization.context_compressor import ContextCompressor
+                self._compressor = ContextCompressor()
+                logger.info(f"SynthesisRunner: compression enabled, threshold={token_threshold}")
+            except Exception as e:
+                logger.warning(f"SynthesisRunner: compressor init failed: {e}")
 
     # ------------------------------------------------------------------
     # Sprint F151A: Synthesis outcome seam
@@ -609,9 +661,61 @@ class SynthesisRunner:
                 f"Current timestamp: {time.time()}"
             )
 
+        # Sprint F234: DSPy optimized prompts — try to load from cache first
+        dspy_prompts = _get_dspy_prompts()
+        if dspy_prompts:
+            dspy_opt = _get_dspy_optimizer()
+            if dspy_opt is not None:
+                try:
+                    # Check for optimized prompt for analysis task
+                    optimized = dspy_opt.get_prompt('analysis', {'complexity': 'medium'})
+                    if optimized:
+                        self.set_custom_prompt(optimized)
+                        logger.info(f"[SYNTHESIS] DSPy optimized prompt loaded ({len(optimized)} chars)")
+                except Exception:
+                    pass
+            # Fallback: use cached prompts directly
+            elif dspy_prompts.get('analysis:medium'):
+                self.set_custom_prompt(dspy_prompts['analysis:medium'])
+
+        # Sprint F234: Bandit arm selection — select before generation, apply modifier to prompt
+        bandit = _get_prompt_bandit()
+        arm_used = ""
+        if bandit is not None:
+            try:
+                arm_used = bandit.select_arm()
+                modifier = bandit.get_prompt_modifier(arm_used)
+                self.set_prompt_modifier(modifier)
+                self._last_arm = arm_used
+                logger.info(f"[SYNTHESIS] Bandit selected arm: {arm_used}")
+            except Exception as e:
+                logger.debug(f"[SYNTHESIS] Bandit select failed: {e}")
+                arm_used = ""
+
+        # Sprint F234: Append bandit modifier to prompt if set
+        if self._prompt_modifier:
+            prompt = prompt.rstrip() + self._prompt_modifier + "\n"
+
         raw_dict = None
         used_engine = "none"
         try:
+            # F234: Context compression — compress prompt if it exceeds threshold
+            if self._compression_threshold > 0 and self._compressor is not None:
+                prompt_len = len(prompt)
+                if prompt_len > self._compression_threshold:
+                    try:
+                        compressed = await self._compressor.compress_context(prompt)
+                        # Use critical content tier (most concise)
+                        compressed_prompt = compressed.critical_content
+                        logger.info(
+                            f"[SYNTHESIS] Context compressed: {prompt_len} → {len(compressed_prompt)} chars "
+                            f"(ratio={compressed.compression_ratio:.2f})"
+                        )
+                        prompt = compressed_prompt
+                    except Exception as e:
+                        # F234: fail-soft — synthesis continues with original prompt
+                        logger.warning(f"[SYNTHESIS] Context compression failed (using original prompt): {e}")
+
             # Sprint 8UC B.1 + B.3: Cascade: xgrammar → streaming → constrained
             result_tuple = await self._run_xgrammar_generation(prompt)
             if result_tuple is not None:
@@ -668,6 +772,24 @@ class SynthesisRunner:
             report = self._parse_raw_to_osintreport(raw_dict)
             if report is not None:
                 report.confidence = self._compute_confidence(report, used_outlines)
+
+                # Sprint F234: Update bandit UCB1 reward — reward = response_length_normalized × confidence
+                # Note: LinUCB update() is NOT called — select_arm() uses UCB1 algorithm.
+                # UCB1 state (arm_counts, arm_rewards) requires persistence fix — see prompt_bandit.py.
+                if bandit is not None and arm_used:
+                    try:
+                        response_text = (
+                            report.threat_summary + " " +
+                            " ".join(str(e) for e in report.ioc_entities) +
+                            " ".join(report.threat_actors)
+                        )
+                        response_len_norm = min(1.0, len(response_text) / 2000.0)  # 2k chars = 1.0
+                        reward = response_len_norm * report.confidence
+                        bandit.update_reward(arm_used, reward, reward)
+                        logger.info(f"[SYNTHESIS] Bandit reward: arm={arm_used} reward={reward:.3f}")
+                    except Exception as e:
+                        logger.debug(f"[SYNTHESIS] Bandit update failed: {e}")
+
                 self._last_synthesis_outcome = SynthesisOutcome(
                     status="success",
                     primary_reason="success",
@@ -708,6 +830,13 @@ class SynthesisRunner:
             await self._lifecycle.unload()
         except Exception:
             pass
+        # Sprint F234: Persist bandit state on shutdown
+        bandit = _get_prompt_bandit()
+        if bandit is not None:
+            try:
+                await bandit.final_save()
+            except Exception:
+                pass
         gc.collect()
 
     # ------------------------------------------------------------------

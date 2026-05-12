@@ -58,6 +58,7 @@ Lane = Literal[
     "i2p_socks",
     "js_renderer",
     "cache_safe_http",
+    "gopher",
 ]
 
 
@@ -187,6 +188,17 @@ class TransportRouter:
             return TransportDecision(
                 lane="i2p_socks",
                 reason="darknet_i2p",
+                cache_allowed=False,
+                max_bytes=suggested_max_bytes or 0,
+                timeout_s=suggested_timeout_s or 0.0,
+                concurrency_class=suggested_concurrency or "low",
+            )
+
+        # Gopher protocol — before Freenet since gopher:// has no hostname suffix
+        if url.startswith("gopher://"):
+            return TransportDecision(
+                lane="gopher",
+                reason="gopher_protocol",
                 cache_allowed=False,
                 max_bytes=suggested_max_bytes or 0,
                 timeout_s=suggested_timeout_s or 0.0,

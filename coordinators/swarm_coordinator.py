@@ -22,9 +22,16 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-import numpy as np
+try:
+    import numpy as np
+    from numpy.typing import NDArray
+    HAS_NUMPY = True
+except ImportError:
+    np = None
+    NDArray = "NDArray"  # type: ignore[misc]
+    HAS_NUMPY = False
 
 from .base import UniversalCoordinator, OperationType, DecisionResponse, OperationResult
 
@@ -70,9 +77,9 @@ class AdaptiveStrategy:
 class SwarmAgent:
     """Individual swarm agent."""
     agent_id: str
-    position: np.ndarray = field(default_factory=lambda: np.array([]))
-    velocity: np.ndarray = field(default_factory=lambda: np.array([]))
-    best_position: np.ndarray = field(default_factory=lambda: np.array([]))
+    position: List[float] = field(default_factory=list)
+    velocity: List[float] = field(default_factory=list)
+    best_position: List[float] = field(default_factory=list)
     best_fitness: float = float('-inf')
     energy: float = 1.0
     exploration_rate: float = 0.5
@@ -383,36 +390,39 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
     def _monitor_swarm(self) -> SwarmMetrics:
         """Monitor all agents and collect metrics."""
         metrics = SwarmMetrics()
-        
+
         if not self.agents:
             return metrics
-        
+
+        if not HAS_NUMPY:
+            raise ImportError("numpy required for swarm metrics computation — pip install 'hledac[dev]'")
+
         # Calculate diversity
         positions = [a.position for a in self.agents.values() if len(a.position) > 0]
         if positions:
             positions_array = np.array(positions)
-            metrics.diversity = np.std(positions_array, axis=0).mean()
-        
+            metrics.diversity = float(np.std(positions_array, axis=0).mean())
+
         # Calculate convergence
         best_positions = [a.best_position for a in self.agents.values() if len(a.best_position) > 0]
         if best_positions:
             best_array = np.array(best_positions)
-            metrics.convergence = 1.0 - (np.std(best_array, axis=0).mean() / 10.0)
-        
+            metrics.convergence = float(1.0 - (np.std(best_array, axis=0).mean() / 10.0))
+
         # Calculate progress
         fitness_values = [a.best_fitness for a in self.agents.values()]
         if fitness_values:
-            metrics.progress = np.mean(fitness_values)
-        
+            metrics.progress = float(np.mean(fitness_values))
+
         # Other metrics
         metrics.efficiency = len(self.agents) / self.max_agents
         metrics.communication = sum(len(a.findings) for a in self.agents.values()) / max(len(self.agents), 1)
         metrics.collaboration = sum(1 for a in self.agents.values() if a.current_task) / max(len(self.agents), 1)
         metrics.performance = (metrics.diversity + metrics.convergence + metrics.progress) / 3
-        
+
         self.current_metrics = metrics
         self.performance_history.append(metrics)
-        
+
         return metrics
 
     def _analyze_swarm_state(self, metrics: SwarmMetrics):
@@ -515,25 +525,28 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
     async def _execute_strategy_actions(self, strategy: AdaptiveStrategy):
         """Execute actions for a specific strategy."""
         params = strategy.parameters
-        
+
+        if not HAS_NUMPY:
+            raise ImportError("numpy required for swarm strategy actions — pip install 'hledac[dev]'")
+
         for action in strategy.actions:
             if action == "boost_exploration":
                 for agent in self.agents.values():
                     agent.exploration_rate = min(1.0, agent.exploration_rate * params.get('boost_factor', 1.5))
-            
+
             elif action == "inject_randomness":
                 for agent in list(self.agents.values())[:5]:
                     if len(agent.velocity) > 0:
-                        agent.velocity = np.random.uniform(-1, 1, len(agent.velocity))
-            
+                        agent.velocity = np.random.uniform(-1, 1, len(agent.velocity)).tolist()
+
             elif action == "reinitialize_particles":
                 ratio = params.get('reinit_ratio', 0.3)
                 num_reinit = max(1, int(len(self.agents) * ratio))
                 for agent in list(self.agents.values())[:num_reinit]:
                     if len(agent.position) > 0:
-                        agent.position = np.random.uniform(-5, 5, len(agent.position))
+                        agent.position = np.random.uniform(-5, 5, len(agent.position)).tolist()
                         agent.best_fitness = float('-inf')
-            
+
             elif action == "replace_agents":
                 # Reset failed agents
                 for agent in self.agents.values():
@@ -558,14 +571,23 @@ class UniversalSwarmCoordinator(UniversalCoordinator):
         else:
             self.current_metrics.fault_tolerance = min(1.0, self.current_metrics.fault_tolerance + 0.05)
 
-    def add_agent(self, agent_id: str, position: Optional[np.ndarray] = None) -> SwarmAgent:
+    def add_agent(self, agent_id: str, position: Optional[List[float]] = None) -> SwarmAgent:
         """Add new agent to swarm."""
-        agent = SwarmAgent(
-            agent_id=agent_id,
-            position=position if position is not None else np.array([]),
-            velocity=np.array([]),
-            best_position=position.copy() if position is not None else np.array([])
-        )
+        if position is not None and HAS_NUMPY:
+            position_arr = np.array(position)
+            agent = SwarmAgent(
+                agent_id=agent_id,
+                position=position_arr.tolist(),
+                velocity=[],
+                best_position=position_arr.tolist()
+            )
+        else:
+            agent = SwarmAgent(
+                agent_id=agent_id,
+                position=position if position is not None else [],
+                velocity=[],
+                best_position=position.copy() if position is not None else []
+            )
         self.agents[agent_id] = agent
         return agent
 

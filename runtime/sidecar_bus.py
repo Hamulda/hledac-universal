@@ -71,6 +71,8 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
     "identity_stitching",
     "embedding",
     "sprint_diff",
+    "banner_grab",
+    "ipv6_recon",
 })
 
 # F205B: Explicit staged ordering guarantee
@@ -79,7 +81,16 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
 # Stage 3 (derived): runs last, depends on correlated signals from stage 2
 SIDECAR_STAGES: tuple[tuple[str, ...], ...] = (
     # Stage 1: light extraction — passive signal collection
-    ("leak_sentinel", "passive_fingerprint", "passive_tech_stack", "evidence_triage", "temporal_archaeology"),
+    (
+        "leak_sentinel",
+        "passive_fingerprint",
+        "passive_tech_stack",
+        "evidence_triage",
+        "temporal_archaeology",
+        "network_intel",
+        "banner_grab",
+        "ipv6_recon",
+    ),
     # Stage 2: correlation — combines signals into exposure/identity/attribution findings
     (
         "exposure_correlator",
@@ -903,6 +914,123 @@ async def _passive_tech_stack_runner(
         pass  # Fail-soft
 
 
+async def _network_intel_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """F214 network intelligence — unified passive DNS, fingerprint, BGP."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.network import NETWORK_INTEL_AVAILABLE
+        if not NETWORK_INTEL_AVAILABLE:
+            return
+        from hledac.universal.network.network_intelligence import NetworkIntelAdapter
+    except Exception:
+        return
+
+    try:
+        adapter = NetworkIntelAdapter()
+        try:
+            derived_findings = await adapter.async_query(query)
+            if not derived_findings:
+                return
+            results = await store.async_ingest_findings_batch(derived_findings)
+            stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+            return stored
+        finally:
+            await adapter.close()
+    except Exception:
+        pass  # Fail-soft
+
+
+async def _banner_grab_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """F214 banner grabber — TCP banner extraction, RAM-isolated."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.network import BANNER_GRABBER_AVAILABLE
+        if not BANNER_GRABBER_AVAILABLE:
+            return
+        from hledac.universal.network.banner_grabber import BannerGrabberAdapter
+    except Exception:
+        return
+
+    try:
+        adapter = BannerGrabberAdapter()
+        try:
+            # Extract IPs from findings for banner grab
+            targets: list[str] = []
+            for f in findings:
+                ioc_value = getattr(f, "ioc_value", "") or ""
+                ioc_type = getattr(f, "ioc_type", "") or ""
+                if ioc_type in ("ipv4", "ip") and ioc_value:
+                    targets.append(ioc_value)
+            if not targets:
+                return
+            derived_findings: list = []
+            for target in targets[:20]:  # bound
+                findings_batch = await adapter.query(target)
+                derived_findings.extend(findings_batch)
+            if not derived_findings:
+                return
+            results = await store.async_ingest_findings_batch(derived_findings)
+            stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+            return stored
+        finally:
+            await adapter.close()
+    except Exception:
+        pass  # Fail-soft
+
+
+async def _ipv6_recon_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> None:
+    """F214 IPv6 reconnaissance — RDAP, WHOIS, DoH AAAA, BGP peer."""
+    if not findings or store is None:
+        return
+    try:
+        from hledac.universal.network import IPV6_RECON_AVAILABLE
+        if not IPV6_RECON_AVAILABLE:
+            return
+        from hledac.universal.network.ipv6_recon import IPv6ReconAdapter
+    except Exception:
+        return
+
+    try:
+        adapter = IPv6ReconAdapter()
+        try:
+            # Extract domains/IPs from findings for IPv6 recon
+            targets: list[str] = []
+            for f in findings:
+                ioc_value = getattr(f, "ioc_value", "") or ""
+                ioc_type = getattr(f, "ioc_type", "") or ""
+                if ioc_type in ("domain", "ipv4", "ip") and ioc_value:
+                    targets.append(ioc_value)
+            if not targets:
+                return
+            derived_findings: list = []
+            for target in targets[:20]:  # bound
+                findings_batch = await adapter.query(target)
+                derived_findings.extend(findings_batch)
+            if not derived_findings:
+                return
+            results = await store.async_ingest_findings_batch(derived_findings)
+            stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+            return stored
+        finally:
+            await adapter.close()
+    except Exception:
+        pass  # Fail-soft
+
+
 # ── Default Registry ───────────────────────────────────────────────────────────
 # Ordered list of (name, runner) pairs — bus registers these by default.
 DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
@@ -919,6 +1047,9 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
     ("rir_correlator", _rir_correlator_runner),
     ("embedding", _embedding_runner),
     ("social_identity_surface", _social_identity_surface_runner),
+    ("network_intel", _network_intel_runner),
+    ("banner_grab", _banner_grab_runner),
+    ("ipv6_recon", _ipv6_recon_runner),
 ]
 
 

@@ -477,6 +477,12 @@ class FetchCoordinator(UniversalCoordinator):
         self._tor_max_sessions = CONCURRENCY_TOR
         self._tor_lock = asyncio.Lock()
 
+        # I2P connection pooling (mirrors Tor pattern)
+        self._i2p_sessions: Dict[str, Any] = {}
+        self._i2p_last_used: Dict[str, float] = {}
+        self._i2p_max_sessions = CONCURRENCY_TOR
+        self._i2p_lock = asyncio.Lock()
+
         # Sprint 80: Token bucket concurrency (still kept for compatibility)
         self._concurrency = TokenBucketController(rate=5, capacity=10)
 
@@ -973,6 +979,76 @@ class FetchCoordinator(UniversalCoordinator):
             self._aimd_release_failure()
             return None
 
+    # =============================================================================
+    # I2P Connection Pooling
+    # =============================================================================
+
+    async def _get_i2p_session(self, domain: str) -> Optional[Any]:
+        """Get or create I2P session with connection pooling."""
+        async with self._i2p_lock:
+            import time
+            now = time.time()
+
+            # Cleanup expired sessions (5 min TTL)
+            expired = [d for d, t in self._i2p_last_used.items() if now - t > 300]
+            for d in expired:
+                if d in self._i2p_sessions:
+                    await self._i2p_sessions[d].close()
+                    del self._i2p_sessions[d]
+                    del self._i2p_last_used[d]
+
+            # Enforce limit
+            if len(self._i2p_sessions) >= self._i2p_max_sessions:
+                oldest = min(self._i2p_last_used.items(), key=lambda x: x[1])
+                await self._i2p_sessions[oldest[0]].close()
+                del self._i2p_sessions[oldest[0]]
+                del self._i2p_last_used[oldest[0]]
+
+            # Create new session if needed
+            if domain not in self._i2p_sessions:
+                try:
+                    import aiohttp_socks
+                    i2p_proxy = os.environ.get('I2P_PROXY', 'socks5://127.0.0.1:7654')
+                    connector = aiohttp_socks.SocksConnector.from_url(i2p_proxy, rdns=True)
+                    session = aiohttp.ClientSession(
+                        connector=connector,
+                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_I2P)
+                    )
+                    self._i2p_sessions[domain] = session
+                except Exception as e:
+                    logger.warning(f"I2P session creation failed: {e}")
+                    return None
+
+            self._i2p_last_used[domain] = now
+            return self._i2p_sessions.get(domain)
+
+    async def _fetch_with_i2p(self, url: str) -> Optional[Dict[str, Any]]:
+        """Fetch .i2p URL using I2P connection pool."""
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc
+            session = await self._get_i2p_session(domain)
+            if not session:
+                return None
+
+            async with session.get(url) as resp:
+                content = await resp.read()
+                return {
+                    'url': url,
+                    'content': content,
+                    'status': resp.status,
+                    'headers': dict(resp.headers),
+                    'content_type': resp.content_type,
+                }
+        except asyncio.TimeoutError:
+            logger.debug(f"[I2P] Timeout for {url}")
+            self._aimd_release_failure()
+            return None
+        except Exception as e:
+            logger.warning(f"I2P fetch failed: {e}")
+            self._aimd_release_failure()
+            return None
+
     async def _fetch_with_curl(self, url: str, proxy: str = None) -> Dict[str, Any]:
         """Fetch URL with curl_cffi (fallback)."""
         # Sprint F3/F8/F9: also populates status_code/content_type/headers for corpus ingest
@@ -1307,16 +1383,27 @@ class FetchCoordinator(UniversalCoordinator):
                             result['final_url'] = url
                             trace_fetch_end(url, "darknet_fallback", "ok", 0.0)
                             break
-                elif url_transport is Transport.I2P and self._darknet_connector:
+                elif url_transport is Transport.I2P:
                     trace_fetch_start(url, "i2p", {"attempt": attempt, "timeout": TIMEOUT_I2P})
-                    result = await self._darknet_connector.fetch_i2p(url)
+                    result = await self._fetch_with_i2p(url)
                     if result:
                         result['success'] = True
-                        result['status_code'] = result.get('status_code', 0)
+                        result['status_code'] = result.pop('status', 0)
                         result['url'] = url
                         result['final_url'] = url
+                        result.setdefault('content_type', 'text/html')
                         trace_fetch_end(url, "i2p", "ok", 0.0)
                         break
+                    # Fallback to darknet connector if I2P pool failed
+                    if self._darknet_connector:
+                        result = await self._darknet_connector.fetch_i2p(url)
+                        if result:
+                            result['success'] = True
+                            result['status_code'] = result.get('status_code', 0)
+                            result['url'] = url
+                            result['final_url'] = url
+                            trace_fetch_end(url, "i2p_fallback", "ok", 0.0)
+                            break
 
                 # Sprint 46: Session injection - get cookies before fetch
                 # P3-5 fix: Never log raw session cookies - use _mask_cookies_for_log()
@@ -1553,6 +1640,15 @@ class FetchCoordinator(UniversalCoordinator):
                 pass
         self._tor_sessions.clear()
         self._tor_last_used.clear()
+
+        # I2P session cleanup with drain
+        for session in self._i2p_sessions.values():
+            try:
+                await session.close()
+            except Exception:
+                pass
+        self._i2p_sessions.clear()
+        self._i2p_last_used.clear()
 
         # Sprint 4B: Small drain to allow SSL/TCP to flush
         await asyncio.sleep(0.25)

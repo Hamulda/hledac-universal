@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import statistics
 import threading
 import time
 from collections import OrderedDict
@@ -33,7 +34,15 @@ except ImportError:
     ORJSON_AVAILABLE = False
     import json as _json
 
-import numpy as np
+try:
+    import numpy as _np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    _np = None
+
+# np is the internal alias; if numpy unavailable, raise ImportError at first use
+np = _np
 
 # Lazy imports for memory efficiency - faiss only loaded when needed
 if TYPE_CHECKING:
@@ -66,7 +75,7 @@ QUERY = "query"
 
 def _ndarray_to_list(obj: Any) -> Any:
     """Convert numpy arrays to lists for JSON serialization."""
-    if isinstance(obj, np.ndarray):
+    if NUMPY_AVAILABLE and isinstance(obj, _np.ndarray):
         return obj.tolist()
     if is_dataclass(obj):
         return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
@@ -79,8 +88,8 @@ def _ndarray_to_list(obj: Any) -> Any:
 
 def _list_to_ndarray(obj: Any, target_type: Any = None) -> Any:
     """Convert lists back to numpy arrays after JSON deserialization."""
-    if isinstance(obj, list) and target_type is not None:
-        return np.array(obj, dtype=target_type)
+    if NUMPY_AVAILABLE and isinstance(obj, list) and target_type is not None:
+        return _np.array(obj, dtype=target_type)
     if isinstance(obj, dict):
         return {k: _list_to_ndarray(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -379,13 +388,13 @@ class MultiLevelContextCache:
                 else:
                     result = self.embedder.encode(text)
                 if hasattr(result, 'tolist'):
-                    return np.array(result.tolist())
-                return np.array(result)
+                    return _np.array(result.tolist()) if NUMPY_AVAILABLE else None
+                return _np.array(result) if NUMPY_AVAILABLE else None
             else:
                 # FastEmbed uses .embed()
                 embeddings = list(self.embedder.embed([text]))
                 if embeddings:
-                    return np.array(embeddings[0])
+                    return _np.array(embeddings[0]) if NUMPY_AVAILABLE else None
         except Exception as e:
             logger.warning(f"Embedding failed: {e}")
         return None
@@ -717,7 +726,7 @@ class MultiLevelContextCache:
         
         avg_similarity = 0.0
         if self.stats["similarities"]:
-            avg_similarity = np.mean(self.stats["similarities"])
+            avg_similarity = statistics.mean(self.stats["similarities"])
         
         return CacheStats(
             total_entries=len(self.l1_cache) + len(self.l2_cache),

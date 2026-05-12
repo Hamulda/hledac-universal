@@ -970,6 +970,13 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
 # Sprint F226D §2: analyst_brief-driven seeds
 # ---------------------------------------------------------------------------
 
+def _get_brief_field(obj: Any, field: str, default: Any = None) -> Any:
+    """Get field from dict or dataclass/attr object (fallback: getattr)."""
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    return getattr(obj, field, default)
+
+
 def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[dict[str, Any]]:
     """
     Sprint F226D: Derive seeds from analyst_brief fields.
@@ -987,7 +994,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
         return []
     seeds: list[dict[str, Any]] = []
 
-    pivots = analyst_brief.get("pivot_recommendations") or []
+    pivots = _get_brief_field(analyst_brief, "pivot_recommendations") or []
     if isinstance(pivots, (list, tuple)):
         for p in pivots[:2]:
             if isinstance(p, str) and len(p) > 3:
@@ -1000,7 +1007,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
                     "expected_value": "pivot_discovery",
                 })
 
-    gaps = analyst_brief.get("evidence_gaps") or []
+    gaps = _get_brief_field(analyst_brief, "evidence_gaps") or []
     if isinstance(gaps, (list, tuple)) and gaps:
         gap = gaps[0]
         if isinstance(gap, str) and len(gap) > 3:
@@ -1013,7 +1020,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
                 "expected_value": "evidence_completeness",
             })
 
-    risks = analyst_brief.get("risk_hypotheses") or []
+    risks = _get_brief_field(analyst_brief, "risk_hypotheses") or []
     if isinstance(risks, (list, tuple)) and risks:
         risk = risks[0]
         if isinstance(risk, str) and len(risk) > 3:
@@ -2514,7 +2521,7 @@ def _build_capability_synthesis(
 
     # ── 7b. F226E: Target memory feedback — feed dominance correction ────────
     if analyst_brief and isinstance(analyst_brief, dict):
-        tmf = analyst_brief.get("target_memory_feedback", {}) or {}
+        tmf = _get_brief_field(analyst_brief, "target_memory_feedback", {}) or {}
         if tmf.get("repeated_feed_dominance"):
             next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
         elif tmf.get("prior_nonfeed_weakness"):
@@ -2526,7 +2533,7 @@ def _build_capability_synthesis(
 
     # ── 8. Next investigation action (for analyst) ─────────────────────────
     if analyst_brief and isinstance(analyst_brief, dict):
-        target_memory = analyst_brief.get("target_memory_summary", "")
+        target_memory = _get_brief_field(analyst_brief, "target_memory_summary", "") or ""
         if isinstance(target_memory, str) and target_memory:
             next_investigation_action = f"follow_up_on_target_memory_{target_memory[:40]}"
         else:

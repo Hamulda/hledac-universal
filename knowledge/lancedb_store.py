@@ -32,6 +32,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import lmdb
 import numpy as np
 
+from context_optimization.mmr import maximal_marginal_relevance
+
 logger = logging.getLogger(__name__)
 
 # P1-12: RAM guard for M1 8GB — import lazily to avoid circular deps
@@ -1319,6 +1321,71 @@ class LanceDBIdentityStore:
 
         # Fallback: MLX rerank
         return await self._mlx_rerank(query_emb, candidates, top_k)
+
+    # =============================================================================
+    # MMR Reranking via context_optimization (Sprint 77)
+    # =============================================================================
+
+    async def search_with_mmr(
+        self,
+        query_text: str,
+        query_emb: List[float],
+        top_k: int = 10,
+        lambda_mult: float = 0.5,
+        fetch_k: int = 30,
+    ) -> List[Dict]:
+        """
+        Diversity-aware search using Maximal Marginal Relevance from context_optimization.
+
+        Args:
+            query_text: Original query text for reranking.
+            query_emb: Query embedding vector.
+            top_k: Number of results to return.
+            lambda_mult: Balance relevance (1.0) vs diversity (0.0). Default 0.5.
+            fetch_k: Number of candidates to fetch before reranking.
+
+        Returns:
+            List of diverse, relevant documents.
+        """
+        # Stage 1: Fetch candidates from LanceDB
+        try:
+            candidates = await self.search_similar(query_emb, limit=fetch_k)
+        except Exception:
+            if self._usearch_index is not None:
+                candidates = await self._usearch_search(query_emb, count=fetch_k)
+            else:
+                candidates = []
+
+        if not candidates:
+            return []
+
+        # Stage 2: Extract candidate embeddings for MMR
+        candidate_embs: List[np.ndarray] = []
+        for c in candidates:
+            emb = c.get('_embedding')
+            if emb is None:
+                emb = c.get('embedding')
+            if emb is not None:
+                candidate_embs.append(np.array(emb, dtype='float32'))
+            else:
+                candidate_embs.append(np.zeros(len(query_emb), dtype='float32'))
+
+        if not candidate_embs:
+            return candidates[:top_k]
+
+        # Stage 3: MMR reranking via context_optimization.mmr
+        query_emb_np = np.array(query_emb, dtype='float32')
+        if query_emb_np.ndim == 1:
+            query_emb_np = query_emb_np.reshape(1, -1)
+
+        selected_indices = maximal_marginal_relevance(
+            query_vector=query_emb_np,
+            candidate_vectors=candidate_embs,
+            top_k=top_k,
+            lambda_param=lambda_mult,
+        )
+
+        return [candidates[i] for i in selected_indices]
 
 
 # Module-level singleton

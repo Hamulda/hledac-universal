@@ -425,6 +425,10 @@ class ForensicsEnricher:
         if not forensics_result.enrichment_available:
             return None
 
+        # Sprint F224F: Compute FOCA confidence modifier from enrichment metadata
+        foca_modifier = self._score_foca_findings(enrichment)
+        enrichment["foca_confidence_modifier"] = foca_modifier
+
         # Sprint F198B: inject forensics result into finding.metadata["forensics"]
         enrichment["forensics"] = forensics_result.to_dict()
 
@@ -472,6 +476,64 @@ class ForensicsEnricher:
                 out[fid] = enrich_data
 
         return out
+
+    def _score_foca_findings(self, enrichment: Optional[dict[str, Any]]) -> float:
+        """
+        FOCA Step 3: Score FOCA findings for confidence integration.
+
+        Enriches the confidence scoring pipeline with FOCA-specific signals:
+        - PPTX: macros, hidden slides, speaker notes, template paths
+        - Email: originating IP, attachments, DKIM/SPF results
+        - CAD: autocad version, coordinate extents
+
+        This bridges FOCA metadata into the confidence_policy.compute_confidence()
+        seam used by the broader pipeline.
+
+        Args:
+            enrichment: Enrichment dict from enrich() containing 'metadata' with FOCA data
+
+        Returns:
+            FOCA-specific confidence modifier in [0.0, 0.3] to be added to base confidence
+        """
+        if not enrichment:
+            return 0.0
+
+        score = 0.0
+        metadata = enrichment.get("metadata")
+        if not metadata:
+            return 0.0
+
+        # PPTX signals: macro URLs are high-confidence indicators
+        pptx = metadata.get("pptx")
+        if pptx:
+            if pptx.get("macro_urls"):
+                score += 0.1
+            if pptx.get("has_macros"):
+                score += 0.05
+            if pptx.get("hidden_slides"):
+                score += 0.05  # Hidden content suggests intentional obfuscation
+            if pptx.get("template_path"):
+                score += 0.05  # Template tracking is forensic signal
+
+        # Email signals: infrastructure indicators
+        email = metadata.get("email")
+        if email:
+            if email.get("originating_ip"):
+                score += 0.1  # Traceable infrastructure
+            if email.get("dkim_domain") or email.get("spf_result"):
+                score += 0.05  # Authentication signals
+            if email.get("attachment_count", 0) > 0:
+                score += 0.05  # Attachments are IOCs
+
+        # CAD signals: technical drawings are high-value
+        cad = metadata.get("cad")
+        if cad:
+            if cad.get("autocad_version"):
+                score += 0.1  # Specific version is identifiable
+            if cad.get("coordinate_extents"):
+                score += 0.05  # Geolocation possible
+
+        return min(score, 0.3)  # Cap at 0.3 to avoid over-weighting
 
     # ── Sprint F198B: External lookups (WHOIS/SSL/DNS/rDNS) ─────────────────
 

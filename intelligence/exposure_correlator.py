@@ -25,14 +25,17 @@ Findings persist via async_ingest_findings_batch (canonical write path).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generator
 
 if TYPE_CHECKING:
+    import aiohttp
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.network.passive_dns import PassiveDNSResolver
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,12 @@ logger = logging.getLogger(__name__)
 MAX_ASSETS: int = 1000
 MAX_SIGNALS_PER_ASSET: int = 3
 MAX_FINDINGS: int = 500
+
+# ── Cloud Bucket Enumeration Bounds ───────────────────────────────────────────
+MAX_BUCKET_CANDIDATES_PER_ENTITY: int = 30  # lazy generator cap
+MAX_BUCKET_CHECKS_PARALLEL: int = 10        # semaphore cap
+MAX_SUBDOMAIN_TAKEOVER_SUBDOMAINS: int = 50  # per entity
+MAX_CLOUD_FINDINGS: int = 100              # cap on cloud-specific findings
 
 # ── Signal Types ───────────────────────────────────────────────────────────────
 
@@ -57,6 +66,7 @@ CORR_CERT_DOMAIN = "cert_domain_relation"
 CORR_OPEN_BUCKET = "open_bucket"
 CORR_SUSPICIOUS_FP = "suspicious_service_fingerprint"
 CORR_INFRA_CLUSTER = "infra_cluster"
+CORR_SUBDOMAIN_TAKEOVER = "subdomain_takeover_possible"
 
 # ── JARM Known-Suspicious Prefixes ───────────────────────────────────────────
 
@@ -76,7 +86,73 @@ _stats: dict[str, int] = {
     "exposed_hosts_found": 0,
     "open_buckets_found": 0,
     "infra_clusters_found": 0,
+    "subdomain_takeovers_found": 0,
 }
+
+# ── Cloud Bucket Suffixes & URL Templates ──────────────────────────────────────
+
+# S3 bucket name suffixes to try
+_S3_SUFFIXES: tuple[str, ...] = (
+    "",
+    "-prod",
+    "-dev",
+    "-staging",
+    "-backup",
+    "-data",
+    "-assets",
+    "-media",
+    "-static",
+    "-files",
+    "-documents",
+    "-private",
+    "-public",
+    "-logs",
+    "-config",
+    "-database",
+    "-storage",
+    "-usercontent",
+)
+
+# Cloud bucket URL templates: (bucket_candidate, provider, url_template)
+# Template uses {bucket} placeholder
+_CLOUD_BUCKET_TEMPLATES: tuple[tuple[str, str, str], ...] = (
+    # AWS S3
+    ("s3", "s3", "https://{bucket}.s3.amazonaws.com"),
+    ("s3", "s3", "https://{bucket}.s3.{region}.amazonaws.com"),
+    # GCP Cloud Storage
+    ("gcs", "gcs", "https://storage.googleapis.com/{bucket}"),
+    ("gcs", "gcs", "https://{bucket}.storage.googleapis.com"),
+    # Azure Blob
+    ("azure", "azure", "https://{bucket}.blob.core.windows.net"),
+    ("azure", "azure", "https://{bucket}.blob.core.windows.net/{bucket}"),
+)
+
+# ── Subdomain Takeover Provider Patterns ────────────────────────────────────────
+# CNAME targets that indicate potential takeover targets
+_SUBDOMAIN_TAKEOVER_PROVIDERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("github_io", "github", (".github.io",)),
+    ("azurewebsites", "azure", (".azurewebsites.net",)),
+    ("netlify", "netlify", (".netlify.app", ".netlify.com")),
+    ("heroku", "heroku", (".herokuapp.com",)),
+    ("shopify", "shopify", (".myshopify.com", ".shopify.com")),
+    ("ghost", "ghost", (".ghost.io",)),
+    ("wordpress", "wordpress", (".wordpress.com",)),
+    ("firebase", "firebase", (".firebaseapp.com", ".firebase.io")),
+    ("appspot", "gcp", (".appspot.com",)),
+    ("cloudfunctions", "gcp", (".cloudfunctions.net",)),
+    ("surge", "surge", (".surge.sh",)),
+    ("vercel", "vercel", (".vercel.app",)),
+    ("render", "render", (".onrender.com",)),
+    ("gitlab", "gitlab", (".gitlab.io",)),
+    ("bitbucket", "bitbucket", (".bitbucket.io",)),
+)
+
+# Generic hosting JARM hashes (infrastructure fingerprint, not real content)
+_GENERIC_HOSTING_JARM_PREFIXES: tuple[str, ...] = (
+    "2a2a2a2a2a2a",  # GREASE placeholder
+    "000000000000",  # No cipher accepted
+    "07e14f8e7e7e7e",  # Known generic hosting pattern
+)
 
 
 def get_correlator_stats() -> dict[str, int]:
@@ -95,6 +171,7 @@ def reset_correlator_stats() -> None:
         "exposed_hosts_found": 0,
         "open_buckets_found": 0,
         "infra_clusters_found": 0,
+        "subdomain_takeovers_found": 0,
     })
 
 
@@ -183,6 +260,275 @@ def _extract_jarm_from_payload(payload_text: str | None) -> str | None:
     return None
 
 
+# ── Cloud Bucket Enumeration ───────────────────────────────────────────────────
+
+def _generate_bucket_candidates(entity_name: str) -> Generator[tuple[str, str, str], None, None]:
+    """
+    Generate lazy bucket name candidates for an entity.
+
+    Yields suffix-augmented names for S3-style buckets.
+    Generator pattern: yields tuples of (candidate_name, provider, url_template).
+    """
+    # Strip scheme and normalize
+    name = entity_name.lower().split("://")[-1].split("/")[0].split(":")[0]
+    parts = name.split(".")
+    base_name = parts[0] if parts else name
+
+    for suffix in _S3_SUFFIXES:
+        bucket_name = f"{base_name}{suffix}"
+        for _, provider, template in _CLOUD_BUCKET_TEMPLATES:
+            yield (bucket_name, provider, template)
+
+
+async def _check_bucket_head(
+    session: aiohttp.ClientSession,
+    bucket_name: str,
+    provider: str,
+    url_template: str,
+) -> dict | None:
+    """
+    Perform HEAD check on a single bucket URL.
+
+    Returns dict with bucket info if accessible (200/403), None if unreachable.
+    """
+    try:
+        import aiohttp
+        url = url_template.format(bucket=bucket_name)
+        async with session.head(
+            url,
+            timeout=aiohttp.ClientTimeout(total=10.0),
+            allow_redirects=True,
+        ) as resp:
+            status = resp.status
+            # 200 = open bucket (HIGH severity)
+            # 403 = bucket exists but access denied (MEDIUM severity)
+            if status in (200, 403):
+                return {
+                    "url": url,
+                    "bucket_name": bucket_name,
+                    "provider": provider,
+                    "status": status,
+                    "is_open": status == 200,
+                    "headers": dict(resp.headers),
+                }
+    except Exception:
+        pass
+    return None
+
+
+async def _detect_open_buckets_async(
+    entity_name: str,
+) -> list[dict]:
+    """
+    Async bucket enumeration for a single entity.
+
+    Uses lazy generator + semaphore(10) for parallel checks.
+    Returns list of accessible bucket dicts.
+    """
+    import asyncio
+    import aiohttp
+
+    try:
+        from hledac.universal.network.session_runtime import async_get_aiohttp_session
+    except Exception:
+        return []
+
+    candidates = _generate_bucket_candidates(entity_name)
+    session = await async_get_aiohttp_session()
+    semaphore = asyncio.Semaphore(MAX_BUCKET_CHECKS_PARALLEL)
+
+    async def _check_with_sem(candidate: tuple[str, str, str]) -> dict | None:
+        async with semaphore:
+            return await _check_bucket_head(session, *candidate)
+
+    # Build tasks from generator, cap at max candidates
+    tasks = []
+    async for candidate in _async_candidate_gen(candidates, MAX_BUCKET_CANDIDATES_PER_ENTITY):
+        tasks.append(asyncio.create_task(_check_with_sem(candidate)))
+
+    if not tasks:
+        return []
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    findings = []
+    for r in results:
+        if isinstance(r, Exception):
+            continue
+        if r is not None:
+            findings.append(r)
+
+    return findings
+
+
+async def _async_candidate_gen(candidates, max_items: int):
+    """Async generator that yields from an iterator with a cap."""
+    count = 0
+    for candidate in candidates:
+        if count >= max_items:
+            break
+        yield candidate
+        count += 1
+
+
+def _detect_open_buckets(entity_name: str) -> list[dict]:
+    """
+    Sync wrapper for bucket enumeration.
+
+    Returns list of bucket findings (sync, for integration with existing pipeline).
+    Uses get_running_loop + run_until_complete, falls back to new_event_loop only
+    when no loop is running (GHOST_INVARIANTS compliant).
+    """
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(_detect_open_buckets_async(entity_name))
+    except RuntimeError:
+        # No running loop — create one (fallback for sync callers)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_detect_open_buckets_async(entity_name))
+        finally:
+            loop.close()
+
+
+# ── Subdomain Takeover Detection ────────────────────────────────────────────────
+
+async def _resolve_cname_chain(
+    resolver: PassiveDNSResolver,
+    subdomain: str,
+    max_depth: int = 3,
+) -> list[str]:
+    """
+    Resolve CNAME chain for a subdomain.
+
+    Returns list of CNAME targets in chain order.
+    """
+    chain = []
+    current = subdomain
+    seen = set()
+
+    for _ in range(max_depth):
+        if current in seen:
+            break
+        seen.add(current)
+        try:
+            cnames = await resolver.resolve(current, rdtype="CNAME")
+            if not cnames:
+                break
+            chain.append(cnames[0])
+            current = cnames[0]
+        except Exception:
+            break
+
+    return chain
+
+
+def _check_takeover_provider(cname_chain: list[str]) -> tuple[str, str] | None:
+    """
+    Check if CNAME chain matches a takeover-vulnerable provider.
+
+    Returns (provider_name, target_pattern) if matched, None otherwise.
+    """
+    for provider_name, _, patterns in _SUBDOMAIN_TAKEOVER_PROVIDERS:
+        for cname in cname_chain:
+            for pattern in patterns:
+                if cname.endswith(pattern) or pattern.endswith(cname):
+                    return (provider_name, pattern)
+    return None
+
+
+async def _detect_subdomain_takeover_async(
+    subdomains: list[str],
+) -> list[dict]:
+    """
+    Async subdomain takeover detection.
+
+    Uses PassiveDNSResolver to follow CNAME chains and checks for
+    takeover-vulnerable providers.
+    """
+    from hledac.universal.network.passive_dns import PassiveDNSResolver
+
+    findings = []
+    resolver = PassiveDNSResolver()
+
+    for subdomain in subdomains[:MAX_SUBDOMAIN_TAKEOVER_SUBDOMAINS]:
+        try:
+            cname_chain = await _resolve_cname_chain(resolver, subdomain)
+            if not cname_chain:
+                continue
+
+            takeover_info = _check_takeover_provider(cname_chain)
+            if takeover_info:
+                provider, pattern = takeover_info
+                findings.append({
+                    "subdomain": subdomain,
+                    "cname_chain": cname_chain,
+                    "provider": provider,
+                    "target_pattern": pattern,
+                    "severity": "CRITICAL",
+                })
+        except Exception:
+            continue
+
+    return findings
+
+
+def _detect_subdomain_takeover(subdomains: list[str]) -> list[dict]:
+    """
+    Sync wrapper for subdomain takeover detection.
+
+    Returns list of takeover findings.
+    Uses get_running_loop + run_until_complete, falls back to new_event_loop only
+    when no loop is running (GHOST_INVARIANTS compliant).
+    """
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+        return loop.run_until_complete(_detect_subdomain_takeover_async(subdomains))
+    except RuntimeError:
+        # No running loop — create one (fallback for sync callers)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_detect_subdomain_takeover_async(subdomains))
+        finally:
+            loop.close()
+
+
+# ── JARM Hosting Classification ────────────────────────────────────────────────
+
+def _is_generic_hosting_jarm(jarm_hash: str) -> bool:
+    """
+    Check if JARM hash indicates generic hosting infrastructure.
+
+    Generic hosting pages return similar JARM regardless of content.
+    Real services have distinct fingerprints.
+    """
+    if not jarm_hash or len(jarm_hash) != 62:
+        return False
+    # Check against known generic patterns
+    if any(jarm_hash.startswith(p) for p in _GENERIC_HOSTING_JARM_PREFIXES):
+        return True
+    return False
+
+
+def _classify_jarm_hosting(jarm_hash: str, http_status: int) -> str:
+    """
+    Classify if a JARM + HTTP response indicates hosting vs real content.
+
+    Returns: "generic_hosting" | "real_content" | "unknown"
+    """
+    if _is_generic_hosting_jarm(jarm_hash):
+        return "generic_hosting"
+    # 404 on a known hosting pattern suggests abandoned/unclaimed
+    if http_status == 404 and jarm_hash:
+        return "possible_takeover"
+    if http_status == 200 and jarm_hash and len(jarm_hash) == 62:
+        return "real_content"
+    return "unknown"
+
+
 # ── Open Storage Scanner DTO ──────────────────────────────────────────────────
 
 @dataclass
@@ -226,13 +572,14 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
     for scan_result in scan_results:
         if isinstance(scan_result, Exception):
             continue
-        for item in scan_result:
-            results.append(OpenStorageResult(
-                url=item.get("url", ""),
-                status=item.get("status", 0),
-                bucket_type=item.get("type", "unknown"),
-                headers=item.get("headers", {}),
-            ))
+        if isinstance(scan_result, (list, tuple, set)):
+            for item in scan_result:
+                results.append(OpenStorageResult(
+                    url=item.get("url", ""),
+                    status=item.get("status", 0),
+                    bucket_type=item.get("type", "unknown"),
+                    headers=item.get("headers", {}),
+                ))
 
     return results
 
@@ -742,6 +1089,38 @@ class ExposureCorrelatorAdapter:
         """Reset internal state and stats."""
         reset_correlator_stats()
         self._stats_snapshot = {}
+
+    def enumerate_cloud_buckets(self, entity_name: str) -> list[dict]:
+        """
+        Enumerate S3/GCP/Azure buckets for an entity name.
+
+        Uses lazy generator with semaphore(10) for parallel HEAD checks.
+        Returns list of bucket findings with provider, status, and severity.
+
+        Bounds:
+            - MAX_BUCKET_CANDIDATES_PER_ENTITY=30 candidates max
+            - MAX_BUCKET_CHECKS_PARALLEL=10 parallel checks
+            - 200 = OPEN BUCKET (HIGH severity), 403 = bucket exists (MEDIUM)
+        """
+        findings = _detect_open_buckets(entity_name)
+        _stats["open_buckets_found"] += len(findings)
+        return findings
+
+    def detect_subdomain_takeovers(self, subdomains: list[str]) -> list[dict]:
+        """
+        Detect subdomain takeover vulnerabilities.
+
+        Uses PassiveDNSResolver to follow CNAME chains and identifies
+        subdomains pointing to takeover-vulnerable providers.
+
+        Returns list of takeover findings with severity=CRITICAL.
+
+        Bounds:
+            - MAX_SUBDOMAIN_TAKEOVER_SUBDOMAINS=50 subdomains per entity
+        """
+        findings = _detect_subdomain_takeover(subdomains)
+        _stats["subdomain_takeovers_found"] += len(findings)
+        return findings
 
 
 def create_exposure_correlator_adapter() -> ExposureCorrelatorAdapter:

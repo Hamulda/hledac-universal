@@ -107,6 +107,7 @@ class TriageFacets:
         file_hashes: File content hashes (md5, sha256)
         embedded_urls: Embedded URLs found in OCR text
         embedded_domains: Domain names found in OCR text
+        metadata:    FOCA metadata dict (pptx, email, cad extended data)
         triage_complete: Whether triage finished successfully
 
     Fail-safe: all fields have safe defaults. Never raises.
@@ -120,6 +121,7 @@ class TriageFacets:
     file_hashes: dict[str, str] = field(default_factory=dict)
     embedded_urls: list[str] = field(default_factory=list)
     embedded_domains: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     triage_complete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -133,6 +135,7 @@ class TriageFacets:
             "file_hashes": self.file_hashes,
             "embedded_urls": self.embedded_urls,
             "embedded_domains": self.embedded_domains,
+            "metadata": self.metadata,
             "triage_complete": self.triage_complete,
         }
 
@@ -412,6 +415,54 @@ class EvidenceTriageCoordinator:
                         "longitude": im.gps.longitude if hasattr(im.gps, "longitude") else None,
                         "altitude": im.gps.altitude if hasattr(im.gps, "altitude") else None,
                     }
+
+            # PPTX/ODP presentation metadata: author, company, template
+            if metadata_result.pptx:
+                pm = metadata_result.pptx
+                if pm.author and not facets.author:
+                    facets.author = pm.author
+                if pm.company:
+                    facets.metadata["company"] = pm.company
+                if pm.template_path:
+                    facets.metadata["template_path"] = pm.template_path
+                if pm.slide_count is not None:
+                    facets.metadata["slide_count"] = pm.slide_count
+                if pm.speaker_notes:
+                    facets.metadata["speaker_notes"] = pm.speaker_notes[:3]
+                if pm.hidden_slides:
+                    facets.metadata["hidden_slides_count"] = len(pm.hidden_slides)
+                if pm.has_macros is not None:
+                    facets.metadata["has_macros"] = pm.has_macros
+
+            # Email metadata: from_addr, message_id_domain, originating_ip
+            if metadata_result.email:
+                em = metadata_result.email
+                if em.from_addr:
+                    facets.metadata["from_addr"] = em.from_addr
+                if em.reply_to:
+                    facets.metadata["reply_to"] = em.reply_to
+                if em.message_id_domain:
+                    facets.metadata["message_id_domain"] = em.message_id_domain
+                if em.originating_ip:
+                    facets.metadata["originating_ip"] = em.originating_ip
+                if em.received_chain:
+                    facets.metadata["received_chain"] = em.received_chain[:3]
+                if em.has_attachments:
+                    facets.metadata["attachment_count"] = em.attachment_count
+
+            # CAD metadata: author, coordinate system
+            if metadata_result.cad:
+                cm = metadata_result.cad
+                if cm.author and not facets.author:
+                    facets.author = cm.author
+                if cm.title:
+                    facets.title = cm.title
+                if cm.autocad_version:
+                    facets.metadata["cad_version"] = cm.autocad_version
+                if cm.viewBox:
+                    facets.metadata["viewbox"] = cm.viewBox
+                if cm.width and cm.height:
+                    facets.metadata["dimensions"] = f"{cm.width}x{cm.height}"
 
             # Fallback: use filename as title if no title found
             if facets.title is None:

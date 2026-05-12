@@ -282,6 +282,17 @@ except ImportError:
     EXPOSED_SERVICE_HUNTER_AVAILABLE = False
 
 
+# Open Source Collectors (Paste sites, Usenet, Matrix, Academic, SEC EDGAR, Court Records)
+try:
+    from .open_source_collectors import (
+        OpenSourceCollectors,
+        get_open_source_collectors,
+    )
+    OPEN_SOURCE_COLLECTORS_AVAILABLE = True
+except ImportError:
+    OPEN_SOURCE_COLLECTORS_AVAILABLE = False
+
+
 # Relationship Discovery (Social Network Analysis)
 try:
     from .relationship_discovery import (
@@ -436,6 +447,7 @@ __all__ = [
     "TIMELINE_SYNTHESIZER_AVAILABLE",
     "TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE",
     "EXPOSED_SERVICE_HUNTER_AVAILABLE",
+    "OPEN_SOURCE_COLLECTORS_AVAILABLE",
     # Archive
     "ArchiveDiscovery",
     "ArchiveResult",
@@ -587,6 +599,10 @@ __all__ = [
     "S3Bucket",
     "CertificateInfo",
     "ServiceType",
+    # Open Source Collectors
+    "OPEN_SOURCE_COLLECTORS_AVAILABLE",
+    "OpenSourceCollectors",
+    "get_open_source_collectors",
     "ExposureType",
     "RiskLevel",
     "quick_hunt",

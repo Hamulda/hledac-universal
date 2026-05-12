@@ -164,6 +164,7 @@ class AcquisitionLane:
     ACADEMIC = "ACADEMIC"
     IPFS = "IPFS"
     DOH = "DOH"
+    OPEN_SOURCE = "OPEN_SOURCE"
 
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
@@ -2516,6 +2517,24 @@ def _build_plan_impl(
         )
     )
 
+    # ── Open Source Collectors ───────────────────────────────────────────────
+    # OSINT: pastebin, usenet, matrix, academic, sec_edgar, court records.
+    # Enabled for research/academic/geopolitical profiles, bounded.
+    open_source_enabled = is_academic_profile(acquisition_profile) and not hardware_critical
+    plans.append(
+        AcquisitionLanePlan(
+            lane=AcquisitionLane.OPEN_SOURCE,
+            enabled=open_source_enabled,
+            reason="academic_profile"
+            if open_source_enabled
+            else ("hardware_critical" if hardware_critical else "non_academic_profile"),
+            max_items=20,
+            timeout_s=60,
+            concurrency=1,
+            risk_level=RiskLevel.MEDIUM,
+        )
+    )
+
     # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
     # F216B: Updated to include nonfeed_diagnostic telemetry
     # R10: IPFS is included in nonfeed lanes (CID-only, bounded)
@@ -2525,6 +2544,7 @@ def _build_plan_impl(
         AcquisitionLane.PASSIVE_DNS,
         AcquisitionLane.BLOCKCHAIN,
         AcquisitionLane.IPFS,
+        AcquisitionLane.OPEN_SOURCE,
     )
     _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if hardware_critical else set()
 
@@ -3186,6 +3206,63 @@ async def run_enabled_acquisition_lanes(
                 ipfs_terminal_state="error",
             )
 
+    async def _run_open_source_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run OpenSourceCollectors lane — pastebin, usenet, matrix, academic, sec_edgar, court records."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.open_source_collectors import (
+                    get_open_source_collectors,
+                )
+
+                collector = get_open_source_collectors()
+                results = await collector.gather_all(query)
+
+                accepted = 0
+                all_findings: list = []
+                for source, findings in results.items():
+                    all_findings.extend(findings)
+
+                if all_findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(all_findings)
+                            accepted = sum(
+                                1 for r in ingest_results
+                                if isinstance(r, dict) and r.get("accepted")
+                            )
+                        except Exception:
+                            pass  # fail-soft
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.OPEN_SOURCE,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(all_findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="public",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.OPEN_SOURCE,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="public",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.OPEN_SOURCE,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="public",
+            )
+
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
         """Run blockchain forensics lane."""
         start = time.monotonic()
@@ -3269,6 +3346,7 @@ async def run_enabled_acquisition_lanes(
         AcquisitionLane.STEALTH: _stealth_never_run,
         AcquisitionLane.ACADEMIC: _run_academic_lane,
         AcquisitionLane.IPFS: _run_ipfs_lane,
+        AcquisitionLane.OPEN_SOURCE: _run_open_source_lane,
     }
 
     for plan in snapshot.plans:
@@ -3340,6 +3418,7 @@ _LANE_TO_FAMILY: dict[str, str] = {
     AcquisitionLane.STEALTH: "stealth",
     AcquisitionLane.PIVOT_EXECUTOR: "pivot",
     AcquisitionLane.ACADEMIC: "academic",
+    AcquisitionLane.OPEN_SOURCE: "public",
 }
 
 

@@ -22,15 +22,14 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-import lz4.frame
-import numpy as np
-
 try:
     import orjson
     ORJSON_AVAILABLE = True
 except ImportError:
     ORJSON_AVAILABLE = False
     import json as _json
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -400,6 +399,7 @@ class ContextCompressor:
         )
         
         # Compress full context with LZ4
+        import lz4.frame
         full_compressed = lz4.frame.compress(full_context.encode('utf-8'))
         
         # Calculate compression ratio
@@ -610,6 +610,7 @@ class ContextCompressor:
             source_level = CompressionLevel.ABSTRACT
         else:
             # Full decompression
+            import lz4.frame
             content = lz4.frame.decompress(compressed_ctx.full_compressed).decode('utf-8')
             source_level = None
         

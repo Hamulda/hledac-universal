@@ -1,0 +1,49 @@
+EXIT:1
+STDERR:
+STDOUT:WARNING:hledac.universal.__main__:[OPSEC] PYTHON_DISABLE_REMOTE_DEBUG not set — Python 3.14 safe-external-debugger interface is ACTIVE. Set PYTHON_DISABLE_REMOTE_DEBUG=1 for production OSINT runs.
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__main__.py:407: UserWarning: [GHOST OPSEC] No active ramdisk found at /Volumes/ghost_tmp and GHOST_RAMDISK is unset. Runtime artifacts will be written to SSD fallback location. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp to avoid OPSEC degradation.
+  from hledac.universal.paths import LMDB_ROOT as _derived_root
+WARNING:hledac.universal.intelligence.web_intelligence:intel.webintel: optional Hledac components unavailable — running in degraded mode. Error: No module named 'hledac.advanced_web'
+WARNING:hledac.universal.intelligence.document_intelligence:PIL not available - image analysis disabled
+WARNING:hledac.universal.intelligence.document_intelligence:PyMuPDF not available - advanced PDF analysis disabled
+mx.metal.set_cache_limit is deprecated and will be removed in a future version. Use mx.set_cache_limit instead.
+mx.metal.set_wired_limit is deprecated and will be removed in a future version. Use mx.set_wired_limit instead.
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py:4761: RuntimeWarning: coroutine 'wait_for' was never awaited
+  _bg_loop.close()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py:4761: RuntimeWarning: coroutine 'SprintScheduler._ensure_pre_windup_lane_terminal_states' was never awaited
+  _bg_loop.close()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+WARNING:hledac.universal.runtime.sprint_scheduler:[F223-D] prewindup barrier async bridge error (blocking windup): Cannot run the event loop while another loop is running
+ERROR:hledac.universal.__main__:[MAIN] Fatal error: cannot import name 'adjust_fetch_workers' from 'hledac.universal' (unknown location)
+Traceback (most recent call last):
+  File "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__main__.py", line 3166, in main
+    asyncio.run(_core_run_sprint(
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+        query=sprint_target,
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        deep_probe_enabled=args.deep_probe,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ))
+    ^^
+  File "/Users/vojtechhamada/.local/share/uv/python/cpython-3.14.4-macos-aarch64-none/lib/python3.14/asyncio/runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/Users/vojtechhamada/.local/share/uv/python/cpython-3.14.4-macos-aarch64-none/lib/python3.14/asyncio/runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/core/__main__.py", line 1007, in run_sprint
+    result = await scheduler.run(
+             ^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py", line 2318, in run
+    await self._unload_hermes_at_teardown()
+  File "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py", line 9171, in _unload_hermes_at_teardown
+    from hledac.universal.brain.model_manager import get_model_manager
+  File "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/brain/model_manager.py", line 26, in <module>
+    from hledac.universal import adjust_fetch_workers
+ImportError: cannot import name 'adjust_fetch_workers' from 'hledac.universal' (unknown location)

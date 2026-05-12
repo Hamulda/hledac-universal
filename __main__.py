@@ -236,6 +236,13 @@ def build_parser() -> "argparse.ArgumentParser":
         "--ui", action="store_true",
         help="Enable terminal dashboard during sprint",
     )
+    parser.add_argument(
+        "--acquisition-profile",
+        type=str,
+        default="default",
+        choices=["default", "nonfeed_diagnostic"],
+        help="F216B: Acquisition runtime profile (default | nonfeed_diagnostic)",
+    )
     # Python 3.14 argparse settings
     try:
         parser.suggest_on_error = True
@@ -3163,12 +3170,14 @@ def main() -> None:
         if sprint_target is not None:
             # Sprint F150R: Delegate to canonical sprint owner in core/__main__.py
             from .core.__main__ import run_sprint as _core_run_sprint
+            os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
             asyncio.run(_core_run_sprint(
                 query=sprint_target,
                 duration_s=sprint_duration,
                 ui_mode=sprint_ui_mode,
                 aggressive_mode=args.aggressive,
                 deep_probe_enabled=args.deep_probe,
+                acquisition_profile=args.acquisition_profile,
             ))
         else:
             # Sprint 8AM C.1: Async runtime with owned resources via _run_public_passive_once

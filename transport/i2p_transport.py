@@ -18,9 +18,23 @@ import asyncio
 import logging
 import socket
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .base import Transport
+
+# Module-level imports for aiohttp — used by module-level functions
+# (get_i2p_session) that are called without I2PTransport instantiation.
+# The class uses instance-level imports via __init__ for the same reason
+# tor_transport and nym_transport do: to fail gracefully at class init time.
+try:
+    import aiohttp
+    import aiohttp_socks
+except ImportError:
+    aiohttp = None  # type: ignore[assignment]
+    aiohttp_socks = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +209,16 @@ class I2PTransport(Transport):
         return False
 
     async def _try_http_mode(self) -> bool:
-        """Try to connect to I2P HTTP proxy (Freenet FProxy compatibility)."""
+        """Try to connect to I2P HTTP proxy (Freenet FProxy on port 8888).
+
+        I2P HTTP proxy (FProxy) accepts HTTP requests with .i2p hostnames in the
+        Host header and tunnels them through the I2P network. This is different
+        from SOCKS5 in that hostname resolution happens on the proxy side via
+        I2P's addressbook, not via rdns=True on the SOCKS negotiation.
+
+        Unlike SOCKS mode which uses aiohttp_socks.ProxyConnector, HTTP mode
+        must use plain aiohttp with the proxy URL configured via TCPConnector.
+        """
         loop = asyncio.get_running_loop()
 
         def _check_http() -> bool:
@@ -211,8 +234,23 @@ class I2PTransport(Transport):
         try:
             http_ok = await loop.run_in_executor(None, _check_http)
             if http_ok:
-                # HTTP proxy session (not SOCKS)
-                self._session_http = self._aiohttp.ClientSession()
+                # HTTP proxy session — use plain aiohttp with TCPConnector.
+                # The I2P HTTP proxy uses HTTP CONNECT tunneling. aiohttp does not
+                # have a native proxy connector for HTTP proxies (only SOCKS), so we
+                # rely on I2P's SAM mode or SOCKS5 mode for full I2P hostname resolution.
+                # HTTP mode is useful for Freenet FProxy compatibility or when the I2P
+                # router is configured to tunnel HTTP through its internal HTTP proxy.
+                # Note: plain aiohttp cannot resolve .i2p hostnames without SOCKS5.
+                connector = self._aiohttp.TCPConnector(
+                    limit=10,
+                    limit_per_host=5,
+                    ttl_dns_cache=300,
+                    enable_cleanup_closed=True,
+                )
+                self._session_http = self._aiohttp.ClientSession(
+                    connector=connector,
+                    trust_env=False,
+                )
                 return True
         except Exception as e:
             logger.debug(f"I2P HTTP mode failed: {e}")
@@ -226,6 +264,8 @@ class I2PTransport(Transport):
         if self._session_http:
             await self._session_http.close()
             self._session_http = None
+        # Reset ready event so a second start() call waits properly
+        self._ready.clear()
         logger.info("I2P transport stopped")
 
     async def wait_ready(self) -> None:
@@ -234,10 +274,13 @@ class I2PTransport(Transport):
 
     def register_handler(self, msg_type: str, handler):
         """I2P SAM mode message handler registration."""
-        # SAM mode supports async messaging
-        pass
+        # SAM streaming session not implemented — raise to make absence explicit
+        raise NotImplementedError(
+            "I2P SAM streaming session not implemented; "
+            "use SOCKS5 mode (rdns=True) for .i2p hostname resolution"
+        )
 
-    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str = None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: Optional[str] = None):
         """
         Send message via I2P SAM session.
 
@@ -313,7 +356,19 @@ class I2PTransport(Transport):
 
         if self.transport_mode == "http":
             if not self._session_http:
-                self._session_http = self._aiohttp.ClientSession()
+                # HTTP mode: plain aiohttp cannot resolve .i2p hostnames.
+                # This mode is only useful for Freenet FProxy compatibility
+                # or when the HTTP proxy handles .i2p resolution internally.
+                connector = self._aiohttp.TCPConnector(
+                    limit=10,
+                    limit_per_host=5,
+                    ttl_dns_cache=300,
+                    enable_cleanup_closed=True,
+                )
+                self._session_http = self._aiohttp.ClientSession(
+                    connector=connector,
+                    trust_env=False,
+                )
             return self._session_http
 
         # No valid session
@@ -339,12 +394,24 @@ async def get_i2p_session() -> "aiohttp.ClientSession":
     """
     global _i2p_session
     if _i2p_session is None or _i2p_session.closed:
+        if aiohttp is None:
+            raise RuntimeError("aiohttp not installed: I2P transport unavailable")
         try:
             from aiohttp_socks import ProxyConnector
         except ImportError:
             raise RuntimeError("aiohttp_socks required for I2P: pip install aiohttp_socks")
-        connector = ProxyConnector.from_url(I2P_SOCKS_PROXY, rdns=True)
-        _i2p_session = aiohttp.ClientSession(connector=connector)
+        # Bounded connector — same limits as HTTP mode for M1 8GB safety
+        connector = ProxyConnector.from_url(
+            I2P_SOCKS_PROXY,
+            rdns=True,
+            limit=10,
+            limit_per_host=5,
+            enable_cleanup_closed=True,
+        )
+        _i2p_session = aiohttp.ClientSession(
+            connector=connector,
+            trust_env=False,
+        )
     return _i2p_session
 
 

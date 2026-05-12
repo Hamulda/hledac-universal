@@ -30,12 +30,15 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from typing import AsyncIterator, Dict, List
+from typing import AsyncIterator, Dict, List, Optional, TYPE_CHECKING, Union
 
 import numpy as np
 import psutil
 
 from hledac.universal.utils.exceptions import MemoryPressureError
+
+if TYPE_CHECKING:
+    from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,242 @@ _DEFAULT_BATCH_SIZE = 16
 # F214OPT-F: Env var names for batch override
 _ENV_BATCH_SIZE_VAR = "HLEDAC_MLX_EMBED_BATCH"
 _ENV_ALLOW_LARGE_BATCH_VAR = "HLEDAC_ALLOW_LARGE_MLX_BATCH"
+
+
+class EmbeddingRouter:
+    """
+    Priority routing: ANE (CoreML) → MLX ModernBERT → CPU sentence-transformers.
+
+    M1 8GB UMA constraint: ANE and MLX ModernBERT are never loaded simultaneously.
+    ANE uses ~300MB CoreML model; MLX ModernBERT uses ~500MB.
+    Loading both would exceed the 5.5GB working limit.
+
+    Wiring: Replaces _get_embedder() singleton in embedding_pipeline.py.
+    Lazy initialization — no models loaded at construction.
+    """
+
+    def __init__(self):
+        self._ane = None
+        self._modernbert: Optional["ModernBERTEmbedder"] = None
+        self._ane_available = False
+        self._initialized = False
+
+    def _ensure_initialized(self):
+        """Deferred import to avoid circular deps at module load."""
+        if self._initialized:
+            return
+        self._initialized = True
+        try:
+            from hledac.universal.brain.ane_embedder import ANE_AVAILABLE
+            self._ane_available = ANE_AVAILABLE
+        except ImportError:
+            self._ane_available = False
+
+    async def _load_ane(self) -> bool:
+        """Load ANE embedder. Returns True if ANE is ready."""
+        self._ensure_initialized()
+        if not self._ane_available:
+            return False
+
+        from hledac.universal.brain.ane_embedder import ANEEmbedder
+
+        if self._ane is None:
+            self._ane = ANEEmbedder()
+        if not self._ane.is_loaded:
+            await self._ane.load()
+        return self._ane.is_loaded
+
+    def _load_modernbert(self) -> "ModernBERTEmbedder":
+        """Load MLX ModernBERT embedder. Raises on failure."""
+        if self._modernbert is None:
+            from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
+            self._modernbert = ModernBERTEmbedder(lazy_load=True)
+        if not self._modernbert.is_loaded:
+            self._modernbert._load_model()
+        return self._modernbert
+
+    def _check_mlx_loaded(self) -> bool:
+        """Check if MLX ModernBERT is currently in memory via ModelManager."""
+        try:
+            from hledac.universal.brain.model_manager import ModelManager
+            mm = ModelManager.instance()
+            current = mm.get_current_model()
+            # MLX model loaded means ANE would compete for UMA
+            return current is not None and current != "ane"
+        except Exception:
+            return False
+
+    def encode(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+        """
+        Encode texts using the selected embedder (ANE or ModernBERT).
+
+        Implements the .encode() interface expected by generate_embeddings().
+        Delegated to the underlying embedder's native method:
+          - ANEEmbedder.embed()        (async)
+          - ModernBERTEmbedder.embed_batch()  (sync)
+          - MLXEmbeddingManager.encode()       (sync)
+
+        Args:
+            texts: Single text or list of texts.
+            kwargs: Passed through to the underlying embedder.
+
+        Returns:
+            np.ndarray of shape (len(texts), 256) or (len(texts), 768).
+        """
+        # Use sync path — determine which embedder is active
+        embedder = self._get_embedder_sync()
+        if embedder is None:
+            return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
+
+        # MLXEmbeddingManager already has .encode()
+        if hasattr(embedder, 'encode'):
+            return embedder.encode(texts, **kwargs)
+
+        # ModernBERTEmbedder — use .embed_batch()
+        if hasattr(embedder, 'embed_batch'):
+            if isinstance(texts, str):
+                texts = [texts]
+            return embedder.embed_batch(texts, **kwargs)
+
+        # ANEEmbedder — use .embed() (async)
+        if hasattr(embedder, 'embed'):
+            if isinstance(texts, str):
+                texts = [texts]
+            if asyncio.iscoroutinefunction(embedder.embed):
+                # asyncio.run() creates its own loop — correct for executor thread
+                return asyncio.run(embedder.embed(texts))
+            else:
+                return embedder.embed(texts)
+
+        # Fallback
+        return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
+
+    def _get_embedder_sync(self):
+        """
+        Internal sync embedder selection — returns the raw embedder instance.
+
+        Priority: ANE (if already loaded) → MLX ModernBERT → MLXEmbeddingManager.
+        Does NOT attempt to load ANE asynchronously — that happens via get_embedder() async.
+
+        M1 memory rule: When MLX is in UMA, ANE doesn't add to Metal buffers (separate
+        hardware), so if ANE is already cached, prefer it. ModernBERT is only chosen
+        when ANE is not yet loaded.
+
+        Returns:
+            Embedder instance with .encode() / .embed() / .embed_batch() methods.
+        """
+        self._ensure_initialized()
+
+        # ANE is already loaded → use it (ANE + MLX UMA are separate, not additive)
+        if self._ane is not None and self._ane.is_loaded:
+            logger.debug("[EMBED:ROUTER] sync: using cached ANE")
+            return self._ane
+
+        # ANE not loaded but MLX is loaded → stick with MLX (don't load another model)
+        if self._check_mlx_loaded():
+            try:
+                mb = self._load_modernbert()
+                logger.debug("[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT")
+                return mb
+            except Exception:
+                pass
+
+        # Fallback to MLX ModernBERT (normal path when nothing loaded)
+        try:
+            mb = self._load_modernbert()
+            logger.debug("[EMBED:ROUTER] sync: falling back to MLX ModernBERT")
+            return mb
+        except Exception as e:
+            logger.warning(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
+
+        # Final fallback: MLXEmbeddingManager
+        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        return get_embedding_manager()
+
+    async def get_embedder(self):
+        """
+        Priority: ANE → MLX ModernBERT → CPU fallback.
+
+        M1 memory rule: If MLX model is already loaded, prefer ANE (doesn't
+        compete with MLX Metal buffers). If no MLX model loaded, prefer ANE
+        since it's cheaper on UMA than MLX ModernBERT.
+
+        Returns:
+            embedder with .embed(texts) → np.ndarray and .is_loaded property
+        """
+        self._ensure_initialized()
+
+        # Try ANE first
+        if self._ane_available:
+            ane_ready = await self._load_ane()
+            if ane_ready:
+                # M1 guard: if MLX model is loaded, ANE doesn't add UMA pressure
+                if self._check_mlx_loaded():
+                    logger.debug("[EMBED:ROUTER] ANE ready, MLX already loaded — using ANE")
+                    return self._ane
+                # No MLX loaded: prefer ANE (300MB CoreML vs 500MB MLX)
+                if not self._check_mlx_loaded():
+                    logger.debug("[EMBED:ROUTER] ANE ready, no MLX loaded — using ANE")
+                    return self._ane
+
+        # Fallback to MLX ModernBERT
+        try:
+            mb = self._load_modernbert()
+            logger.debug("[EMBED:ROUTER] Falling back to MLX ModernBERT")
+            return mb
+        except Exception as e:
+            logger.warning(f"[EMBED:ROUTER] ModernBERT load failed: {e}")
+
+        # Final fallback: MLXEmbeddingManager (CPU sentence-transformers)
+        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        return get_embedding_manager()
+
+    async def warmup(self):
+        """Warmup the selected embedder. Called after model selection."""
+        embedder = await self.get_embedder()
+        if embedder is None:
+            return
+        if hasattr(embedder, 'warmup') and asyncio.iscoroutinefunction(embedder.warmup):
+            await embedder.warmup()
+        elif hasattr(embedder, 'warmup'):
+            embedder.warmup()
+
+    def unload_all(self):
+        """Release all embedders from memory."""
+        if self._ane is not None:
+            self._ane._loaded = False
+            self._ane.model = None
+            self._ane = None
+        if self._modernbert is not None:
+            try:
+                self._modernbert.unload()
+            except Exception:
+                pass
+            self._modernbert = None
+        logger.info("[EMBED:ROUTER] All embedders unloaded")
+
+
+# Module-level router singleton
+_embedding_router: Optional[EmbeddingRouter] = None
+
+
+def _get_embedder():
+    """
+    Get the embedding manager via EmbeddingRouter (ANE → MLX → CPU).
+
+    P20: Changed to local import to break circular dependency on hledac.config.
+    Sprint F228B: Now uses EmbeddingRouter for ANE-aware priority routing.
+
+    Note: EmbeddingRouter.get_embedder() is async but this sync wrapper handles
+    model selection inline to avoid blocking the event loop for callers that
+    call _get_embedder() from sync contexts (embedding_pipeline.py callers).
+    ANE loading is done via asyncio.run() here — it only happens once per
+    EmbeddingRouter instance at first embed call.
+    """
+    global _embedding_router
+    if _embedding_router is None:
+        _embedding_router = EmbeddingRouter()
+    return _embedding_router._get_embedder_sync()
 
 
 def _is_swap_detected() -> bool:
@@ -215,17 +454,6 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
         return True, {}
     except Exception:
         return True, {}  # Fail-safe — allow through
-
-
-def _get_embedder():
-    """
-    Get MLXEmbeddingManager singleton.
-
-    Uses core.mlx_embeddings.get_embedding_manager() for ModernBERT via MLX.
-    P20: Changed to local import to break circular dependency on hledac.config.
-    """
-    from hledac.universal.core.mlx_embeddings import get_embedding_manager
-    return get_embedding_manager()
 
 
 def _get_current_rss_gb() -> float:

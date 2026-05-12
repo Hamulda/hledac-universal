@@ -1936,7 +1936,7 @@ def main() -> None:
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
-        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe))
+        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile))
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:

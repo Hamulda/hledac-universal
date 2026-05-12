@@ -21,6 +21,10 @@ from enum import Enum
 import logging
 from collections import deque
 
+import aiohttp
+
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
+
 # psutil je optional — nepovinný pro M1 lightweight provoz
 try:
     import psutil
@@ -79,6 +83,15 @@ class IntelligenceTarget:
     priority: str = "medium"  # low, medium, high, critical
     compliance_level: str = "strict"  # strict, moderate, permissive
     stealth_level: str = "high"  # low, medium, high, maximum
+
+
+@dataclass
+class TechIntelligence:
+    """Tech stack intelligence inferred from job postings."""
+    detected_technologies: dict[str, int]  # tech → frequency
+    hiring_patterns: list[str]              # "scaling team", "greenfield"
+    seniority_distribution: dict[str, int]   # junior/mid/senior counts
+    inferred_pain_points: list[str]          # "performance issues"
 
 
 @dataclass
@@ -958,6 +971,367 @@ class UnifiedWebIntelligence:
                 'psutil_available': psutil is not None
             }
         }
+
+    # -------------------------------------------------------------------------
+    # Job Posting Tech Inference
+    # -------------------------------------------------------------------------
+
+    # Lazy spaCy / PhraseMatcher — only loaded when first needed
+    _spacy_nlp = None
+    _phrasematcher = None
+    _SPACY_AVAILABLE = False
+
+    # Tech keyword sets for word-boundary regex extraction
+    _TECH_KEYWORDS: dict[str, set[str]] = {
+        "language": {
+            "python", "javascript", "typescript", "java", "go", "rust", "c++", "c#",
+            "ruby", "php", "swift", "kotlin", "scala", "r", "matlab", "perl",
+            "elixir", "clojure", "haskell", "dart", "lua", "shell", "bash",
+        },
+        "framework": {
+            "react", "angular", "vue", "svelte", "next.js", "django", "flask",
+            "fastapi", "spring", "rails", "laravel", "express", "nestjs", "gin",
+            "fiber", "playwright", "selenium", "cypress", "pytest", "junit",
+        },
+        "infrastructure": {
+            "kubernetes", "docker", "terraform", "ansible", "aws", "gcp", "azure",
+            "kubernetes", "k8s", "helm", "istio", "envoy", "nginx", "traefik",
+            "linux", "unix", "windows server", "active directory",
+        },
+        "database": {
+            "postgresql", "postgres", "mysql", "mongodb", "redis", "elasticsearch",
+            "kafka", "rabbitmq", "graphql", "sqlite", "mariadb", "dynamodb",
+            "cassandra", "couchbase", "neo4j", "influxdb", "timescale",
+        },
+        "ai_ml": {
+            "tensorflow", "pytorch", "jax", "sklearn", "pandas", "numpy",
+            "opencv", "pillow", "transformers", "hugging face", "langchain",
+            "llamaindex", "crewai", "mxnet", "chainlit",
+        },
+        "observability": {
+            "prometheus", "grafana", "datadog", "new relic", "sentry", "elk",
+            "splunk", "cloudwatch", "stackdriver", "jaeger", "zipkin", "opentelemetry",
+        },
+        "cicd": {
+            "github actions", "gitlab ci", "jenkins", "circleci", "travis",
+            "argocd", "spinnaker", "tekton", "github", "bitbucket", "jira",
+        },
+    }
+
+    # Hiring pattern phrases
+    _HIRING_PATTERNS: list[str] = [
+        "scaling team", "building from scratch", "greenfield", "high growth",
+        "Series A", "Series B", "Series C", "IPO", "hypergrowth",
+        "remote first", "async first", "distributed team", "international team",
+        "lead engineer", "staff engineer", "principal engineer", "architect",
+        "tech lead", "engineering manager", "senior", "junior", "mid-level",
+    ]
+
+    # Pain point indicators
+    _PAIN_POINT_PATTERNS: list[str] = [
+        "performance issues", "legacy code", "technical debt", "migration",
+        "scalability challenges", "bottleneck", "outdated", "legacy system",
+        "tech stack modernization", "re-architecting", "monolith", "spaghetti",
+    ]
+
+    @classmethod
+    def _get_spacy_matcher(cls):
+        """Lazy spaCy PhraseMatcher initialization."""
+        if cls._spacy_nlp is not None:
+            return cls._spacy_nlp, cls._phrasematcher
+        try:
+            import spacy
+            from spacy.matcher import PhraseMatcher
+
+            cls._spacy_nlp = spacy.load("en_core_web_sm")
+            patterns = []
+            # Build patterns from tech keywords
+            all_techs = []
+            for kw_set in cls._TECH_KEYWORDS.values():
+                all_techs.extend(kw_set)
+            # Use nlp.make_doc for efficient pattern creation
+            cls._phrasematcher = PhraseMatcher(cls._spacy_nlp.vocab, attr="TEXT")
+            for tech in set(all_techs):
+                cls._phrasematcher.add(tech, [cls._spacy_nlp.make_doc(tech)])
+            cls._SPACY_AVAILABLE = True
+            return cls._spacy_nlp, cls._phrasematcher
+        except Exception:
+            cls._SPACY_AVAILABLE = False
+            return None, None
+
+    def _extract_tech_regex(self, text: str) -> dict[str, int]:
+        """Extract tech keywords using word-boundary regex (spaCy fallback)."""
+        import re
+
+        found: dict[str, int] = {}
+        for category, keywords in self._TECH_KEYWORDS.items():
+            for kw in keywords:
+                # Word boundary match (case-insensitive)
+                pattern = r"\b" + re.escape(kw) + r"\b"
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                if matches:
+                    found[kw] = found.get(kw, 0) + len(matches)
+        return found
+
+    def _extract_tech_spacy(self, text: str) -> dict[str, int]:
+        """Extract tech keywords using spaCy PhraseMatcher."""
+        nlp, matcher = self._get_spacy_matcher()
+        if nlp is None or matcher is None:
+            return self._extract_tech_regex(text)
+        doc = nlp(text[:50000])  # cap at 50k chars for memory
+        found: dict[str, int] = {}
+        matches = matcher(doc)
+        for match_id, start, end in matches:
+            tech = nlp.vocab.strings[match_id]
+            found[tech] = found.get(tech, 0) + 1
+        return found
+
+    def _normalize_seniority(self, text: str) -> dict[str, int]:
+        """Infer seniority distribution from job posting text."""
+        import re
+
+        text_lower = text.lower()
+        counts: dict[str, int] = {"junior": 0, "mid": 0, "senior": 0}
+
+        # Junior indicators
+        junior_patterns = [
+            r"\bjunior\b", r"\bentry.level\b", r"\bentry level\b", r"\bgraduate\b",
+            r"\bintern\b", r"\btrainee\b", r"\bassociate\b", r"\bnew grad\b",
+        ]
+        for pat in junior_patterns:
+            counts["junior"] += len(re.findall(pat, text_lower))
+
+        # Mid-level indicators
+        mid_patterns = [
+            r"\bmid.level\b", r"\bmid level\b", r"\bintermediate\b",
+            r"\b2-5 year\b", r"\b3+ year\b", r"\bexperience\b",
+        ]
+        for pat in mid_patterns:
+            counts["mid"] += len(re.findall(pat, text_lower))
+
+        # Senior indicators
+        senior_patterns = [
+            r"\bsenior\b", r"\bstaff\b", r"\bprincipal\b", r"\blead\b",
+            r"\barchitect\b", r"\b5\+ year\b", r"\b7\+ year\b",
+            r"\bengineering manager\b", r"\btech lead\b",
+        ]
+        for pat in senior_patterns:
+            counts["senior"] += len(re.findall(pat, text_lower))
+
+        return counts
+
+    def _extract_hiring_patterns(self, text: str) -> list[str]:
+        """Detect hiring patterns in job posting text."""
+        import re
+
+        text_lower = text.lower()
+        found = []
+        for pattern in self._HIRING_PATTERNS:
+            if re.search(r"\b" + re.escape(pattern) + r"\b", text_lower):
+                found.append(pattern)
+        return found[:10]  # cap at 10 patterns
+
+    def _extract_pain_points(self, text: str) -> list[str]:
+        """Detect inferred pain points from job posting text."""
+        import re
+
+        text_lower = text.lower()
+        found = []
+        for pattern in self._PAIN_POINT_PATTERNS:
+            if re.search(r"\b" + re.escape(pattern) + r"\b", text_lower):
+                found.append(pattern)
+        return found[:10]  # cap at 10 pain points
+
+    async def infer_tech_from_jobs(self, entity_name: str) -> TechIntelligence:
+        """
+        Infer technology stack from job postings across multiple sources.
+
+        Sources:
+        - Indeed RSS: https://www.indeed.com/rss?q={entity_name}+engineer
+        - Hacker News "Who is Hiring": HN API topstories.json filtered monthly
+        - Remoteok.com API: https://remoteok.io/api?tag={entity_name}
+
+        Args:
+            entity_name: Company/entity name to search job postings for
+
+        Returns:
+            TechIntelligence with detected_technologies, hiring_patterns,
+            seniority_distribution, and inferred_pain_points
+        """
+        import re
+
+        all_text_parts: list[str] = []
+        tech_counts: dict[str, int] = {}
+        seniority_totals: dict[str, int] = {"junior": 0, "mid": 0, "senior": 0}
+        hiring_patterns_found: set[str] = set()
+        pain_points_found: set[str] = set()
+
+        async def fetch_indeed_jobs() -> None:
+            """Fetch job postings from Indeed RSS."""
+            try:
+                import urllib.parse
+
+                encoded_q = urllib.parse.quote_plus(f"{entity_name} engineer")
+                url = f"https://www.indeed.com/rss?q={encoded_q}"
+                session = await async_get_aiohttp_session()
+                async with asyncio.timeout(15.0):
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status != 200:
+                            return
+                        raw = await resp.text()
+                        # Streaming XML parse — defusedxml primary, stdlib fallback
+                        try:
+                            import defusedxml.ElementTree as ET
+                        except ImportError:
+                            import xml.etree.ElementTree as ET
+                        # Parse in chunks to avoid loading full XML into memory
+                        try:
+                            root = ET.fromstring(raw)
+                            # Indeed RSS item structure: /rss/channel/item/title, description
+                            for item in root.iter("item"):
+                                title = (item.findtext("title") or "")[:500]
+                                desc = (item.findtext("description") or "")[:2000]
+                                link = (item.findtext("link") or "")[:500]
+                                if title or desc:
+                                    all_text_parts.append(f"{title} {desc}")
+                                # Follow link for full description if available
+                                if link and len(all_text_parts) < 50:
+                                    try:
+                                        async with session.get(link, timeout=aiohttp.ClientTimeout(total=10)) as lresp:
+                                            if lresp.status == 200:
+                                                page_text = await lresp.text()
+                                                all_text_parts.append(page_text[:3000])
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            # Malformed XML — try regex extraction as fallback
+                            titles = re.findall(r"<title><!\[CDATA\[(.*?)\]\]></title>", raw)
+                            descs = re.findall(r"<description><!\[CDATA\[(.*?)\]\]></description>", raw)
+                            for t, d in zip(titles, descs):
+                                all_text_parts.append(f"{t} {d}"[:3000])
+            except Exception:
+                pass
+
+        async def fetch_hn_jobs() -> None:
+            """Fetch from Hacker News 'Who is Hiring' monthly threads via HN API."""
+            try:
+                session = await async_get_aiohttp_session()
+                # Get topstories to find monthly "Who is Hiring" threads
+                async with asyncio.timeout(15.0):
+                    async with session.get(
+                        "https://hacker-news.firebaseio.com/v0/topstories.json",
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        if resp.status != 200:
+                            return
+                        story_ids = await resp.json()
+                        # Scan top 100 stories for "who is hiring" threads
+                        scanned = 0
+                        for story_id in story_ids[:100]:
+                            if scanned >= 20:
+                                break
+                            scanned += 1
+                            async with session.get(
+                                f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
+                                timeout=aiohttp.ClientTimeout(total=5),
+                            ) as item_resp:
+                                if item_resp.status != 200:
+                                    continue
+                                item = await item_resp.json()
+                                if not item:
+                                    continue
+                                title = item.get("title", "")
+                                # Look for monthly "Who is Hiring" threads
+                                if re.search(r"Who is Hiring\?.*\d{4}", title, re.IGNORECASE):
+                                    # Get the text body of the thread
+                                    if "text" in item and item["text"]:
+                                        all_text_parts.append(item["text"][:5000])
+                                    elif item.get("url"):
+                                        # Fetch the actual hiring post URL
+                                        async with session.get(
+                                            item["url"],
+                                            timeout=aiohttp.ClientTimeout(total=10),
+                                        ) as text_resp:
+                                            if text_resp.status == 200:
+                                                all_text_parts.append(
+                                                    (await text_resp.text())[:5000]
+                                                )
+            except Exception:
+                pass
+
+        async def fetch_remoteok_jobs() -> None:
+            """Fetch from Remoteok.com API for remote job postings."""
+            try:
+                import urllib.parse
+
+                encoded_tag = urllib.parse.quote_plus(entity_name)
+                url = f"https://remoteok.io/api?tag={encoded_tag}"
+                session = await async_get_aiohttp_session()
+                async with asyncio.timeout(15.0):
+                    async with session.get(
+                        url,
+                        headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        if resp.status != 200:
+                            return
+                        try:
+                            import orjson
+                            data = await resp.json(loads=orjson.loads)
+                        except Exception:
+                            import json
+                            data = await resp.json(loads=json.loads)
+                        # Remoteok API returns list of job objects
+                        if not isinstance(data, list):
+                            return
+                        for job in data[:50]:  # cap at 50 postings
+                            if not isinstance(job, dict):
+                                continue
+                            # Company name check — skip if not matching entity
+                            company = job.get("company", "").lower()
+                            if entity_name.lower() not in company and company not in entity_name.lower():
+                                # Still include general tech jobs
+                                pass
+                            title = job.get("position", "") or job.get("title", "")
+                            description = job.get("description", "")[:2000]
+                            tags = job.get("tags", [])
+                            if isinstance(tags, list):
+                                description += " " + " ".join(str(t) for t in tags)
+                            if title or description:
+                                all_text_parts.append(f"{title} {description}"[:3000])
+            except Exception:
+                pass
+
+        # Execute all three sources concurrently
+        await asyncio.gather(
+            fetch_indeed_jobs(),
+            fetch_hn_jobs(),
+            fetch_remoteok_jobs(),
+            return_exceptions=True,
+        )
+
+        # Aggregate all text and extract tech signals
+        combined_text = " ".join(all_text_parts[:200])  # cap at 200 postings worth of text
+
+        # Extract tech using spaCy if available, regex fallback
+        tech_counts = self._extract_tech_spacy(combined_text)
+
+        # Extract seniority distribution
+        seniority_totals = self._normalize_seniority(combined_text)
+
+        # Extract hiring patterns
+        for text_chunk in all_text_parts[:50]:
+            for pat in self._extract_hiring_patterns(text_chunk):
+                hiring_patterns_found.add(pat)
+            for pp in self._extract_pain_points(text_chunk):
+                pain_points_found.add(pp)
+
+        return TechIntelligence(
+            detected_technologies=tech_counts,
+            hiring_patterns=sorted(hiring_patterns_found)[:10],
+            seniority_distribution=seniority_totals,
+            inferred_pain_points=sorted(pain_points_found)[:10],
+        )
 
     async def cleanup(self) -> None:
         """Cleanup all system resources. Idempotent — safe to call multiple times."""

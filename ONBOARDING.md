@@ -45,6 +45,42 @@ Top MCP Servers:
 - /python-development:async-python-patterns — Async patterns reference for Python projects.
 - /context-mode:ctx-doctor — Diagnose context-mode installation and health.
 
+## I2P Setup
+
+I2P (Invisible Internet Project) provides anonymous network access for .i2p/.b32.i2p URLs.
+
+### Install i2pd
+
+```bash
+brew install i2pd
+```
+
+### Run as service
+
+```bash
+i2pd --service  # starts as background daemon
+```
+
+### Verify SAM proxy is running
+
+```bash
+# Test SAM proxy on default port 7654
+curl --socks5 socks5://127.0.0.1:7654 http://i2p.rocks
+
+# Or check i2pd status
+brew services list | grep i2pd
+```
+
+### Environment variable
+
+In your `.env` (copy from `.env.example`):
+```
+I2P_PROXY_URL=socks5://127.0.0.1:7654
+```
+
+Hledac automatically routes .i2p and .b32.i2p URLs through this proxy.
+
+
 ## Team Tips
 
 _TODO_

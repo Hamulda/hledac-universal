@@ -89,9 +89,12 @@ class RouterMLP:
         self._nn = _nn
         self.fc1 = _nn.Linear(input_dim, hidden_dim)
         self.fc2 = _nn.Linear(hidden_dim, num_experts)
+        self._nn = _nn
 
     def __call__(self, x) -> mx.array:
         """Forward pass vrací logits pro každého experta"""
+        if self._nn is None:
+            raise RuntimeError("No neural network backend available (MLX and torch both unavailable)")
         x = self.fc1(x)
         x = mx.maximum(x, 0)  # ReLU
         x = self.fc2(x)

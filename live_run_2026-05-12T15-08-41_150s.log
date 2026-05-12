@@ -1,0 +1,73 @@
+INFO:root:[RUNTIME] uvloop installed successfully
+INFO:__main__:[BOOT] PID=58578 — python -m asyncio ps 58578 | python -m asyncio pstree 58578
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/__main__.py:407: UserWarning: [GHOST OPSEC] No active ramdisk found at /Volumes/ghost_tmp and GHOST_RAMDISK is unset. Runtime artifacts will be written to SSD fallback location. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp to avoid OPSEC degradation.
+  from hledac.universal.paths import LMDB_ROOT as _derived_root
+INFO:__main__:[BOOT GUARD] result: removed=0, reason=lock_file_not_found
+WARNING:hledac.universal.intelligence.web_intelligence:intel.webintel: optional Hledac components unavailable — running in degraded mode. Error: No module named 'hledac.advanced_web.captcha_solver'
+WARNING:hledac.universal.intelligence.document_intelligence:PIL not available - image analysis disabled
+WARNING:hledac.universal.intelligence.document_intelligence:PyMuPDF not available - advanced PDF analysis disabled
+INFO:hledac.universal.core.__main__:[GC] gc.freeze() applied — reduces GC pause variance
+mx.metal.set_cache_limit is deprecated and will be removed in a future version. Use mx.set_cache_limit instead.
+mx.metal.set_wired_limit is deprecated and will be removed in a future version. Use mx.set_wired_limit instead.
+INFO:hledac.universal.utils.mlx_cache:[Sprint 8T] Metal limits configured: cache=2560 MiB, wired=2560 MiB
+INFO:hledac.universal.utils.mlx_cache:MLX buffers initialized: cache=2560 MiB, wired=2560 MiB, configured=True, error=None
+INFO:hledac.universal.core.__main__:[BOOT] MLX buffers: cache=2560MiB wired=2560MiB configured=True
+INFO:hledac.universal.core.__main__:[BOOT] Pre-sprint checks OK | UMA: 5.11GiB used | swap: 1.01GiB
+INFO:hledac.universal.patterns.pattern_matcher:[PATTERNS] configured 134 bootstrap patterns
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store initialized at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/shadow_wal.lmdb
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store initialized at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/cti/db/lmdb/dedup.lmdb
+WARNING:coremltools:Torch version 2.11.0 has not been tested with coremltools. You may run into unexpected errors. Torch 2.5.0 is the most recent version that has been tested.
+WARNING:coremltools:Failed to load _MLModelProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLCPUComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLGPUComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLNeuralEngineComputeDeviceProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLModelProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLComputePlanProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Fail to import BlobReader from libmilstoragepython. No module named 'coremltools.libmilstoragepython'
+WARNING:coremltools:Failed to load _MLModelProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Failed to load _MLModelAssetProxy: No module named 'coremltools.libcoremlpython'
+WARNING:coremltools:Fail to import BlobWriter from libmilstoragepython. No module named 'coremltools.libmilstoragepython'
+INFO:hledac.universal.metrics_registry:MetricsRegistry initialized: run_id=default
+INFO:hledac.universal.runtime.sprint_scheduler:Dedup LMDB loaded: 0 existing hashes
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py:4761: RuntimeWarning: coroutine 'wait_for' was never awaited
+  _bg_loop.close()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/sprint_scheduler.py:4761: RuntimeWarning: coroutine 'SprintScheduler._ensure_pre_windup_lane_terminal_states' was never awaited
+  _bg_loop.close()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+WARNING:hledac.universal.runtime.sprint_scheduler:[F223-D] prewindup barrier async bridge error (blocking windup): Cannot run the event loop while another loop is running
+INFO:hledac.universal.runtime.sprint_scheduler:[MEM] fetch_limit=2 ml_jobs=0
+INFO:hledac.universal.utils.concurrency:[FETCH_WORKERS] Adjusted from 0 to 25
+INFO:hledac.universal.core.__main__:[TEARDOWN] sprint_delta written: 0 findings, 0 dedup hits, UMA delta: +0.10GiB, top_source: '', findings_per_min: 0.00
+WARNING:hledac.universal.core.__main__:[RUNTIME TRUTH] 🚨 SMOKE ONLY | runtime 8s and 1 cycles below minimum | cycles: 1/1 | windup: 8s (budget=-30s)
+INFO:hledac.universal.core.__main__:[SPRINT DONE] 8sa_1778598522461_1db099 | findings: 0 | cycles: 1/1 | duplicates: 0 | phase: TEARDOWN
+INFO:hledac.universal.core.__main__:[SUMMARY] 🗿  DEPLETED: no pattern hits anywhere | feed=0 public=0(0%) | f/min=0.00 | dup=0.0% | public: disc=0 fetch=0 match=0 stored=0
+INFO:hledac.universal.core.__main__:[NEXT] query may be too narrow — broaden terms or switch seed
+INFO:hledac.universal.core.__main__:[SOURCES] none
+INFO:hledac.universal.core.__main__:[REPORT] /Users/vojtechhamada/.hledac/reports/8sa_1778598522461_1db099_report.json
+INFO:hledac.universal.core.__main__:[EXPORT] fully_enriched → sprint_id=8sa_1778598522461_1db099
+INFO:hledac.universal.export.sprint_exporter:[EXPORT] JSON report → /Users/vojtechhamada/.hledac/reports/8sa_1778598522461_1db099_report.json
+WARNING:hledac.universal.export.sprint_exporter:[EXPORT] Enhanced seed generation failed: 'AnalystBrief' object has no attribute 'get'
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+WARNING:hledac.universal.knowledge.finding_envelope:[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding
+INFO:hledac.universal.core.__main__:[EXPORT] finish layer → seeds=/Users/vojtechhamada/.hledac/reports/8sa_1778598522461_1db099_next_seeds.json
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store closed
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store closed
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store closed
+INFO:hledac.universal.tools.lmdb_kv:LMDB KV store closed

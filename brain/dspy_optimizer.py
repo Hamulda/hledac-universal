@@ -1,7 +1,7 @@
 """Offline DSPy prompt optimizer – MIPROv2, idle-only, memory/thermal guards, circuit breaker."""
 import asyncio
-import psutil
 import logging
+import psutil
 import sys
 import time
 from pathlib import Path
@@ -118,39 +118,107 @@ class DSPyOptimizer:
             if self._should_optimize():
                 await self._run_optimization()
 
+    async def _load_training_examples(self, limit: int = 1000) -> List[tuple]:
+        """
+        Load training examples from evidence JSONL files.
+
+        Reads from EVIDENCE_ROOT/*.jsonl — one JSON per line, each line is an
+        EvidenceEvent dict with event_type + payload. Fails safe on error (returns []).
+
+        GHOST_INVARIANTS: async only (aiofiles), fail-safe on empty/corrupt files.
+        """
+        examples: List[tuple] = []
+        try:
+            from hledac.universal.paths import EVIDENCE_ROOT
+        except Exception:
+            # paths.py not available — skip
+            logger.debug("[DSPy] EVIDENCE_ROOT not available")
+            return []
+
+        try:
+            import aiofiles
+        except ImportError:
+            logger.debug("[DSPy] aiofiles not available, skipping evidence load")
+            return []
+
+        evidence_files = []
+        try:
+            if EVIDENCE_ROOT.exists():
+                evidence_files = sorted(
+                    EVIDENCE_ROOT.glob("*.jsonl"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )[:10]  # newest 10 files to avoid scanning old history
+        except Exception as e:
+            logger.debug(f"[DSPy] Failed to list evidence files: {e}")
+            return []
+
+        for ev_file in evidence_files:
+            try:
+                async with aiofiles.open(ev_file, "rb") as f:
+                    content = await f.read()
+            except Exception as e:
+                logger.debug(f"[DSPy] Failed to read {ev_file}: {e}")
+                continue
+
+            if not content:
+                continue
+
+            # Parse JSONL — each line is one EvidenceEvent dict
+            try:
+                text = content.decode("utf-8") if isinstance(content, bytes) else content
+                lines = text.strip().split("\n")
+                events = []
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if ORJSON_AVAILABLE:
+                        ev = orjson.loads(line)
+                    else:
+                        ev = _json.loads(line)
+                    events.append(ev)
+            except Exception as e:
+                logger.debug(f"[DSPy] Failed to parse {ev_file}: {e}")
+                continue
+
+            for ev in events:
+                ev_type = ev.get("event_type", "")
+                if ev_type not in ("decision", "action_executed"):
+                    continue
+
+                payload = ev.get("payload") or {}
+
+                # Query extraction (mirrors broken seam logic)
+                query = (
+                    payload.get("query") or
+                    payload.get("params", {}).get("query") or
+                    payload.get("action_params", {}).get("query") or
+                    ""
+                )
+
+                # Result extraction
+                result = (
+                    payload.get("result") or
+                    payload.get("action_result") or
+                    payload.get("response", {}).get("content", "") or
+                    ""
+                )
+
+                if query and result:
+                    examples.append((query, result))
+
+                if len(examples) >= limit:
+                    return examples
+
+        return examples
+
     async def _run_optimization(self):
         """Load training data from evidence log and run DSPy."""
         logger.info("Starting DSPy optimization...")
         try:
-            # Extract training data from evidence log
-            if not hasattr(self._brain._orch, '_evidence_log'):
-                return
-
-            recent = self._brain._orch._evidence_log.get_recent_events(1000)
-            raw_examples = []
-
-            for ev in recent:
-                if ev.event_type in ('decision', 'action_executed'):
-                    payload = ev.payload or {}
-
-                    # Query extraction
-                    query = (
-                        payload.get('query') or
-                        payload.get('params', {}).get('query') or
-                        payload.get('action_params', {}).get('query') or
-                        ''
-                    )
-
-                    # Result extraction
-                    result = (
-                        payload.get('result') or
-                        payload.get('action_result') or
-                        payload.get('response', {}).get('content', '') or
-                        ''
-                    )
-
-                    if query and result:
-                        raw_examples.append((query, result))
+            # Load training examples from evidence JSONL files
+            raw_examples = await self._load_training_examples(1000)
 
             # Filter for quality
             examples = self._filter_training_examples(raw_examples)
@@ -193,7 +261,11 @@ class DSPyOptimizer:
             logger.warning("DSPy optimization timed out after 10 minutes")
             self._failure_count += 1
         except Exception as e:
-            logger.warning(f"DSPy optimization failed: {e}")
+            # Check if it's an ExceptionGroup (Python 3.11+)
+            if isinstance(e, ExceptionGroup):
+                logger.warning(f"DSPy optimization failed (ExceptionGroup): {e}")
+            else:
+                logger.warning(f"DSPy optimization failed: {e}")
             self._failure_count += 1
 
         # Circuit breaker
@@ -373,23 +445,11 @@ def load_optimized_prompts() -> dict:
             with open(cache_path, 'rb') as f:
                 data = orjson.loads(f.read())
         else:
-            import json
+            import json as _json
             with open(cache_path, 'r') as f:
-                data = json.load(f)
+                data = _json.load(f)
         prompts = data.get('prompts', {})
         # Filter only valid non-empty prompts
         return {k: v for k, v in prompts.items() if v and isinstance(v, str)}
     except Exception:
         return {}
-
-    async def stop(self):
-        self._stop.set()
-        if self._task:
-            try:
-                await asyncio.wait_for(self._task, timeout=2.0)
-            except asyncio.TimeoutError:
-                self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass

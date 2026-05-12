@@ -47,6 +47,7 @@ class Transport(Enum):
       I2P       — proxy-aware SOCKS5 world (ProxyConnector)
       FREENET   — Freenet FProxy HTTP proxy world
       INMEMORY  — test/internal only
+      GOPHER    — Gopher protocol (direct TCP socket)
 
     curl_cffi is a SEPARATE world (JA3 fingerprint spoofing) — not in this enum.
     """
@@ -55,6 +56,7 @@ class Transport(Enum):
     I2P = auto()
     FREENET = auto()
     INMEMORY = auto()
+    GOPHER = auto()
 
 
 # B6: SourceTransportMap — mandatory onion routing, no DIRECT override
@@ -297,6 +299,9 @@ def get_transport_for_url(url: str) -> 'Transport':
         return Transport.I2P
     if host.endswith('.freenet'):
         return Transport.FREENET
+    # Gopher protocol
+    if url.startswith('gopher://'):
+        return Transport.GOPHER
     return Transport.DIRECT
 
 

@@ -194,6 +194,10 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
         from brain.moe_router import MoERouter  # type: ignore
         return MoERouter()
 
+    def _modernbert():
+        from brain.modernbert_engine import ModernBertEngine  # type: ignore
+        return ModernBertEngine()
+
     return {
         "hermes3":    LazyModel(_hermes3, ttl_seconds=90,  name="hermes3"),
         "ner":        LazyModel(_ner,     ttl_seconds=300, name="ner"),
@@ -201,6 +205,7 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
                                conditional_min_findings=50),
         "ane":        LazyModel(_ane,     ttl_seconds=600, name="ane"),
         "moe_router": LazyModel(_moe,     ttl_seconds=180, name="moe_router"),
+        "modernbert": LazyModel(_modernbert, ttl_seconds=180, name="modernbert"),
     }
 
 

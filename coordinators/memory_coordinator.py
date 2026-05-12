@@ -34,7 +34,15 @@ from enum import Enum, IntEnum
 from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import psutil
-import numpy as np
+
+try:
+    import numpy as np
+    from numpy.typing import NDArray
+    HAS_NUMPY = True
+except ImportError:
+    np = None
+    NDArray = "NDArray"  # type: ignore[misc]
+    HAS_NUMPY = False
 
 try:
     import orjson
@@ -71,7 +79,7 @@ def _get_sparse():
 
 def _ndarray_to_list(obj: Any) -> Any:
     """Convert numpy arrays to lists for JSON serialization."""
-    if isinstance(obj, np.ndarray):
+    if HAS_NUMPY and isinstance(obj, np.ndarray):
         return obj.tolist()
     if is_dataclass(obj):
         return {k: _ndarray_to_list(v) for k, v in asdict(obj).items()}
@@ -103,6 +111,8 @@ logger = logging.getLogger(__name__)
 # This defers numpy import until neuromorphic path is actually needed
 def _get_np():
     """Return numpy module. Defined at module level for type compatibility."""
+    if not HAS_NUMPY:
+        return None
     return np
 
 # Memory bounds
@@ -134,7 +144,7 @@ class MemoryPattern:
         metadata: Additional pattern metadata
     """
     pattern_id: str
-    neuron_activations: np.ndarray
+    neuron_activations: Any  # np.ndarray at runtime
     timestamp: float
     strength: float = 1.0
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -216,7 +226,8 @@ class NeuromorphicMemoryManager:
             logger.warning("NeuromorphicMemoryManager: scipy.sparse not available, synaptic weights disabled")
 
         # Spike traces for STDP (lazy numpy)
-        self.spike_traces = _get_np().zeros(n_neurons)
+        _np = _get_np()
+        self.spike_traces = _np.zeros(n_neurons) if _np else []
         self.trace_decay = 0.9
 
         # Sleep/replay parameters
@@ -240,6 +251,11 @@ class NeuromorphicMemoryManager:
 
     def _init_synaptic_weights(self) -> None:
         """Initialize sparse synaptic weight matrix."""
+        if not HAS_NUMPY:
+            logger.warning("NeuromorphicMemoryManager: numpy not available, synaptic weights disabled")
+            self.synaptic_weights = None
+            return
+
         # Create sparse random connectivity
         n_connections = int(self.n_neurons * self.n_neurons * self.connectivity)
 
@@ -262,7 +278,7 @@ class NeuromorphicMemoryManager:
             shape=(self.n_neurons, self.n_neurons)
         )
 
-    def _encode_pattern(self, data: Any) -> np.ndarray:
+    def _encode_pattern(self, data: Any) -> Any:
         """
         Convert data to neuron activation pattern.
 
@@ -280,8 +296,12 @@ class NeuromorphicMemoryManager:
         # Generate hash-based activation pattern
         hash_val = hashlib.sha256(data_str.encode()).hexdigest()
 
+        _np = _get_np()
+        if not _np:
+            return []  # numpy not available
+
         # Create sparse activation pattern (lazy numpy)
-        activations = _get_np().zeros(self.n_neurons)
+        activations = _np.zeros(self.n_neurons)
 
         # Use hash chunks to determine active neurons
         chunk_size = 8
@@ -373,12 +393,16 @@ class NeuromorphicMemoryManager:
 
         return True
 
-    def _update_weights_from_pattern(self, activations: np.ndarray) -> None:
+    def _update_weights_from_pattern(self, activations: Any) -> None:
         """Update synaptic weights based on pattern co-activation."""
         if self.synaptic_weights is None:
             return  # scipy not available, skip
 
-        active_neurons = _get_np().where(activations > 0.3)[0]
+        _np = _get_np()
+        if _np is None:
+            return  # numpy not available
+
+        active_neurons = _np.where(activations > 0.3)[0]
 
         if len(active_neurons) < 2:
             return
@@ -440,7 +464,7 @@ class NeuromorphicMemoryManager:
             'activations': pattern.neuron_activations
         }
 
-    def _pattern_completion(self, partial_activations: np.ndarray) -> np.ndarray:
+    def _pattern_completion(self, partial_activations: Any) -> Any:
         """
         Perform pattern completion using associative memory.
 
@@ -2431,15 +2455,12 @@ class MultiLevelContextCache:
             logger.warning(f"HNSW index initialization failed: {e}")
             self._hnsw_index = None
 
-    def _hnsw_search(self, query_emb: np.ndarray, k: int) -> List[int]:
+    def _hnsw_search(self, query_emb: Any, k: int) -> List[int]:
         """Search hnsw index for approximate nearest neighbors (Sprint 26)."""
         if self._hnsw_index is None:
             return []
         try:
             labels, distances = self._hnsw_index.knn_query(query_emb, k=k)
-            # NOTE: list() copies but is O(k) where k≤10 — negligible vs HNSW search cost.
-            # Unlike .tolist(), list() on a numpy array avoids triggering Metal buffer sync
-            # since labels are already CPU-resident from hnswlib's query path.
             return list(labels[0])
         except Exception:
             return []
@@ -2499,7 +2520,7 @@ class MultiLevelContextCache:
         except Exception as e:
             logger.warning(f"Could not rebuild semantic index: {e}")
     
-    def _get_embedding(self, text: str) -> Optional[np.ndarray]:
+    def _get_embedding(self, text: str) -> Optional[Any]:
         """Get embedding for text."""
         if self.embedder:
             try:

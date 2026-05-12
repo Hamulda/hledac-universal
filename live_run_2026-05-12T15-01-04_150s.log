@@ -1,0 +1,8 @@
+EXIT_CODE: 1
+STDERR:
+STDOUT:WARNING:hledac.universal.__main__:[OPSEC] PYTHON_DISABLE_REMOTE_DEBUG not set — Python 3.14 safe-external-debugger interface is ACTIVE. Set PYTHON_DISABLE_REMOTE_DEBUG=1 for production OSINT runs.
+ERROR:hledac.universal.__main__:[MAIN] Fatal error: No module named 'hledac.universal.core'
+Traceback (most recent call last):
+  File "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/hledac/universal/__main__.py", line 3165, in main
+    from .core.__main__ import run_sprint as _core_run_sprint
+ModuleNotFoundError: No module named 'hledac.universal.core'

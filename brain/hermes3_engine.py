@@ -1897,6 +1897,37 @@ Do not include any other text. Output valid JSON only."""
         logger.info("✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)")
 
     # =========================================================================
+    # ModelLifecycleProtocol implementation (Sprint 8Z bridge)
+    # =========================================================================
+
+    async def get_current_model_name(self) -> Optional[str]:
+        """Return currently loaded model name, or None if no model loaded."""
+        return self.config.model_path if self._model is not None else None
+
+    async def cancel_pending_model_tasks(self) -> None:
+        """Cancel any in-flight generation tasks."""
+        if hasattr(self, '_generation_task') and self._generation_task is not None:
+            self._generation_task.cancel()
+            try:
+                await self._generation_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+    async def load_model(self, model_id: str) -> bool:
+        """Load specified model by path identifier."""
+        try:
+            from mlx_lm import load
+            self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
+            self.config.model_path = model_id
+            logger.info(f"✓ Model loaded: {model_id}")
+            return True
+        except Exception as e:
+            logger.warning(f"Model load failed for {model_id}: {e}")
+            return False
+
+    # =========================================================================
     # Sprint 30: KV Cache Compression with CommVQ 2-bit Quantization
     # =========================================================================
 

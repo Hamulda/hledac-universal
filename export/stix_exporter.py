@@ -41,6 +41,16 @@ __all__ = [
     "render_cti_stix_bundle_to_path",
     "collect_cti_export_inputs",
     "CTIExportInputs",
+    # F234: Full STIX 2.1 object types
+    "render_full_stix_bundle",
+    "render_full_stix_bundle_json",
+    "render_full_stix_bundle_to_path",
+    "_ATTACK_TTP_MAP",
+    "_build_malware_object",
+    "_build_tool_object",
+    "_build_attack_pattern_object",
+    "_build_campaign_object",
+    "_build_intrusion_set_object",
 ]
 
 # ---------------------------------------------------------------------------
@@ -79,6 +89,93 @@ _FALLBACK_RECOMMENDATION: dict[str, str] = {
 
 # Canonical root-cause strings for export (machine-readable keys)
 _CANONICAL_ROOT_CAUSES = frozenset(_ROOT_CAUSE_LABELS.keys())
+
+# ---------------------------------------------------------------------------
+# F234: MITRE ATT&CK Technique → TTP mapping
+# Maps IOC types and context → STIX Attack-Pattern, Malware, Tool objects
+# Technique IDs use STIX attack-pattern ID format (Tnnnn.nnn)
+# ---------------------------------------------------------------------------
+
+# ATT&CK technique → (name, platforms, MITRE external_ref)
+_ATTACK_TTP_MAP: dict[str, dict[str, Any]] = {
+    # Domain-based TTPs
+    "T1590.001": {"name": "Domain Name", "type": "attack-pattern",
+                   "desc": "Gather victim domain information: domain names"},
+    "T1590.002": {"name": "WHOIS", "type": "attack-pattern",
+                   "desc": "Gather victim domain WHOIS information"},
+    "T1590.003": {"name": "DNS", "type": "attack-pattern",
+                   "desc": "Gather victim DNS information"},
+    "T1590.004": {"name": "Subdomain", "type": "attack-pattern",
+                   "desc": "Gather victim subdomain information"},
+    "T1590.005": {"name": "Email Addresses", "type": "attack-pattern",
+                   "desc": "Gather victim email addresses"},
+    "T1590.006": {"name": "Employee Names", "type": "attack-pattern",
+                   "desc": "Gather victim employee information"},
+    # IP-based TTPs
+    "T1595.001": {"name": "Active Scanning: WHOIS", "type": "attack-pattern",
+                   "desc": "Active scanning using WHOIS"},
+    "T1595.002": {"name": "Active Scanning: DNS", "type": "attack-pattern",
+                   "desc": "Active scanning using DNS"},
+    "T1016": {"name": "Network Infrastructure", "type": "attack-pattern",
+               "desc": "Identify victim network infrastructure"},
+    "T1595": {"name": "Active Scanning", "type": "attack-pattern",
+              "desc": "Gather victim network topology and exposed services"},
+    # Credential/access TTPs
+    "T1589.001": {"name": "Credentials", "type": "attack-pattern",
+                  "desc": "Gather victim credentials"},
+    "T1589.002": {"name": "Email Addresses", "type": "attack-pattern",
+                  "desc": "Gather victim email addresses"},
+    "T1589.003": {"name": "Employee Names", "type": "attack-pattern",
+                  "desc": "Gather victim employee names"},
+    # Infrastructure TTPs
+    "T1584.001": {"name": "Domain", "type": "attack-pattern",
+                  "desc": "Acquire infrastructure: domains"},
+    "T1584.004": {"name": "Server", "type": "attack-pattern",
+                  "desc": "Acquire infrastructure: servers"},
+    "T1105": {"name": "Ingress Tool Transfer", "type": "attack-pattern",
+              "desc": "Transfer tools or other files from external systems"},
+    # Exfiltration TTPs
+    "T1041": {"name": "Exfiltration Over C2 Channel", "type": "attack-pattern",
+              "desc": "Exfiltrate data over command and control channel"},
+    # Supply chain
+    "T1195.001": {"name": "Supply Chain Compromise: Software Development Tools", "type": "attack-pattern",
+                  "desc": "Compromise software development tools"},
+    "T1195.002": {"name": "Supply Chain Compromise: Software Supply Chain", "type": "attack-pattern",
+                  "desc": "Compromise software supply chain"},
+}
+
+# IOC type → likely ATT&CK technique IDs (for TTP mapping)
+_IOC_ATTACK_TECHNIQUES: dict[str, list[str]] = {
+    "domain": ["T1590.001", "T1590.002", "T1590.003", "T1590.004", "T1584.001"],
+    "ip": ["T1016", "T1595.001", "T1595.002", "T1584.004"],
+    "url": ["T1105", "T1041"],
+    "email": ["T1589.002"],
+    "hash_md5": ["T1589.001"],
+    "hash_sha1": ["T1589.001"],
+    "hash_sha256": ["T1589.001"],
+    "cve": ["T1589.001"],
+    "username": ["T1589.003"],
+    "leak": ["T1589.001", "T1589.002"],
+    "paste": ["T1589.001", "T1589.002"],
+}
+
+# Kill-chain phase → ATT&CK tactic name
+_PHASE_TO_TACTIC: dict[str, str] = {
+    "reconnaissance": "Reconnaissance",
+    "resource_development": "Resource Development",
+    "initial_access": "Initial Access",
+    "execution": "Execution",
+    "persistence": "Persistence",
+    "privilege_escalation": "Privilege Escalation",
+    "defense_evasion": "Defense Evasion",
+    "credential_access": "Credential Access",
+    "discovery": "Discovery",
+    "lateral_movement": "Lateral Movement",
+    "collection": "Collection",
+    "command_and_control": "Command and Control",
+    "exfiltration": "Exfiltration",
+    "impact": "Impact",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +803,536 @@ def _build_evidence_chain_object(
             "depth": len(serialized_steps),
         }, sort_keys=True),
     }
+
+
+# ---------------------------------------------------------------------------
+# F234: Full STIX 2.1 Object Builders
+# Campaign, Intrusion Set, Malware, Tool, Attack Pattern
+# ---------------------------------------------------------------------------
+
+def _build_attack_pattern_object(
+    technique_id: str,
+    created: str,
+) -> dict[str, Any]:
+    """Build a STIX attack-pattern from an ATT&CK technique ID."""
+    ttp = _ATTACK_TTP_MAP.get(technique_id)
+    name = ttp["name"] if ttp else technique_id
+    desc = ttp.get("desc", "") if ttp else ""
+
+    return {
+        "type": "attack-pattern",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"attack-pattern--{_make_stix_id('attack-pattern', technique_id)}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": desc,
+        "external_references": [{
+            "source_name": "mitre-attack",
+            "external_id": technique_id,
+            "url": f"https://attack.mitre.org/techniques/{technique_id.replace('.', '/')}/",
+        }] if technique_id.startswith("T") else [],
+        "x_mitre_contributor": "Ghost Prime OSINT",
+        "x_mitre_version": "1.0",
+    }
+
+
+def _build_malware_object(
+    name: str,
+    malware_type: str,
+    created: str,
+    technique_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a STIX malware object (for identified malware from OSINT)."""
+    malware_id = _make_stix_id("malware", name, malware_type)
+    ext_refs = [{
+        "source_name": "Ghost Prime OSINT",
+        "description": f"Identified from Hledac OSINT collection",
+    }]
+    if technique_ids:
+        for tech in technique_ids[:5]:
+            ext_refs.append({
+                "source_name": "mitre-attack",
+                "external_id": tech,
+                "url": f"https://attack.mitre.org/techniques/{tech.replace('.', '/')}/",
+            })
+    return {
+        "type": "malware",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"malware--{malware_id}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": f"Malware identified via OSINT: {name}",
+        "malware_types": [malware_type] if malware_type else ["unknown"],
+        "is_family": False,
+        "external_references": ext_refs,
+        "x_mitre_platforms": ["Linux", "Windows", "macOS"],
+    }
+
+
+def _build_tool_object(
+    name: str,
+    tool_type: str,
+    created: str,
+) -> dict[str, Any]:
+    """Build a STIX tool object (for legitimate tools identified in OSINT)."""
+    tool_id = _make_stix_id("tool", name, tool_type)
+    return {
+        "type": "tool",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"tool--{tool_id}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": f"Tool identified via OSINT: {name}",
+        "tool_types": [tool_type] if tool_type else ["utility"],
+        "external_references": [{
+            "source_name": "Ghost Prime OSINT",
+            "description": f"Identified from Hledac OSINT collection",
+        }],
+    }
+
+
+def _build_campaign_object(
+    name: str,
+    objective: str,
+    created: str,
+    first_seen: str | None = None,
+    last_seen: str | None = None,
+) -> dict[str, Any]:
+    """Build a STIX campaign object (for correlated threat activity)."""
+    campaign_id = _make_stix_id("campaign", name)
+    result: dict[str, Any] = {
+        "type": "campaign",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"campaign--{campaign_id}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": objective,
+        "objective": objective,
+    }
+    if first_seen:
+        result["first_seen"] = first_seen
+    if last_seen:
+        result["last_seen"] = last_seen
+    return result
+
+
+def _build_intrusion_set_object(
+    name: str,
+    aliases: list[str] | None,
+    created: str,
+    description: str = "",
+) -> dict[str, Any]:
+    """Build a STIX intrusion-set object (for tracked threat actors)."""
+    intr_id = _make_stix_id("intrusion-set", name)
+    result: dict[str, Any] = {
+        "type": "intrusion-set",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"intrusion-set--{intr_id}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": description or f"Intrusion set tracked via OSINT: {name}",
+    }
+    if aliases:
+        result["aliases"] = aliases[:10]
+    return result
+
+
+def _build_infrastructure_object(
+    name: str,
+    infrastructure_type: str,
+    created: str,
+    description: str = "",
+) -> dict[str, Any]:
+    """Build a STIX infrastructure object for C2 or other infra."""
+    infra_id = _make_stix_id("infrastructure", name, infrastructure_type)
+    return {
+        "type": "infrastructure",
+        "spec_version": _STIX_SPEC_VERSION,
+        "id": f"infrastructure--{infra_id}",
+        "created": created,
+        "modified": created,
+        "name": name,
+        "description": description or f"Infrastructure identified via OSINT: {name}",
+        "infrastructure_types": [infrastructure_type] if infrastructure_type else ["unknown"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# F234: Full STIX 2.1 Bundle Renderer
+# Includes all STIX object types + ATT&CK mapping
+# Compatible with OpenCTI, MISP, TheHive
+# ---------------------------------------------------------------------------
+
+def render_full_stix_bundle(
+    findings: list[Any],
+    identity_candidates: list[dict[str, Any]] | None = None,
+    attribution_scores: dict[str, Any] | None = None,
+    killchain_tags: dict[str, Any] | None = None,
+    evidence_chains: list[dict[str, Any]] | None = None,
+    campaigns: list[dict[str, Any]] | None = None,
+    intrusion_sets: list[dict[str, Any]] | None = None,
+    malware_samples: list[dict[str, Any]] | None = None,
+    tool_samples: list[dict[str, Any]] | None = None,
+    max_objects: int = MAX_STIX_OBJECTS,
+) -> dict[str, Any]:
+    """
+    F234: Full STIX 2.1 bundle with all object types.
+
+    Produces complete CTI bundle including:
+    - indicator / observed-data (from findings)
+    - identity (from identity candidates)
+    - attack-pattern (ATT&CK technique mapping)
+    - malware, tool, campaign, intrusion-set
+    - relationship objects linking all entities
+    - report object wrapping all CTI
+
+    Compatible with: OpenCTI, MISP, TheHive, STIX 2.1 vanilla consumers.
+
+    Guardrails:
+    - No network / No model
+    - No fake IOCs when findings list is empty
+    - Bounded to MAX_STIX_OBJECTS
+    - ATT&CK technique mapping from killchain_tags
+
+    Parameters
+    ----------
+    findings : list[CanonicalFinding | dict]
+    identity_candidates : list[dict] | None
+    attribution_scores : dict | None
+    killchain_tags : dict | None
+    evidence_chains : list[dict] | None
+    campaigns : list[dict] | None - campaign objects to include
+    intrusion_sets : list[dict] | None - intrusion-set objects to include
+    malware_samples : list[dict] | None - malware objects to include
+    tool_samples : list[dict] | None - tool objects to include
+    max_objects : int - cap on total STIX objects (default 500)
+
+    Returns
+    -------
+    dict - STIX 2.1 bundle with all object types
+    """
+    if identity_candidates is None:
+        identity_candidates = []
+    if attribution_scores is None:
+        attribution_scores = {}
+    if killchain_tags is None:
+        killchain_tags = {}
+    if evidence_chains is None:
+        evidence_chains = []
+    if campaigns is None:
+        campaigns = []
+    if intrusion_sets is None:
+        intrusion_sets = []
+    if malware_samples is None:
+        malware_samples = []
+    if tool_samples is None:
+        tool_samples = []
+
+    created = _utc_now()
+    objects: list[dict[str, Any]] = []
+
+    # Ghost Prime identity (report author)
+    objects.append(_build_diagnostic_identity())
+
+    # ── ATT&CK attack-pattern objects (unique technique IDs from killchain_tags) ──
+    technique_ids_seen: set[str] = set()
+    for fid, tags in killchain_tags.items():
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, dict):
+                    tech = _safe_str(tag.get("technique_id", ""))
+                    if tech and tech.startswith("T") and len(objects) < max_objects:
+                        if tech not in technique_ids_seen:
+                            technique_ids_seen.add(tech)
+                            obj = _build_attack_pattern_object(tech, created)
+                            objects.append(obj)
+
+    # ── Findings → indicators + observed-data ─────────────────────────────────
+    finding_ids_seen: set[str] = set()
+    indicator_refs: list[str] = []
+    observed_refs: list[str] = []
+
+    for finding_raw in findings:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(finding_raw, dict):
+            finding_raw = dict(finding_raw) if hasattr(finding_raw, "__dict__") else {}
+        finding = finding_raw
+
+        fid = _safe_str(finding.get("finding_id", ""))
+        finding_ids_seen.add(fid)
+
+        # Kill-chain tags for this finding
+        finding_kc_tags = killchain_tags.get(fid) if fid else None
+
+        # Try indicator first
+        ind = _ioc_to_indicator(finding, created, finding_kc_tags)
+        if ind is not None:
+            objects.append(ind)
+            indicator_refs.append(ind["id"])
+        else:
+            # Fall back to observed-data
+            obs = _finding_to_observed_data(finding, created)
+            if obs and obs.get("objects"):
+                objects.append(obs)
+                observed_refs.append(obs["id"])
+
+        # Kill-chain note per finding (if tags present)
+        if finding_kc_tags:
+            note = _build_killchain_note(
+                fid,
+                finding_kc_tags,
+                indicator_refs[-1] if indicator_refs else None,
+                created,
+            )
+            if note and len(objects) < max_objects:
+                objects.append(note)
+
+    # ── Identity candidates → identity objects ───────────────────────────────
+    identity_refs: list[str] = []
+    for cand in identity_candidates:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(cand, dict):
+            cand = dict(cand) if hasattr(cand, "__dict__") else {}
+        identity_obj = _build_identity_object(cand, created)
+        objects.append(identity_obj)
+        identity_refs.append(identity_obj["id"])
+
+        # Attribution note for this identity
+        cand_id = _safe_str(cand.get("candidate_id", ""))
+        if cand_id in attribution_scores and len(objects) < max_objects:
+            score = attribution_scores[cand_id]
+            if isinstance(score, dict):
+                note = _build_attribution_note(
+                    cand_id,
+                    score,
+                    _make_stix_id("identity", _safe_str(cand.get("primary_name", "")), cand_id),
+                    created,
+                )
+                objects.append(note)
+
+    # ── Evidence chains → observed-data ───────────────────────────────────────
+    chain_refs: list[str] = []
+    for chain in evidence_chains:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(chain, dict):
+            chain = dict(chain) if hasattr(chain, "__dict__") else {}
+        chain_obj = _build_evidence_chain_object(chain, created)
+        objects.append(chain_obj)
+        chain_refs.append(chain_obj["id"])
+
+    # ── Campaigns ─────────────────────────────────────────────────────────────
+    for camp in campaigns:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(camp, dict):
+            camp = dict(camp) if hasattr(camp, "__dict__") else {}
+        camp_obj = _build_campaign_object(
+            name=_safe_str(camp.get("name", "Unknown Campaign")),
+            objective=_safe_str(camp.get("objective", "")),
+            created=created,
+            first_seen=_iso_timestamp(camp.get("first_seen")),
+            last_seen=_iso_timestamp(camp.get("last_seen")),
+        )
+        objects.append(camp_obj)
+
+    # ── Intrusion Sets ────────────────────────────────────────────────────────
+    for intr in intrusion_sets:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(intr, dict):
+            intr = dict(intr) if hasattr(intr, "__dict__") else {}
+        intr_obj = _build_intrusion_set_object(
+            name=_safe_str(intr.get("name", "Unknown Actor")),
+            aliases=intr.get("aliases", []) if isinstance(intr.get("aliases"), list) else [],
+            created=created,
+            description=_safe_str(intr.get("description", "")),
+        )
+        objects.append(intr_obj)
+
+    # ── Malware Samples ──────────────────────────────────────────────────────
+    for mal in malware_samples:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(mal, dict):
+            mal = dict(mal) if hasattr(mal, "__dict__") else {}
+        mal_obj = _build_malware_object(
+            name=_safe_str(mal.get("name", "Unknown Malware")),
+            malware_type=_safe_str(mal.get("type", "unknown")),
+            created=created,
+            technique_ids=mal.get("technique_ids"),
+        )
+        objects.append(mal_obj)
+
+    # ── Tool Samples ──────────────────────────────────────────────────────────
+    for tool in tool_samples:
+        if len(objects) >= max_objects:
+            break
+        if not isinstance(tool, dict):
+            tool = dict(tool) if hasattr(tool, "__dict__") else {}
+        tool_obj = _build_tool_object(
+            name=_safe_str(tool.get("name", "Unknown Tool")),
+            tool_type=_safe_str(tool.get("type", "utility")),
+            created=created,
+        )
+        objects.append(tool_obj)
+
+    # ── Relationship objects ─────────────────────────────────────────────────
+    # Link indicators to identity objects via "based-on" relationships
+    for ind_id in indicator_refs:
+        if len(objects) >= max_objects:
+            break
+        for ident_id in identity_refs[:3]:  # limit relationships
+            rel_id = _make_stix_id("relationship", ind_id, ident_id)
+            objects.append({
+                "type": "relationship",
+                "spec_version": _STIX_SPEC_VERSION,
+                "id": f"relationship--{rel_id}",
+                "created": created,
+                "modified": created,
+                "source_ref": ind_id,
+                "target_ref": f"identity--{ident_id}",
+                "relationship_type": "derived-from",
+            })
+
+    # Link attack-patterns to indicators via "uses" relationships
+    for ttp_id in technique_ids_seen:
+        if len(objects) >= max_objects:
+            break
+        for ind_id in indicator_refs[:3]:
+            rel_id = _make_stix_id("relationship", ttp_id, ind_id)
+            objects.append({
+                "type": "relationship",
+                "spec_version": _STIX_SPEC_VERSION,
+                "id": f"relationship--{rel_id}",
+                "created": created,
+                "modified": created,
+                "source_ref": f"intrusion-set--{_make_stix_id('intrusion-set', 'ghost-prime')}",
+                "target_ref": f"attack-pattern--{_make_stix_id('attack-pattern', ttp_id)}",
+                "relationship_type": "uses",
+            })
+
+    # ── Report object ───────────────────────────────────────────────────────
+    report_name = f"Ghost Prime Full CTI {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    report = _build_cti_report(
+        objects=objects,
+        name=report_name,
+        finding_count=len(finding_ids_seen),
+        identity_count=len(identity_refs),
+        chain_count=len(chain_refs),
+        created=created,
+    )
+    if len(objects) < max_objects:
+        objects.append(report)
+
+    bundle: dict[str, Any] = {
+        "type": _BUNDLE_TYPE,
+        "id": _cti_bundle_id(report_name),
+        "spec_version": _STIX_SPEC_VERSION,
+        "created": created,
+        "modified": created,
+        "objects": objects,
+    }
+    return bundle
+
+
+def render_full_stix_bundle_json(
+    findings: list[Any],
+    identity_candidates: list[dict[str, Any]] | None = None,
+    attribution_scores: dict[str, Any] | None = None,
+    killchain_tags: dict[str, Any] | None = None,
+    evidence_chains: list[dict[str, Any]] | None = None,
+    campaigns: list[dict[str, Any]] | None = None,
+    intrusion_sets: list[dict[str, Any]] | None = None,
+    malware_samples: list[dict[str, Any]] | None = None,
+    tool_samples: list[dict[str, Any]] | None = None,
+    max_objects: int = MAX_STIX_OBJECTS,
+) -> str:
+    """
+    Render full CTI findings as a deterministic STIX bundle JSON string.
+
+    Returns
+    -------
+    str - JSON string with sorted keys for determinism.
+    """
+    bundle = render_full_stix_bundle(
+        findings=findings,
+        identity_candidates=identity_candidates,
+        attribution_scores=attribution_scores,
+        killchain_tags=killchain_tags,
+        evidence_chains=evidence_chains,
+        campaigns=campaigns,
+        intrusion_sets=intrusion_sets,
+        malware_samples=malware_samples,
+        tool_samples=tool_samples,
+        max_objects=max_objects,
+    )
+    return json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False)
+
+
+def render_full_stix_bundle_to_path(
+    findings: list[Any],
+    identity_candidates: list[dict[str, Any]] | None = None,
+    attribution_scores: dict[str, Any] | None = None,
+    killchain_tags: dict[str, Any] | None = None,
+    evidence_chains: list[dict[str, Any]] | None = None,
+    campaigns: list[dict[str, Any]] | None = None,
+    intrusion_sets: list[dict[str, Any]] | None = None,
+    malware_samples: list[dict[str, Any]] | None = None,
+    tool_samples: list[dict[str, Any]] | None = None,
+    max_objects: int = MAX_STIX_OBJECTS,
+    path: Union[str, Path, None] = None,
+) -> Path:
+    """
+    Render full CTI findings as a STIX bundle and write to ``path``.
+
+    If ``path`` is None:
+      1. ``GHOST_EXPORT_DIR`` env var
+      2. ``CTI_EXPORT_DIR`` (~/.local/share/hledac/cti)
+
+    Filename: ``ghost_full_cti_{timestamp}.stix.json``
+
+    Returns the Path of the written file.
+    """
+    content = render_full_stix_bundle_json(
+        findings=findings,
+        identity_candidates=identity_candidates,
+        attribution_scores=attribution_scores,
+        killchain_tags=killchain_tags,
+        evidence_chains=evidence_chains,
+        campaigns=campaigns,
+        intrusion_sets=intrusion_sets,
+        malware_samples=malware_samples,
+        tool_samples=tool_samples,
+        max_objects=max_objects,
+    )
+
+    if path is None:
+        export_dir_env = os.environ.get("GHOST_EXPORT_DIR")
+        if export_dir_env:
+            base = Path(export_dir_env)
+        else:
+            from hledac.universal.paths import CTI_EXPORT_DIR
+            base = CTI_EXPORT_DIR
+    else:
+        base = Path(path).parent
+
+    filename = Path(path).name if path else None
+    if not filename:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"ghost_full_cti_{timestamp}.stix.json"
+
+    out_path = base / filename
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(content, encoding="utf-8")
+    return out_path
 
 
 def _build_cti_report(

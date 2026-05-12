@@ -1343,7 +1343,7 @@ class SprintScheduler:
         # Env override via HLEDAC_ARROW_BATCH_HARD_CAP
         self._ARROW_BATCH_HARD_CAP: int = self._resolve_arrow_batch_hard_cap()
         # M1 8GB: 500 findings × ~5KB avg = ~2.5 MB ceiling for _all_findings.
-        _MAX_FINDINGS_PER_SPRINT: int = 500
+        self._MAX_FINDINGS_PER_SPRINT: int = 500
         # Sprint F214OPT-D: Arrow flush failure telemetry
         self._arrow_batch_dropped_after_flush_failure: int = 0
         self._arrow_last_flush_error: Optional[str] = None
@@ -2339,6 +2339,18 @@ class SprintScheduler:
             await public_fetcher._close_i2p_session()
         except Exception:
             pass  # fail-safe: session close must not crash teardown
+
+        # WARN 14: Close GopherTransport and OpenSourceCollectors at teardown
+        try:
+            from hledac.universal.transport import get_gopher_transport
+            await get_gopher_transport().stop()
+        except Exception:
+            pass  # fail-safe: transport stop must not crash teardown
+        try:
+            from hledac.universal.intelligence import get_open_source_collectors
+            await get_open_source_collectors().close()
+        except Exception:
+            pass  # fail-safe: collector close must not crash teardown
 
         # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
         _r = self._result
@@ -4741,35 +4753,31 @@ class SprintScheduler:
             pass  # No running loop — asyncio.run() is safe here
 
         if _loop is not None:
-            # Running loop detected — cannot use asyncio.run() (M1 crash vector).
-            # Use run_until_complete on a new loop created for this thread context.
+            # Running loop detected — run on the running loop directly.
+            # F223-D fix: run_until_complete on a new loop failed in Python 3.14
+            # because Python internally calls get_running_loop() which returns the
+            # outer loop, causing "Cannot run the event loop while another loop".
+            # Fix: use the running loop directly — run_until_complete schedules
+            # the coroutine on the same loop; no nested loop needed.
             self._result.prewindup_guard_async_bridge_used = True
-            try:
-                # run_until_complete on a fresh loop is safe for sync callback
-                # and avoids M1 crash vector of asyncio.run() inside running loop
-                _bg_loop = asyncio.new_event_loop()
-                try:
-                    result = _bg_loop.run_until_complete(
-                        asyncio.wait_for(
-                            self._ensure_pre_windup_lane_terminal_states(
-                                query, self._acquisition_plan, "ok"
-                            ),
-                            timeout=30.0,
-                        ),
-                    )
-                finally:
-                    _bg_loop.close()
-            except asyncio.CancelledError:
-                # F223-D: CancelledError is re-raised — propagate, don't silently allow
-                raise
-            except Exception as exc:
-                self._result.prewindup_guard_async_error = str(exc)
+            import time as _time
+
+            _t0 = _time.monotonic()
+            result = _loop.run_until_complete(
+                self._ensure_pre_windup_lane_terminal_states(
+                    query, self._acquisition_plan, "ok"
+                ),
+            )
+            _elapsed = _time.monotonic() - _t0
+            if _elapsed >= 30.0:
+                self._result.prewindup_guard_async_error = "timeout"
                 self._result.prewindup_guard_fail_closed = True
                 log.warning(
-                    "[F223-D] prewindup barrier async bridge error (blocking windup): %s",
-                    exc,
+                    "[F223-D] prewindup barrier timeout (blocking windup): %ss wall-clock",
+                    "30.0",
                 )
                 return False
+            return True
         else:
             # No running loop — asyncio.run() is safe (creates its own)
             try:
@@ -6279,7 +6287,7 @@ class SprintScheduler:
                 ))
                 # [F207K-A] Bounded accumulation of CanonicalFinding candidates from bridge
                 candidate_findings = getattr(outcome, "candidate_findings", ()) or ()
-                remaining = _MAX_FINDINGS_PER_SPRINT - len(self._all_findings)
+                remaining = self._MAX_FINDINGS_PER_SPRINT - len(self._all_findings)
                 if candidate_findings and remaining > 0:
                     for cf in candidate_findings[:remaining]:
                         try:
@@ -6287,7 +6295,7 @@ class SprintScheduler:
                             conf = getattr(cf, "confidence", 0.5) or 0.5
                             ts_val = getattr(cf, "ts", 0.0) or 0.0
                             desc = getattr(cf, "payload_text", f"bridge finding") or f"bridge finding"
-                            if len(self._all_findings) < _MAX_FINDINGS_PER_SPRINT:
+                            if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
                                 self._all_findings.append({
                                     "type": f"lane_{sf_type}",
                                     "source": sf_type,
@@ -6298,10 +6306,12 @@ class SprintScheduler:
                                     "description": str(desc)[:200] if desc else f"bridge finding from {verdict_tag}",
                                     "ts": ts_val,
                                 })
+                        except asyncio.CancelledError:
+                            raise  # [I6] propagate CancelledError
                         except Exception:
                             continue
                 elif remaining > 0:
-                    if len(self._all_findings) < _MAX_FINDINGS_PER_SPRINT:
+                    if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
                         self._all_findings.append({
                         "type": f"lane_{verdict_tag}",
                         "source": verdict_tag,
@@ -8787,7 +8797,7 @@ class SprintScheduler:
                 "description": f"{result.matched_patterns} pattern hits from {feed_url}",
             }
             # Sprint 8VN: bounded accumulation — cap at 500 to prevent OOM
-            if len(self._all_findings) < _MAX_FINDINGS_PER_SPRINT:
+            if len(self._all_findings) < self._MAX_FINDINGS_PER_SPRINT:
                 self._all_findings.append(finding_entry)
         # Sprint F160C: Update source economics from pipeline result signals
         # Uses signal_stage, feed_confidence_score, winning_source_breakdown

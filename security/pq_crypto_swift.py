@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -192,6 +193,11 @@ class SwiftPostQuantumBackend:
         """
         Check if the Swift helper is available and ML-DSA is supported.
 
+        Returns True only when:
+        - macOS >= 15.0 (Swift helper checks via pq-status)
+        - platform.machine() == "arm64" (M1/M2/M3 native)
+        - CryptoKit ML-DSA-65 available (via Swift helper probe)
+
         Args:
             force_refresh: If True, bypass status cache and re-query helper.
         """
@@ -200,6 +206,26 @@ class SwiftPostQuantumBackend:
             if time.monotonic() < self._cache.until:
                 self._status = self._cache.status
                 return self._status.availability == PQAvailability.AVAILABLE
+
+        # Pre-flight: arm64 check before helper call
+        if platform.machine() != "arm64":
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="ML-DSA requires arm64 (M1/M2/M3)",
+            )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
+            return False
+
+        # Helper must be present
+        if _get_helper_path() is None:
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="secure-enclave-helper not found",
+            )
+            self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
+            return False
 
         result = _run_helper_sync(["pq-status"])
         if result is None:
