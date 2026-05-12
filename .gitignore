@@ -106,3 +106,4 @@ probe_*/
 # runtime/
 *.tgz
 *.duckdb
+cache_storage/
