@@ -2,370 +2,267 @@
 
 <cite>
 **Referenced Files in This Document**
+- [README.md](file://README.md)
+- [pyproject.toml](file://pyproject.toml)
 - [requirements.txt](file://requirements.txt)
 - [requirements-optional.txt](file://requirements-optional.txt)
-- [__main__.py](file://__main__.py)
-- [core/__main__.py](file://core/__main__.py)
-- [config.py](file://config.py)
 - [paths.py](file://paths.py)
-- [tests/README.md](file://tests/README.md)
+- [__main__.py](file://__main__.py)
+- [config.py](file://config.py)
+- [assert_py314_runtime.py](file://tools/assert_py314_runtime.py)
+- [cp314_wheel_gate.py](file://tools/cp314_wheel_gate.py)
 - [smoke_runner.py](file://smoke_runner.py)
-- [project_types.py](file://project_types.py)
 </cite>
 
 ## Table of Contents
 1. [Introduction](#introduction)
-2. [Project Structure](#project-structure)
-3. [Core Components](#core-components)
-4. [Architecture Overview](#architecture-overview)
-5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+2. [System Requirements](#system-requirements)
+3. [Installation](#installation)
+4. [Environment Setup](#environment-setup)
+5. [Initial Configuration](#initial-configuration)
+6. [Basic Usage](#basic-usage)
+7. [First Research Cycle](#first-research-cycle)
+8. [Runtime Directory Structure and Path Management](#runtime-directory-structure-and-path-management)
+9. [Quick Start Examples](#quick-start-examples)
+10. [Troubleshooting](#troubleshooting)
+11. [Performance Considerations](#performance-considerations)
+12. [Conclusion](#conclusion)
 
 ## Introduction
-This guide helps you install, configure, and run Hledac Universal for the first time. It covers system requirements, environment setup, dependency management, basic configuration, and a quick-start research sprint. You will learn how to interpret initial results, verify your installation, and troubleshoot common issues.
+This guide helps you install, configure, and run Hledac Universal for the first time. It covers Python version requirements, dependency installation, environment setup, configuration basics, and a minimal first research cycle. It also explains the runtime directory structure, provides troubleshooting guidance, and offers quick-start examples.
 
-## Project Structure
-Hledac Universal is a modular research platform with a canonical entrypoint and layered components for orchestration, knowledge, and intelligence. Key areas:
-- Entry points: root and core modules expose CLI and canonical run paths
-- Configuration: centralized presets and environment-driven tuning
-- Paths: canonical runtime path roots for storage and reports
-- Pipelines: live public and feed pipelines for discovery
-- Tests: layered test harness optimized for M1 8GB
+## System Requirements
+- Python version: 3.13 or 3.14 (recommended). The project enforces a minimum of 3.13 and targets 3.14+ features.
+- Operating system: macOS 14 Sonoma or 15 Sequoia on Apple Silicon (ARM64).
+- Hardware: M1/M2 Mac with at least 8 GB RAM recommended for baseline operation; 16 GB+ recommended for heavier modes.
 
-```mermaid
-graph TB
-subgraph "Entry Points"
-ROOT["hledac.universal.__main__"]
-CORE["hledac.universal.core.__main__"]
-end
-subgraph "Configuration"
-CFG["config.py<br/>UniversalConfig"]
-TYPES["project_types.py<br/>ResearchMode, enums"]
-end
-subgraph "Paths & Storage"
-PATHS["paths.py<br/>RAMDISK_ROOT, DB_ROOT, REPORTS"]
-end
-subgraph "Pipelines"
-PUB["pipeline.live_public_pipeline"]
-FEED["pipeline.live_feed_pipeline"]
-end
-ROOT --> CORE
-CORE --> CFG
-CORE --> PATHS
-CORE --> PUB
-CORE --> FEED
-CFG --> TYPES
-```
-
-**Diagram sources**
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:1-120](file://core/__main__.py#L1-L120)
-- [config.py:228-498](file://config.py#L228-L498)
-- [paths.py:111-352](file://paths.py#L111-L352)
+Key indicators in the project:
+- Python requirement and classifiers specify 3.13 and 3.14 support.
+- Apple Silicon extras (MLX, uvloop) are guarded for Darwin+arm64.
+- M1 8GB presets are built-in for memory-constrained environments.
 
 **Section sources**
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:1-120](file://core/__main__.py#L1-L120)
-- [config.py:228-498](file://config.py#L228-L498)
-- [paths.py:111-352](file://paths.py#L111-L352)
+- [pyproject.toml:41-41](file://pyproject.toml#L41)
+- [pyproject.toml:26-41](file://pyproject.toml#L26-L41)
+- [config.py:36-56](file://config.py#L36-L56)
 
-## Core Components
-- Entry points
-  - Root module: provides CLI and alternate paths
-  - Core module: canonical sprint owner and orchestrator
-- Configuration
-  - Centralized presets for research modes and M1 optimization
-  - Environment-driven overrides
-- Paths
-  - Canonical runtime roots for databases, keys, reports, and sprints
-- Pipelines
-  - Live public and default feed batches for discovery
+## Installation
+There are two supported installation approaches: pip and uv. Both are reproducible and validated by the project’s packaging configuration.
 
-Key responsibilities:
-- Root entrypoint validates environment and boot hygiene
-- Core orchestrator runs the full lifecycle, writes deltas, and generates reports
-- Configuration presets tune memory, agents, and features for M1 8GB
-- Paths ensure secure, ephemeral storage and deterministic report locations
-
-**Section sources**
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:1-120](file://core/__main__.py#L1-L120)
-- [config.py:36-117](file://config.py#L36-L117)
-- [paths.py:111-352](file://paths.py#L111-L352)
-
-## Architecture Overview
-The canonical run path is through the core module’s sprint owner. It wires lifecycle, monitors UMA, and writes canonical runtime truth and deltas. Alternate paths exist for diagnostics and probes.
-
-```mermaid
-sequenceDiagram
-participant CLI as "CLI"
-participant Root as "hledac.universal.__main__"
-participant Core as "hledac.universal.core.__main__"
-participant Scheduler as "SprintScheduler"
-participant Store as "DuckDBShadowStore"
-participant Export as "Exporters"
-CLI->>Root : "python -m hledac.universal --sprint ..."
-Root->>Core : "delegate to canonical run_sprint()"
-Core->>Core : "pre-sprint checks"
-Core->>Store : "async_initialize()"
-Core->>Scheduler : "run(query, sources, store)"
-Scheduler-->>Core : "result"
-Core->>Store : "write_sprint_delta()"
-Core->>Export : "export_sprint(...)"
-Core-->>CLI : "runtime truth, findings, report path"
-```
-
-**Diagram sources**
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:320-520](file://core/__main__.py#L320-L520)
-
-**Section sources**
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:320-520](file://core/__main__.py#L320-L520)
-
-## Detailed Component Analysis
-
-### Installation and System Requirements
-- Python
-  - Use a supported interpreter; the project includes a CLI entrypoint and relies on async runtime features
-- Operating system
-  - Designed for macOS M1/M2; memory and thermal constraints are optimized for M1 8GB
-- Dependencies
-  - Required: see [requirements.txt:1-32](file://requirements.txt#L1-L32)
-  - Optional accelerators: see [requirements-optional.txt:1-54](file://requirements-optional.txt#L1-L54)
-
-Verification steps:
-- Confirm Python interpreter and version
-- Install dependencies from both requirement files
-- Optionally install optional accelerators for performance and extended features
-
-**Section sources**
-- [requirements.txt:1-32](file://requirements.txt#L1-L32)
-- [requirements-optional.txt:1-54](file://requirements-optional.txt#L1-L54)
-
-### Environment Setup and Paths
-- Runtime roots
-  - RAMDISK_ROOT: preferred ephemeral storage; fallback to user home if unavailable
-  - DB_ROOT, KEYS_ROOT, RUNS_ROOT, SOCKETS_ROOT, CACHE_ROOT: managed directories
-  - Reports: canonical path for sprint reports under user home
-- Environment variables
-  - GHOST_RAMDISK: select active ramdisk mount
-  - GHOST_LMDB_MAX_SIZE_MB: LMDB map size
-  - HLEDAC_SPRINT_STORE: persistent sprint store root
-  - HLEDAC_RESEARCH_MODE, HLEDAC_M1_OPTIMIZED, HLEDAC_LOG_LEVEL: configuration overrides
-
-Validation:
-- Ensure RAMDISK_ROOT is mounted or accept fallback behavior
-- Verify directory permissions for security-sensitive roots
-- Check canonical report paths for generated outputs
-
-**Section sources**
-- [paths.py:111-352](file://paths.py#L111-L352)
-
-### Configuration and Presets
-- Research modes
-  - QUICK, STANDARD, DEEP, EXTREME, AUTONOMOUS with tuned parameters
-- M1 optimization presets
-  - Memory ceilings, agent limits, and feature toggles for 8GB devices
-- Environment-driven configuration
-  - Research mode, memory limit, max steps, log level
-
-Usage tips:
-- Start with STANDARD mode on M1 8GB
-- Adjust max steps and concurrent agents conservatively
-- Use environment variables to override defaults without editing code
-
-**Section sources**
-- [config.py:36-117](file://config.py#L36-L117)
-- [config.py:466-498](file://config.py#L466-L498)
-- [config.py:494-498](file://config.py#L494-L498)
-
-### Running the Platform and Command-Line Options
-- Canonical run path
-  - Entry: python -m hledac.universal.core --sprint
-  - Parameters: query, duration, export directory, aggressive mode, UI mode
-- Root dispatcher
-  - Entry: python -m hledac.universal --sprint
-  - Delegates to canonical path
-- Alternate paths
-  - Public passive run and diagnostic probes exist for testing
-
-Quick invocation:
-- python -m hledac.universal.core --sprint --query "your topic" --duration 1800
+### Option A: Install with pip
+- Install the default dependency set:
+  - pip install .
+- Install optional extras as needed:
+  - pip install .[light]
+  - pip install .[apple-accel]
+  - pip install .[osint-html]
+  - pip install .[graph-storage]
+  - pip install .[torch]
+  - pip install .[dev]
+  - pip install .[all] (everything except torch)
 
 Notes:
-- The core module is the canonical sprint owner; root dispatcher delegates to it
-- Alternate paths are for diagnostics and do not produce canonical truth
+- Torch is not included in default dependencies; install separately if needed.
+- Apple Silicon acceleration extras require Darwin+arm64.
 
 **Section sources**
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:320-520](file://core/__main__.py#L320-L520)
+- [pyproject.toml:7-16](file://pyproject.toml#L7-L16)
+- [pyproject.toml:130-138](file://pyproject.toml#L130-L138)
+- [pyproject.toml:105-112](file://pyproject.toml#L105-L112)
 
-### Understanding Results and Reports
-- Runtime truth
-  - Includes meaningful vs smoke classification, primary signal source, and branch timeouts
-- Sprint delta
-  - Stored in DuckDB with metrics like findings per minute and UMA delta
-- Reports
-  - Canonical report path computed under user home; JSON and Markdown variants
-- Verdicts and hints
-  - Heuristics summarize performance and suggest next steps
+### Option B: Install with uv (recommended for speed and reproducibility)
+- The project is configured to prefer managed Python installations and package resolution.
+- Use uv to resolve and install with the same extras as above.
 
-Interpretation tips:
-- “Meaningful active run” indicates sustained discovery
-- “Hardware-limited smoke” indicates memory/swap pressure blocked entry
-- “Public-led” vs “feed-led” highlights dominant discovery source
+Verification:
+- The project includes a tool to validate Python 3.14+ runtime features before use.
 
 **Section sources**
-- [core/__main__.py:640-762](file://core/__main__.py#L640-L762)
-- [paths.py:293-352](file://paths.py#L293-L352)
+- [pyproject.toml:216-219](file://pyproject.toml#L216-L219)
+- [assert_py314_runtime.py:58-72](file://tools/assert_py314_runtime.py#L58-L72)
 
-### Quick Start Guide: First Research Sprint
-Follow these steps to run your first research sprint:
-
-1. Prepare environment
-   - Ensure Python interpreter is available
-   - Install dependencies from [requirements.txt:1-32](file://requirements.txt#L1-L32) and [requirements-optional.txt:1-54](file://requirements-optional.txt#L1-L54)
-   - Optionally set GHOST_RAMDISK to an active ramdisk mount
-
-2. Choose configuration
-   - Start with STANDARD mode and M1 optimization
-   - Optionally set HLEDAC_RESEARCH_MODE, HLEDAC_M1_OPTIMIZED, HLEDAC_LOG_LEVEL
-
-3. Run the sprint
-   - python -m hledac.universal.core --sprint --query "LockBit ransomware" --duration 1800
-
-4. Inspect results
-   - Review logs for runtime truth and verdict
-   - Check canonical report path under ~/.hledac/reports
-   - Examine sprint delta in DuckDB store
-
-5. Iterate
-   - Adjust query, duration, or agent concurrency based on hints
-
-Verification checklist:
-- RAMDISK_ROOT is accessible or fallback is acceptable
-- At least one finding accepted
-- Report files generated under canonical path
-- No “hardware-limited smoke” classification
+### Optional Dependencies
+Install optional extras from requirements-optional.txt or via extras:
+- Acceleration: rapidfuzz
+- Graph storage: pyarrow, duckdb, polars
+- OSINT HTML: selectolax, curl_cffi, h2
+- Security: cryptography
+- Transport: h2, aiohttp-socks
+- Torch: torch, torchvision (install separately)
 
 **Section sources**
-- [requirements.txt:1-32](file://requirements.txt#L1-L32)
 - [requirements-optional.txt:1-54](file://requirements-optional.txt#L1-L54)
-- [paths.py:111-352](file://paths.py#L111-L352)
-- [core/__main__.py:640-762](file://core/__main__.py#L640-L762)
+- [pyproject.toml:153-185](file://pyproject.toml#L153-L185)
 
-### Diagnostics and Smoke Testing
-- Smoke runner
-  - Lightweight smoke test without network
-  - Validates imports, semaphores, and basic runtime
-- Test harness
-  - Probe gates, AO canary, phase gates, and sprint suites
-  - Optimized for M1 8GB constraints
+## Environment Setup
+- Ensure your active Python interpreter is 3.14+ and has the required features (uuid.uuid7, annotationlib, InterpreterPoolExecutor).
+- Use a virtual environment to isolate dependencies.
 
-Recommended workflow:
-- Run smoke tests before PRs
-- Use AO canary for lifecycle checks
-- Run phase gates for sprint-focused tests
+Validation script:
+- Run the Python 3.14 runtime assertion tool to confirm your environment meets requirements.
 
 **Section sources**
-- [smoke_runner.py:1-150](file://smoke_runner.py#L1-L150)
-- [tests/README.md:26-123](file://tests/README.md#L26-L123)
+- [assert_py314_runtime.py:58-72](file://tools/assert_py314_runtime.py#L58-L72)
 
-## Dependency Analysis
-Required and optional dependencies are declared in dedicated requirement files. The root entrypoint documents runtime roles and deprecations.
+## Initial Configuration
+Hledac Universal supports environment-based configuration and presets tailored for M1 8GB systems.
 
-```mermaid
-graph LR
-REQ["requirements.txt"]
-OPT["requirements-optional.txt"]
-ROOT["hledac.universal.__main__"]
-CORE["hledac.universal.core.__main__"]
-REQ --> ROOT
-OPT --> ROOT
-REQ --> CORE
-OPT --> CORE
-```
+- Research modes: QUICK, STANDARD, DEEP, EXTREME, AUTONOMOUS
+- M1 8GB optimization presets are applied automatically when enabled
+- Environment variables:
+  - HLEDAC_RESEARCH_MODE (quick, standard, deep, extreme, autonomous)
+  - HLEDAC_MEMORY_LIMIT_MB
+  - HLEDAC_MAX_STEPS
+  - HLEDAC_LOG_LEVEL
+  - HLEDAC_M1_OPTIMIZED (true/false)
 
-**Diagram sources**
-- [requirements.txt:1-32](file://requirements.txt#L1-L32)
-- [requirements-optional.txt:1-54](file://requirements-optional.txt#L1-L54)
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-- [core/__main__.py:1-120](file://core/__main__.py#L1-L120)
+Example usage:
+- Create a configuration programmatically or load from environment
+- Adjust model stacks and concurrency for M1 8GB
 
 **Section sources**
-- [requirements.txt:1-32](file://requirements.txt#L1-L32)
-- [requirements-optional.txt:1-54](file://requirements-optional.txt#L1-L54)
-- [__main__.py:1-120](file://__main__.py#L1-L120)
-
-## Performance Considerations
-- M1 8GB optimization
-  - Memory limits, agent concurrency, and feature toggles are tuned for constrained RAM
-- Thermal and memory monitoring
-  - Pre-sprint checks and UMA sampling inform smoke classification
-- Optional accelerators
-  - Optional packages improve throughput and reduce latency when available
-
-Recommendations:
-- Keep concurrent agents and knowledge/graph features aligned with M1 constraints
-- Enable optional accelerators for heavy workloads
-- Monitor RAM and swap usage during long runs
-
-**Section sources**
-- [config.py:36-117](file://config.py#L36-L117)
+- [config.py:394-431](file://config.py#L394-L431)
+- [config.py:466-498](file://config.py#L466-L498)
 - [config.py:432-464](file://config.py#L432-L464)
-- [core/__main__.py:221-251](file://core/__main__.py#L221-L251)
 
-## Troubleshooting Guide
+## Basic Usage
+Run Hledac Universal with the built-in CLI. The default entry point is the “universal” runner.
+
+Common commands:
+- python -m hledac.universal
+- python -m hledac.universal --sprint "<your query>" --duration 1800
+- python -m hledac.universal --export-dir "<path>"
+- python -m hledac.universal --aggressive
+- python -m hledac.universal --deep-probe
+- python -m hledac.universal --ui
+
+Notes:
+- The CLI supports Python 3.14 features like suggestion-on-error and colored help when available.
+- The canonical sprint owner path is core.__main__.run_sprint(); the universal entry point delegates to it.
+
+**Section sources**
+- [__main__.py:211-245](file://__main__.py#L211-L245)
+- [__main__.py:70-81](file://__main__.py#L70-L81)
+
+## First Research Cycle
+Follow these steps to run your first research cycle:
+
+1. Verify Python 3.14+ runtime:
+   - python tools/assert_py314_runtime.py
+
+2. Run a smoke test to validate imports and basic runtime:
+   - python smoke_runner.py
+
+3. Start a short sprint:
+   - python -m hledac.universal --sprint "initial test query" --duration 180
+
+4. Review the generated report in ~/.hledac/reports/<sprint_id>.md
+
+Optional:
+- Enable aggressive mode for tighter budgets
+- Enable UI dashboard for live telemetry
+- Use --export-dir to customize report location
+
+**Section sources**
+- [assert_py314_runtime.py:58-72](file://tools/assert_py314_runtime.py#L58-L72)
+- [smoke_runner.py:59-151](file://smoke_runner.py#L59-L151)
+- [__main__.py:211-245](file://__main__.py#L211-L245)
+- [paths.py:326-363](file://paths.py#L326-L363)
+
+## Runtime Directory Structure and Path Management
+All runtime data resides under hledac/universal/runtime/ (gitignored). The project defines canonical path constants and initializes directories at import time.
+
+- runtime/cti/: CTI export bundle directory
+- runtime/runs/: diagnostic/markdown/stix bundle runs
+- runtime/state/: sprint state and reports
+- runtime/embeddings/: vector embedding cache
+- runtime/benchmarks/: benchmark results
+
+Environment overrides:
+- GHOST_EXPORT_DIR can override CTI export directory (backward compatibility)
+
+Initialization:
+- All runtime directories are created with mkdir(parents=True, exist_ok=True) at import time.
+
+**Section sources**
+- [README.md:8-48](file://README.md#L8-L48)
+- [paths.py:266-283](file://paths.py#L266-L283)
+- [paths.py:420-436](file://paths.py#L420-L436)
+
+## Quick Start Examples
+- Basic query:
+  - python -m hledac.universal --sprint "cyber threat landscape"
+
+- Custom configuration via environment:
+  - HLEDAC_RESEARCH_MODE=DEEP HLEDAC_M1_OPTIMIZED=true python -m hledac.universal --sprint "deep research"
+
+- Verification:
+  - python tools/assert_py314_runtime.py
+  - python smoke_runner.py
+
+- Export location:
+  - python -m hledac.universal --sprint "test" --export-dir "/custom/reports"
+
+**Section sources**
+- [config.py:466-498](file://config.py#L466-L498)
+- [assert_py314_runtime.py:58-72](file://tools/assert_py314_runtime.py#L58-L72)
+- [smoke_runner.py:293-330](file://smoke_runner.py#L293-L330)
+
+## Troubleshooting
 Common issues and resolutions:
 
-- RAMDISK not available
-  - Set GHOST_RAMDISK to an active mount or accept fallback to user home
-  - Verify canonical paths and cleanup behavior
-- Memory pressure or swap usage
-  - Reduce concurrent agents and disable heavy features
-  - Check pre-sprint UMA readings and hardware-limited smoke classification
-- Import or module errors
-  - Use smoke runner to validate canonical runtime imports
-  - Run AO canary and phase gates for targeted checks
-- Network/TOR connectivity
-  - Public discovery may degrade; verify TOR/proxy configuration
-- Long runs and thermal throttling
-  - Shorten duration or split into multiple sprints
-  - Monitor thermal thresholds and adjust pacing
+- Python version mismatch:
+  - Symptom: Errors about missing uuid.uuid7 or annotationlib.
+  - Resolution: Ensure Python 3.14+ is active and reinstall dependencies in a fresh virtual environment.
 
-Verification steps:
-- Confirm canonical report path exists and contains outputs
-- Validate sprint delta records in DuckDB
-- Review runtime truth for meaningful vs smoke classification
+- Missing Apple Silicon acceleration:
+  - Symptom: mlx or uvloop not available on non-Darwin/arm64.
+  - Resolution: Install .[apple-accel] only on Apple Silicon; otherwise, rely on defaults.
+
+- RAM disk not available:
+  - Symptom: Warning about fallback to SSD; runtime artifacts written to ~/.hledac_fallback_ramdisk.
+  - Resolution: Set GHOST_RAMDISK to an active ramdisk or mount /Volumes/ghost_tmp.
+
+- Lock files or stale sockets:
+  - Symptom: LMDB lock errors or stale socket files.
+  - Resolution: Use the boot guard and cleanup helpers in paths.py to remove stale locks and sockets.
+
+- Torch installation:
+  - Symptom: Missing torch/torchvision.
+  - Resolution: Install separately as documented in pyproject.toml and requirements-optional.txt.
+
+- Dependency validation:
+  - Use the cp314 wheel gate tool to dry-run and validate wheel downloads for specific extras before installation.
 
 **Section sources**
-- [paths.py:111-352](file://paths.py#L111-L352)
-- [core/__main__.py:221-251](file://core/__main__.py#L221-L251)
-- [tests/README.md:221-238](file://tests/README.md#L221-L238)
-- [smoke_runner.py:249-290](file://smoke_runner.py#L249-L290)
+- [assert_py314_runtime.py:58-72](file://tools/assert_py314_runtime.py#L58-L72)
+- [paths.py:134-142](file://paths.py#L134-L142)
+- [paths.py:495-537](file://paths.py#L495-L537)
+- [paths.py:565-590](file://paths.py#L565-L590)
+- [pyproject.toml:130-138](file://pyproject.toml#L130-L138)
+- [requirements-optional.txt:14-18](file://requirements-optional.txt#L14-L18)
+- [cp314_wheel_gate.py:202-264](file://tools/cp314_wheel_gate.py#L202-L264)
+
+## Performance Considerations
+- Apple Silicon optimization:
+  - M1 8GB presets reduce memory footprint and agent concurrency.
+  - Enable .[apple-accel] for MLX and uvloop acceleration on Darwin+arm64.
+
+- Memory management:
+  - M1Presets caps memory usage and thermal thresholds.
+  - Consider disabling heavy features (knowledge graph, RAG) on constrained systems.
+
+- Concurrency:
+  - Adjust max_concurrent_agents and agent timeouts according to your hardware.
+
+- Disk I/O:
+  - Prefer a ramdisk via GHOST_RAMDISK for runtime artifacts to avoid SSD wear.
+
+**Section sources**
+- [config.py:36-56](file://config.py#L36-L56)
+- [config.py:432-464](file://config.py#L432-L464)
+- [pyproject.toml:105-112](file://pyproject.toml#L105-L112)
+- [paths.py:116-142](file://paths.py#L116-L142)
 
 ## Conclusion
-You are ready to install Hledac Universal, configure it for M1 8GB, and run your first research sprint. Use the canonical core entrypoint, validate with smoke tests, and iterate based on runtime truth and report outputs. For deeper exploration, consult the layered test harness and optional accelerators.
-
-## Appendices
-
-### Appendix A: Environment Variables
-- GHOST_RAMDISK: Select active ramdisk mount
-- GHOST_LMDB_MAX_SIZE_MB: LMDB map size
-- HLEDAC_SPRINT_STORE: Persistent sprint store root
-- HLEDAC_RESEARCH_MODE: quick, standard, deep, extreme, autonomous
-- HLEDAC_M1_OPTIMIZED: true/false
-- HLEDAC_LOG_LEVEL: DEBUG, INFO, WARNING, ERROR
-- HLEDAC_MEMORY_LIMIT_MB: Override memory limit
-- HLEDAC_MAX_STEPS: Override max steps
-- HLEDAC_OFFLINE: 1 to disable network operations
-
-**Section sources**
-- [paths.py:169-200](file://paths.py#L169-L200)
-- [config.py:466-498](file://config.py#L466-L498)
-- [project_types.py:58-61](file://project_types.py#L58-L61)
+You are now ready to install Hledac Universal, configure it for your environment, and run your first research cycle. Use the quick-start examples to validate your setup, and consult the troubleshooting section if you encounter issues. For deeper customization, explore the configuration presets and optional extras.

@@ -786,6 +786,7 @@ class SystemContext:
                     try:
                         import mlx.core as mx
                         if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
+                            mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
                             mx.metal.clear_cache()
                             cleanup_results['mlx_cache_cleared'] = True
                             logger.info("MLX Metal cache cleared")

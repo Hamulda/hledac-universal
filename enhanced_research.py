@@ -2215,20 +2215,15 @@ class EnhancedResearchOrchestrator(UniversalResearchOrchestrator):
             except Exception as e:
                 logger.warning(f"Fusion failed, using fallback: {e}")
 
-        # Fallback synthesis
-        synthesis = f"## Synthesis for: {query}\n\n"
-
-        # TODO B5-2: O(n²) string concatenation in loop.
-        # Replace with: parts = []; parts.append(...); synthesis = "".join(parts)
-        # Low priority unless this path handles > 100 sources per sprint.
+        # Fallback synthesis — use list append to avoid O(n²) string concatenation
+        parts = [f"## Synthesis for: {query}\n\n"]
         for source, results in all_results.items():
-            synthesis += f"\n### From {source}:\n"
+            parts.append(f"\n### From {source}:\n")
             for i, result in enumerate(results[:3], 1):
                 if isinstance(result, dict):
                     title = result.get('title', result.get('url', 'Untitled'))
-                    synthesis += f"{i}. {title}\n"
-
-        return synthesis
+                    parts.append(f"{i}. {title}\n")
+        return "".join(parts)
     
     def get_performance_stats(self) -> Dict[str, Any]:
         """Získat statistiky výkonu"""

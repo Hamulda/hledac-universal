@@ -1228,6 +1228,31 @@ class DuckPGQGraph:
         )
         return row_id
 
+    def upsert_ioc_batch(
+        self, rows: list[tuple[str, str, float, str]]
+    ) -> int:
+        """
+        Batch upsert IOCs — single DuckDB round-trip for N rows.
+
+        Args:
+            rows: List of (value, ioc_type, confidence, source) tuples.
+        Returns:
+            Number of rows attempted (DuckDB executes all or none).
+        """
+        if not rows:
+            return 0
+        batch_with_ids = [
+            (_stable_node_id(v), v, it, c, s)
+            for v, it, c, s in rows
+        ]
+        self.con.execute(
+            """INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (id) DO NOTHING""",
+            batch_with_ids,
+        )
+        return len(batch_with_ids)
+
     def add_relation(self, src: str, dst: str, rel_type: str,
                      weight: float = 1.0, evidence: str = ""):
         src_id = self.add_ioc(src)

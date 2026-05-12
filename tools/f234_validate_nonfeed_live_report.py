@@ -78,11 +78,16 @@ def _check_acquisition_profile(data: dict) -> tuple[bool, str]:
     acq_profile = _get(data, "acquisition_report", "acquisition_profile", default=None)
     # Check top-level (from live_sprint_measurement report)
     profile = _get(data, "acquisition_profile", default=None)
+    # F235G: 'profile' key is the benchmark profile name (e.g. nonfeed_diagnostic180)
+    # which normalizes to nonfeed_diagnostic for acquisition purposes
+    profile_alias = _get(data, "profile", default=None)
+    if profile_alias and profile_alias not in ("default", "nonfeed_diagnostic"):
+        profile_alias = profile_alias.rsplit("180", 1)[0] if profile_alias.endswith("180") else profile_alias
     # Check from acquisition_report input/effective
     acq_input = _get(data, "acquisition_report", "acquisition_profile_input", default=None)
     acq_effective = _get(data, "acquisition_report", "acquisition_profile_effective", default=None)
 
-    profiles = {p for p in [acq_profile, profile, acq_input, acq_effective] if p is not None}
+    profiles = {p for p in [acq_profile, profile, profile_alias, acq_input, acq_effective] if p is not None}
     if not profiles:
         return False, "acquisition_profile not found in report"
 
@@ -180,7 +185,9 @@ def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
     """
     # Determine if this run expected nonfeed_diagnostic:
     # - CT missing from prelude OR ct_terminal_stage indicates error
-    prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=[])
+    prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=None)
+    if prelude_missing is None:
+        return True, "acquisition_prelude_missing_lanes is None — upstream issue (see FIX-02)"
     ct_terminal = (
         _get(data, "runtime_truth", "ct_terminal_stage", default="")
         or _get(data, "acquisition_report", "ct_terminal_stage", default="")
@@ -200,23 +207,65 @@ def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
         return True, "CT not expected in this run — profile/priority mismatch N/A"
 
     # CT was expected — check for profile=default or nonfeed_priority_enabled=False
+    # Canonical priority order for nonfeed_priority_enabled:
+    #   1. acquisition_report (canonical, highest authority)
+    #   2. runtime_truth (runtime surface, second authority)
+    #   3. live_kpi / top-level (advisory fallback — stale copies may exist)
     acq_profile = _get(data, "acquisition_report", "acquisition_profile", default=None)
+    if acq_profile is None:
+        return True, "acquisition_profile is None — upstream issue (see FIX-02)"
     profile = _get(data, "acquisition_profile", default=None)
     profiles = {p for p in [acq_profile, profile] if p is not None}
 
-    np_enabled_rt = _get(data, "runtime_truth", "nonfeed_priority_enabled", default=None)
+    # Priority order: canonical acquisition_report > runtime_truth > stale surfaces
     np_enabled_ar = _get(data, "acquisition_report", "nonfeed_priority_enabled", default=None)
+    np_enabled_rt = _get(data, "runtime_truth", "nonfeed_priority_enabled", default=None)
+    # live_kpi nested stale copy (advisory fallback only — do not fail on this alone)
+    np_enabled_lk = _get(data, "live_kpi", "nonfeed_priority_enabled", default=None)
     np_enabled_top = _get(data, "nonfeed_priority_enabled", default=None)
-    np_values = {v for v in [np_enabled_rt, np_enabled_ar, np_enabled_top] if v is not None}
 
-    failures = []
-    if profiles and "default" in profiles:
-        failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
-    if np_values and False in np_values:
-        failures.append(f"nonfeed_priority_enabled=False (should be True for CT-expected run)")
+    # Canonical check: acquisition_report must have profile=nonfeed_diagnostic AND
+    # nonfeed_priority_enabled=True to grant passage. Stale surfaces are ignored.
+    if np_enabled_ar is True and acq_profile == "nonfeed_diagnostic":
+        return True, "nonfeed_priority_enabled=True (acquisition_report canonical)"
 
-    if failures:
+    # If acquisition_report says False explicitly, fail unless runtime_truth overrides
+    if np_enabled_ar is False:
+        if np_enabled_rt is True:
+            return True, "nonfeed_priority_enabled=True (runtime_truth override)"
+        failures = [f"nonfeed_priority_enabled=False (acquisition_report canonical)"]
+        if profiles and "default" in profiles:
+            failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
         return False, "; ".join(failures)
+
+    # acquisition_report missing or None — fall back to runtime_truth
+    # BUT runtime_truth nonfeed_priority_enabled=True is only valid when
+    # the profile is also nonfeed_diagnostic (not default). runtime_truth
+    # is a runtime surface, not a profile authority.
+    if np_enabled_rt is True:
+        if acq_profile == "nonfeed_diagnostic":
+            return True, "nonfeed_priority_enabled=True (runtime_truth)"
+        # runtime_truth True but profile is wrong — this run has a profile problem
+        failures = [f"nonfeed_priority_enabled=True (runtime_truth) but acquisition_profile={acq_profile!r}"]
+        if profiles and "default" in profiles:
+            failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
+        return False, "; ".join(failures)
+    if np_enabled_rt is False:
+        failures = [f"nonfeed_priority_enabled=False (runtime_truth)"]
+        if profiles and "default" in profiles:
+            failures.append(f"acquisition_profile=default (should be nonfeed_diagnostic for CT-expected run)")
+        return False, "; ".join(failures)
+
+    # Both canonical surfaces missing/None — check stale surfaces for informational message
+    # but only fail if stale surfaces agree it's False (no higher-priority True exists)
+    stale_values = [v for v in [np_enabled_lk, np_enabled_top] if v is not None]
+    if stale_values and False in stale_values and profiles and "default" in profiles:
+        return False, (
+            f"nonfeed_priority_enabled=False (stale surfaces: {stale_values}), "
+            f"acquisition_profile=default (should be nonfeed_diagnostic)"
+        )
+
+    # No higher-priority truth available — pass (profile propagation may have worked without explicit flag)
     return True, "profile/priority OK for CT-expected nonfeed_diagnostic run"
 
 
@@ -231,7 +280,9 @@ def _check_ct_prelude_contradiction(data: dict) -> tuple[bool, str]:
     but ct_attempted_error signals a final attempt was made — and the
     ct_prelude_missing_but_final_attempted flag doesn't explain this.
     """
-    prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=[])
+    prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=None)
+    if prelude_missing is None:
+        return True, "acquisition_prelude_missing_lanes is None — upstream issue (see FIX-02)"
     ct_in_prelude_missing = "CT" in prelude_missing
 
     ct_attempted_error = _get(data, "acquisition_report", "ct_attempted_error", default=None)

@@ -546,6 +546,9 @@ def required_terminal_lanes(
     is_emergency = uma_state == "emergency"
     is_critical = uma_state == "critical"
     is_warn = uma_state == "warn"
+    # F233D-FIX-06c: nonfeed_diagnostic profile should treat CT as required even for non-domain
+    _nd = getattr(snapshot, "nonfeed_plan_debug", None) if snapshot else None
+    _is_nonfeed_diagnostic = getattr(_nd, "acquisition_profile", "") == "nonfeed_diagnostic" if _nd else False
 
     lanes: list[MandatoryLaneTerminality] = []
 
@@ -613,7 +616,8 @@ def required_terminal_lanes(
                 max_attempts=0,
             )
         )
-    elif not has_domain:
+    # F233D-FIX-06c: nonfeed_diagnostic profile requires CT even for non-domain queries
+    elif not has_domain and not _is_nonfeed_diagnostic:
         lanes.append(
             MandatoryLaneTerminality(
                 lane=AcquisitionLane.CT,
@@ -909,6 +913,8 @@ def build_acquisition_report(
     # F217C: PUBLIC bootstrap telemetry
     public_terminal_stage: str = "",
     public_stage_counters: dict | None = None,
+    # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
+    public_discovery_empty_reason: str = "",
     # Sprint F229A: Bootstrap ordering telemetry
     public_bootstrap_order: str = "disabled",
     public_bootstrap_prevented_discovery_timeout: bool = False,
@@ -1141,6 +1147,8 @@ def build_acquisition_report(
         # F217C: PUBLIC bootstrap telemetry
         "public_terminal_stage": public_terminal_stage,
         "public_stage_counters": public_stage_counters or {},
+        # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
+        "public_discovery_empty_reason": public_discovery_empty_reason,
         # Sprint F229A: Bootstrap ordering telemetry
         "public_bootstrap_order": public_bootstrap_order,
         "public_bootstrap_prevented_discovery_timeout": public_bootstrap_prevented_discovery_timeout,

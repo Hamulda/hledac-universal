@@ -3,31 +3,16 @@
 <cite>
 **Referenced Files in This Document**
 - [live_public_pipeline.py](file://pipeline/live_public_pipeline.py)
+- [live_feed_pipeline.py](file://pipeline/live_feed_pipeline.py)
+- [duckduckgo_adapter.py](file://discovery/duckduckgo_adapter.py)
 - [public_fetcher.py](file://fetching/public_fetcher.py)
 - [pattern_matcher.py](file://patterns/pattern_matcher.py)
 - [duckdb_store.py](file://knowledge/duckdb_store.py)
-- [duckduckgo_adapter.py](file://discovery/duckduckgo_adapter.py)
-- [ct_log_scanner.py](file://network/ct_log_scanner.py)
-- [commoncrawl_adapter.py](file://tools/commoncrawl_adapter.py)
-- [stealth_session.py](file://stealth/stealth_session.py)
-- [transport_resolver.py](file://transport/transport_resolver.py)
-- [httpx_client.py](file://transport/httpx_client.py)
-- [curl_cffi_transport.py](file://transport/curl_cffi_transport.py)
-- [curl_cffi_fetch.py](file://transport/curl_cffi_fetch.py)
-- [session_runtime.py](file://network/session_runtime.py)
-- [resource_governor.py](file://core/resource_governor.py)
-- [embedding_pipeline.py](file://embedding_pipeline.py)
-- [brain/model_manager.py](file://brain/model_manager.py)
-- [vector_store.py](file://knowledge/vector_store.py)
-- [export_manager.py](file://export/export_manager.py)
-- [research_loop.py](file://loops/research_loop.py)
-- [memory_manager.py](file://memory/memory_manager.py)
-- [graph_manager.py](file://graph/graph_manager.py)
-- [pastebin_monitor.py](file://intelligence/pastebin_monitor.py)
-- [github_secret_scanner.py](file://intelligence/github_secret_scanner.py)
-- [academic_discovery.py](file://intelligence/academic_discovery.py)
-- [layers/temporal_signal_layer.py](file://layers/temporal_signal_layer.py)
-- [tot_integration.py](file://tot_integration.py)
+- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
+- [live_measurement_next_action.py](file://benchmarks/live_measurement_next_action.py)
+- [live_result_sanity.py](file://tools/live_result_sanity.py)
+- [research_quality_score.py](file://tools/research_quality_score.py)
+- [monitoring_coordinator.py](file://coordinators/monitoring_coordinator.py)
 </cite>
 
 ## Table of Contents
@@ -40,337 +25,416 @@
 7. [Performance Considerations](#performance-considerations)
 8. [Troubleshooting Guide](#troubleshooting-guide)
 9. [Conclusion](#conclusion)
+10. [Appendices](#appendices)
 
 ## Introduction
-The Live Public Pipeline is a high-throughput, memory-conscious OSINT pipeline designed to process public web content at scale. It orchestrates discovery, fetching, content extraction, pattern matching, quality gating, and storage while maintaining strict separation of concerns and fail-safe behavior. The pipeline emphasizes:
-- Lightweight HTML-to-text conversion using a custom parser
-- Query-aware page quality scoring to prioritize valuable content
-- Pattern matching via a dedicated matcher registry
-- Quality gates that differentiate false positives, structural waste, and conversion failures
-- Optional report generation, vector indexing, and research loop integration
-- Robust error handling, memory management, and performance optimization
+The Live Public Pipeline is a passive, pattern-driven OSINT acquisition system that discovers public web content, fetches and parses HTML, enriches text with discovery metadata, scans for structured indicators using a high-performance pattern matcher, builds canonical findings, and stores them in a durable analytics store. It operates without LLMs, agents, or new storage schemas, emphasizing lightweight heuristics, bounded concurrency, and strict observability. It integrates with the broader research workflow by complementing the feed pipeline and informing scheduling decisions.
 
 ## Project Structure
-The Live Public Pipeline lives in the pipeline module and integrates with several subsystems:
-- Discovery: DuckDuckGo adapter for passive web search
-- Fetching: Public fetcher with transport diversity (aiohttp, HTTP/2, curl_cffi, stealth)
-- Extraction: HTML-to-text conversion with metadata enrichment
-- Matching: Pattern registry for IOC and entity detection
-- Storage: DuckDB-backed shadow store for findings
-- Optional integrations: Vector store, memory manager, export, research loop, and temporal layers
+The Live Public Pipeline is organized around a single module that orchestrates discovery, fetching, parsing, pattern scanning, quality control, and storage. Supporting modules provide discovery adapters, fetchers, pattern matching, and storage.
 
 ```mermaid
 graph TB
 subgraph "Pipeline"
-LP["Live Public Pipeline<br/>orchestrates the run"]
-FP["Fetch Policy Engine<br/>adaptive fetch strategy"]
-PQ["Page Quality Scoring<br/>query-aware heuristics"]
-PM["Pattern Matcher<br/>registry-driven scanning"]
-QG["Quality Gate<br/>conversion truth surfaces"]
-ST["Storage<br/>DuckDB Shadow Store"]
+LPP["live_public_pipeline.py"]
 end
-subgraph "External Integrations"
-DDG["DuckDuckGo Adapter<br/>discovery"]
-PF["Public Fetcher<br/>transport diversity"]
-VE["Vector Store<br/>embeddings"]
-MM["Memory Manager<br/>RAG context"]
-EM["Export Manager<br/>markdown/graph export"]
-RL["Research Loop<br/>autonomous refinement"]
+subgraph "Discovery"
+DDG["duckduckgo_adapter.py"]
 end
-LP --> DDG
-LP --> FP
-LP --> PQ
-LP --> PM
-LP --> QG
-LP --> ST
-LP --> PF
-LP --> VE
-LP --> MM
-LP --> EM
-LP --> RL
+subgraph "Fetching"
+PF["public_fetcher.py"]
+end
+subgraph "Pattern Matching"
+PM["pattern_matcher.py"]
+end
+subgraph "Storage"
+DDB["duckdb_store.py"]
+end
+subgraph "Runtime Orchestration"
+SCH["sprint_scheduler.py"]
+end
+LPP --> DDG
+LPP --> PF
+LPP --> PM
+LPP --> DDB
+SCH --> LPP
 ```
 
 **Diagram sources**
-- [live_public_pipeline.py:1876-2944](file://pipeline/live_public_pipeline.py#L1876-L2944)
-- [public_fetcher.py:654-1424](file://fetching/public_fetcher.py#L654-L1424)
-- [pattern_matcher.py](file://patterns/pattern_matcher.py)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [live_public_pipeline.py:1-120](file://pipeline/live_public_pipeline.py#L1-L120)
+- [duckduckgo_adapter.py:1-120](file://discovery/duckduckgo_adapter.py#L1-L120)
+- [public_fetcher.py:1-120](file://fetching/public_fetcher.py#L1-L120)
+- [pattern_matcher.py:1-120](file://patterns/pattern_matcher.py#L1-L120)
+- [duckdb_store.py:1-120](file://knowledge/duckdb_store.py#L1-L120)
+- [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
 
 **Section sources**
-- [live_public_pipeline.py:1876-2944](file://pipeline/live_public_pipeline.py#L1876-L2944)
+- [live_public_pipeline.py:1-120](file://pipeline/live_public_pipeline.py#L1-L120)
+- [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
 
 ## Core Components
-- Live Public Pipeline: Orchestrates discovery, fetch, extract, match, store, and optional report generation. Implements adaptive fetch budgets, quality gates, and comprehensive observability.
-- Public Fetcher: Provides robust, transport-diverse fetching with Tor/I2P support, stealth mode, DoH resolution, and circuit breaker integration.
-- Pattern Matcher: Registry-backed matcher that scans extracted text for configured patterns and labels.
-- DuckDB Shadow Store: Asynchronous ingestion and retrieval of findings with quality gating feedback.
-- Quality Scoring: Query-aware heuristics to classify page value and guide fetch prioritization.
-- Report Generation: Optional OSINT report creation using Hermes engine with vector search and MMR reranking.
-- Memory Manager: Persistent RAG history for iterative refinement.
-- Vector Store: Embedding storage for findings and page text to enable semantic search.
+- Discovery integration: DuckDuckGo adapter provides discovery results with typed DTOs and error classification.
+- Fetching: Public fetcher performs passive, bounded HTTP fetching with optional Tor/I2P/stealth and JS renderer fallback.
+- Content processing: HTML-to-text extraction with lightweight parser, metadata enrichment, and bounded text caps.
+- Pattern matching: High-throughput Aho–Corasick matcher with configurable registry and offloaded scanning.
+- Quality control: Heuristics-based page quality scoring, adaptive fetch budgets, and pre-fetch gates.
+- Deduplication: Deterministic finding IDs and per-run deduplication strategies.
+- Storage: Canonical findings recorded into DuckDB shadow store with durability and async APIs.
+- Observability: Extensive telemetry on discovery, fetch, acceptance, and terminal outcomes.
 
 **Section sources**
-- [live_public_pipeline.py:1876-2944](file://pipeline/live_public_pipeline.py#L1876-L2944)
-- [public_fetcher.py:654-1424](file://fetching/public_fetcher.py#L654-L1424)
-- [pattern_matcher.py](file://patterns/pattern_matcher.py)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [live_public_pipeline.py:451-643](file://pipeline/live_public_pipeline.py#L451-L643)
+- [duckduckgo_adapter.py:59-120](file://discovery/duckduckgo_adapter.py#L59-L120)
+- [public_fetcher.py:155-200](file://fetching/public_fetcher.py#L155-L200)
+- [pattern_matcher.py:52-70](file://patterns/pattern_matcher.py#L52-L70)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
 
 ## Architecture Overview
-The pipeline follows a staged, asynchronous workflow:
-1. Discovery: Passive web search yields candidate URLs with scores and reasons.
-2. Fetch Policy: Adaptive policy selects transport and capabilities based on URL class and discovery signals.
-3. Fetch: Transport-diverse fetching with retries, size caps, and access-path truth.
-4. Extract: Lightweight HTML parser converts pages to text; metadata is prepended for richer scanning context.
-5. Quality Score: Query-aware heuristics determine value tier and guide further processing.
-6. Pattern Scan: Registry-driven matching produces findings with context windows.
-7. Deduplication: Exact deduplication per label/pattern/value.
-8. Storage: Quality-gated ingestion with acceptance and persistence feedback.
-9. Optional: Embeddings, report generation, export, and research loop.
+The pipeline follows a staged flow: discovery → fetch → parse → enrich → pattern scan → canonical finding → storage. Each stage is instrumented with telemetry and quality gates to prevent waste of compute and memory.
 
 ```mermaid
 sequenceDiagram
-participant Orchestrator as "Live Public Pipeline"
-participant Discovery as "DuckDuckGo Adapter"
-participant Fetcher as "Public Fetcher"
-participant Extractor as "HTML Parser"
-participant Matcher as "Pattern Matcher"
-participant Store as "DuckDB Shadow Store"
-Orchestrator->>Discovery : async_search_public_web(query, max_results)
-Discovery-->>Orchestrator : hits (url,title,snippet,rank,score,reason)
+participant Orchestrator as "SprintScheduler"
+participant Pipeline as "LivePublicPipeline"
+participant Discovery as "DuckDuckGoAdapter"
+participant Fetcher as "PublicFetcher"
+participant Matcher as "PatternMatcher"
+participant Store as "DuckDBShadowStore"
+Orchestrator->>Pipeline : async_run_live_public_pipeline(query, ...)
+Pipeline->>Discovery : discover(query, max_results)
+Discovery-->>Pipeline : DiscoveryBatchResult(hits)
 loop For each hit
-Orchestrator->>Fetcher : async_fetch_public_text(url, policy)
-Fetcher-->>Orchestrator : FetchResult (text, redirected, failure_stage)
-Orchestrator->>Extractor : _html_to_text(text)
-Extractor-->>Orchestrator : extracted_text
-Orchestrator->>Orchestrator : _score_page_quality(...)
-Orchestrator->>Matcher : match_text(enriched_text)
-Matcher-->>Orchestrator : hits
-Orchestrator->>Store : async_ingest_findings_batch(findings)
-Store-->>Orchestrator : quality-gated results
+Pipeline->>Fetcher : fetch(url, timeout, policy)
+Fetcher-->>Pipeline : FetchResult(text, failure_stage, redirected)
+Pipeline->>Pipeline : _html_to_text(html)
+Pipeline->>Matcher : match_text(enriched_text)
+Matcher-->>Pipeline : PatternHits[]
+alt Hits exist
+Pipeline->>Store : append(CanonicalFinding)
+Store-->>Pipeline : accepted
+else No hits
+Pipeline->>Store : optional public_surface finding
+Store-->>Pipeline : accepted or empty
 end
-Orchestrator-->>Orchestrator : aggregate metrics and run-level verdict
+end
+Pipeline-->>Orchestrator : PipelineRunResult
 ```
 
 **Diagram sources**
-- [live_public_pipeline.py:1876-2944](file://pipeline/live_public_pipeline.py#L1876-L2944)
-- [public_fetcher.py:654-1424](file://fetching/public_fetcher.py#L654-L1424)
-- [pattern_matcher.py](file://patterns/pattern_matcher.py)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
+- [live_public_pipeline.py:1211-1604](file://pipeline/live_public_pipeline.py#L1211-L1604)
+- [duckduckgo_adapter.py:87-120](file://discovery/duckduckgo_adapter.py#L87-L120)
+- [public_fetcher.py:1-120](file://fetching/public_fetcher.py#L1-L120)
+- [pattern_matcher.py:643-740](file://patterns/pattern_matcher.py#L643-L740)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
 
 ## Detailed Component Analysis
 
-### Live Public Pipeline Orchestration
-- Entry point: async_run_live_public_pipeline(query, store, max_results, fetch_timeout_s, fetch_max_bytes, fetch_concurrency, hermes_engine, graph, memory_manager, session_id, vector_store, run_loop, rl_steps, enqueue_hypothesis_pivot)
-- Key responsibilities:
-  - UMA governance: respects emergency/critical states to throttle concurrency
-  - Discovery orchestration: integrates DuckDuckGo and optional academic discovery
-  - Augmentation: CT subdomain injection, CommonCrawl archive injection, Onion discovery scraping
-  - Batch processing: per-page fetch-and-process with adaptive budgets and quality gates
-  - Aggregation: comprehensive run-level metrics, public branch verdict, and zero-hit evidence
-  - Optional: report generation, embeddings, export, research loop, hypothesis synthesis
+### Discovery Integration (DuckDuckGo)
+- Provides typed DTOs for hits and batch results.
+- Classifies discovery errors into taxonomy categories for observability.
+- Supports provider status telemetry and fallback triggers.
+
+```mermaid
+classDiagram
+class DiscoveryHit {
++string query
++string title
++string url
++string snippet
++string source
++int rank
++float retrieved_ts
++float score
++string reason
+}
+class DiscoveryBatchResult {
++tuple~DiscoveryHit~ hits
++string error
++string fallback_triggered
++bool cache_hit
++string provider_name
++tuple~string~ provider_chain
++string source_family
++float elapsed_s
++string error_type
+}
+DiscoveryBatchResult --> DiscoveryHit : "contains"
+```
+
+**Diagram sources**
+- [duckduckgo_adapter.py:59-120](file://discovery/duckduckgo_adapter.py#L59-L120)
+
+**Section sources**
+- [duckduckgo_adapter.py:127-197](file://discovery/duckduckgo_adapter.py#L127-L197)
+
+### Fetching and Transport Policies
+- Passive, bounded fetch with optional Tor/I2P/stealth and JS renderer fallback.
+- Adaptive fetch policy computed from URL class and discovery signals.
+- Telemetry on transport usage and fallbacks.
 
 ```mermaid
 flowchart TD
-Start(["Start Pipeline"]) --> UMA["Check UMA state"]
-UMA --> |Emergency| Abort["Abort run with error"]
-UMA --> |OK/Critical| Discovery["Discovery + Academic + Augmentations"]
-Discovery --> Batch["Batch fetch with adaptive budgets"]
-Batch --> PerPage["_fetch_and_process_page per URL"]
-PerPage --> Quality["_score_page_quality"]
-Quality --> Extract["_html_to_text + metadata enrichment"]
-Extract --> Match["match_text via registry"]
-Match --> Dedup["Exact dedup by label/pattern/value"]
-Dedup --> Store["Quality-gated storage"]
-Store --> Optional["Embeddings, Report, Export, RL, Hypotheses"]
-Optional --> Aggregate["Aggregate metrics and run-level verdict"]
-Aggregate --> End(["End Pipeline"])
+Start(["Fetch Request"]) --> Policy["_compute_fetch_policy(url, score, reason, strong_signal)"]
+Policy --> |Onion/I2P| TorLike["use_doh + use_stealth"]
+Policy --> |score >= 0.7| JS["use_js"]
+Policy --> |ct_ reason| DoH["use_doh"]
+Policy --> |score >= 0.5| DoH2["use_doh"]
+Policy --> Default["default"]
+TorLike --> Fetch["async_fetch_public_text(...)"]
+JS --> Fetch
+DoH --> Fetch
+DoH2 --> Fetch
+Default --> Fetch
+Fetch --> Result["FetchResult(text, failure_stage, redirected)"]
 ```
 
 **Diagram sources**
-- [live_public_pipeline.py:1876-2944](file://pipeline/live_public_pipeline.py#L1876-L2944)
+- [live_public_pipeline.py:306-336](file://pipeline/live_public_pipeline.py#L306-L336)
+- [public_fetcher.py:1-120](file://fetching/public_fetcher.py#L1-L120)
 
 **Section sources**
-- [live_public_pipeline.py:1876-2944](file://pipeline/live_public_pipeline.py#L1876-L2944)
+- [live_public_pipeline.py:306-336](file://pipeline/live_public_pipeline.py#L306-L336)
+- [public_fetcher.py:99-146](file://fetching/public_fetcher.py#L99-L146)
 
-### Fetch Policy Engine
-- Purpose: Select optimal transport and capabilities based on URL class and discovery signals.
-- Rules:
-  - Very strong discovery score or strong signal → JS-capable fetch
-  - Darknet URLs (.onion/.i2p/.b32.i2p) → Tor-like policy (DoH + stealth)
-  - Discovery reason indicates certificate transparency → DoH
-  - Moderate discovery score → DoH
-  - Otherwise → default (plain fetch)
-- Implementation: _compute_fetch_policy with bounded logic and no external calls.
+### Content Processing and Enrichment
+- HTML-to-text extraction using a lightweight parser with defensive fallback.
+- Metadata enrichment by prepending title/snippet to extracted text.
+- Hard caps on text sizes to remain M1-safe.
 
-**Section sources**
-- [live_public_pipeline.py:136-167](file://pipeline/live_public_pipeline.py#L136-L167)
+```mermaid
+flowchart TD
+A["Raw HTML"] --> B["_html_to_text()"]
+B --> C["Extracted Text"]
+C --> D["_enrich_text_with_metadata(title, snippet, text)"]
+D --> E["Scan Text (bounded)"]
+```
 
-### HTML-to-Text Conversion and Metadata Enrichment
-- Lightweight HTML parser extracts text from body-level tags, normalizes whitespace, and collapses runs of whitespace.
-- Metadata enrichment: Prepends title and snippet to extracted text to improve pattern scanning recall without external dependencies.
-- Hard caps: MAX_EXTRACTED_TEXT_CHARS and MAX_METADATA_PREPEND_CHARS ensure memory safety.
-
-**Section sources**
-- [live_public_pipeline.py:304-451](file://pipeline/live_public_pipeline.py#L304-L451)
-
-### Page Quality Scoring
-- Compositional heuristics:
-  - Query-term density in title/snippet
-  - URL structural depth
-  - Text richness (avg word length and word count)
-  - Discovery signal strength and reason
-  - Rank bonus for top-5 results
-- Early skip gates:
-  - Pre-fetch text-length gate to avoid thin pages
-  - Low-entropy gate to detect repetitive placeholders
-- Output tiers: SKIP_WEAK, weak_low_signal, ok, good, very_good
+**Diagram sources**
+- [live_public_pipeline.py:701-761](file://pipeline/live_public_pipeline.py#L701-L761)
+- [live_public_pipeline.py:809-847](file://pipeline/live_public_pipeline.py#L809-L847)
 
 **Section sources**
-- [live_public_pipeline.py:460-559](file://pipeline/live_public_pipeline.py#L460-L559)
+- [live_public_pipeline.py:701-761](file://pipeline/live_public_pipeline.py#L701-L761)
+- [live_public_pipeline.py:809-847](file://pipeline/live_public_pipeline.py#L809-L847)
 
-### Pattern Matching Workflow
-- Registry-driven scanning: Uses a singleton matcher registry to scan enriched text for configured patterns.
-- Context extraction: Extracts bounded context windows around hits for findings.
-- Finding construction: Builds CanonicalFinding with deterministic IDs, source type, confidence, and provenance.
+### Pattern Matching Integration
+- Singleton matcher with configurable registry and Aho–Corasick backend.
+- Scanning offloaded to thread executor with bounded concurrency.
+- Deterministic finding IDs constructed from pipeline inputs.
 
-**Section sources**
-- [live_public_pipeline.py:665-720](file://pipeline/live_public_pipeline.py#L665-L720)
-- [pattern_matcher.py](file://patterns/pattern_matcher.py)
+```mermaid
+sequenceDiagram
+participant Pipeline as "LivePublicPipeline"
+participant Matcher as "PatternMatcher"
+Pipeline->>Matcher : match_text(scan_text)
+Matcher-->>Pipeline : PatternHits[]
+Pipeline->>Pipeline : _make_finding_id(...)
+Pipeline->>Pipeline : CanonicalFinding(payload_text, provenance)
+```
 
-### Quality Gate and Usable Value Derivation
-- Derives usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, and structural_quality from existing page data.
-- Distinguishes between structural waste (thin/dead content), signalless waste (no discovery signal), false positives (legitimate discovery but no conversion), and error-induced waste.
-- Provides conversion truth surfaces for deeper diagnostics.
-
-**Section sources**
-- [live_public_pipeline.py:567-658](file://pipeline/live_public_pipeline.py#L567-L658)
-
-### Storage Integration and Embeddings
-- DuckDB Shadow Store ingestion: Acceptance and persistence feedback drive metrics and downstream decisions.
-- Per-finding embeddings: Generated after quality gate using model manager lifecycle for memory discipline.
-- Page text embeddings: Stored separately for semantic search and RAG context.
-- Vector store integration: Adds vectors with proper dtype and shape handling.
+**Diagram sources**
+- [pattern_matcher.py:619-740](file://patterns/pattern_matcher.py#L619-L740)
+- [live_public_pipeline.py:1073-1204](file://pipeline/live_public_pipeline.py#L1073-L1204)
 
 **Section sources**
-- [live_public_pipeline.py:1074-1225](file://pipeline/live_public_pipeline.py#L1074-L1225)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [pattern_matcher.py:619-740](file://patterns/pattern_matcher.py#L619-L740)
+- [live_public_pipeline.py:1073-1204](file://pipeline/live_public_pipeline.py#L1073-L1204)
 
-### Report Generation and RAG Enhancement
-- Optional OSINT report generation using Hermes engine with vector search, MMR reranking, and RRF fusion.
-- RAG context: Builds context from top pages and fused candidates, routes to appropriate model via MoE router.
-- Report storage: Stores generated report as a CanonicalFinding with source_type='report'.
+### Quality Control and Adaptive Budgets
+- Heuristic-based page quality scoring with pre-fetch gates.
+- Adaptive fetch budget multipliers based on discovery signals.
+- Early skip for weak pages to conserve resources.
 
-**Section sources**
-- [live_public_pipeline.py:1310-1527](file://pipeline/live_public_pipeline.py#L1310-L1527)
+```mermaid
+flowchart TD
+Start(["Page Quality Gate"]) --> PreText["Pre-fetch text-length gate"]
+PreText --> |Too short| Skip["SKIP_WEAK"]
+PreText --> |OK| Entropy["Low-entropy gate"]
+Entropy --> |High repetition| Skip
+Entropy --> |OK| Richness["Text richness + query-term density"]
+Richness --> Score["Tier: very_good/good/ok/weak_low_signal/SKIP_WEAK"]
+Score --> Budget["Adaptive fetch budget multiplier"]
+Budget --> |0x| Skip
+Budget --> |1.25x| Strong
+Budget --> |1.0x| Normal
+Budget --> |0.65x| Weak
+```
 
-### Research Loop Integration
-- Optional autonomous refinement loop that iteratively improves findings and rewards.
-- Stores RL results and maintains session history for reproducible iterations.
-
-**Section sources**
-- [live_public_pipeline.py:2628-2712](file://pipeline/live_public_pipeline.py#L2628-L2712)
-- [research_loop.py](file://loops/research_loop.py)
-
-### Hypothesis Generation and ToT Evaluation
-- Generates hypotheses from real stored findings and evaluates via Tree-of-Thought (ToT) with bounded concurrency and timeouts.
-- Enqueues pivots for scheduler-driven exploration.
-
-**Section sources**
-- [live_public_pipeline.py:2777-2872](file://pipeline/live_public_pipeline.py#L2777-L2872)
-- [tot_integration.py](file://tot_integration.py)
-
-### Discovery and Augmentation
-- DuckDuckGo discovery: Passive web search with hits ordered by relevance.
-- Academic discovery: Optional integration with academic search APIs.
-- CT subdomain injection: Synthesizes high-confidence discovery hits for domain queries.
-- CommonCrawl archive injection: Adds historical URLs for domain-like queries.
-- Onion discovery: Scrapes .onion URLs via Tor with circuit breaker and failure limits.
+**Diagram sources**
+- [live_public_pipeline.py:857-956](file://pipeline/live_public_pipeline.py#L857-L956)
+- [live_public_pipeline.py:1234-1258](file://pipeline/live_public_pipeline.py#L1234-L1258)
 
 **Section sources**
-- [live_public_pipeline.py:1535-1873](file://pipeline/live_public_pipeline.py#L1535-L1873)
-- [duckduckgo_adapter.py](file://discovery/duckduckgo_adapter.py)
-- [ct_log_scanner.py](file://network/ct_log_scanner.py)
-- [commoncrawl_adapter.py](file://tools/commoncrawl_adapter.py)
+- [live_public_pipeline.py:857-956](file://pipeline/live_public_pipeline.py#L857-L956)
+- [live_public_pipeline.py:1234-1258](file://pipeline/live_public_pipeline.py#L1234-L1258)
+
+### Deduplication Strategies
+- Deterministic finding IDs via SHA-256 over query, URL, label, pattern, and value.
+- Public-surface findings use a separate ID scheme for content-only pages.
+- Per-run deduplication ensures canonical findings are stored once.
+
+```mermaid
+flowchart TD
+A["PatternHit"] --> B["_make_finding_id(query, url, label, pattern, value)"]
+C["Content-only page"] --> D["_make_finding_id(query, url, 'public_surface', 'content_only', preview)"]
+B --> E["CanonicalFinding"]
+D --> E
+E --> F["DuckDBShadowStore.append()"]
+```
+
+**Diagram sources**
+- [live_public_pipeline.py:767-776](file://pipeline/live_public_pipeline.py#L767-L776)
+- [live_public_pipeline.py:1136-1157](file://pipeline/live_public_pipeline.py#L1136-L1157)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
+
+**Section sources**
+- [live_public_pipeline.py:767-776](file://pipeline/live_public_pipeline.py#L767-L776)
+- [live_public_pipeline.py:1136-1157](file://pipeline/live_public_pipeline.py#L1136-L1157)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
+
+### Storage Coordination
+- DuckDB shadow store provides async APIs for recording findings and run metadata.
+- Batch insertion with chunking and thread-affine connections.
+- CanonicalFinding DTO defines minimal required fields and optional payload.
+
+```mermaid
+classDiagram
+class CanonicalFinding {
++string finding_id
++string query
++string source_type
++float confidence
++float ts
++tuple~string~ provenance
++string payload_text
+}
+class DuckDBShadowStore {
++async async_record_shadow_findings_batch(...)
++async async_record_shadow_run(...)
++async async_query_recent_findings(...)
+}
+DuckDBShadowStore --> CanonicalFinding : "stores"
+```
+
+**Diagram sources**
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
+
+**Section sources**
+- [duckdb_store.py:1-120](file://knowledge/duckdb_store.py#L1-L120)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
+
+### Relationship Between Public and Feed Pipelines
+- Public pipeline focuses on discovery-driven web pages with pattern scanning and public-surface findings.
+- Feed pipeline focuses on RSS/Atom entries with entry-level quality signals and optional article fallback.
+- Both pipelines share pattern matching and storage primitives, enabling complementary roles in research workflows.
+
+```mermaid
+graph LR
+Pub["Live Public Pipeline"] -- "patterns, storage" --> Shared["Shared Primitives"]
+Feed["Live Feed Pipeline"] -- "patterns, storage" --> Shared
+Shared --> Store["DuckDBShadowStore"]
+```
+
+**Diagram sources**
+- [live_public_pipeline.py:1-20](file://pipeline/live_public_pipeline.py#L1-L20)
+- [live_feed_pipeline.py:1-30](file://pipeline/live_feed_pipeline.py#L1-L30)
+
+**Section sources**
+- [live_public_pipeline.py:1-20](file://pipeline/live_public_pipeline.py#L1-L20)
+- [live_feed_pipeline.py:1-30](file://pipeline/live_feed_pipeline.py#L1-L30)
 
 ## Dependency Analysis
-The pipeline integrates with multiple subsystems through well-defined seams and patch points:
-- Discovery seam: _ASYNC_DISCOVERY_SEARCH patched to duckduckgo_adapter.async_search_public_web
-- Fetch seam: _ASYNC_FETCH_PUBLIC_TEXT patched to public_fetcher.async_fetch_public_text
-- Matcher seam: _SYNC_MATCH_TEXT patched to patterns.pattern_matcher.match_text
-- CT scanner seam: _CT_SCANNER_GET_SUBDOMAINS patched to network.ct_log_scanner
-- Graph seam: _add_pattern_hits_to_graph streams entities to graph manager
+The Live Public Pipeline depends on discovery, fetching, pattern matching, and storage modules. Runtime orchestration coordinates pipeline execution and propagates telemetry.
 
 ```mermaid
 graph TB
-LP["Live Public Pipeline"]
-DDG["DuckDuckGo Adapter"]
-PF["Public Fetcher"]
-PM["Pattern Matcher"]
-DB["DuckDB Shadow Store"]
-VE["Vector Store"]
-MM["Memory Manager"]
-EM["Export Manager"]
-RL["Research Loop"]
-LP --> DDG
-LP --> PF
-LP --> PM
-LP --> DB
-LP --> VE
-LP --> MM
-LP --> EM
-LP --> RL
+LPP["live_public_pipeline.py"] --> DDG["duckduckgo_adapter.py"]
+LPP --> PF["public_fetcher.py"]
+LPP --> PM["pattern_matcher.py"]
+LPP --> DDB["duckdb_store.py"]
+SCH["sprint_scheduler.py"] --> LPP
 ```
 
 **Diagram sources**
-- [live_public_pipeline.py:1266-1297](file://pipeline/live_public_pipeline.py#L1266-L1297)
-- [public_fetcher.py:654-1424](file://fetching/public_fetcher.py#L654-L1424)
-- [pattern_matcher.py](file://patterns/pattern_matcher.py)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [live_public_pipeline.py:1-120](file://pipeline/live_public_pipeline.py#L1-L120)
+- [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
 
 **Section sources**
-- [live_public_pipeline.py:1266-1297](file://pipeline/live_public_pipeline.py#L1266-L1297)
+- [live_public_pipeline.py:1-120](file://pipeline/live_public_pipeline.py#L1-L120)
+- [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
 
 ## Performance Considerations
-- Concurrency control: Semaphore-based batching with UMA-aware throttling to prevent resource exhaustion.
-- Adaptive fetch budgets: Multipliers adjust per-page timeouts based on discovery signals to prioritize promising pages.
-- Memory management:
-  - Hard caps on extracted text and metadata to bound memory usage.
-  - Early skip gates (text length and entropy) to avoid expensive processing.
-  - Thread executor offloading for CPU-intensive tasks (HTML parsing, pattern matching).
-- Transport diversity: HTTP/2, curl_cffi, stealth, and Tor lanes with fallbacks and counters for observability.
-- Model lifecycle discipline: Embedding generation wrapped in model manager lifecycle to manage GPU/MPS memory.
-- Backpressure: Lightweight memory checks to slow down clearnet requests when RSS exceeds thresholds.
+- Concurrency: Pattern scanning offloaded to thread executor; fetch concurrency controlled via semaphores.
+- Memory: Hard caps on extracted text and metadata; bounded payload sizes; pre-fetch text-length gate.
+- Transport: Adaptive fetch budgets reduce wasted I/O on low-signal pages; JS renderer fallback used judiciously.
+- Storage: Batched writes with chunking; thread-affine DB connections minimize contention.
 
-**Section sources**
-- [live_public_pipeline.py:750-807](file://pipeline/live_public_pipeline.py#L750-L807)
-- [public_fetcher.py:1082-1089](file://fetching/public_fetcher.py#L1082-L1089)
-- [embedding_pipeline.py](file://embedding_pipeline.py)
-- [brain/model_manager.py](file://brain/model_manager.py)
+[No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
-Common failure modes and diagnostics:
-- Discovery blockers:
-  - Backend error with no fallback: public_discovery_blocker indicates primary backend failure.
-  - Fallback state mapping: primary_failed_fallback_succeeded/failed mapped to public_discovery_fallback_state.
-- Fetch accessibility blockers:
-  - Connection/TLS/HTTP failures: public_fetch_accessibility_blocker indicates network-level issues.
-  - Dominant failure mode aggregation considers discovery blocker, accessibility blocker, redirect-induced non-content, and waste categories.
-- Zero-hit evidence:
-  - zero_hit_accessible_fetch_count tracks pages fetched with zero matches.
-  - zero_hit_quality_reason_counts and zero_hit_title_samples provide structured summaries for gate review.
-- Backend degradation:
-  - backend_degraded flag detects when fetch errors dominate output, decoupling backend failures from weak content.
-- Error handling:
-  - Fail-soft across storage, embeddings, report generation, export, and optional integrations.
-  - CancelledError propagation to avoid swallowing cancellations.
-
-Operational tips:
-- Monitor public_branch_verdict for actionable insights (next action, confidence note, temporal hints).
-- Use zero_hit_summary to identify systemic issues (signalless, false positive, redirect-induced non-content).
-- Inspect failure_stage and network_error_kind for precise failure classification.
+Common issues and diagnostic approaches:
+- Discovery failures: Use discovery error taxonomy to identify timeouts, rate limits, or provider exceptions.
+- Fetch timeouts or errors: Inspect failure stages and transport telemetry; adjust fetch timeouts or policies.
+- Low-quality pages: Review quality tiers and pre-fetch gates; consider adjusting thresholds.
+- Storage rejections: Validate CanonicalFinding fields and payload sizes; confirm DuckDB availability.
+- Research quality gates: Ensure quality gate is not zeroed and counts are preserved for feed-only scenarios.
 
 **Section sources**
-- [live_public_pipeline.py:2507-2603](file://pipeline/live_public_pipeline.py#L2507-L2603)
+- [duckduckgo_adapter.py:127-197](file://discovery/duckduckgo_adapter.py#L127-L197)
+- [public_fetcher.py:1-120](file://fetching/public_fetcher.py#L1-L120)
+- [live_public_pipeline.py:857-956](file://pipeline/live_public_pipeline.py#L857-L956)
+- [duckdb_store.py:1-120](file://knowledge/duckdb_store.py#L1-L120)
+- [live_result_sanity.py:638-656](file://tools/live_result_sanity.py#L638-L656)
+- [research_quality_score.py:67-72](file://tools/research_quality_score.py#L67-L72)
 
 ## Conclusion
-The Live Public Pipeline provides a robust, memory-conscious, and highly observable framework for processing public web content. By combining adaptive fetch policies, query-aware quality scoring, registry-driven pattern matching, and quality-gated storage, it achieves strong value density while maintaining resilience against network and content variability. Optional integrations for reporting, embeddings, export, research loops, and hypothesis synthesis enable iterative refinement and comprehensive OSINT workflows.
+The Live Public Pipeline provides a robust, observability-rich system for passive discovery and pattern-driven extraction from public web sources. Its quality gates, adaptive budgets, and bounded concurrency ensure efficient resource utilization, while shared primitives enable seamless integration with feed pipelines and broader research workflows.
+
+[No sources needed since this section summarizes without analyzing specific files]
+
+## Appendices
+
+### Pipeline Configuration Options
+- Discovery: max_results, timeout, provider selection and status telemetry.
+- Fetching: timeouts, concurrency, policy flags (use_js, use_doh, use_stealth), Tor/I2P sessions.
+- Pattern matching: registry configuration, bootstrap patterns, offloading semaphore.
+- Storage: batch sizes, async APIs, canonical finding schema.
+- Runtime: orchestration parameters, scheduling timeouts, and telemetry propagation.
+
+**Section sources**
+- [live_public_pipeline.py:1-120](file://pipeline/live_public_pipeline.py#L1-L120)
+- [duckduckgo_adapter.py:46-52](file://discovery/duckduckgo_adapter.py#L46-L52)
+- [public_fetcher.py:155-200](file://fetching/public_fetcher.py#L155-L200)
+- [pattern_matcher.py:619-641](file://patterns/pattern_matcher.py#L619-L641)
+- [duckdb_store.py:1-120](file://knowledge/duckdb_store.py#L1-L120)
+- [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
+
+### Examples
+
+- Executing the public pipeline in a scheduled run:
+  - The scheduler invokes the pipeline with shaped query, bounded results, and timeouts, capturing telemetry for downstream analysis.
+
+  **Section sources**
+  - [sprint_scheduler.py:3935-3950](file://runtime/sprint_scheduler.py#L3935-L3950)
+
+- Custom source integration:
+  - Discovery adapters expose typed DTOs and error taxonomy; integrate new providers by implementing compatible interfaces and updating provider selection logic.
+
+  **Section sources**
+  - [duckduckgo_adapter.py:59-120](file://discovery/duckduckgo_adapter.py#L59-L120)
+
+- Error handling patterns:
+  - Discovery errors are classified; fetch failures record failure stages; quality gates produce terminal reasons; storage rejections are surfaced in run results.
+
+  **Section sources**
+  - [duckduckgo_adapter.py:127-197](file://discovery/duckduckgo_adapter.py#L127-L197)
+  - [public_fetcher.py:1-120](file://fetching/public_fetcher.py#L1-L120)
+  - [live_public_pipeline.py:1211-1604](file://pipeline/live_public_pipeline.py#L1211-L1604)
+
+- Monitoring capabilities:
+  - Monitoring coordinator routes decisions to advanced, watchdog, or performance backends; pipeline telemetry supports KPI derivation and next-action recommendations.
+
+  **Section sources**
+  - [monitoring_coordinator.py:321-366](file://coordinators/monitoring_coordinator.py#L321-L366)
+  - [live_measurement_next_action.py:169-187](file://benchmarks/live_measurement_next_action.py#L169-L187)

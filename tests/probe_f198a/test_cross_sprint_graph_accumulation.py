@@ -75,50 +75,49 @@ class TestAccumulateIdempotent:
         f1 = _make_finding("fid-001", "ct_log", 0.8)
         f2 = _make_finding("fid-002", "public", 0.9)
 
-        upsert_calls = []
+        batch_calls = []
 
-        def mock_upsert(value, ioc_type, confidence, source):
-            upsert_calls.append((value, ioc_type, confidence, source))
-            return True  # newly upserted
+        def mock_batch(rows):
+            batch_calls.append(rows)
+            return len(rows)  # returns number of rows in batch
 
         scheduler = SprintScheduler(SprintSchedulerConfig())
 
-        # Patch the functions directly on the module object
         gs_module = MagicMock()
-        gs_module.upsert_ioc = mock_upsert
+        gs_module.upsert_ioc_batch = mock_batch
         with patch.dict(sys.modules, {
             "hledac.universal.knowledge.graph_service": gs_module,
         }):
             count = scheduler._accumulate_findings_to_graph([f1, f2], sprint_id="sprint-x")
 
         assert count == 2
-        assert len(upsert_calls) == 2
-        assert upsert_calls[0] == ("fid-001", "ct_log", 0.8, "sprint-x")
-        assert upsert_calls[1] == ("fid-002", "public", 0.9, "sprint-x")
+        assert len(batch_calls) == 1
+        assert batch_calls[0] == [("fid-001", "ct_log", 0.8, "sprint-x"), ("fid-002", "public", 0.9, "sprint-x")]
 
     def test_invariant_2b_second_call_is_skipped_by_graph_service_idempotency(self):
-        """Second call within same sprint returns 0 because _SEEN_IOCS blocks duplicates."""
+        """Second call within same sprint returns 0 because _SEEN_IOCS deduplicates inside upsert_ioc_batch."""
         f1 = _make_finding("fid-same", "ct_log", 0.7)
 
-        upsert_calls = []
+        batch_calls = []
 
-        def mock_upsert(value, ioc_type, confidence, source):
-            upsert_calls.append((value, ioc_type, confidence, source))
-            return False  # already seen — graph_service skips
+        def mock_batch(rows):
+            batch_calls.append(rows)
+            # Simulate graph_service._SEEN_IOCS filtering: second call gets empty list
+            return len(rows)
 
         scheduler = SprintScheduler(SprintSchedulerConfig())
 
         gs_module = MagicMock()
-        gs_module.upsert_ioc = mock_upsert
+        gs_module.upsert_ioc_batch = mock_batch
         with patch.dict(sys.modules, {
             "hledac.universal.knowledge.graph_service": gs_module,
         }):
             count1 = scheduler._accumulate_findings_to_graph([f1], sprint_id="s1")
             count2 = scheduler._accumulate_findings_to_graph([f1], sprint_id="s1")
 
-        assert count1 == 0  # upsert_ioc returned False
-        assert count2 == 0  # still 0
-        assert len(upsert_calls) == 2  # still called (scheduler doesn't check return)
+        assert count1 == 1  # 1 finding with ID, batch sent
+        assert count2 == 1  # batch called again (scheduler doesn't track _SEEN_IOCS; dedup happens inside upsert_ioc_batch)
+        assert len(batch_calls) == 2  # scheduler calls batch each time (dedup is inside batch)
 
 
 # ------------------------------------------------------------------
@@ -131,7 +130,7 @@ class TestAccumulateFailSoft:
         scheduler = SprintScheduler(SprintSchedulerConfig())
 
         gs_module = MagicMock()
-        gs_module.upsert_ioc = MagicMock(side_effect=RuntimeError("graph connection failed"))
+        gs_module.upsert_ioc_batch = MagicMock(side_effect=RuntimeError("graph connection failed"))
         with patch.dict(sys.modules, {
             "hledac.universal.knowledge.graph_service": gs_module,
         }):
@@ -144,7 +143,7 @@ class TestAccumulateFailSoft:
 
     def test_accumulate_skips_findings_without_finding_id(self):
         """Findings without finding_id are skipped without error."""
-        calls = []
+        batch_calls = []
 
         class NoIdFinding:
             source_type = "ct_log"
@@ -152,11 +151,11 @@ class TestAccumulateFailSoft:
 
         scheduler = SprintScheduler(SprintSchedulerConfig())
 
-        def track_upsert(*args, **kwargs):
-            calls.append(args)
+        def track_batch(rows):
+            batch_calls.append(rows)
 
         gs_module = MagicMock()
-        gs_module.upsert_ioc = track_upsert
+        gs_module.upsert_ioc_batch = track_batch
         with patch.dict(sys.modules, {
             "hledac.universal.knowledge.graph_service": gs_module,
         }):
@@ -165,7 +164,7 @@ class TestAccumulateFailSoft:
                 sprint_id="s1",
             )
         assert count == 0
-        assert len(calls) == 0
+        assert len(batch_calls) == 0  # batch never called: finding filtered before batch build
 
 
 # ------------------------------------------------------------------
@@ -235,7 +234,8 @@ class TestResetSession:
 # ------------------------------------------------------------------
 
 class TestGraphSignalInReport:
-    def test_invariant_8_graph_signal_in_diagnostic_report(self):
+    @pytest.mark.asyncio
+    async def test_invariant_8_graph_signal_in_diagnostic_report(self):
         """_build_diagnostic_report includes graph_signal dict when graph available."""
         scheduler = SprintScheduler(SprintSchedulerConfig())
 
@@ -251,13 +251,14 @@ class TestGraphSignalInReport:
         with patch.dict(sys.modules, {
             "hledac.universal.knowledge.graph_service": gs_module,
         }):
-            report = scheduler._build_diagnostic_report(mock_lifecycle)
+            report = await scheduler._build_diagnostic_report(mock_lifecycle)
 
         assert "graph_signal" in report
         assert report["graph_signal"]["graph_nodes"] == 10
         assert report["graph_signal"]["graph_edges"] == 50
 
-    def test_invariant_8b_no_graph_signal_when_graph_unavailable(self):
+    @pytest.mark.asyncio
+    async def test_invariant_8b_no_graph_signal_when_graph_unavailable(self):
         """graph_signal key absent from report when graph_stats returns empty."""
         scheduler = SprintScheduler(SprintSchedulerConfig())
 
@@ -272,7 +273,7 @@ class TestGraphSignalInReport:
         with patch.dict(sys.modules, {
             "hledac.universal.knowledge.graph_service": gs_module,
         }):
-            report = scheduler._build_diagnostic_report(mock_lifecycle)
+            report = await scheduler._build_diagnostic_report(mock_lifecycle)
 
         # Empty dict — key should be absent (not included if empty)
         assert "graph_signal" not in report

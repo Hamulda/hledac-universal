@@ -2,14 +2,14 @@
 
 <cite>
 **Referenced Files in This Document**
-- [markdown_reporter.py](file://export/markdown_reporter.py)
-- [sprint_markdown_reporter.py](file://export/sprint_markdown_reporter.py)
-- [export_manager.py](file://export/export_manager.py)
-- [sprint_exporter.py](file://export/sprint_exporter.py)
-- [__main__.py](file://__main__.py)
-- [test_sprint_8bb.py](file://tests/probe_8bb/test_sprint_8bb.py)
-- [test_sprint_markdown_reporter_parity.py](file://tests/probe_8vj/test_sprint_markdown_reporter_parity.py)
-- [conftest.py](file://tests/probe_8bb/conftest.py)
+- [markdown_reporter.py](file://hledac/universal/export/markdown_reporter.py)
+- [sprint_markdown_reporter.py](file://hledac/universal/export/sprint_markdown_reporter.py)
+- [export_manager.py](file://hledac/universal/export/export_manager.py)
+- [safe_render.py](file://hledac/universal/utils/safe_render.py)
+- [paths.py](file://hledac/universal/paths.py)
+- [sprint_exporter.py](file://hledac/universal/export/sprint_exporter.py)
+- [05-final-report.md](file://hledac/universal/.full-review-2026-04-23/05-final-report.md)
+- [01A-quality-findings.md](file://hledac/universal/.full-review-2026-04-23/01A-quality-findings.md)
 </cite>
 
 ## Table of Contents
@@ -25,388 +25,436 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the Markdown Reporting subsystem responsible for deterministic, side-effect-free generation of diagnostic and sprint reports in Markdown. It covers:
-- Implementation details and invocation relationships
-- Interfaces and domain models
-- Formatting options and customization
-- Configuration parameters and styling
-- Integration with the export framework and knowledge stores
-- Common formatting issues and solutions
+This document describes the Markdown reporting system used across the project’s export plane. It covers:
+- The deterministic diagnostic reporter for ObservedRunReport
+- The Obsidian-compatible export manager with YAML front matter and wikilink formatting
+- The sprint-specific markdown reporter for automated reporting cycles
+- Formatting options, safety mechanisms, and integration with external note-taking systems
 
-The subsystem consists of:
-- A deterministic diagnostic reporter for ObservedRunReport
-- A deterministic sprint reporter for canonical sprint artifacts
-- An export manager for Obsidian-compatible Markdown and graph exports
-- An exporter that builds enriched JSON reports and next-sprint seeds
+The goal is to help both technical and non-technical users understand how reports are structured, how to customize metadata, and how to integrate with tools like Obsidian and external CTI systems.
 
 ## Project Structure
-The Markdown Reporting subsystem lives under the export plane and integrates with the broader runtime and knowledge layers.
+The Markdown reporting system is organized around three primary modules:
+- Diagnostic markdown reporter for run diagnostics
+- Obsidian-compatible export manager for general reports and findings
+- Sprint markdown reporter for automated sprint reporting and enrichment
 
 ```mermaid
 graph TB
 subgraph "Export Plane"
-MR["markdown_reporter.py<br/>Diagnostic Markdown Renderer"]
-SR["sprint_markdown_reporter.py<br/>Sprint Markdown Renderer"]
-EM["export_manager.py<br/>Obsidian Markdown + Graph Export"]
-SE["sprint_exporter.py<br/>JSON + Seeds + Operator Brief"]
+DM["Diagnostic Markdown Reporter<br/>markdown_reporter.py"]
+EM["Obsidian Export Manager<br/>export_manager.py"]
+SMR["Sprint Markdown Reporter<br/>sprint_markdown_reporter.py"]
 end
-subgraph "Runtime"
-MAIN["__main__.py<br/>Entry point + ObservedRunReport"]
+subgraph "Utilities"
+SR["Safe Rendering<br/>safe_render.py"]
+PATHS["Path Utilities<br/>paths.py"]
 end
-subgraph "Tests"
-T8BB["tests/probe_8bb/test_sprint_8bb.py"]
-T8VJ["tests/probe_8vj/test_sprint_markdown_reporter_parity.py"]
-FIX["tests/probe_8bb/conftest.py"]
+subgraph "Integration"
+SE["Sprint Exporter<br/>sprint_exporter.py"]
+EX["External Systems<br/>Obsidian, CTI"]
 end
-MAIN --> MR
-MAIN --> SR
-MAIN --> SE
-SE --> EM
-T8BB --> MR
-T8VJ --> SR
-FIX --> T8BB
+DM --> SR
+EM --> SR
+SMR --> SR
+EM --> PATHS
+SE --> PATHS
+SE --> SMR
+DM --> EX
+EM --> EX
+SMR --> EX
 ```
 
 **Diagram sources**
-- [markdown_reporter.py:1-474](file://export/markdown_reporter.py#L1-L474)
-- [sprint_markdown_reporter.py:1-833](file://export/sprint_markdown_reporter.py#L1-L833)
-- [export_manager.py:1-298](file://export/export_manager.py#L1-L298)
-- [sprint_exporter.py:1-2738](file://export/sprint_exporter.py#L1-L2738)
-- [__main__.py:1-200](file://__main__.py#L1-L200)
-- [test_sprint_8bb.py:1-200](file://tests/probe_8bb/test_sprint_8bb.py#L1-L200)
-- [test_sprint_markdown_reporter_parity.py:77-207](file://tests/probe_8vj/test_sprint_markdown_reporter_parity.py#L77-L207)
-- [conftest.py:1-200](file://tests/probe_8bb/conftest.py#L1-L200)
+- [markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+- [export_manager.py:1-300](file://hledac/universal/export/export_manager.py#L1-L300)
+- [sprint_markdown_reporter.py:1-889](file://hledac/universal/export/sprint_markdown_reporter.py#L1-L889)
+- [safe_render.py:1-119](file://hledac/universal/utils/safe_render.py#L1-L119)
+- [paths.py:1-591](file://hledac/universal/paths.py#L1-L591)
+- [sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
 
 **Section sources**
-- [markdown_reporter.py:1-474](file://export/markdown_reporter.py#L1-L474)
-- [sprint_markdown_reporter.py:1-833](file://export/sprint_markdown_reporter.py#L1-L833)
-- [export_manager.py:1-298](file://export/export_manager.py#L1-L298)
-- [sprint_exporter.py:1-2738](file://export/sprint_exporter.py#L1-L2738)
-- [__main__.py:1-200](file://__main__.py#L1-L200)
+- [markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+- [export_manager.py:1-300](file://hledac/universal/export/export_manager.py#L1-L300)
+- [sprint_markdown_reporter.py:1-889](file://hledac/universal/export/sprint_markdown_reporter.py#L1-L889)
+- [safe_render.py:1-119](file://hledac/universal/utils/safe_render.py#L1-L119)
+- [paths.py:1-591](file://hledac/universal/paths.py#L1-L591)
+- [sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
 
 ## Core Components
-- Diagnostic Markdown Reporter
-  - Converts ObservedRunReport (msgspec.Struct) or Mapping into deterministic Markdown
-  - Provides normalized input, escaping, and ordered rendering
-  - Includes machine-readable JSON block appended at the end
-- Sprint Markdown Reporter
-  - Renders canonical sprint reports with metrics, findings, optional leaderboards/timings, and extended sections
-  - Pure function with centralized JSON parsing and graceful degradation
-- Export Manager
-  - Writes Obsidian-compatible Markdown with YAML front matter and optional findings
-  - Enforces safe output paths and filters sensitive metadata
-- Sprint Exporter
-  - Produces JSON reports enriched with product value summaries, operator briefs, and next-sprint seeds
-  - Integrates with knowledge stores for graph context, envelopes, diffs, kill chain, and evidence chains
+- Diagnostic Markdown Reporter: Renders ObservedRunReport into a deterministic, side-effect-free markdown string with standardized sections and machine-readable summaries.
+- Obsidian Export Manager: Produces Obsidian-compatible markdown with YAML front matter, optional findings list, and wikilink formatting.
+- Sprint Markdown Reporter: Builds comprehensive sprint reports from report and scorecard data, including optional enrichment sections (evidence envelopes, timelines, kill chain heat maps, etc.).
+
+Key capabilities:
+- Deterministic rendering with stable ordering and normalization
+- Obsidian-compatible formatting (wikilinks, YAML front matter)
+- Safe markdown rendering with escaping and link validation
+- Path semantics for canonical report locations
+- Optional enrichment for analyst briefs, evidence chains, and more
 
 **Section sources**
-- [markdown_reporter.py:63-474](file://export/markdown_reporter.py#L63-L474)
-- [sprint_markdown_reporter.py:37-279](file://export/sprint_markdown_reporter.py#L37-L279)
-- [export_manager.py:47-298](file://export/export_manager.py#L47-L298)
-- [sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
+- [markdown_reporter.py:389-425](file://hledac/universal/export/markdown_reporter.py#L389-L425)
+- [export_manager.py:90-201](file://hledac/universal/export/export_manager.py#L90-L201)
+- [sprint_markdown_reporter.py:144-281](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L281)
 
 ## Architecture Overview
-The reporting subsystem is invoked from the runtime entry point and produces Markdown and JSON artifacts consumed by downstream systems and operators.
+The system separates concerns across modules:
+- Normalization and rendering for diagnostic reports
+- Obsidian export with metadata and findings
+- Sprint reporting with enrichment and canonical paths
+- Safe rendering utilities for markdown and links
+- Path utilities for canonical locations
 
 ```mermaid
 sequenceDiagram
-participant Runtime as "Runtime (__main__.py)"
-participant Diag as "Diagnostic Reporter<br/>markdown_reporter.py"
-participant SprintMD as "Sprint Reporter<br/>sprint_markdown_reporter.py"
-participant Exporter as "Sprint Exporter<br/>sprint_exporter.py"
-participant Manager as "Export Manager<br/>export_manager.py"
-Runtime->>Diag : render_diagnostic_markdown(report)
-Diag-->>Runtime : deterministic Markdown string
-Runtime->>SprintMD : render_sprint_markdown(report, scorecard, sprint_id)
-SprintMD-->>Runtime : deterministic Markdown string
-Runtime->>Exporter : export_sprint(store, handoff, sprint_id)
-Exporter-->>Runtime : {report_json, seeds_json, operator_brief, ...}
-Runtime->>Manager : export_markdown(report_md, findings?, file_path?, metadata?)
-Manager-->>Runtime : Path or None
+participant Client as "Caller"
+participant DM as "Diagnostic Reporter<br/>render_diagnostic_markdown()"
+participant EM as "Export Manager<br/>export_markdown()"
+participant SMR as "Sprint Reporter<br/>render_sprint_markdown()"
+participant SR as "Safe Renderer<br/>safe_markdown_link()"
+participant PATHS as "Paths<br/>get_sprint_report_path()"
+Client->>DM : "render_diagnostic_markdown(report)"
+DM->>SR : "escape/link helpers"
+DM-->>Client : "Markdown string"
+Client->>EM : "export_markdown(report, findings, metadata, file_path)"
+EM->>SR : "safe_markdown_link() for URLs"
+EM-->>Client : "Path to written file"
+Client->>SMR : "render_sprint_markdown(report, scorecard, sprint_id)"
+SMR->>PATHS : "get_sprint_report_path()"
+SMR->>SR : "escape_markdown_text()"
+SMR-->>Client : "Sprint Markdown string"
 ```
 
 **Diagram sources**
-- [__main__.py:1-200](file://__main__.py#L1-L200)
-- [markdown_reporter.py:372-408](file://export/markdown_reporter.py#L372-L408)
-- [sprint_markdown_reporter.py:142-279](file://export/sprint_markdown_reporter.py#L142-L279)
-- [sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
-- [export_manager.py:88-198](file://export/export_manager.py#L88-L198)
+- [markdown_reporter.py:389-425](file://hledac/universal/export/markdown_reporter.py#L389-L425)
+- [export_manager.py:90-201](file://hledac/universal/export/export_manager.py#L90-L201)
+- [sprint_markdown_reporter.py:144-281](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L281)
+- [safe_render.py:79-102](file://hledac/universal/utils/safe_render.py#L79-L102)
+- [paths.py:326-343](file://hledac/universal/paths.py#L326-L343)
 
 ## Detailed Component Analysis
 
 ### Diagnostic Markdown Reporter
 Purpose:
-- Produce a deterministic, side-effect-free Markdown diagnostic report from ObservedRunReport-like inputs.
+- Accepts an ObservedRunReport (msgspec.Struct or Mapping) and renders a deterministic markdown report.
 
 Key behaviors:
-- Input normalization supports msgspec.Struct and Mapping
-- Escaping and linkification for safe Markdown rendering
-- Ordered sections with canonical labels and fallbacks
-- Machine-readable JSON block appended at the end
+- Input normalization converts Struct or Mapping to dict
+- Sections include Run Metadata, Executive Summary, Runtime Truth, Signal Funnel, Store Rejection Trace, Per-Source Health, Root Cause, Recommended Next Sprint, Known Limits, and Machine-Readable Summary
+- Deterministic ordering and sorting for stability
+- Optional machine-readable JSON block appended at the end
 
-Interfaces:
-- normalize_report_input(report) -> dict
-- render_diagnostic_markdown(report) -> str
-- render_diagnostic_markdown_to_path(report, path=None) -> Path
+Parameters and behavior:
+- render_diagnostic_markdown(report): returns markdown string
+- render_diagnostic_markdown_to_path(report, path=None): writes to file with deterministic filename logic
 
-Formatting and customization:
-- Sections are rendered in a fixed order and use canonical labels for root causes and recommendations
-- Deterministic sorting ensures stable output across runs
-- URLs and paths are linkified; inline code spans escape backticks
-
-Configuration parameters:
-- Environment variable GHOST_EXPORT_DIR controls output directory for to-path helper
-- Filename is derived from diagnostic_run_id/run_id or timestamp; falls back to a default name
-
-Usage patterns:
-- From runtime: call render_diagnostic_markdown(report) to get Markdown
-- From orchestration: call render_diagnostic_markdown_to_path(report) to write to disk
-
-Common issues and solutions:
-- Non-deterministic inputs: ensure inputs are normalized via normalize_report_input
-- Missing fields: renderer gracefully handles missing keys with defaults
-- Unsafe content: rely on escaping/linkification; do not inject raw user-provided Markdown
+Formatting highlights:
+- Escaping for inline code and markdown special characters
+- Linkification for URLs and file paths
+- Ordered rendering of nested dictionaries and lists
 
 ```mermaid
 flowchart TD
-Start(["normalize_report_input"]) --> BuildSections["Build ordered sections"]
-BuildSections --> Escaping["Escape and linkify"]
-Escaping --> AppendJSON["Append machine-readable JSON block"]
-AppendJSON --> End(["Return deterministic Markdown"])
+Start(["Entry: render_diagnostic_markdown"]) --> Normalize["Normalize input to dict"]
+Normalize --> BuildSections["Build ordered sections"]
+BuildSections --> ExecSum["Executive Summary"]
+BuildSections --> RuntimeTruth["Runtime Truth"]
+BuildSections --> SignalFunnel["Signal Funnel"]
+BuildSections --> StoreRejection["Store Rejection Trace"]
+BuildSections --> PerSource["Per-Source Health"]
+BuildSections --> RootCause["Root Cause"]
+BuildSections --> Recommendation["Recommended Next Sprint"]
+BuildSections --> KnownLimits["Known Limits"]
+BuildSections --> MachineSummary["Machine-Readable Summary (JSON)"]
+MachineSummary --> Join["Join all parts"]
+Join --> End(["Exit: markdown string"])
 ```
 
 **Diagram sources**
-- [markdown_reporter.py:63-407](file://export/markdown_reporter.py#L63-L407)
+- [markdown_reporter.py:389-425](file://hledac/universal/export/markdown_reporter.py#L389-L425)
+- [markdown_reporter.py:142-383](file://hledac/universal/export/markdown_reporter.py#L142-L383)
 
 **Section sources**
-- [markdown_reporter.py:63-474](file://export/markdown_reporter.py#L63-L474)
-- [test_sprint_8bb.py:119-180](file://tests/probe_8bb/test_sprint_8bb.py#L119-L180)
+- [markdown_reporter.py:65-82](file://hledac/universal/export/markdown_reporter.py#L65-L82)
+- [markdown_reporter.py:87-136](file://hledac/universal/export/markdown_reporter.py#L87-L136)
+- [markdown_reporter.py:142-383](file://hledac/universal/export/markdown_reporter.py#L142-L383)
+- [markdown_reporter.py:389-425](file://hledac/universal/export/markdown_reporter.py#L389-L425)
+- [markdown_reporter.py:431-487](file://hledac/universal/export/markdown_reporter.py#L431-L487)
+
+### Obsidian Export Manager
+Purpose:
+- Produce Obsidian-compatible markdown with YAML front matter and optional findings list.
+
+Parameters:
+- export_markdown(report, findings=None, file_path=None, metadata=None)
+
+Behavior:
+- Ensures output path is within a controlled output directory
+- Builds YAML front matter with title, date, sources, tags, and filtered metadata
+- Adds report content and findings section
+- Finds are rendered as bullet lists with Obsidian-style wikilinks for URLs
+- Confidence and provenance are included when available
+
+Formatting and safety:
+- Filters sensitive fields from metadata and findings
+- Uses safe_markdown_link for URLs
+- Limits sources and tags arrays and findings count
+
+```mermaid
+sequenceDiagram
+participant Caller as "Caller"
+participant EM as "ExportManager.export_markdown"
+participant FS as "Filesystem"
+participant SR as "Safe Renderer"
+Caller->>EM : "export_markdown(report, findings, file_path, metadata)"
+EM->>EM : "Filter sensitive fields"
+EM->>EM : "Build YAML front matter"
+EM->>SR : "safe_markdown_link(url)"
+EM->>FS : "Write UTF-8 markdown"
+EM-->>Caller : "Path to written file"
+```
+
+**Diagram sources**
+- [export_manager.py:90-201](file://hledac/universal/export/export_manager.py#L90-L201)
+- [safe_render.py:79-102](file://hledac/universal/utils/safe_render.py#L79-L102)
+
+**Section sources**
+- [export_manager.py:90-201](file://hledac/universal/export/export_manager.py#L90-L201)
+- [safe_render.py:79-102](file://hledac/universal/utils/safe_render.py#L79-L102)
 
 ### Sprint Markdown Reporter
 Purpose:
-- Render canonical sprint reports with research metrics, findings, optional leaderboards/timings, and extended sections.
+- Render sprint reports from report and scorecard data with optional enrichment.
 
-Key behaviors:
-- Pure function with no side effects
-- Centralized JSON parsing with graceful fallback
-- Graceful degradation when report fields are missing
-- Bounded displays for lists and tables
+Parameters:
+- render_sprint_markdown(report, scorecard, sprint_id)
 
-Interfaces:
-- render_sprint_markdown(report, scorecard, sprint_id) -> str
+Behavior:
+- Extracts research metrics, threat actors, top findings, and optional sections
+- Parses JSON fields safely using centralized JSON parsing helper
+- Renders optional sections: Source Leaderboard, Phase Timings, Evidence Envelope Findings, Identity Candidates, Temporal Archaeology Timeline, Sprint Diff, Kill Chain Heat Map, Evidence Chains, Analyst Brief
 
-Formatting and customization:
-- Research metrics table with synthesis engine label
-- Threat actors list with backtick formatting
-- Top findings numbered list (bounded)
-- Optional sections: Source Leaderboard, Phase Timings, Evidence Envelope Findings, Identity Candidates, Temporal Archaeology Timeline, Sprint Diff, Kill Chain Heat Map, Evidence Chains, Analyst Brief
-
-Configuration parameters:
-- Paths computed via canonical path helpers; shell role is orchestration plus file write
-- Output path convention: ~/.hledac/reports/{sprint_id}.md
-
-Usage patterns:
-- From runtime: call render_sprint_markdown(report, scorecard, sprint_id) to produce Markdown
-- From exporters: integrate with sprint_exporter to include extended sections
-
-Common issues and solutions:
-- JSON parsing failures: centralized fallback returns None; renderer continues with graceful placeholders
-- Missing optional data: sections are omitted when data is unavailable
-- Large lists: bounded displays prevent excessive output
+Formatting highlights:
+- Uses escape_markdown_text for safe text rendering
+- Tables for metrics and leaderboards
+- Bounded displays for large datasets
 
 ```mermaid
 flowchart TD
-Start(["render_sprint_markdown"]) --> ParseJSON["Parse source_yield_json and phase_timings_json"]
-ParseJSON --> ExtractFields["Extract report fields (graceful)"]
-ExtractFields --> BuildParts["Assemble sections in order"]
-BuildParts --> Optional["Add optional sections if data present"]
-Optional --> End(["Return deterministic Markdown"])
+Start(["Entry: render_sprint_markdown"]) --> ParseScorecard["Parse scorecard fields"]
+ParseScorecard --> ExtractReport["Extract report fields"]
+ExtractReport --> BuildHeader["Build header with sprint_id and timestamp"]
+BuildHeader --> Metrics["Research Metrics table"]
+BuildHeader --> ThreatActors["Threat Actors list"]
+BuildHeader --> TopFindings["Top Findings list"]
+BuildHeader --> OptionalSections{"Optional sections?"}
+OptionalSections --> |Yes| Leaderboard["Source Leaderboard"]
+OptionalSections --> |Yes| Timings["Phase Timings"]
+OptionalSections --> |Yes| Envelope["Evidence Envelope Findings"]
+OptionalSections --> |Yes| Identity["Identity Candidates"]
+OptionalSections --> |Yes| Timeline["Temporal Archaeology Timeline"]
+OptionalSections --> |Yes| Diff["Sprint Diff"]
+OptionalSections --> |Yes| KillChain["Kill Chain Heat Map"]
+OptionalSections --> |Yes| Chains["Evidence Chains"]
+OptionalSections --> |Yes| Analyst["Analyst Brief"]
+OptionalSections --> |No| Skip["Skip optional sections"]
+Leaderboard --> Join["Join all parts"]
+Timings --> Join
+Envelope --> Join
+Identity --> Join
+Timeline --> Join
+Diff --> Join
+KillChain --> Join
+Chains --> Join
+Analyst --> Join
+Skip --> Join
+Join --> End(["Exit: markdown string"])
 ```
 
 **Diagram sources**
-- [sprint_markdown_reporter.py:142-279](file://export/sprint_markdown_reporter.py#L142-L279)
+- [sprint_markdown_reporter.py:144-281](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L281)
+- [sprint_markdown_reporter.py:288-417](file://hledac/universal/export/sprint_markdown_reporter.py#L288-L417)
+- [sprint_markdown_reporter.py:423-485](file://hledac/universal/export/sprint_markdown_reporter.py#L423-L485)
+- [sprint_markdown_reporter.py:491-588](file://hledac/universal/export/sprint_markdown_reporter.py#L491-L588)
+- [sprint_markdown_reporter.py:594-707](file://hledac/universal/export/sprint_markdown_reporter.py#L594-L707)
+- [sprint_markdown_reporter.py:713-755](file://hledac/universal/export/sprint_markdown_reporter.py#L713-L755)
+- [sprint_markdown_reporter.py:800-819](file://hledac/universal/export/sprint_markdown_reporter.py#L800-L819)
+- [sprint_markdown_reporter.py:824-889](file://hledac/universal/export/sprint_markdown_reporter.py#L824-L889)
 
 **Section sources**
-- [sprint_markdown_reporter.py:37-279](file://export/sprint_markdown_reporter.py#L37-L279)
-- [test_sprint_markdown_reporter_parity.py:77-207](file://tests/probe_8vj/test_sprint_markdown_reporter_parity.py#L77-L207)
+- [sprint_markdown_reporter.py:144-281](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L281)
+- [sprint_markdown_reporter.py:39-56](file://hledac/universal/export/sprint_markdown_reporter.py#L39-L56)
+- [sprint_markdown_reporter.py:288-417](file://hledac/universal/export/sprint_markdown_reporter.py#L288-L417)
+- [sprint_markdown_reporter.py:423-485](file://hledac/universal/export/sprint_markdown_reporter.py#L423-L485)
+- [sprint_markdown_reporter.py:491-588](file://hledac/universal/export/sprint_markdown_reporter.py#L491-L588)
+- [sprint_markdown_reporter.py:594-707](file://hledac/universal/export/sprint_markdown_reporter.py#L594-L707)
+- [sprint_markdown_reporter.py:713-755](file://hledac/universal/export/sprint_markdown_reporter.py#L713-L755)
+- [sprint_markdown_reporter.py:800-819](file://hledac/universal/export/sprint_markdown_reporter.py#L800-L819)
+- [sprint_markdown_reporter.py:824-889](file://hledac/universal/export/sprint_markdown_reporter.py#L824-L889)
 
-### Export Manager
+### Safe Rendering Utilities
 Purpose:
-- Export Markdown compatible with Obsidian and interactive HTML graphs.
+- Provide safe text and link rendering to prevent markdown injection and ensure Obsidian compatibility.
 
-Key behaviors:
-- Obsidian-compatible YAML front matter with title, date, sources, tags
-- Optional findings section with wikilink formatting
-- Safe output path enforcement and sensitive data filtering
-- HTML graph export via pyvis or networkx-to-pyvis fallback
-
-Interfaces:
-- export_markdown(report, findings?, file_path?, metadata?) -> Path | None
-- export_graph_html(graph_manager, file_path?, title?) -> Path | None
-
-Configuration parameters:
-- Output directory defaults to ~/hledac_outputs
-- File path resolution prevents escaping the output directory
-- Sensitive fields filtered from metadata and findings
-
-Usage patterns:
-- From runtime: call export_markdown(report_md, findings?, metadata?) to write Markdown
-- From runtime: call export_graph_html(graph_manager) to write HTML
-
-Common issues and solutions:
-- Path traversal: ensure file_path is within output directory; otherwise returns None
-- Sensitive data leakage: metadata and findings are filtered before export
-- Missing graph backend: fallback to networkx conversion if available
-
-```mermaid
-flowchart TD
-Start(["export_markdown"]) --> BuildYAML["Build YAML front matter"]
-BuildYAML --> BuildContent["Build report + findings sections"]
-BuildContent --> WriteFile["Write UTF-8 file"]
-WriteFile --> End(["Return Path or None"])
-```
-
-**Diagram sources**
-- [export_manager.py:88-198](file://export/export_manager.py#L88-L198)
+Capabilities:
+- escape_markdown_text: escapes special markdown characters
+- safe_markdown_link: validates schemes, escapes labels, and percent-encodes parentheses
+- safe_code_fence: escapes backticks for fenced code blocks
 
 **Section sources**
-- [export_manager.py:47-298](file://export/export_manager.py#L47-L298)
+- [safe_render.py:42-54](file://hledac/universal/utils/safe_render.py#L42-L54)
+- [safe_render.py:79-102](file://hledac/universal/utils/safe_render.py#L79-L102)
+- [safe_render.py:108-119](file://hledac/universal/utils/safe_render.py#L108-L119)
 
-### Sprint Exporter
+### Path Semantics and File Output
 Purpose:
-- Produce canonical JSON reports enriched with product value summaries, operator briefs, and next-sprint seeds.
+- Provide canonical paths for diagnostic and sprint reports.
 
-Key behaviors:
-- Derives product_value_summary from runtime_truth, scorecard, and branch mix
-- Attaches derived data: analyst brief, canonical run summary, runtime truth, timing truth
-- Generates next-sprint seeds from top nodes and product value signals
-- Integrates with knowledge stores for graph context, envelopes, diffs, kill chain, and evidence chains
-
-Interfaces:
-- export_sprint(store, handoff, sprint_id?) -> dict
-
-Configuration parameters:
-- JSON report path via canonical helper; seeds path colocated with JSON report
-- Sanitization via security coordinator with degraded fallback
-
-Usage patterns:
-- From runtime: call export_sprint(store, handoff, sprint_id) to produce JSON, seeds, and operator brief
-- From orchestrator: consume returned artifacts for downstream actions
-
-Common issues and solutions:
-- Sanitization failures: degraded structure written instead of unsanitized content
-- Truncated JSON: write sanitized prefix only when parse fails
-- Missing graph/context: fallbacks and fail-soft logic ensure export proceeds
-
-```mermaid
-flowchart TD
-Start(["export_sprint"]) --> Sanitize["Sanitize outbound JSON"]
-Sanitize --> BuildPVS["Build product_value_summary"]
-BuildPVS --> AttachTruth["Attach canonical run summary + runtime truth"]
-AttachTruth --> Seeds["Generate next-sprint seeds"]
-Seeds --> Enrich["Enrich with graph context, envelopes, diffs, kill chain, chains"]
-Enrich --> End(["Return artifacts dict"])
-```
-
-**Diagram sources**
-- [sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
+Highlights:
+- RUNS_ROOT for diagnostic markdown files
+- get_sprint_report_path() for sprint reports under ~/.hledac/reports/
+- get_sprint_json_report_path() and get_sprint_next_seeds_path() for related artifacts
 
 **Section sources**
-- [sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
+- [paths.py:266-283](file://hledac/universal/paths.py#L266-L283)
+- [paths.py:326-343](file://hledac/universal/paths.py#L326-L343)
+- [paths.py:345-363](file://hledac/universal/paths.py#L345-L363)
+- [paths.py:365-385](file://hledac/universal/paths.py#L365-L385)
+
+### Integration with External Note-Taking Systems
+- Obsidian-compatible formatting:
+  - YAML front matter with title, date, sources, tags
+  - Wikilinks for URLs and file paths
+  - Deterministic filenames and directories
+- Integration points:
+  - ExportManager writes to ~/hledac_outputs/
+  - Sprint reporter writes to ~/.hledac/reports/
+
+**Section sources**
+- [export_manager.py:90-201](file://hledac/universal/export/export_manager.py#L90-L201)
+- [paths.py:326-343](file://hledac/universal/paths.py#L326-L343)
+
+### Example Reports and Templates
+- Comprehensive review report template with executive summary, findings tables, and remediation guidance
+- Quality review findings with severity ratings and fix examples
+
+These examples illustrate:
+- Obsidian-friendly structure with YAML front matter
+- Markdown tables and lists
+- Sectioned presentation of findings and recommendations
+
+**Section sources**
+- [05-final-report.md:1-216](file://hledac/universal/.full-review-2026-04-23/05-final-report.md#L1-L216)
+- [01A-quality-findings.md:1-630](file://hledac/universal/.full-review-2026-04-23/01A-quality-findings.md#L1-L630)
 
 ## Dependency Analysis
-- Diagnostic reporter depends on:
-  - ObservedRunReport-like inputs (msgspec.Struct or Mapping)
-  - Normalization and helper functions for escaping/linkification
-- Sprint reporter depends on:
-  - Scorecard dictionaries with JSON-encoded fields
-  - Graceful degradation when report fields are missing
-- Export manager depends on:
-  - Safe path handling and sensitive data filtering
-  - Optional graph backend for HTML export
-- Sprint exporter depends on:
-  - Store interfaces for recent findings and graph context
-  - Security coordinator for sanitization
-  - Knowledge store for evidence chains and derived sections
+Relationships between components:
+- Diagnostic reporter depends on safe_render for escaping and linkification
+- Export manager depends on safe_render for URLs and on paths for canonical locations
+- Sprint reporter depends on safe_render for text and on paths for report location
+- Sprint exporter coordinates with sprint reporter and paths for artifact creation
 
 ```mermaid
 graph LR
-MR["markdown_reporter.py"] --> ORR["ObservedRunReport-like input"]
-SR["sprint_markdown_reporter.py"] --> SC["Scorecard dict"]
-EM["export_manager.py"] --> OM["Obsidian Markdown"]
-EM --> GH["Graph HTML"]
-SE["sprint_exporter.py"] --> STORE["Knowledge/Store APIs"]
-SE --> SEC["Security Coordinator"]
+DM["Diagnostic Reporter"] --> SR["Safe Renderer"]
+EM["Export Manager"] --> SR
+EM --> PATHS["Paths"]
+SMR["Sprint Reporter"] --> SR
+SMR --> PATHS
+SE["Sprint Exporter"] --> PATHS
+SE --> SMR
 ```
 
 **Diagram sources**
-- [markdown_reporter.py:63-474](file://export/markdown_reporter.py#L63-L474)
-- [sprint_markdown_reporter.py:142-279](file://export/sprint_markdown_reporter.py#L142-L279)
-- [export_manager.py:88-298](file://export/export_manager.py#L88-L298)
-- [sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
+- [markdown_reporter.py:17-18](file://hledac/universal/export/markdown_reporter.py#L17-L18)
+- [export_manager.py](file://hledac/universal/export/export_manager.py#L21)
+- [sprint_markdown_reporter.py](file://hledac/universal/export/sprint_markdown_reporter.py#L29)
+- [paths.py:326-343](file://hledac/universal/paths.py#L326-L343)
+- [sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
 
 **Section sources**
-- [markdown_reporter.py:63-474](file://export/markdown_reporter.py#L63-L474)
-- [sprint_markdown_reporter.py:142-279](file://export/sprint_markdown_reporter.py#L142-L279)
-- [export_manager.py:88-298](file://export/export_manager.py#L88-L298)
-- [sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
+- [markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+- [export_manager.py:1-300](file://hledac/universal/export/export_manager.py#L1-L300)
+- [sprint_markdown_reporter.py:1-889](file://hledac/universal/export/sprint_markdown_reporter.py#L1-L889)
+- [paths.py:1-591](file://hledac/universal/paths.py#L1-L591)
+- [sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
 
 ## Performance Considerations
-- Deterministic rendering avoids randomization and ensures byte-identical outputs across runs
-- Sorting and iteration are bounded; lists and tables are truncated to maintain readability
-- File I/O is minimized; to-path helper computes deterministic filenames and writes once
-- Centralized JSON parsing reduces duplication and improves reliability
+- Deterministic rendering avoids expensive operations; prefer passing normalized inputs to minimize conversions
+- Safe rendering functions are lightweight; use them consistently to avoid rework
+- Bounded displays in sprint reporter prevent large outputs; tune limits as needed
+- File I/O is minimized; ensure output directories exist to avoid repeated checks
 
 [No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
-Common formatting issues and resolutions:
-- Non-deterministic output: ensure inputs are normalized and sections are ordered; tests confirm deterministic behavior
-- Missing optional sections: verify presence of required JSON fields; reporter degrades gracefully
-- Unsafe links/paths: rely on linkification; do not inject raw user-provided Markdown
-- Sensitive data exposure: metadata and findings are filtered before export
-- Path traversal attempts: export manager enforces safe paths and returns None on violations
-- Sanitization failures: degraded structure is written instead of unsanitized content
-
-Validation references:
-- Deterministic rendering and section ordering validated by tests
-- Graceful degradation for missing data and JSON parsing failures
-- Safe path handling and sensitive data filtering enforced by export manager
+Common issues and resolutions:
+- Sensitive data leakage: ExportManager filters sensitive fields; ensure metadata does not include credentials
+- Path escapes: ExportManager enforces output directory boundaries; verify file_path resolves within output directory
+- JSON parsing failures: Sprint reporter uses centralized JSON parsing; malformed JSON fields are handled gracefully
+- Link safety: Use safe_markdown_link to prevent scheme-based injection and ensure URLs render correctly
+- Character limits: ExportManager caps findings and sources; adjust as needed for your workflow
 
 **Section sources**
-- [test_sprint_8bb.py:119-180](file://tests/probe_8bb/test_sprint_8bb.py#L119-L180)
-- [test_sprint_markdown_reporter_parity.py:77-207](file://tests/probe_8vj/test_sprint_markdown_reporter_parity.py#L77-L207)
-- [export_manager.py:47-198](file://export/export_manager.py#L47-L198)
-- [sprint_exporter.py:205-287](file://export/sprint_exporter.py#L205-L287)
+- [export_manager.py:35-47](file://hledac/universal/export/export_manager.py#L35-L47)
+- [export_manager.py:71-89](file://hledac/universal/export/export_manager.py#L71-L89)
+- [sprint_markdown_reporter.py:39-56](file://hledac/universal/export/sprint_markdown_reporter.py#L39-L56)
+- [safe_render.py:79-102](file://hledac/universal/utils/safe_render.py#L79-L102)
 
 ## Conclusion
-The Markdown Reporting subsystem provides deterministic, secure, and extensible report generation across diagnostic and sprint contexts. It integrates cleanly with the export framework and knowledge stores, offering robust formatting, graceful degradation, and safe output handling. Developers can rely on stable interfaces and deterministic outputs while customizing sections and styling through the provided helpers and configuration parameters.
+The Markdown reporting system provides deterministic, safe, and Obsidian-compatible outputs for both diagnostic runs and automated sprint cycles. By leveraging normalization, safe rendering, and canonical path semantics, it integrates seamlessly with external note-taking systems while maintaining stability and readability.
 
 [No sources needed since this section summarizes without analyzing specific files]
 
 ## Appendices
 
-### Domain Models and Inputs
-ObservedRunReport-like input fields used by diagnostic reporter:
-- Timing: started_ts, finished_ts, elapsed_ms
-- Counts: total_sources, completed_sources, accepted_findings, stored_findings
-- Dedup: uma_snapshot, dedup_surface_available, dedup_delta
-- Patterns: patterns_configured, bootstrap_applied, content_quality_validated
-- Success: success_rate, failed_source_count, batch_error
-- Signal funnel: entries_seen, entries_with_empty_assembled_text, entries_with_text, entries_scanned, entries_with_hits, total_pattern_hits, findings_built_pre_store, accepted_count_delta
-- Rejection trace: low_information_rejected_count_delta, in_memory_duplicate_rejected_count_delta, persistent_duplicate_rejected_count_delta, other_rejected_count_delta
-- Health: per_source, health_breakdown
-- Root cause: diagnostic_root_cause, is_network_variance
-- Recommendation: recommendation (optional)
-- Known limits: known_limits (optional)
+### API Definitions and Parameters
 
-Sprint report and scorecard inputs used by sprint reporter:
-- Executive summary, threat actors, findings
-- Metrics: findings_per_minute, ioc_density, semantic_novelty, outlines_used
-- Optional JSON fields: source_yield_json, phase_timings_json
-- Extended sections: envelope_findings, identity_candidates, timeline_findings, sprint_diff_findings, kill_chain_findings, evidence_chains, analyst_brief
+- export_markdown(report, findings=None, file_path=None, metadata=None)
+  - report: string content from Hermes 3 or other LLM
+  - findings: optional list of finding dicts
+  - file_path: output path relative to output directory
+  - metadata: optional dict for YAML front matter (query, sources, tags, etc.)
+
+- render_diagnostic_markdown(report)
+  - report: ObservedRunReport (msgspec.Struct or Mapping)
+  - returns: markdown string
+
+- render_diagnostic_markdown_to_path(report, path=None)
+  - report: ObservedRunReport
+  - path: optional output path; if None, uses GHOST_EXPORT_DIR or RUNS_ROOT with deterministic filename
+
+- render_sprint_markdown(report, scorecard, sprint_id)
+  - report: sprint report object with summary/threat_actors/findings
+  - scorecard: dict with metrics and optional enrichment fields
+  - sprint_id: sprint identifier used in header
 
 **Section sources**
-- [markdown_reporter.py:125-365](file://export/markdown_reporter.py#L125-L365)
-- [sprint_markdown_reporter.py:142-279](file://export/sprint_markdown_reporter.py#L142-L279)
-- [conftest.py:16-200](file://tests/probe_8bb/conftest.py#L16-L200)
+- [export_manager.py:90-201](file://hledac/universal/export/export_manager.py#L90-L201)
+- [markdown_reporter.py:389-425](file://hledac/universal/export/markdown_reporter.py#L389-L425)
+- [markdown_reporter.py:431-487](file://hledac/universal/export/markdown_reporter.py#L431-L487)
+- [sprint_markdown_reporter.py:144-281](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L281)
+
+### Formatting Options and Examples
+- Obsidian-compatible YAML front matter with title, date, sources, tags
+- Wikilink formatting for URLs and file paths
+- Deterministic section ordering and machine-readable JSON summary
+- Bounded displays for large datasets in sprint reports
+
+**Section sources**
+- [export_manager.py:123-156](file://hledac/universal/export/export_manager.py#L123-L156)
+- [export_manager.py:166-194](file://hledac/universal/export/export_manager.py#L166-L194)
+- [markdown_reporter.py:343-383](file://hledac/universal/export/markdown_reporter.py#L343-L383)
+- [sprint_markdown_reporter.py:70-87](file://hledac/universal/export/sprint_markdown_reporter.py#L70-L87)
+
+### Batch Processing Workflows
+- Diagnostic runs: render_diagnostic_markdown_to_path with deterministic filenames
+- Sprint runs: export_sprint produces JSON report and seeds; render_sprint_markdown for markdown
+- Integration: paths.py provides canonical locations for all artifacts
+
+**Section sources**
+- [markdown_reporter.py:431-487](file://hledac/universal/export/markdown_reporter.py#L431-L487)
+- [sprint_exporter.py:156-556](file://hledac/universal/export/sprint_exporter.py#L156-L556)
+- [sprint_markdown_reporter.py:144-281](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L281)
+- [paths.py:326-343](file://hledac/universal/paths.py#L326-L343)

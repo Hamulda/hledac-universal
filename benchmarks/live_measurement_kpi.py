@@ -491,6 +491,12 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     nonfeed_starvation_reason: str | None = None
     nonfeed_findings = public_findings + ct_findings
     starvation_suppressed = prewindup_barrier_checked and prewindup_barrier_satisfied
+    # F234: Shared counter lookup helper. Guards isinstance so non-dict truthy values
+    # (e.g. int counters) don't crash .get() with a chained fallback.
+    def _ledger_counter(d: dict | None, key: str, default: int = 0) -> int:
+        if isinstance(d, dict):
+            return d.get(key, default)
+        return default
     if (
         inp.run_quality_verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN.value
         and not nonfeed_attempted_families
@@ -504,6 +510,49 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
         if public_not_timed and ct_not_timed:
             nonfeed_starvation_suspected = True
             nonfeed_starvation_reason = "early_windup_or_scheduler_order"
+
+    # F234: When explicit_source_family_outcomes is absent, nonfeed_attempted_families
+    # is set to the sentinel "CANONICAL_FIELD_MISSING" (string, truthy — so Branch 1 above
+    # is skipped). We cannot verify whether nonfeed lanes ran; treat as indeterminate.
+    if (
+        nonfeed_attempted_families == "CANONICAL_FIELD_MISSING"
+        and inp.run_quality_verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN.value
+        and active_runtime_occurred
+        and (feed_findings > 0)
+        and (nonfeed_findings == 0)
+        and (not starvation_suppressed)
+    ):
+        nonfeed_starvation_suspected = True
+        nonfeed_starvation_reason = "canonical_field_missing_indeterminate"
+
+    # Branch 2: families were attempted (nonfeed_attempted_families truthy), but
+    # public discovered=0 and fetch_attempted=0, and PUBLIC lane ended ERROR.
+    # This catches the "ran but starved" scenario that branch 1 misses.
+    if (
+        not nonfeed_starvation_suspected
+        and inp.run_quality_verdict == RunQualityVerdict.PASS_VALID_CAPABILITY_RUN.value
+        and nonfeed_attempted_families
+        and active_runtime_occurred
+        and (feed_findings > 0)
+        and (nonfeed_findings == 0)
+        and (not starvation_suppressed)
+    ):
+        _pp_for_starvation = inp.public_pipeline
+        _public_disc = _ledger_counter(_pp_for_starvation, "public_candidates_discovered")
+        _public_fetch = _ledger_counter(_pp_for_starvation, "public_candidates_fetch_attempted")
+        _public_lec = lane_execution_counts.get("PUBLIC")
+        _public_ts = _public_lec.get("terminal_state") if _public_lec else None
+        # Also require public NOT timed out: timeout = lane WAS dispatched but hit limit
+        # True starvation = lane was never dispatched (public_branch_timed_out=False)
+        _public_not_timed = not rt.get("public_branch_timed_out", False)
+        if (
+            _public_not_timed
+            and _public_disc == 0
+            and _public_fetch == 0
+            and _public_ts in ("ERROR", "DISCOVERY_ERROR")
+        ):
+            nonfeed_starvation_suspected = True
+            nonfeed_starvation_reason = "public_discovery_error_no_candidates"
 
     wallclock_budget_exceeded = False
     wallclock_budget_excess_s: float | None = None
@@ -632,18 +681,15 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     if _pp and isinstance(_pp, dict):
         _public_terminal_stage = _pp.get("public_terminal_stage") or _ar_pts or ""
     _public_candidate_ledger_summary = {
-        # F233A: all fields guard with isinstance(_pp, dict) — _pp can be a non-dict truthy value
-        # (e.g. an int counter) which would crash .get() without the isinstance check
-        "discovered": _pp.get("public_candidates_discovered", 0) if isinstance(_pp, dict) else (_ar_psc.get("discovered", 0) if _ar_psc else 0),
-        "fetch_attempted": _pp.get("public_candidates_fetch_attempted", 0) if isinstance(_pp, dict) else (_ar_psc.get("fetch_attempted", 0) if _ar_psc else 0),
-        "fetch_success": _pp.get("public_candidates_fetch_success", 0) if isinstance(_pp, dict) else (_ar_psc.get("fetch_success", 0) if _ar_psc else 0),
-        "parse_success": _pp.get("public_candidates_parse_success", 0) if isinstance(_pp, dict) else (_ar_psc.get("parse_success", 0) if _ar_psc else 0),
-        # F233A: pattern_matched had no _ar_psc fallback — add one for consistency
-        "pattern_matched": _pp.get("public_candidates_pattern_matched", 0) if isinstance(_pp, dict) else 0,
-        "built": _pp.get("public_candidates_built", 0) if isinstance(_pp, dict) else (_ar_psc.get("built", 0) if _ar_psc else 0),
-        "store_attempted": _pp.get("public_candidates_store_attempted", 0) if isinstance(_pp, dict) else (_ar_psc.get("store_attempted", 0) if _ar_psc else 0),
-        "stored": _pp.get("public_candidates_stored", 0) if isinstance(_pp, dict) else (_ar_psc.get("stored", 0) if _ar_psc else 0),
-        "rejected": _pp.get("public_candidates_rejected", 0) if isinstance(_pp, dict) else (_ar_psc.get("rejected", 0) if _ar_psc else 0),
+        "discovered": _ledger_counter(_pp, "public_candidates_discovered"),
+        "fetch_attempted": _ledger_counter(_pp, "public_candidates_fetch_attempted"),
+        "fetch_success": _ledger_counter(_pp, "public_candidates_fetch_success"),
+        "parse_success": _ledger_counter(_pp, "public_candidates_parse_success"),
+        "pattern_matched": _ledger_counter(_pp, "public_candidates_pattern_matched"),
+        "built": _ledger_counter(_pp, "public_candidates_built") or _ledger_counter(_ar_psc, "built"),
+        "store_attempted": _ledger_counter(_pp, "public_candidates_store_attempted"),
+        "stored": _ledger_counter(_pp, "public_candidates_stored") or _ledger_counter(_ar_psc, "stored"),
+        "rejected": _ledger_counter(_pp, "public_candidates_rejected") or _ledger_counter(_ar_psc, "rejected"),
     }
     _public_surface_present = bool(
         (_pp and isinstance(_pp, dict))
@@ -851,7 +897,10 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     _result_dict["mode"] = "live"
     _result_dict["runtime_truth"] = rt
     _result_dict["branch_mix"] = branch_mix
-    _result_dict["live_kpi"] = _result_dict  # self-reference so _detect_format sees live_kpi
+    # F235H: Replaced self-reference with live_kpi_marker to avoid circular reference
+    # in JSON serialization. The key "live_kpi_marker" is detected by _detect_format
+    # as equivalent signal for "live" format (checked alongside mode/live_kpi/runtime_truth).
+    _result_dict["live_kpi_marker"] = True
     return _result_dict
 
 

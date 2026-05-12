@@ -4,12 +4,11 @@
 **Referenced Files in This Document**
 - [live_feed_pipeline.py](file://pipeline/live_feed_pipeline.py)
 - [pattern_matcher.py](file://patterns/pattern_matcher.py)
-- [rss_atom_adapter.py](file://discovery/rss_atom_adapter.py)
 - [duckdb_store.py](file://knowledge/duckdb_store.py)
-- [session_runtime.py](file://network/session_runtime.py)
+- [rss_atom_adapter.py](file://discovery/rss_atom_adapter.py)
 - [public_fetcher.py](file://fetching/public_fetcher.py)
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [__main__.py](file://__main__.py)
+- [resource_governor.py](file://core/resource_governor.py)
+- [session_runtime.py](file://network/session_runtime.py)
 </cite>
 
 ## Table of Contents
@@ -22,376 +21,347 @@
 7. [Performance Considerations](#performance-considerations)
 8. [Troubleshooting Guide](#troubleshooting-guide)
 9. [Conclusion](#conclusion)
+10. [Appendices](#appendices)
 
 ## Introduction
-The Live Feed Pipeline is a passive RSS/Atom feed processing system designed to generate pattern-matched findings without LLM involvement. It operates as a pure pattern-backing pipeline that ingests feed URLs, normalizes entries, extracts and enriches text, performs pattern scanning, applies deduplication, and stores findings. The pipeline emphasizes determinism, quality signaling, and economic decision-making to guide scheduling and resource allocation.
-
-Key characteristics:
-- Passive-only operation with no autonomous orchestration or LLM involvement
-- PatternMatcher-driven scanning with configurable pattern registries
-- Quality signal computation for routing and observability
-- Fallback decision logic to determine when article enrichment is beneficial
-- Economic analysis to guide feed branch scheduling and budget allocation
-- Comprehensive observability and diagnostics for zero-signal scenarios
+The Live Feed Pipeline system processes RSS/Atom feeds to discover OSINT findings through pattern matching. It ingests feed URLs, normalizes entries, converts HTML to text safely, scans for structured patterns, and stores canonical findings. The pipeline emphasizes determinism, metadata-aware quality routing, bounded concurrency, and economic analysis to guide next actions.
 
 ## Project Structure
-The Live Feed Pipeline resides in the pipeline module and integrates with several supporting systems:
+The Live Feed Pipeline centers around a single module orchestrating feed ingestion, text processing, pattern scanning, and storage. Supporting components include:
+- PatternMatcher: AHO-Corasick-based pattern registry and scanner
+- DuckDBShadowStore: Canonical storage for findings with quality gating
+- RSS/Atom adapter: Fetches and parses feed entries
+- Public fetcher: Provides fallback decoding utilities
+- Resource governor: UMA integration for emergency aborts
+- Session runtime: HTTP client for article fallback
 
 ```mermaid
 graph TB
-subgraph "Pipeline Module"
-LFP[live_feed_pipeline.py]
+subgraph "Pipeline"
+LF["live_feed_pipeline.py"]
 end
-subgraph "Pattern System"
-PM[pattern_matcher.py]
+subgraph "Patterns"
+PM["pattern_matcher.py"]
 end
-subgraph "Discovery Layer"
-RA[rss_atom_adapter.py]
+subgraph "Storage"
+DS["duckdb_store.py"]
 end
-subgraph "Storage Layer"
-DS[duckdb_store.py]
+subgraph "Feeds"
+RA["rss_atom_adapter.py"]
 end
-subgraph "Network Layer"
-SR[session_runtime.py]
-PF[public_fetcher.py]
+subgraph "Network"
+PF["public_fetcher.py"]
+SR["session_runtime.py"]
 end
-subgraph "Runtime Integration"
-SS[sprint_scheduler.py]
-MAIN[__main__.py]
+subgraph "System"
+RG["resource_governor.py"]
 end
-LFP --> PM
-LFP --> RA
-LFP --> DS
-LFP --> SR
-LFP --> PF
-SS --> LFP
-MAIN --> LFP
+LF --> RA
+LF --> PM
+LF --> DS
+LF --> RG
+LF --> PF
+LF --> SR
 ```
 
 **Diagram sources**
-- [live_feed_pipeline.py:1754-2385](file://pipeline/live_feed_pipeline.py#L1754-L2385)
-- [pattern_matcher.py:619-740](file://patterns/pattern_matcher.py#L619-L740)
+- [live_feed_pipeline.py:1767-2399](file://pipeline/live_feed_pipeline.py#L1767-L2399)
+- [pattern_matcher.py:619-800](file://patterns/pattern_matcher.py#L619-L800)
+- [duckdb_store.py:643-800](file://knowledge/duckdb_store.py#L643-L800)
 - [rss_atom_adapter.py](file://discovery/rss_atom_adapter.py)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
-- [session_runtime.py](file://network/session_runtime.py)
 - [public_fetcher.py](file://fetching/public_fetcher.py)
-- [sprint_scheduler.py:477-480](file://runtime/sprint_scheduler.py#L477-L480)
-- [__main__.py:1574-1660](file://__main__.py#L1574-L1660)
+- [resource_governor.py](file://core/resource_governor.py)
+- [session_runtime.py](file://network/session_runtime.py)
 
 **Section sources**
-- [live_feed_pipeline.py:1-29](file://pipeline/live_feed_pipeline.py#L1-L29)
-- [live_feed_pipeline.py:1754-2385](file://pipeline/live_feed_pipeline.py#L1754-L2385)
+- [live_feed_pipeline.py:1-299](file://pipeline/live_feed_pipeline.py#L1-L299)
+- [pattern_matcher.py:1-80](file://patterns/pattern_matcher.py#L1-L80)
+- [duckdb_store.py:1-80](file://knowledge/duckdb_store.py#L1-L80)
 
 ## Core Components
-The Live Feed Pipeline consists of several core components that work together to process RSS/Atom feeds:
-
-### Entry Quality Signal System
-The pipeline computes lightweight quality signals for each entry using metadata heuristics:
-- Text substance assessment (minimum character thresholds)
-- Metadata boost detection (author, feed title, language alignment)
-- Language mismatch detection against OSINT-relevant languages
-- Adapter quality score integration for spam/downgrade mitigation
-
-### Pattern Matching Engine
-Powered by the PatternMatcher singleton with pyahocorasick backend:
-- Configurable pattern registries with bootstrap defaults
-- Case-insensitive literal matching with word-boundary support
-- Regex post-processing for structured entity extraction
-- High-precision IOC coverage for OSINT use cases
-
-### Fallback Decision Logic
-Structured decision-making system that evaluates when article fallback is beneficial:
-- Pre-fallback hits analysis
-- Quality signal assessment
-- Adapter-derived priorities
-- Forced fallback scenarios for metadata/content mismatches
-- Economic value tracking (useful vs waste)
-
-### Economic Analysis Framework
-Comprehensive economic evaluation for feed branch scheduling:
-- Yield ratios between feed-native and fallback sources
-- Waste rate calculations
-- Confidence scoring with adapter adjustments
-- Next-action recommendations
-- Budget optimization guidance
+- Feed ingestion and parsing: Fetches entries from RSS/Atom sources with timeout and byte limits.
+- Text normalization: Strips HTML safely, unescapes entities, and builds enriched text prioritizing rich content.
+- Pattern scanning: Offloads AHO-Corasick scanning to threads with bounded concurrency.
+- Quality routing: Computes lightweight entry quality signals for metadata-aware routing.
+- Fallback decision: Structured classification of article fallback necessity and outcomes.
+- Economic analysis: Tracks feed-native vs fallback yields, waste ratios, and next-action recommendations.
+- Deduplication: Per-run and per-entry deduplication strategies.
+- Storage integration: Quality-gated ingestion into DuckDBShadowStore with acceptance and storage counters.
 
 **Section sources**
-- [live_feed_pipeline.py:78-193](file://pipeline/live_feed_pipeline.py#L78-L193)
-- [live_feed_pipeline.py:1217-1228](file://pipeline/live_feed_pipeline.py#L1217-L1228)
-- [live_feed_pipeline.py:322-487](file://pipeline/live_feed_pipeline.py#L322-L487)
-- [live_feed_pipeline.py:538-693](file://pipeline/live_feed_pipeline.py#L538-L693)
+- [live_feed_pipeline.py:58-310](file://pipeline/live_feed_pipeline.py#L58-L310)
+- [live_feed_pipeline.py:880-1081](file://pipeline/live_feed_pipeline.py#L880-L1081)
+- [live_feed_pipeline.py:1244-1268](file://pipeline/live_feed_pipeline.py#L1244-L1268)
+- [live_feed_pipeline.py:318-488](file://pipeline/live_feed_pipeline.py#L318-L488)
+- [live_feed_pipeline.py:535-723](file://pipeline/live_feed_pipeline.py#L535-L723)
+- [live_feed_pipeline.py:1199-1241](file://pipeline/live_feed_pipeline.py#L1199-L1241)
+- [live_feed_pipeline.py:1767-2399](file://pipeline/live_feed_pipeline.py#L1767-L2399)
+- [duckdb_store.py:148-224](file://knowledge/duckdb_store.py#L148-L224)
 
 ## Architecture Overview
-The Live Feed Pipeline follows a structured processing flow from feed ingestion to finding storage:
+The pipeline follows a deterministic, fail-soft design:
+- UMA emergency check at run start
+- Fetch entries from feed source
+- For each entry: assemble text → scan patterns → classify fallback → enrich if needed → deduplicate → store
+- Aggregate observability and economic metrics
 
 ```mermaid
 sequenceDiagram
-participant Scheduler as "SprintScheduler"
-participant Pipeline as "LiveFeedPipeline"
-participant Adapter as "RSS/Atom Adapter"
-participant Matcher as "PatternMatcher"
-participant Store as "DuckDB Store"
-participant Network as "HTTP Session"
-Scheduler->>Pipeline : async_run_live_feed_pipeline()
-Pipeline->>Adapter : async_fetch_feed_entries()
-Adapter-->>Pipeline : FeedBatch(entries)
+participant Client as "Caller"
+participant LF as "LiveFeedPipeline"
+participant RA as "RSS/Atom Adapter"
+participant PM as "PatternMatcher"
+participant DS as "DuckDBShadowStore"
+Client->>LF : async_run_live_feed_pipeline(feed_url, store, ...)
+LF->>LF : _check_uma_emergency()
+alt Emergency
+LF-->>Client : FeedPipelineRunResult(error="uma_emergency_abort")
+else Normal
+LF->>RA : async_fetch_feed_entries(...)
+RA-->>LF : batch(entries)
 loop For each entry
-Pipeline->>Pipeline : _assemble_enriched_feed_text()
-Pipeline->>Matcher : match_text(clean_text)
-Matcher-->>Pipeline : PatternHits[]
-alt Hits found
-Pipeline->>Pipeline : _entry_to_pattern_findings()
-Pipeline->>Store : async_ingest_findings_batch()
-Store-->>Pipeline : IngestResults
-else No hits
-Pipeline->>Pipeline : _classify_fallback_decision()
-alt Should fallback
-Pipeline->>Network : _fetch_article_text()
-Network-->>Pipeline : ArticleText
-Pipeline->>Matcher : match_text(combined_text)
+LF->>LF : _entry_to_pattern_findings(...)
+LF->>PM : match_text(clean_text)
+PM-->>LF : hits
+LF->>LF : _classify_fallback_decision(...)
+alt Should fallback and helpful
+LF->>LF : _fetch_article_text(entry_url)
+LF->>PM : match_text(combined_text)
+PM-->>LF : post_hits
 end
+LF->>LF : _EntryDeduper().is_new(...)
+LF->>DS : async_ingest_findings_batch(canonicals)
+DS-->>LF : acceptance/storage counts
 end
+LF-->>Client : FeedPipelineRunResult(...)
 end
-Pipeline-->>Scheduler : FeedPipelineRunResult
 ```
 
 **Diagram sources**
-- [live_feed_pipeline.py:1754-2385](file://pipeline/live_feed_pipeline.py#L1754-L2385)
+- [live_feed_pipeline.py:1767-2399](file://pipeline/live_feed_pipeline.py#L1767-L2399)
 - [rss_atom_adapter.py](file://discovery/rss_atom_adapter.py)
 - [pattern_matcher.py:643-740](file://patterns/pattern_matcher.py#L643-L740)
-- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [duckdb_store.py:643-800](file://knowledge/duckdb_store.py#L643-L800)
 
 ## Detailed Component Analysis
 
-### Entry Processing Pipeline
-The core entry processing involves multiple stages of text assembly and pattern matching:
+### Feed URL Ingestion and Entry Normalization
+- Fetches up to a bounded number of entries with timeout and byte limits.
+- Parses feed metadata (title, summary, rich content, author, language).
+- Computes entry quality signals before text assembly to guide routing and fallback decisions.
 
-```mermaid
-flowchart TD
-Start([Entry Received]) --> Quality["Compute Quality Signal"]
-Quality --> Assembly["Assemble Clean Text"]
-Assembly --> PreScan["Pre-fallback Pattern Scan"]
-PreScan --> HasHits{"Pre-fallback Hits?"}
-HasHits --> |Yes| Dedup["Per-entry Deduplication"]
-HasHits --> |No| FallbackDecision["Fallback Decision Logic"]
-Dedup --> BuildFindings["Build CanonicalFindings"]
-FallbackDecision --> ShouldFallback{"Should Fallback?"}
-ShouldFallback --> |No| BuildFindings
-ShouldFallback --> |Yes| ArticleFetch["Fetch Article Text"]
-ArticleFetch --> CombineText["Combine Text"]
-CombineText --> PostScan["Post-fallback Pattern Scan"]
-PostScan --> BuildFindings
-BuildFindings --> Store["Store Findings"]
-Store --> End([Complete])
-```
-
-**Diagram sources**
-- [live_feed_pipeline.py:1513-1734](file://pipeline/live_feed_pipeline.py#L1513-L1734)
-- [live_feed_pipeline.py:1601-1683](file://pipeline/live_feed_pipeline.py#L1601-L1683)
-
-### Quality Signal Computation
-The quality signal system uses multiple heuristics to assess entry quality:
-
-```mermaid
-classDiagram
-class EntryQualitySignal {
-+string quality_band
-+int quality_score
-+string quality_reason_tag
-+bool metadata_boost
-+bool language_mismatch
-}
-class QualityHeuristics {
-+int MIN_SUBSTANTIVE_CHARS
-+int QUALITY_TITLE_ONLY_CHARS
-+int QUALITY_SUMMARY_MIN_CHARS
-+frozenset OSINT_RELEVANT_LANGUAGES
-+frozenset HIGH_VALUE_FEED_LANGS
-+compute_quality_signal() EntryQualitySignal
-}
-QualityHeuristics --> EntryQualitySignal : "produces"
-```
-
-**Diagram sources**
-- [live_feed_pipeline.py:78-193](file://pipeline/live_feed_pipeline.py#L78-L193)
-
-### Fallback Decision System
-The fallback decision logic evaluates multiple factors to determine enrichment value:
-
-```mermaid
-flowchart TD
-Entry[Entry Analysis] --> PreHits[Pre-fallback Hits: N]
-Entry --> Quality[Quality Signal]
-Entry --> Adapter[Adapter Signals]
-PreHits --> CheckPre{"N > 0?"}
-CheckPre --> |Yes| Waste["Wasteful Fallback"]
-CheckPre --> |No| CheckSkip{"Skip Due to Quality?"}
-CheckSkip --> |Yes| SkipReason["Skip Reason"]
-CheckSkip --> |No| CheckForce{"Force Fallback?"}
-CheckForce --> |Yes| ForceOutcome["Force Outcome"]
-CheckForce --> |No| NormalFallback["Normal Fallback"]
-Waste --> Decision[Final Decision]
-SkipReason --> Decision
-ForceOutcome --> Decision
-NormalFallback --> Decision
-```
-
-**Diagram sources**
-- [live_feed_pipeline.py:341-487](file://pipeline/live_feed_pipeline.py#L341-L487)
-
-### Economic Analysis Framework
-The pipeline tracks economic metrics to guide scheduling decisions:
-
-```mermaid
-graph TB
-subgraph "Feed Economics Metrics"
-RichFeed[Feed-native Findings]
-FallbackFindings[Fallback Findings]
-UsefulFallback[Useful Fallback Count]
-WasteFallback[Waste Fallback Count]
-end
-subgraph "Calculations"
-YieldRatio[Rich/Total Yield Ratio]
-ValueRatio[Useful/(Useful+Waste)]
-Confidence[Confidence Score]
-NextAction[Next Action Recommendation]
-end
-RichFeed --> YieldRatio
-FallbackFindings --> YieldRatio
-UsefulFallback --> ValueRatio
-WasteFallback --> ValueRatio
-YieldRatio --> Confidence
-ValueRatio --> Confidence
-Confidence --> NextAction
-```
-
-**Diagram sources**
-- [live_feed_pipeline.py:538-693](file://pipeline/live_feed_pipeline.py#L538-L693)
-- [live_feed_pipeline.py:696-723](file://pipeline/live_feed_pipeline.py#L696-L723)
+Key behaviors:
+- Granular upstream blocker classification from adapter errors.
+- Per-run dedup by entry_url to avoid reprocessing.
+- Deterministic timestamp handling.
 
 **Section sources**
-- [live_feed_pipeline.py:1513-1734](file://pipeline/live_feed_pipeline.py#L1513-L1734)
-- [live_feed_pipeline.py:341-487](file://pipeline/live_feed_pipeline.py#L341-L487)
-- [live_feed_pipeline.py:538-723](file://pipeline/live_feed_pipeline.py#L538-L723)
+- [live_feed_pipeline.py:1820-1946](file://pipeline/live_feed_pipeline.py#L1820-L1946)
+- [live_feed_pipeline.py:1948-2021](file://pipeline/live_feed_pipeline.py#L1948-L2021)
+- [live_feed_pipeline.py:1166-1174](file://pipeline/live_feed_pipeline.py#L1166-L1174)
+
+### HTML-to-Text Conversion with Word-Boundary Safety
+- Strips script/style blocks first, then tags, normalizes whitespace, and unescapes entities after tag removal.
+- Rich content conversion optionally uses markdownify when available, falling back to tag stripping.
+- Minimum substantive thresholds ensure only meaningful content is used for pattern scanning.
+
+Safety invariants:
+- Order: remove script/style → strip tags → normalize whitespace → unescape.
+- Rich content minimum length prevents noise from tiny HTML fragments.
+
+**Section sources**
+- [live_feed_pipeline.py:880-951](file://pipeline/live_feed_pipeline.py#L880-L951)
+- [live_feed_pipeline.py:953-1004](file://pipeline/live_feed_pipeline.py#L953-L1004)
+- [live_feed_pipeline.py:1006-1081](file://pipeline/live_feed_pipeline.py#L1006-L1081)
+
+### Pattern Scanning Architecture
+- Uses AHO-Corasick automaton with case-insensitive matching and optional word-boundary enforcement.
+- Registry is bootstrapped with OSINT-focused literals and extended with structured regex post-processing.
+- Scanning is offloaded to threads with a shared semaphore limiting concurrent tasks.
+
+Concurrency control:
+- Global semaphore with bounded tasks to prevent resource exhaustion.
+- Fail-soft handling of pattern matcher failures.
+
+**Section sources**
+- [pattern_matcher.py:619-800](file://patterns/pattern_matcher.py#L619-L800)
+- [live_feed_pipeline.py:1244-1268](file://pipeline/live_feed_pipeline.py#L1244-L1268)
+
+### Entry Quality Signal Computation
+- Computes a 0–100 quality score based on text length, metadata presence, and language alignment.
+- Downgrades quality for adapter-detected spam/low-quality content.
+- Produces a quality band and reason tags for observability.
+
+Routing implications:
+- Metadata boosts and language match increase perceived value.
+- Adapter quality score influences final band to avoid cascading downgrades.
+
+**Section sources**
+- [live_feed_pipeline.py:78-194](file://pipeline/live_feed_pipeline.py#L78-L194)
+
+### Metadata-Aware Routing and Fallback Decision Classification
+- Structured fallback decision consolidates multiple heuristics into a single classification.
+- Decision tree considers pre-fallback hits, quality, adapter signals, and metadata/content mismatch.
+- Tracks whether fallback was forced, wasteful, helpful, or skipped.
+
+Fallback outcomes:
+- Forced fallback due to metadata/content mismatch.
+- Helpful fallback producing new findings.
+- Wasteful fallback when feed-native already had hits.
+- Skipping fallback for high-quality assembled text.
+
+**Section sources**
+- [live_feed_pipeline.py:322-488](file://pipeline/live_feed_pipeline.py#L322-L488)
+
+### Bounded Concurrency Pattern Offloading Mechanism
+- Shared semaphore limits concurrent pattern scans to a fixed number.
+- Offloads scanning to threads using asyncio.to_thread with fail-soft error propagation.
+- Prevents CPU-bound overload while maintaining responsiveness.
+
+**Section sources**
+- [live_feed_pipeline.py:206-214](file://pipeline/live_feed_pipeline.py#L206-L214)
+- [live_feed_pipeline.py:1248-1268](file://pipeline/live_feed_pipeline.py#L1248-L1268)
+
+### Deduplication Strategies
+- Per-run dedup by entry_url to avoid reprocessing the same entry across runs.
+- Per-entry dedup by (label, pattern, value) to preserve first occurrence.
+- Aggregated counters track findings lost to dedup for diagnosis.
+
+**Section sources**
+- [live_feed_pipeline.py:1199-1241](file://pipeline/live_feed_pipeline.py#L1199-L1241)
+- [live_feed_pipeline.py:2137-2139](file://pipeline/live_feed_pipeline.py#L2137-L2139)
+
+### Storage Integration
+- Finds are mapped to CanonicalFinding and ingested via DuckDBShadowStore.
+- Acceptance and storage are tracked separately: accepted reflects quality-gated pass, stored reflects successful DuckDB write.
+- Quality gates include entropy checks and persistent duplicate detection.
+
+**Section sources**
+- [live_feed_pipeline.py:2207-2247](file://pipeline/live_feed_pipeline.py#L2207-L2247)
+- [duckdb_store.py:148-224](file://knowledge/duckdb_store.py#L148-L224)
+
+### Economic Analysis Features
+- Feed branch evaluation tracks whether feed-native or fallback produced findings.
+- Measures waste ratios, value ratios, and squandered high-usefulness entries.
+- Computes next action recommendations and confidence annotations.
+- Provides dict-style verdicts with actionable signals for scheduler/exporter.
+
+**Section sources**
+- [live_feed_pipeline.py:535-723](file://pipeline/live_feed_pipeline.py#L535-L723)
+- [live_feed_pipeline.py:725-775](file://pipeline/live_feed_pipeline.py#L725-L775)
+- [live_feed_pipeline.py:2329-2396](file://pipeline/live_feed_pipeline.py#L2329-L2396)
 
 ## Dependency Analysis
-The Live Feed Pipeline has well-defined dependencies that support its passive operation:
+The pipeline exhibits clear layering:
+- Control plane: live_feed_pipeline orchestrates steps and aggregates results.
+- Pattern intelligence: pattern_matcher provides the scanning engine.
+- Storage: duckdb_store manages canonical ingestion and quality gating.
+- Network/runtime: session_runtime supplies HTTP client for fallback.
+- System integration: resource_governor provides UMA state for fail-soft aborts.
 
 ```mermaid
-graph TB
-subgraph "External Dependencies"
-AH[pyahocorasick]
-AIOHTTP[aiohttp]
-MSGSPEC[msgspec]
-HTML[html.unescape]
-end
-subgraph "Internal Dependencies"
-PM[pattern_matcher.py]
-RA[rss_atom_adapter.py]
-DS[duckdb_store.py]
-SR[session_runtime.py]
-PF[public_fetcher.py]
-end
-subgraph "Core Pipeline"
-LFP[live_feed_pipeline.py]
-end
-LFP --> PM
-LFP --> RA
-LFP --> DS
-LFP --> SR
-LFP --> PF
-PM --> AH
-LFP --> MSGSPEC
-LFP --> HTML
-SR --> AIOHTTP
-PF --> AIOHTTP
+graph LR
+LF["live_feed_pipeline.py"] --> PM["pattern_matcher.py"]
+LF --> DS["duckdb_store.py"]
+LF --> RA["rss_atom_adapter.py"]
+LF --> PF["public_fetcher.py"]
+LF --> SR["session_runtime.py"]
+LF --> RG["resource_governor.py"]
 ```
 
 **Diagram sources**
-- [live_feed_pipeline.py:31-48](file://pipeline/live_feed_pipeline.py#L31-L48)
-- [pattern_matcher.py:17-31](file://patterns/pattern_matcher.py#L17-L31)
+- [live_feed_pipeline.py:1767-2399](file://pipeline/live_feed_pipeline.py#L1767-L2399)
+- [pattern_matcher.py:619-800](file://patterns/pattern_matcher.py#L619-L800)
+- [duckdb_store.py:643-800](file://knowledge/duckdb_store.py#L643-L800)
+- [rss_atom_adapter.py](file://discovery/rss_atom_adapter.py)
+- [public_fetcher.py](file://fetching/public_fetcher.py)
 - [session_runtime.py](file://network/session_runtime.py)
-
-### Integration Points
-The pipeline integrates with several system components:
-
-- **PatternMatcher**: Central pattern matching engine with configurable registries
-- **RSS/Atom Adapter**: Feed discovery and fetching layer
-- **DuckDB Store**: Persistent storage for findings
-- **Session Runtime**: HTTP client management for article fallback
-- **Public Fetcher**: Character encoding and decoding utilities
+- [resource_governor.py](file://core/resource_governor.py)
 
 **Section sources**
-- [live_feed_pipeline.py:1211-1211](file://pipeline/live_feed_pipeline.py#L1211-L1211)
-- [live_feed_pipeline.py:1447-1454](file://pipeline/live_feed_pipeline.py#L1447-L1454)
-- [live_feed_pipeline.py:2197-2203](file://pipeline/live_feed_pipeline.py#L2197-L2203)
+- [live_feed_pipeline.py:1767-2399](file://pipeline/live_feed_pipeline.py#L1767-L2399)
+- [pattern_matcher.py:619-800](file://patterns/pattern_matcher.py#L619-L800)
+- [duckdb_store.py:643-800](file://knowledge/duckdb_store.py#L643-L800)
 
 ## Performance Considerations
-The Live Feed Pipeline implements several performance optimizations:
+- Concurrency: Limit pattern scanning threads to balance throughput and resource usage.
+- Text caps: Enforce maximum assembled text length to bound memory and scanning time.
+- Decoding: Use efficient decoding with replacement counting to maintain charset truth.
+- Quality gates: Early filtering reduces downstream processing overhead.
+- Observability: Sample captures and counters enable targeted optimization.
 
-### Concurrency Control
-- Bounded pattern scanning concurrency (default: 4 tasks)
-- Semaphore-based pattern offloading
-- Async I/O for network operations
-- Timeout management for all external operations
+[No sources needed since this section provides general guidance]
 
-### Memory Management
-- Hard caps on processed text sizes
-- Bounded sample captures for observability
-- Efficient deduplication using sets and frozen sets
-- Memory-safe HTML processing with defensive fallbacks
+## Troubleshooting Guide
+Common issues and handling patterns:
+- UMA emergency abort: Pipeline returns with error indicating emergency state.
+- Fetch errors: Granular classification of upstream blockers (XML parse, content type, redirect, DNS, connection, robots, HTTP errors).
+- Pattern scan failures: Fail-soft with runtime error propagation.
+- Store exceptions: Partial acceptance and storage counts preserved; error recorded for diagnosis.
+- Zero-signal scenarios: Signal-stage diagnosis distinguishes empty fetch, content empty, no pattern hits, findings build loss, and empty registry.
 
-### Processing Optimizations
-- Lazy pattern matcher building
-- Case-insensitive matching with single text normalization
-- Word-boundary enforcement for precise matching
-- Structured entity extraction via regex post-processing
+**Section sources**
+- [live_feed_pipeline.py:1804-1818](file://pipeline/live_feed_pipeline.py#L1804-L1818)
+- [live_feed_pipeline.py:1844-1900](file://pipeline/live_feed_pipeline.py#L1844-L1900)
+- [live_feed_pipeline.py:1844-1946](file://pipeline/live_feed_pipeline.py#L1844-L1946)
+- [live_feed_pipeline.py:1703-1704](file://pipeline/live_feed_pipeline.py#L1703-L1704)
+- [live_feed_pipeline.py:2233-2240](file://pipeline/live_feed_pipeline.py#L2233-L2240)
+- [live_feed_pipeline.py:498-532](file://pipeline/live_feed_pipeline.py#L498-L532)
+
+## Conclusion
+The Live Feed Pipeline provides a robust, deterministic, and observable system for discovering OSINT findings from RSS/Atom feeds. Its metadata-aware quality routing, structured fallback decisions, bounded concurrency, and economic analysis enable efficient and informed scheduling. Integration with DuckDBShadowStore ensures quality-gated, persistent storage with comprehensive observability.
+
+[No sources needed since this section summarizes without analyzing specific files]
+
+## Appendices
+
+### Configuration Options
+- Feed processing limits:
+  - max_entries: Upper bound for entries processed per run
+  - timeout_s: Feed fetch timeout
+  - max_bytes: Maximum bytes to fetch
+- Pattern task concurrency:
+  - MAX_FEED_PATTERN_TASKS: Semaphore limit for concurrent pattern scans
+- Quality thresholds:
+  - MIN_SUBSTANTIVE_CHARS: Minimum text length for substantive content
+  - QUALITY_TITLE_ONLY_CHARS: Threshold for title-only quality
+  - QUALITY_SUMMARY_MIN_CHARS: Minimum summary length for quality
+  - MIN_ARTICLE_FALLBACK_CHARS: Threshold for triggering article fallback
+  - MAX_FEED_TEXT_CHARS: Cap on assembled text length
+  - FEED_PAYLOAD_CONTEXT_CHARS: Radius for payload context extraction
 
 **Section sources**
 - [live_feed_pipeline.py:54-56](file://pipeline/live_feed_pipeline.py#L54-L56)
-- [live_feed_pipeline.py:209-214](file://pipeline/live_feed_pipeline.py#L209-L214)
-- [live_feed_pipeline.py:1236-1255](file://pipeline/live_feed_pipeline.py#L1236-L1255)
-- [pattern_matcher.py:788-800](file://patterns/pattern_matcher.py#L788-L800)
+- [live_feed_pipeline.py:63-69](file://pipeline/live_feed_pipeline.py#L63-L69)
+- [live_feed_pipeline.py:1367-1374](file://pipeline/live_feed_pipeline.py#L1367-L1374)
+- [live_feed_pipeline.py:54-56](file://pipeline/live_feed_pipeline.py#L54-L56)
+- [live_feed_pipeline.py:1275-1316](file://pipeline/live_feed_pipeline.py#L1275-L1316)
 
-## Troubleshooting Guide
-
-### Common Issues and Resolutions
-
-#### Zero Signal Scenarios
-The pipeline provides comprehensive diagnostics for zero-signal runs:
-- **Empty Registry**: No patterns configured in PatternMatcher
-- **Empty Fetch**: No entries received from adapter
-- **Content Empty**: Assembled text was empty despite substantive metadata
-- **No Pattern Hits**: Content present but no pattern matches found
-- **Findings Build Loss**: Hits found but filtered by per-entry dedup
-
-#### Error Handling Patterns
-The pipeline implements fail-soft error handling:
-- UMA emergency state detection and graceful abort
-- Granular error categorization for upstream failures
-- Partial result preservation during storage exceptions
-- Timeout handling with structured error reporting
-
-#### Performance Issues
-Common performance bottlenecks and solutions:
-- **High Memory Usage**: Adjust MAX_FEED_TEXT_CHARS and sample limits
-- **Slow Pattern Matching**: Optimize pattern registry size and complexity
-- **Network Latency**: Tune timeouts and fallback strategies
-- **Storage Backpressure**: Monitor DuckDB ingestion rates and adjust concurrency
+### Example Execution Flow
+- Initialize pipeline with feed URL and optional store.
+- Fetch entries from adapter with bounded parameters.
+- For each entry: assemble text, scan patterns, classify fallback, enrich if helpful, deduplicate, and store.
+- Aggregate observability and economic metrics.
 
 **Section sources**
-- [live_feed_pipeline.py:490-533](file://pipeline/live_feed_pipeline.py#L490-L533)
-- [live_feed_pipeline.py:1741-1749](file://pipeline/live_feed_pipeline.py#L1741-L1749)
-- [live_feed_pipeline.py:1832-1888](file://pipeline/live_feed_pipeline.py#L1832-L1888)
+- [live_feed_pipeline.py:1767-2399](file://pipeline/live_feed_pipeline.py#L1767-L2399)
 
-## Conclusion
-The Live Feed Pipeline represents a robust, efficient system for passive RSS/Atom feed processing. Its design emphasizes determinism, quality signaling, and economic decision-making while maintaining strict separation from LLM-based approaches. The pipeline's comprehensive observability, structured fallback logic, and economic analysis provide operators with actionable insights for feed scheduling and resource allocation.
+### Error Handling Patterns
+- UMA emergency: Abort run early with error.
+- Fetch-level errors: Classify blockers and propagate root cause.
+- Pattern scan failures: Raise runtime error with context.
+- Store exceptions: Preserve partial acceptance/storage counts and record error.
 
-Key strengths include:
-- Pure pattern-matching approach with configurable registries
-- Comprehensive quality and economic analysis
-- Structured fallback decision logic
-- Robust error handling and diagnostics
-- Efficient memory and concurrency management
+**Section sources**
+- [live_feed_pipeline.py:1804-1818](file://pipeline/live_feed_pipeline.py#L1804-L1818)
+- [live_feed_pipeline.py:1844-1900](file://pipeline/live_feed_pipeline.py#L1844-L1900)
+- [live_feed_pipeline.py:1703-1704](file://pipeline/live_feed_pipeline.py#L1703-L1704)
+- [live_feed_pipeline.py:2233-2240](file://pipeline/live_feed_pipeline.py#L2233-L2240)
 
-The system is well-suited for continuous monitoring of security-focused feeds while providing the flexibility to adapt pattern registries and economic parameters based on operational requirements.
+### Performance Optimization Techniques
+- Tune MAX_FEED_PATTERN_TASKS to match available CPU cores.
+- Monitor assembled text lengths and adjust MAX_FEED_TEXT_CHARS.
+- Use adapter signals to reduce fallback attempts on high-quality entries.
+- Leverage sample captures to focus optimization on high-yield entries.
+
+[No sources needed since this section provides general guidance]

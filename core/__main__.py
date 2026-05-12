@@ -355,44 +355,45 @@ def _scheduler_result_acquisition_payload(
     _acq_report: dict = {}
     try:
         _plan = getattr(scheduler, "_acquisition_plan", None)
+        _nd_raw = getattr(_plan, "nonfeed_plan_debug", None) if _plan is not None else None
         _nd: dict | None = None
-        if _plan is not None and hasattr(_plan, "nonfeed_plan_debug"):
+        if _nd_raw is not None:
             _nd = {
-                "domain_detected": getattr(_plan.nonfeed_plan_debug, "domain_detected", False),
-                "wallet_detected": getattr(_plan.nonfeed_plan_debug, "wallet_detected", False),
+                "domain_detected": getattr(_nd_raw, "domain_detected", False),
+                "wallet_detected": getattr(_nd_raw, "wallet_detected", False),
                 "enabled_nonfeed_lanes": list(
-                    getattr(_plan.nonfeed_plan_debug, "enabled_nonfeed_lanes", ()) or ()
+                    getattr(_nd_raw, "enabled_nonfeed_lanes", ()) or ()
                 ),
                 "disabled_nonfeed_lanes": list(
-                    getattr(_plan.nonfeed_plan_debug, "disabled_nonfeed_lanes", ()) or ()
+                    getattr(_nd_raw, "disabled_nonfeed_lanes", ()) or ()
                 ),
                 "disabled_reasons": list(
-                    getattr(_plan.nonfeed_plan_debug, "disabled_reasons", ()) or ()
+                    getattr(_nd_raw, "disabled_reasons", ()) or ()
                 ),
                 "scheduled_nonfeed_lanes": list(
-                    getattr(_plan.nonfeed_plan_debug, "scheduled_nonfeed_lanes", ()) or ()
+                    getattr(_nd_raw, "scheduled_nonfeed_lanes", ()) or ()
                 ),
                 "hardware_skipped_lanes": list(
-                    getattr(_plan.nonfeed_plan_debug, "hardware_skipped_lanes", ()) or ()
+                    getattr(_nd_raw, "hardware_skipped_lanes", ()) or ()
                 ),
                 "nonfeed_execution_scheduled": getattr(
-                    _plan.nonfeed_plan_debug, "nonfeed_execution_scheduled", False
+                    _nd_raw, "nonfeed_execution_scheduled", False
                 ),
                 "nonfeed_execution_skip_reason": getattr(
-                    _plan.nonfeed_plan_debug, "nonfeed_execution_skip_reason", None
+                    _nd_raw, "nonfeed_execution_skip_reason", None
                 ),
                 # F216B: nonfeed_diagnostic profile telemetry
                 "acquisition_profile": getattr(
-                    _plan.nonfeed_plan_debug, "acquisition_profile", "default"
+                    _nd_raw, "acquisition_profile", "default"
                 ),
                 "feed_cap_reason": getattr(
-                    _plan.nonfeed_plan_debug, "feed_cap_reason", None
+                    _nd_raw, "feed_cap_reason", None
                 ),
                 "nonfeed_priority_enabled": getattr(
-                    _plan.nonfeed_plan_debug, "nonfeed_priority_enabled", False
+                    _nd_raw, "nonfeed_priority_enabled", False
                 ),
                 "nonfeed_profile_expected_lanes": list(
-                    getattr(_plan.nonfeed_plan_debug, "nonfeed_profile_expected_lanes", ()) or ()
+                    getattr(_nd_raw, "nonfeed_profile_expected_lanes", ()) or ()
                 ),
             }
         _acq_report = build_acquisition_report(
@@ -412,6 +413,8 @@ def _scheduler_result_acquisition_payload(
             # F217C: PUBLIC bootstrap telemetry
             public_terminal_stage=getattr(result, "public_terminal_stage", ""),
             public_stage_counters=getattr(result, "public_stage_counters", None),
+            # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
+            public_discovery_empty_reason=getattr(result, "public_discovery_empty_reason", ""),
             # F217D: CT provider resilience telemetry
             ct_provider_status=getattr(result, "ct_provider_status", ""),
             ct_cache_used=getattr(result, "ct_cache_used", False),
@@ -515,6 +518,8 @@ def _scheduler_result_acquisition_payload(
                 # F217C: PUBLIC bootstrap telemetry
                 "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
                 "public_stage_counters": getattr(result, "public_stage_counters", None),
+                # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
+                "public_discovery_empty_reason": getattr(result, "public_discovery_empty_reason", ""),
                 # F217D: CT provider resilience telemetry
                 "ct_provider_status": getattr(result, "ct_provider_status", ""),
                 "ct_cache_used": getattr(result, "ct_cache_used", False),
@@ -1552,9 +1557,12 @@ async def run_sprint(
                 "git_snapshot": "unknown",
                 "export_dir": export_dir,
             },
-            # Sprint F150H: Canonical operator summary — condensed truth on core boundary
-            # CHECKPOINT-0 additive derived fields
+            # Sprint F150H+F206S: Canonical operator summary — built ONCE, used in both
+            # report_dict and handoff. Acquisition payload spread additively on top so
+            # any canonical_run_summary fields also in _acq_payload are overwritten
+            # with acquisition truth (correct: acquisition fields should take precedence).
             "canonical_run_summary": {
+
                 "meaningful": runtime_truth["is_meaningful"],
                 "primary_signal": runtime_truth["primary_signal_source"],
                 "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
@@ -1567,7 +1575,6 @@ async def run_sprint(
                 "hypothesis_count": (intel.get("hypothesis_pack") or {}).get("hypothesis_count", 0),
                 "first_action": (intel.get("sprint_verdict") or {}).get("first_action", ""),
                 "confidence": (intel.get("sprint_verdict") or {}).get("confidence", ""),
-                # CHECKPOINT-0 derived additive fields
                 "runtime_truth_level": runtime_truth_level,
                 "checkpoint_zero_category": _ckpt_category,
                 "checkpoint_zero_reason": _checkpoint_zero_reason,
@@ -1578,64 +1585,18 @@ async def run_sprint(
                 "effective_parallelism": len(live_feed_urls),
                 "effective_timeouts": {},
                 "active_iteration_count": active_iterations,
-                # F166B+F178B: Pre-loop and pre-active starvation surfaces
                 "pre_loop_elapsed_s": result.pre_loop_elapsed_s,
                 "pre_loop_blocker_reason": result.pre_loop_blocker_reason,
                 "pre_active_starvation": result.pre_active_starved,
                 "export_finish_layer_status": _export_finish_status,
-                # Sprint F163C: public_error must surface at canonical boundary
                 "public_error": result.public_error,
-                # Sprint F194A: CT log canonical findings — additive to sprint truth
                 "ct_log_discovered": result.ct_log_discovered,
                 "ct_log_stored": result.ct_log_stored,
                 "ct_log_accepted_findings": result.ct_log_accepted_findings,
-                # F193B: CommonCrawl + academic discovery additive truth
                 "cc_archive_injected": result.cc_archive_injected,
                 "academic_findings_count": result.academic_findings_count,
-                # Sprint F160E: Canonical timing truth — separates active window from full run
                 "timing_truth": timing_truth,
-            },
-            # [F208I-A] Canonical acquisition terminality and report truth.
-            # _scheduler_result_acquisition_payload() is pure, fail-soft — missing scheduler
-            # fields produce None/empty defaults, never crash.
-            **_scheduler_result_acquisition_payload(result, scheduler, query, duration_s),
-            # Sprint F206S: Additive canonical truth surfaces for benchmark artifact hygiene.
-            # The nested canonical_run_summary above (lines 964-1004) is a VALUE, not a top-level key.
-            # Add canonical_run_summary as a top-level key so it surfaces in the JSON artifact.
-            "canonical_run_summary": {
-                "meaningful": runtime_truth["is_meaningful"],
-                "primary_signal": runtime_truth["primary_signal_source"],
-                "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
-                "dominant_signal_path": (intel.get("signal_path") or {}).get("dominant_signal_path", "unknown"),
-                "corroborated": (intel.get("signal_path") or {}).get("is_corroborated", False),
-                "is_noisy": (intel.get("signal_path") or {}).get("is_noisy", False),
-                "next_pivot": (intel.get("signal_path") or {}).get("next_pivot_recommendation", "unknown"),
-                "branch_verdict": (intel.get("branch_value") or {}).get("branch_verdict", "unknown"),
-                "risk_score": (intel.get("correlation") or {}).get("risk_score", 0.0),
-                "hypothesis_count": (intel.get("hypothesis_pack") or {}).get("hypothesis_count", 0),
-                "first_action": (intel.get("sprint_verdict") or {}).get("first_action", ""),
-                "confidence": (intel.get("sprint_verdict") or {}).get("confidence", ""),
-                "runtime_truth_level": runtime_truth_level,
-                "checkpoint_zero_category": _ckpt_category,
-                "checkpoint_zero_reason": _checkpoint_zero_reason,
-                "observed_run_tuple": observed_run_tuple,
-                "canonical_sprint_owner": "core.__main__.run_sprint",
-                "canonical_path_used": "run_sprint",
-                "effective_source_mix": src_mix_str,
-                "effective_parallelism": len(live_feed_urls),
-                "effective_timeouts": {},
-                "active_iteration_count": active_iterations,
-                "pre_loop_elapsed_s": result.pre_loop_elapsed_s,
-                "pre_loop_blocker_reason": result.pre_loop_blocker_reason,
-                "pre_active_starvation": result.pre_active_starved,
-                "export_finish_layer_status": _export_finish_status,
-                "public_error": result.public_error,
-                "ct_log_discovered": result.ct_log_discovered,
-                "ct_log_stored": result.ct_log_stored,
-                "ct_log_accepted_findings": result.ct_log_accepted_findings,
-                "cc_archive_injected": result.cc_archive_injected,
-                "academic_findings_count": result.academic_findings_count,
-                # Sprint F215D: Early exit semantics — canonical exit classification
+                # Sprint F215D: Early exit semantics
                 "early_exit_class": getattr(result, "early_exit_class", ""),
                 "early_exit_reason": getattr(result, "early_exit_reason", ""),
                 "requested_duration_s": getattr(result, "requested_duration_s", 0.0),
@@ -1644,6 +1605,9 @@ async def run_sprint(
                 "active_window_budget_s": getattr(result, "active_window_budget_s", 0.0),
                 "active_window_elapsed_s": getattr(result, "active_window_elapsed_s", 0.0),
             },
+            # [F208I-A] Acquisition terminality and report truth — pure, fail-soft.
+            # Spread on top of canonical_run_summary so acquisition fields take precedence.
+            **_scheduler_result_acquisition_payload(result, scheduler, query, duration_s),
             "runtime_truth": runtime_truth,
             "timing_truth": timing_truth,
             # Sprint M218A: GC startup tuning telemetry

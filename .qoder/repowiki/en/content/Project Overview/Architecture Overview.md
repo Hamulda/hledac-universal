@@ -2,18 +2,21 @@
 
 <cite>
 **Referenced Files in This Document**
-- [__main__.py](file://hledac/universal/__main__.py)
-- [core/__main__.py](file://hledac/universal/core/__main__.py)
-- [autonomous_orchestrator.py](file://hledac/universal/autonomous_orchestrator.py)
-- [brain/__init__.py](file://hledac/universal/brain/__init__.py)
-- [knowledge/__init__.py](file://hledac/universal/knowledge/__init__.py)
-- [layers/__init__.py](file://hledac/universal/layers/__init__.py)
-- [runtime/sprint_scheduler.py](file://hledac/universal/runtime/sprint_scheduler.py)
-- [security/__init__.py](file://hledac/universal/security/__init__.py)
-- [orchestrator/global_scheduler.py](file://hledac/universal/orchestrator/global_scheduler.py)
-- [paths.py](file://hledac/universal/paths.py)
-- [knowledge/duckdb_store.py](file://hledac/universal/knowledge/duckdb_store.py)
-- [knowledge/lancedb_store.py](file://hledac/universal/knowledge/lancedb_store.py)
+- [REAL_ARCHITECTURE.md](file://REAL_ARCHITECTURE.md)
+- [README.md](file://README.md)
+- [__main__.py](file://__main__.py)
+- [orchestrator/__init__.py](file://orchestrator/__init__.py)
+- [autonomous_orchestrator.py](file://autonomous_orchestrator.py)
+- [brain/__init__.py](file://brain/__init__.py)
+- [hermes3_engine.py](file://brain/hermes3_engine.py)
+- [knowledge/__init__.py](file://knowledge/__init__.py)
+- [duckdb_store.py](file://knowledge/duckdb_store.py)
+- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
+- [live_public_pipeline.py](file://pipeline/live_public_pipeline.py)
+- [base.py](file://transport/base.py)
+- [base.py](file://coordinators/base.py)
+- [layer_manager.py](file://layers/layer_manager.py)
+- [workflow_orchestrator.py](file://intelligence/workflow_orchestrator.py)
 </cite>
 
 ## Table of Contents
@@ -26,500 +29,400 @@
 7. [Performance Considerations](#performance-considerations)
 8. [Troubleshooting Guide](#troubleshooting-guide)
 9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
 
 ## Introduction
-This document presents the Hledac Universal system architecture, focusing on the layered design across brain, knowledge, and runtime layers. It explains boot and initialization sequences, the authority model with canonical, shell, alternate, residual, and diagnostic roles, system boundaries, component interactions, and data flows. It also documents technical decisions such as the use of asyncio for concurrency, storage layer choices (DuckDB, LMDB, LanceDB), and layered security. Finally, it covers infrastructure requirements, scalability considerations, deployment topology, and system integration with external intelligence sources and reporting systems.
+This document describes the high-level architecture of Hledac Universal, focusing on the layered design that separates concerns across:
+- Core orchestrator layer
+- Pipeline system
+- Knowledge management layer
+- Transport abstraction
+- Intelligence modules
+- AI/ML brain system
+
+It explains the canonical ownership model that ensures single-source-of-truth data consistency, component interaction patterns, data flow architecture, and integration points between subsystems. It also documents system boundaries, external dependencies, and the design philosophy enabling autonomous operation with minimal human intervention.
 
 ## Project Structure
-The repository is organized around three primary layers:
-- Brain layer: reasoning engines, hypothesis engines, and model lifecycle management.
-- Knowledge layer: storage, graph, and retrieval systems.
-- Runtime layer: scheduling, lifecycle management, and orchestration.
-
-Supporting modules include:
-- Layers: security, stealth, privacy, communication, content, and coordination.
-- Security: PII detection, encryption, vault management, and steganography detection.
-- Orchestrator: global priority scheduling for distributed processing on a single M1.
-- Paths: canonical path authority and boot hygiene.
+Hledac Universal is organized into clearly separated layers and modules:
+- Runtime entry points and lifecycle management
+- Pipeline for discovery, fetching, parsing, and canonical storage
+- Knowledge layer for analytics, graph, and persistence
+- Transport abstraction for network I/O
+- Intelligence modules for analysis and synthesis
+- AI/ML brain for decision-making and reasoning
+- Layer orchestration for M1 memory optimization
 
 ```mermaid
 graph TB
 subgraph "Entry Points"
-A["hledac.universal.__main__<br/>Shell/Dispatcher"]
-B["hledac.universal.core.__main__<br/>Canonical Owner"]
-end
-subgraph "Brain Layer"
-C["brain/__init__.py<br/>Engines & Facades"]
-end
-subgraph "Knowledge Layer"
-D["knowledge/__init__.py<br/>Graph & Storage"]
-E["knowledge/duckdb_store.py<br/>DuckDB Shadow Store"]
-F["knowledge/lancedb_store.py<br/>LanceDB Identity Store"]
-end
-subgraph "Runtime Layer"
-G["runtime/sprint_scheduler.py<br/>Scheduler"]
-end
-subgraph "Supporting"
-H["layers/__init__.py<br/>Security/Stealth/Privacy/etc."]
-I["security/__init__.py<br/>PII/Encryption/Vaults"]
-J["orchestrator/global_scheduler.py<br/>Global Priority Scheduler"]
-K["paths.py<br/>Canonical Paths & Boot Hygiene"]
-end
-A --> B
-B --> G
-G --> D
-D --> E
-D --> F
-B --> C
-B --> H
-B --> I
-B --> J
-B --> K
-```
-
-**Diagram sources**
-- [__main__.py:1-200](file://hledac/universal/__main__.py#L1-L200)
-- [core/__main__.py:1-120](file://hledac/universal/core/__main__.py#L1-L120)
-- [brain/__init__.py:1-60](file://hledac/universal/brain/__init__.py#L1-L60)
-- [knowledge/__init__.py:1-60](file://hledac/universal/knowledge/__init__.py#L1-L60)
-- [runtime/sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
-- [security/__init__.py:1-40](file://hledac/universal/security/__init__.py#L1-L40)
-- [orchestrator/global_scheduler.py:1-80](file://hledac/universal/orchestrator/global_scheduler.py#L1-L80)
-- [paths.py:1-120](file://hledac/universal/paths.py#L1-L120)
-
-**Section sources**
-- [__main__.py:1-200](file://hledac/universal/__main__.py#L1-L200)
-- [core/__main__.py:1-120](file://hledac/universal/core/__main__.py#L1-L120)
-- [brain/__init__.py:1-60](file://hledac/universal/brain/__init__.py#L1-L60)
-- [knowledge/__init__.py:1-60](file://hledac/universal/knowledge/__init__.py#L1-L60)
-- [layers/__init__.py:1-60](file://hledac/universal/layers/__init__.py#L1-L60)
-- [security/__init__.py:1-40](file://hledac/universal/security/__init__.py#L1-L40)
-- [orchestrator/global_scheduler.py:1-80](file://hledac/universal/orchestrator/global_scheduler.py#L1-L80)
-- [paths.py:1-120](file://hledac/universal/paths.py#L1-L120)
-
-## Core Components
-- Entry points and authority model:
-  - Shell/dispatcher: root entry point that delegates to canonical or alternate paths.
-  - Canonical owner: sole producer of canonical run truth and lifecycle ownership.
-  - Alternate/residual/diagnostic: non-canonical paths for migration, helpers, and probes.
-- Brain layer:
-  - Engines for reasoning, insight, inference, hypothesis, and model lifecycle management.
-  - Facade module exposing available engines with availability guards.
-- Knowledge layer:
-  - DuckDB-backed canonical facts store (DuckDBShadowStore).
-  - LanceDB-based identity store for entity resolution.
-  - Legacy compatibility seams for backward-compatibility.
-- Runtime layer:
-  - SprintScheduler orchestrates bounded sprints with tiered sources and lifecycle enforcement.
-- Supporting modules:
-  - Layers: security, stealth, privacy, communication, content, and coordination.
-  - Security: PII gate, vaults, encryption, steganography detection.
-  - Global scheduler: process pool with priority queues and CPU affinity.
-  - Paths: canonical path authority, RAM disk selection, boot hygiene.
-
-**Section sources**
-- [__main__.py:70-183](file://hledac/universal/__main__.py#L70-L183)
-- [core/__main__.py:1-60](file://hledac/universal/core/__main__.py#L1-L60)
-- [brain/__init__.py:1-60](file://hledac/universal/brain/__init__.py#L1-L60)
-- [knowledge/__init__.py:1-60](file://hledac/universal/knowledge/__init__.py#L1-L60)
-- [runtime/sprint_scheduler.py:1-60](file://hledac/universal/runtime/sprint_scheduler.py#L1-L60)
-- [security/__init__.py:1-40](file://hledac/universal/security/__init__.py#L1-L40)
-- [orchestrator/global_scheduler.py:1-60](file://hledac/universal/orchestrator/global_scheduler.py#L1-L60)
-- [paths.py:1-120](file://hledac/universal/paths.py#L1-L120)
-
-## Architecture Overview
-Hledac Universal follows a layered architecture:
-- Brain layer encapsulates reasoning and model lifecycle.
-- Knowledge layer provides durable and efficient storage for facts, identities, and graphs.
-- Runtime layer coordinates bounded sprints, enforces lifecycle, and orchestrates pipelines.
-- Supporting layers integrate security, stealth, privacy, and communication.
-
-```mermaid
-graph TB
-subgraph "Brain"
-BE["Hermes3Engine"]
-DE["DecisionEngine"]
-IE["InferenceEngine"]
-HE["HypothesisEngine"]
-MM["ModelManager"]
-end
-subgraph "Knowledge"
-DS["DuckDBShadowStore"]
-LS["LanceDBIdentityStore"]
-KG["KnowledgeGraphLayer"]
+MAIN["__main__.py"]
 end
 subgraph "Runtime"
-SC["SprintScheduler"]
-SL["SprintLifecycleManager"]
+SCHED["runtime/sprint_scheduler.py"]
 end
-subgraph "Support"
-SEC["SecurityLayer"]
-STE["StealthLayer"]
-PRIV["PrivacyLayer"]
-COMM["CommunicationLayer"]
-LAY["LayerManager"]
+subgraph "Pipeline"
+PIPE["pipeline/live_public_pipeline.py"]
 end
-BE --> DS
-IE --> DS
-HE --> DS
-MM --> DS
-DS --> KG
-LS --> KG
-SC --> SL
-SC --> DS
-SC --> LS
-SEC --> SC
-STE --> SC
-PRIV --> SC
-COMM --> SC
-LAY --> SEC
-LAY --> STE
-LAY --> PRIV
-LAY --> COMM
+subgraph "Knowledge"
+DUCKDB["knowledge/duckdb_store.py"]
+end
+subgraph "Transport"
+TRANS["transport/base.py"]
+end
+subgraph "Intelligence"
+WF["intelligence/workflow_orchestrator.py"]
+end
+subgraph "Brain"
+BRAIN["brain/hermes3_engine.py"]
+end
+MAIN --> SCHED
+SCHED --> PIPE
+PIPE --> DUCKDB
+PIPE --> TRANS
+SCHED --> DUCKDB
+SCHED --> BRAIN
+WF --> DUCKDB
 ```
 
 **Diagram sources**
-- [brain/__init__.py:30-160](file://hledac/universal/brain/__init__.py#L30-L160)
-- [knowledge/duckdb_store.py:533-780](file://hledac/universal/knowledge/duckdb_store.py#L533-L780)
-- [knowledge/lancedb_store.py:66-180](file://hledac/universal/knowledge/lancedb_store.py#L66-L180)
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [layers/__init__.py:18-95](file://hledac/universal/layers/__init__.py#L18-L95)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [sprint_scheduler.py:1-26](file://runtime/sprint_scheduler.py#L1-L26)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
+- [base.py:1-24](file://transport/base.py#L1-L24)
+- [workflow_orchestrator.py:1-22](file://intelligence/workflow_orchestrator.py#L1-L22)
+- [hermes3_engine.py:1-20](file://brain/hermes3_engine.py#L1-L20)
+
+**Section sources**
+- [README.md:1-48](file://README.md#L1-L48)
+- [REAL_ARCHITECTURE.md:3-96](file://REAL_ARCHITECTURE.md#L3-L96)
+
+## Core Components
+- Core orchestrator layer: Managed by the canonical owner that controls lifecycle and ownership of truth. The root entry point delegates to the canonical owner, which is distinct from legacy facades.
+- Pipeline system: Asynchronous, bounded batch processing that discovers, fetches, parses, and applies quality gates before writing canonical findings to the DuckDB store.
+- Knowledge management layer: DuckDB-backed canonical facts store with analytics hooks and shadow findings; integrates with graph systems for IOC storage and semantic search.
+- Transport abstraction: Pluggable transport interface for network I/O, enabling different transport mechanisms (Tor, I2P, in-memory) without changing pipeline logic.
+- Intelligence modules: Cross-module analysis, pattern mining, and workflow orchestration that produce findings correlated across modules.
+- AI/ML brain system: LLM-based decision-making engine (Hermes3) for synthesis and structured generation, with constrained decoding and memory guards.
+
+**Section sources**
+- [REAL_ARCHITECTURE.md:3-96](file://REAL_ARCHITECTURE.md#L3-L96)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [sprint_scheduler.py:1-26](file://runtime/sprint_scheduler.py#L1-L26)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
+- [base.py:1-24](file://transport/base.py#L1-L24)
+- [workflow_orchestrator.py:1-22](file://intelligence/workflow_orchestrator.py#L1-L22)
+- [hermes3_engine.py:1-20](file://brain/hermes3_engine.py#L1-L20)
+
+## Architecture Overview
+The architecture follows a canonical ownership model:
+- Canonical owner: The runtime owner that produces canonical run summaries and owns report truth, export truth, and timing truth.
+- Secondary facades: Legacy and root re-export facades that are not canonical owners and should not be used as production entry points.
+- Two independent runtimes: A modern pipeline-based runtime and a legacy God-object runtime (deprecated).
+
+```mermaid
+flowchart TB
+subgraph "Entry Points"
+MAIN["__main__.py<br/>Root dispatcher"]
+FACADE["autonomous_orchestrator.py<br/>Root facade (deprecated)"]
+ORCH_INIT["orchestrator/__init__.py<br/>Secondary facade"]
+end
+subgraph "Canonical Runtime"
+OWNER["core.__main__.run_sprint()<br/>Canonical owner"]
+SCHED["runtime/sprint_scheduler.py<br/>Tier-aware scheduler"]
+PIPE["pipeline/live_public_pipeline.py<br/>Async public pipeline"]
+DUCKDB["knowledge/duckdb_store.py<br/>Canonical facts store"]
+BRAIN["brain/hermes3_engine.py<br/>LLM decision-making"]
+end
+subgraph "Legacy Runtime"
+LEGACY["legacy/autonomous_orchestrator.py<br/>God object (deprecated)"]
+end
+MAIN --> OWNER
+OWNER --> SCHED
+SCHED --> PIPE
+PIPE --> DUCKDB
+SCHED --> BRAIN
+FACADE -.-> LEGACY
+ORCH_INIT -.-> LEGACY
+```
+
+**Diagram sources**
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [autonomous_orchestrator.py:25-44](file://autonomous_orchestrator.py#L25-L44)
+- [orchestrator/__init__.py:12-31](file://orchestrator/__init__.py#L12-L31)
+- [sprint_scheduler.py:1-26](file://runtime/sprint_scheduler.py#L1-L26)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
+- [hermes3_engine.py:1-20](file://brain/hermes3_engine.py#L1-L20)
+
+**Section sources**
+- [REAL_ARCHITECTURE.md:3-96](file://REAL_ARCHITECTURE.md#L3-L96)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [autonomous_orchestrator.py:25-44](file://autonomous_orchestrator.py#L25-L44)
+- [orchestrator/__init__.py:12-31](file://orchestrator/__init__.py#L12-L31)
 
 ## Detailed Component Analysis
 
-### Boot Sequence and Initialization
-The boot sequence establishes authority, performs pre-flight checks, initializes stores, and wires lifecycle and scheduler components. It enforces a strict authority model and boot hygiene.
+### Core Orchestrator Layer
+- Canonical owner: The runtime owner that controls lifecycle and ownership of truth. The root dispatcher delegates to the canonical owner, which is distinct from legacy facades.
+- Authority roles: The entry point authority defines roles including canonical, shell/dispatcher, alternate, residual, and diagnostic, ensuring no confusion between canonical and observed paths.
 
 ```mermaid
 sequenceDiagram
-participant CLI as "CLI (__main__.py)"
-participant CORE as "Canonical Owner (core.__main__.py)"
-participant STORE as "DuckDBShadowStore"
-participant LIFE as "SprintLifecycleManager"
-participant SCH as "SprintScheduler"
-CLI->>CORE : Delegate to canonical owner
-CORE->>CORE : run_pre_sprint_checks()
-CORE->>STORE : DuckDBShadowStore()
-CORE->>STORE : async_initialize()
-CORE->>LIFE : SprintLifecycleManager(duration, windup)
-CORE->>SCH : SprintScheduler(config)
-CORE->>SCH : run(lifecycle, sources, store, ...)
-SCH-->>CORE : result
-CORE->>STORE : write_sprint_delta(...)
-CORE-->>CLI : canonical_run_summary, runtime_truth
+participant CLI as "__main__.py"
+participant Owner as "core.__main__.run_sprint()"
+participant Scheduler as "runtime/sprint_scheduler.py"
+CLI->>Owner : "--sprint" delegation
+Owner->>Scheduler : Initialize and run lifecycle
+Scheduler-->>Owner : Canonical run summary and truth
+Owner-->>CLI : Export handoff and artifacts
 ```
 
 **Diagram sources**
-- [__main__.py:349-396](file://hledac/universal/__main__.py#L349-L396)
-- [core/__main__.py:220-320](file://hledac/universal/core/__main__.py#L220-L320)
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [knowledge/duckdb_store.py:533-620](file://hledac/universal/knowledge/duckdb_store.py#L533-L620)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [sprint_scheduler.py:1-26](file://runtime/sprint_scheduler.py#L1-L26)
 
 **Section sources**
-- [__main__.py:349-396](file://hledac/universal/__main__.py#L349-L396)
-- [core/__main__.py:220-320](file://hledac/universal/core/__main__.py#L220-L320)
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [knowledge/duckdb_store.py:533-620](file://hledac/universal/knowledge/duckdb_store.py#L533-L620)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
 
-### Authority Model: Canonical, Shell, Alternate, Residual, Diagnostic
-The authority model defines clear ownership and delegation:
-- Canonical: sole owner of production truth and lifecycle.
-- Shell: dispatcher that reads CLI and delegates to canonical or alternate.
-- Alternate: legacy production path, not canonical.
-- Residual: shared helpers, not sprint owners.
-- Diagnostic: probes/benchmarks, not for production.
+### Pipeline System
+- Live public pipeline: Asynchronous, bounded batch processing that discovers, fetches, parses, and applies quality gates before writing canonical findings to the DuckDB store.
+- Error taxonomy and adaptive budgets: The pipeline includes discovery and fetch error taxonomies and adaptive fetch budget tiers to reduce waste and improve throughput.
 
 ```mermaid
 flowchart TD
-A["Shell/Dispatcher (__main__.py)"] --> |Delegates| B["Canonical Owner (core.__main__.py)"]
-A --> |Alternate| C["Alternate Paths"]
-B --> D["SprintScheduler (runtime)"]
-B --> E["Knowledge Stores"]
-B --> F["Brain Engines"]
-C --> G["Residual Helpers"]
-C --> H["Diagnostic Probes"]
+A["Query"] --> B["Discovery (duckduckgo adapter)"]
+B --> C["Fetch (public_fetcher)"]
+C --> D["Lightweight HTML extraction"]
+D --> E["Pattern matcher"]
+E --> F["Quality gate"]
+F --> G["CanonicalFinding"]
+G --> H["DuckDBShadowStore (canonical facts)"]
 ```
 
 **Diagram sources**
-- [__main__.py:70-183](file://hledac/universal/__main__.py#L70-L183)
-- [core/__main__.py:1-60](file://hledac/universal/core/__main__.py#L1-L60)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [live_public_pipeline.py:45-116](file://pipeline/live_public_pipeline.py#L45-L116)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
 
 **Section sources**
-- [__main__.py:70-183](file://hledac/universal/__main__.py#L70-L183)
-- [core/__main__.py:1-60](file://hledac/universal/core/__main__.py#L1-L60)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [live_public_pipeline.py:45-116](file://pipeline/live_public_pipeline.py#L45-L116)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
 
-### Storage Layer Architecture: DuckDB, LMDB, LanceDB
-- DuckDBShadowStore: canonical facts store for sprint-level analytics and derived metrics. Uses a single-threaded worker pool and thread-affine connections.
-- LanceDBIdentityStore: identity/entity store with hybrid vector/FTS search, embedding caching, and MLX acceleration.
-- Legacy compatibility: knowledge module exposes legacy storage types via lazy imports to avoid import-time coupling.
+### Knowledge Management Layer
+- DuckDB canonical facts store: Tiered facts, shadow findings, and graph integrations. The store is the canonical authority for sprint-level facts and analytics.
+- Legacy compatibility: The knowledge module provides lazy re-exports for legacy storage types to maintain backward compatibility without import-time coupling.
 
 ```mermaid
 classDiagram
 class DuckDBShadowStore {
-+async async_initialize()
-+async async_record_sprint_delta(row)
-+async async_healthcheck()
++async_initialize()
++async_record_shadow_run(...)
++async_record_shadow_finding(...)
++async_record_shadow_findings_batch(...)
++async_query_recent_findings(limit)
++async_healthcheck()
 +aclose()
 }
-class LanceDBIdentityStore {
-+async ensure_index(force)
-+async _embed_single(text)
-+async _embed_batch(texts, batch_size)
-+async health_check()
-+async shutdown()
+class CanonicalFinding {
++finding_id : str
++query : str
++source_type : str
++confidence : float
++ts : float
++provenance : tuple[str,...]
++payload_text : str?
 }
-DuckDBShadowStore <.. LanceDBIdentityStore : "Graph/Analytics Integration"
+DuckDBShadowStore --> CanonicalFinding : "stores"
 ```
 
 **Diagram sources**
-- [knowledge/duckdb_store.py:533-780](file://hledac/universal/knowledge/duckdb_store.py#L533-L780)
-- [knowledge/lancedb_store.py:66-180](file://hledac/universal/knowledge/lancedb_store.py#L66-L180)
+- [duckdb_store.py:148-200](file://knowledge/duckdb_store.py#L148-L200)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
 
 **Section sources**
-- [knowledge/duckdb_store.py:1-200](file://hledac/universal/knowledge/duckdb_store.py#L1-L200)
-- [knowledge/lancedb_store.py:1-120](file://hledac/universal/knowledge/lancedb_store.py#L1-L120)
-- [knowledge/__init__.py:1-60](file://hledac/universal/knowledge/__init__.py#L1-L60)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
+- [knowledge/__init__.py:26-66](file://knowledge/__init__.py#L26-L66)
 
-### Concurrency and Scheduling: asyncio and Global Scheduler
-- asyncio: used extensively for non-blocking I/O, task cancellation, and signal-safe teardown.
-- GlobalPriorityScheduler: process pool executor with priority queues, CPU affinity, and work-stealing for distributed processing on a single M1.
+### Transport Abstraction
+- Transport interface: Defines a transport abstraction with start, stop, wait_ready, register_handler, and send_message methods, enabling pluggable transport mechanisms.
+
+```mermaid
+classDiagram
+class Transport {
+<<abstract>>
++start() async
++stop() async
++wait_ready() async
++register_handler(msg_type, handler)
++send_message(target, msg_type, payload, signature, msg_id) async
+}
+```
+
+**Diagram sources**
+- [base.py:1-24](file://transport/base.py#L1-L24)
+
+**Section sources**
+- [base.py:1-24](file://transport/base.py#L1-L24)
+
+### Intelligence Modules
+- Workflow orchestrator: Coordinates multiple analysis modules, correlates results, detects anomalies, and generates comprehensive reports with risk assessment and recommendations.
+- Pattern mining and cross-module analysis: Provides structured dataclasses for findings, anomalies, and correlation reports to unify outputs across modules.
+
+```mermaid
+classDiagram
+class WorkflowOrchestrator {
++initialize()
++execute()
++correlate_results()
++detect_anomalies()
++generate_report()
+}
+class Finding {
++finding_type : str
++description : str
++severity : str
++confidence : float
++modules : str[]
+}
+class Anomaly {
++anomaly_type : str
++severity : str
++description : str
++affected_modules : str[]
+}
+class CorrelationReport {
++cross_module_findings : Finding[]
++risk_score : float
++attribution : Dict
+}
+WorkflowOrchestrator --> Finding : "produces"
+WorkflowOrchestrator --> Anomaly : "produces"
+WorkflowOrchestrator --> CorrelationReport : "produces"
+```
+
+**Diagram sources**
+- [workflow_orchestrator.py:24-112](file://intelligence/workflow_orchestrator.py#L24-L112)
+
+**Section sources**
+- [workflow_orchestrator.py:1-22](file://intelligence/workflow_orchestrator.py#L1-L22)
+- [workflow_orchestrator.py:24-112](file://intelligence/workflow_orchestrator.py#L24-L112)
+
+### AI/ML Brain System
+- Hermes3 engine: Canonical LLM decision-making engine with ChatML formatting, grammar-constrained decoding, and memory guards for MLX environments.
+- Facade module: Brain module is a pure facade that re-exports engines without instantiating heavy models directly.
+
+```mermaid
+classDiagram
+class Hermes3Engine {
++initialize(model_path, sanitize_for_llm)
++chatml_format(system, user, assistant)
++grammar_constrained_decode(schema)
++safe_mlx_eval_and_clear_cache(reason)
+}
+class BrainFacade {
++Hermes3Engine
++InsightEngine
++InferenceEngine
++HypothesisEngine
++MoERouter
++DistillationEngine
++ModelManager
++NEREngine
+}
+BrainFacade --> Hermes3Engine : "re-exports"
+```
+
+**Diagram sources**
+- [hermes3_engine.py:142-200](file://brain/hermes3_engine.py#L142-L200)
+- [brain/__init__.py:14-28](file://brain/__init__.py#L14-L28)
+
+**Section sources**
+- [hermes3_engine.py:142-200](file://brain/hermes3_engine.py#L142-L200)
+- [brain/__init__.py:14-28](file://brain/__init__.py#L14-L28)
+
+### Layer Orchestration and M1 Memory Optimization
+- Layer manager: Centralized initialization, coordination, and lifecycle management for all universal orchestrator layers with M1 8GB memory optimization.
+- Memory optimizer: Aggressive garbage collection, MLX cache clearing, memory pressure monitoring, and context swapping between layers.
 
 ```mermaid
 flowchart TD
-A["Async Event Loop"] --> B["SprintScheduler.run()"]
-B --> C["TaskGroup / Semaphores"]
-B --> D["Sidecar Bus / Background Tasks"]
-E["GlobalPriorityScheduler"] --> F["ProcessPoolExecutor"]
-F --> G["Priority Queue (bounded)"]
-G --> H["Affinity to Performance Cores"]
+LM["LayerManager.initialize_all()"] --> GHOST["Ghost layer"]
+LM --> MEM["Memory layer"]
+LM --> SEC["Security layer"]
+LM --> COORD["Coordination layer"]
+LM --> STEALTH["Stealth layer"]
+LM --> RESEARCH["Research layer"]
+LM --> PRIVACY["Privacy layer"]
+LM --> COMM["Communication layer"]
+LM --> CONTENT["Content layer"]
+OPT["M1MemoryOptimizer"] --> LM
+OPT --> MEM
+OPT --> GHOST
+OPT --> RESEARCH
 ```
 
 **Diagram sources**
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [orchestrator/global_scheduler.py:59-120](file://hledac/universal/orchestrator/global_scheduler.py#L59-L120)
+- [layer_manager.py:336-401](file://layers/layer_manager.py#L336-L401)
+- [layer_manager.py:37-142](file://layers/layer_manager.py#L37-L142)
 
 **Section sources**
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [orchestrator/global_scheduler.py:59-120](file://hledac/universal/orchestrator/global_scheduler.py#L59-L120)
-
-### Layered Security Approach
-Security is integrated across layers:
-- SecurityLayer: cryptography, obfuscation, secure destruction.
-- StealthLayer: evasion, CAPTCHA solving, fingerprint randomization.
-- PrivacyLayer: VPN/Tor, PGP, audit logging.
-- CommunicationLayer: agent messaging, model bridge.
-- Security module: PII detection, encryption, vault management, steganography detection.
-
-```mermaid
-graph TB
-SEC["SecurityLayer"]
-STE["StealthLayer"]
-PRIV["PrivacyLayer"]
-COMM["CommunicationLayer"]
-SEC --> STE
-SEC --> PRIV
-SEC --> COMM
-STE --> COMM
-PRIV --> COMM
-```
-
-**Diagram sources**
-- [layers/__init__.py:18-95](file://hledac/universal/layers/__init__.py#L18-L95)
-- [security/__init__.py:1-106](file://hledac/universal/security/__init__.py#L1-L106)
-
-**Section sources**
-- [layers/__init__.py:18-95](file://hledac/universal/layers/__init__.py#L18-L95)
-- [security/__init__.py:1-106](file://hledac/universal/security/__init__.py#L1-L106)
-
-### System Boundaries and Data Flows
-- Canonical boundary: core.__main__.run_sprint is the sole owner of canonical truth surfaces.
-- Knowledge boundary: DuckDBShadowStore is the canonical facts authority; LanceDBIdentityStore is the identity authority.
-- Runtime boundary: SprintScheduler executes under lifecycle authority and does not own lifecycle transitions.
-- External integrations: intelligence sources (RSS/Atom feeds), CT log clients, and export/reporting systems.
-
-```mermaid
-graph TB
-subgraph "Canonical Boundary"
-CO["core.__main__.run_sprint"]
-end
-subgraph "Knowledge Boundary"
-DS["DuckDBShadowStore"]
-LS["LanceDBIdentityStore"]
-end
-subgraph "Runtime Boundary"
-SCH["SprintScheduler"]
-LIFE["SprintLifecycleManager"]
-end
-CO --> SCH
-SCH --> LIFE
-SCH --> DS
-SCH --> LS
-```
-
-**Diagram sources**
-- [core/__main__.py:320-420](file://hledac/universal/core/__main__.py#L320-L420)
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [knowledge/duckdb_store.py:533-620](file://hledac/universal/knowledge/duckdb_store.py#L533-L620)
-- [knowledge/lancedb_store.py:66-120](file://hledac/universal/knowledge/lancedb_store.py#L66-L120)
-
-**Section sources**
-- [core/__main__.py:320-420](file://hledac/universal/core/__main__.py#L320-L420)
-- [runtime/sprint_scheduler.py:568-730](file://hledac/universal/runtime/sprint_scheduler.py#L568-L730)
-- [knowledge/duckdb_store.py:533-620](file://hledac/universal/knowledge/duckdb_store.py#L533-L620)
-- [knowledge/lancedb_store.py:66-120](file://hledac/universal/knowledge/lancedb_store.py#L66-L120)
-
-### Relationship Between Main Entry Points and Responsibilities
-- Root entry point: shell/dispatcher that reads CLI and delegates to canonical or alternate.
-- Canonical entry point: core.__main__.run_sprint is the sole owner of production truth and lifecycle.
-- Alternate entry point: legacy production path that calls run_sprint directly but is not canonical.
-- Residual/diagnostic: helper and probe-only paths.
-
-```mermaid
-sequenceDiagram
-participant Root as "__main__.py"
-participant Canonical as "core.__main__.run_sprint"
-participant Alternate as "Alternate Entrypoints"
-participant Residual as "Residual/Helpers"
-participant Diag as "Diagnostic Probes"
-Root->>Canonical : "--sprint" delegation
-Root->>Alternate : "--ct-pivot"/"--pivot"
-Canonical-->>Root : canonical_run_summary
-Alternate-->>Root : alternate truth (non-canonical)
-Residual-->>Root : shared helpers (no ownership)
-Diag-->>Root : probe-only (no ownership)
-```
-
-**Diagram sources**
-- [__main__.py:70-183](file://hledac/universal/__main__.py#L70-L183)
-- [core/__main__.py:1-60](file://hledac/universal/core/__main__.py#L1-L60)
-
-**Section sources**
-- [__main__.py:70-183](file://hledac/universal/__main__.py#L70-L183)
-- [core/__main__.py:1-60](file://hledac/universal/core/__main__.py#L1-L60)
-
-### Infrastructure Requirements, Scalability, and Deployment Topology
-- RAM disk: canonical path authority for runtime paths; fallback to SSD with OPSEC warning.
-- Boot hygiene: LMDB lock cleanup, stale socket removal, and path validation.
-- Concurrency: uvloop installation, asyncio event loops, and process pool for heavy tasks.
-- Scalability: bounded memory usage, adaptive timeouts, mission budget tracking, and sidecar gating under RAM pressure.
-- Deployment: single M1 focus with CPU affinity and priority scheduling; distributed via process pools.
-
-```mermaid
-graph TB
-A["RAMDISK_ROOT / FALLBACK_ROOT"] --> B["paths.py"]
-B --> C["DuckDBShadowStore / LanceDBIdentityStore"]
-D["uvloop + asyncio"] --> E["SprintScheduler"]
-F["ProcessPoolExecutor"] --> G["GlobalPriorityScheduler"]
-H["Mission Budget Tracking"] --> E
-```
-
-**Diagram sources**
-- [paths.py:111-166](file://hledac/universal/paths.py#L111-L166)
-- [knowledge/duckdb_store.py:533-620](file://hledac/universal/knowledge/duckdb_store.py#L533-L620)
-- [knowledge/lancedb_store.py:66-120](file://hledac/universal/knowledge/lancedb_store.py#L66-L120)
-- [runtime/sprint_scheduler.py:650-730](file://hledac/universal/runtime/sprint_scheduler.py#L650-L730)
-- [orchestrator/global_scheduler.py:59-120](file://hledac/universal/orchestrator/global_scheduler.py#L59-L120)
-
-**Section sources**
-- [paths.py:111-166](file://hledac/universal/paths.py#L111-L166)
-- [runtime/sprint_scheduler.py:650-730](file://hledac/universal/runtime/sprint_scheduler.py#L650-L730)
-- [orchestrator/global_scheduler.py:59-120](file://hledac/universal/orchestrator/global_scheduler.py#L59-L120)
-
-### System Context: External Intelligence Sources and Reporting
-- Intelligence sources: RSS/Atom feeds, CT log client, and public discovery pipelines.
-- Reporting: canonical JSON and markdown reports, STIX bundles, and export handoffs.
-- Integration: sidecar buses, advisory gates, and correlation engines.
-
-```mermaid
-graph TB
-SRC["RSS/Atom Feeds"] --> SCH["SprintScheduler"]
-CT["CT Log Client"] --> SCH
-SCH --> EXP["Exporters"]
-EXP --> REP["Reports (JSON/Markdown/STIX)"]
-SCH --> COR["Correlation Engine"]
-SCH --> HYP["Hypothesis Engine"]
-```
-
-**Diagram sources**
-- [core/__main__.py:386-396](file://hledac/universal/core/__main__.py#L386-L396)
-- [runtime/sprint_scheduler.py:500-530](file://hledac/universal/runtime/sprint_scheduler.py#L500-L530)
-
-**Section sources**
-- [core/__main__.py:386-396](file://hledac/universal/core/__main__.py#L386-L396)
-- [runtime/sprint_scheduler.py:500-530](file://hledac/universal/runtime/sprint_scheduler.py#L500-L530)
+- [layer_manager.py:336-401](file://layers/layer_manager.py#L336-L401)
+- [layer_manager.py:37-142](file://layers/layer_manager.py#L37-L142)
 
 ## Dependency Analysis
-The system exhibits clear separation of concerns:
-- Entry points depend on canonical owner for truth.
-- Runtime depends on knowledge stores and brain engines.
-- Supporting layers integrate security, stealth, and privacy.
-- Storage layers are decoupled via facades and lazy imports.
+The system maintains clear boundaries and minimal coupling:
+- Entry point authority ensures canonical ownership and prevents confusion between canonical and alternate paths.
+- The pipeline depends on DuckDB for canonical storage and on transport for network I/O.
+- The scheduler coordinates pipeline execution and integrates with the brain for synthesis and decisions.
+- Intelligence modules coordinate findings and reports, feeding into the knowledge layer.
 
 ```mermaid
 graph TB
-MAIN["__main__.py"] --> CORE["core.__main__.py"]
-CORE --> SCHED["runtime/sprint_scheduler.py"]
-SCHED --> KNOW["knowledge/*"]
-SCHED --> BRAIN["brain/*"]
-CORE --> LAYERS["layers/*"]
-CORE --> SECURITY["security/*"]
-CORE --> PATHS["paths.py"]
+MAIN["__main__.py"] --> OWNER["core.__main__.run_sprint()"]
+OWNER --> SCHED["runtime/sprint_scheduler.py"]
+SCHED --> PIPE["pipeline/live_public_pipeline.py"]
+PIPE --> DUCKDB["knowledge/duckdb_store.py"]
+SCHED --> BRAIN["brain/hermes3_engine.py"]
+WF["intelligence/workflow_orchestrator.py"] --> DUCKDB
+PIPE --> TRANS["transport/base.py"]
 ```
 
 **Diagram sources**
-- [__main__.py:1-120](file://hledac/universal/__main__.py#L1-L120)
-- [core/__main__.py:1-120](file://hledac/universal/core/__main__.py#L1-L120)
-- [runtime/sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
-- [knowledge/__init__.py:1-60](file://hledac/universal/knowledge/__init__.py#L1-L60)
-- [brain/__init__.py:1-60](file://hledac/universal/brain/__init__.py#L1-L60)
-- [layers/__init__.py:1-60](file://hledac/universal/layers/__init__.py#L1-L60)
-- [security/__init__.py:1-40](file://hledac/universal/security/__init__.py#L1-L40)
-- [paths.py:1-120](file://hledac/universal/paths.py#L1-L120)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [sprint_scheduler.py:1-26](file://runtime/sprint_scheduler.py#L1-L26)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
+- [hermes3_engine.py:1-20](file://brain/hermes3_engine.py#L1-L20)
+- [workflow_orchestrator.py:1-22](file://intelligence/workflow_orchestrator.py#L1-L22)
+- [base.py:1-24](file://transport/base.py#L1-L24)
 
 **Section sources**
-- [__main__.py:1-120](file://hledac/universal/__main__.py#L1-L120)
-- [core/__main__.py:1-120](file://hledac/universal/core/__main__.py#L1-L120)
-- [runtime/sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
-- [knowledge/__init__.py:1-60](file://hledac/universal/knowledge/__init__.py#L1-L60)
-- [brain/__init__.py:1-60](file://hledac/universal/brain/__init__.py#L1-L60)
-- [layers/__init__.py:1-60](file://hledac/universal/layers/__init__.py#L1-L60)
-- [security/__init__.py:1-40](file://hledac/universal/security/__init__.py#L1-L40)
-- [paths.py:1-120](file://hledac/universal/paths.py#L1-L120)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [sprint_scheduler.py:1-26](file://runtime/sprint_scheduler.py#L1-L26)
+- [live_public_pipeline.py:1-11](file://pipeline/live_public_pipeline.py#L1-L11)
+- [duckdb_store.py:1-57](file://knowledge/duckdb_store.py#L1-L57)
+- [hermes3_engine.py:1-20](file://brain/hermes3_engine.py#L1-L20)
+- [workflow_orchestrator.py:1-22](file://intelligence/workflow_orchestrator.py#L1-L22)
+- [base.py:1-24](file://transport/base.py#L1-L24)
 
 ## Performance Considerations
-- Concurrency: uvloop installation, asyncio task cancellation, and signal-safe teardown reduce overhead.
-- Memory: bounded caches, adaptive timeouts, and mission budget tracking prevent OOM on M1 8GB.
-- Storage: DuckDB single-threaded worker pool and thread-affine connections minimize contention.
-- Embeddings: LMDB cache with float16 quantization and binary signatures reduce memory footprint.
-- Scheduling: priority queues and CPU affinity improve throughput on single M1.
+- Async hygiene: The pipeline enforces async hygiene invariants, including gather with return_exceptions and explicit error handling to prevent cascading failures.
+- Memory optimization: M1 memory optimization via garbage collection, MLX cache clearing, and context swapping reduces peak memory usage and improves stability on constrained hardware.
+- Bounded operations: Limits on batch sizes, timeouts, and concurrent operations ensure predictable performance and resource usage.
 
 [No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
-- Boot hygiene: verify RAM disk availability and clean stale LMDB locks and sockets.
-- Signal handling: signal handlers set flags and stop the loop; ensure AsyncExitStack unwinds properly.
-- Task cancellation: orphan tasks are cancelled before loop close to prevent warnings.
-- Health checks: DuckDBShadowStore and LanceDBIdentityStore expose health checks for diagnostics.
+- Entry point authority: Verify the role of each entry point to ensure canonical ownership and avoid alternate or diagnostic paths when investigating issues.
+- Pipeline diagnostics: Use public stage counters and terminal stage reporting to diagnose where in the pipeline failures occur.
+- Memory pressure: Monitor memory pressure and use the memory optimizer to force cleanup and context swaps when encountering memory-related issues.
 
 **Section sources**
-- [paths.py:382-430](file://hledac/universal/paths.py#L382-L430)
-- [__main__.py:315-344](file://hledac/universal/__main__.py#L315-L344)
-- [__main__.py:502-535](file://hledac/universal/__main__.py#L502-L535)
-- [knowledge/duckdb_store.py:432-460](file://hledac/universal/knowledge/duckdb_store.py#L432-L460)
-- [knowledge/lancedb_store.py:432-460](file://hledac/universal/knowledge/lancedb_store.py#L432-L460)
+- [__main__.py:70-183](file://__main__.py#L70-L183)
+- [sprint_scheduler.py:191-200](file://runtime/sprint_scheduler.py#L191-L200)
+- [layer_manager.py:37-142](file://layers/layer_manager.py#L37-L142)
 
 ## Conclusion
-Hledac Universal employs a layered architecture with a strict authority model, robust boot hygiene, and layered security. The canonical owner ensures truth integrity, while the runtime orchestrates bounded sprints over diverse intelligence sources. Storage layers leverage DuckDB, LMDB, and LanceDB for durability, identity, and analytics. Concurrency is handled via asyncio and a global priority scheduler, optimized for a single M1. The system integrates external intelligence sources and reporting systems through well-defined boundaries and sidecar buses.
-
-[No sources needed since this section summarizes without analyzing specific files]
-
-## Appendices
-- Canonical ownership: canonical_sprint_owner must be "core.__main__.run_sprint" and no alternate/residual path may claim this field.
-- Legacy compatibility: knowledge module exposes legacy types via lazy imports to avoid import-time coupling.
-- Facade re-export: autonomous_orchestrator is a root re-export facade and not the canonical orchestrator.
-
-**Section sources**
-- [core/__main__.py:1-60](file://hledac/universal/core/__main__.py#L1-L60)
-- [knowledge/__init__.py:26-66](file://hledac/universal/knowledge/__init__.py#L26-L66)
-- [autonomous_orchestrator.py:1-67](file://hledac/universal/autonomous_orchestrator.py#L1-L67)
+Hledac Universal employs a layered architecture with strict canonical ownership and clear separation of concerns. The canonical owner controls lifecycle and truth, while the pipeline, knowledge, transport, intelligence, and brain components collaborate through well-defined interfaces. The design philosophy emphasizes autonomous operation, minimal human intervention, and robust performance on constrained hardware, with explicit diagnostics and memory optimization baked into the runtime.

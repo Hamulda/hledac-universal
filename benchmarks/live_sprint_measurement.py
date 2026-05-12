@@ -286,7 +286,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
     kpi = _derive_live_kpi_from_input(inp)
     result.live_kpi = kpi
     from tools.research_quality_score import score_research_quality
-    _rq_data = {'mode': 'live', 'findings_count': result.findings_count, 'runtime_truth': result.runtime_truth or {}, 'live_kpi': kpi, 'uma_post_swap_gib': result.uma_post_swap_gib}
+    _rq_data = {'mode': 'live', 'findings_count': result.findings_count, 'runtime_truth': result.runtime_truth or {}, 'live_kpi': kpi, 'uma_post_swap_gib': result.uma_post_swap_gib, 'swap_warning': result.swap_warning}
     _rq = score_research_quality(_rq_data)
     result.live_kpi['research_quality'] = _rq
     result.live_kpi['quality_gate'] = _rq['quality_gate']

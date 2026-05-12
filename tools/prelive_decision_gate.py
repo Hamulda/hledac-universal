@@ -687,6 +687,24 @@ def _build_nonfeed_block_reason(f224_blocks: bool, f231_blocks: bool, profile: s
     return ""
 
 
+def _resolve_next_action_capability(
+    live_cmd: str,
+    capability_live_allowed: bool,
+    has_memory_block: bool,
+    has_contract_block: bool,
+    f224_blocks_nonfeed: bool,
+    f231_blocks_nonfeed: bool,
+) -> str:
+    """Resolve next_action_capability from decision gates — flat, readable."""
+    if capability_live_allowed:
+        return live_cmd
+    if has_memory_block:
+        return "restart required — memory pressure"
+    if has_contract_block or f224_blocks_nonfeed or f231_blocks_nonfeed:
+        return "run missing probe lanes to restore capability"
+    return "fix_provider_surface"
+
+
 def run_gate(
     repo_root: Path,
     profile: str,
@@ -1089,7 +1107,10 @@ def run_gate(
         capability_live_allowed=capability_live_allowed,
         capability_blockers=capability_blockers,
         next_action_feed_baseline=live_cmd if feed_baseline_allowed else (highswap_cmd if swap_policy_tier != "hard_block" else "restart required — memory pressure"),
-        next_action_capability=live_cmd if capability_live_allowed else ("restart required — memory pressure" if _has_memory_block else ("run missing probe lanes to restore capability" if _has_contract_block or _f224_blocks_nonfeed or _f231_blocks_nonfeed else "fix_provider_surface")),
+        next_action_capability=_resolve_next_action_capability(
+            live_cmd, capability_live_allowed, _has_memory_block,
+            _has_contract_block, _f224_blocks_nonfeed, _f231_blocks_nonfeed,
+        ),
     )
 
 

@@ -2,22 +2,15 @@
 
 <cite>
 **Referenced Files in This Document**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
-- [opsec_policy.py](file://runtime/opsec_policy.py)
-- [memory_authority.py](file://runtime/memory_authority.py)
-- [hypothesis_feedback.py](file://runtime/hypothesis_feedback.py)
-- [__main__.py](file://core/__main__.py)
+- [sprint_scheduler.py](file://hledac/universal/runtime/sprint_scheduler.py)
+- [sprint_lifecycle.py](file://hledac/universal/runtime/sprint_lifecycle.py)
+- [sprint_lifecycle_runner.py](file://hledac/universal/runtime/sprint_lifecycle_runner.py)
+- [resource_governor.py](file://hledac/universal/runtime/resource_governor.py)
+- [memory_authority.py](file://hledac/universal/runtime/memory_authority.py)
+- [telemetry.py](file://hledac/universal/runtime/telemetry.py)
+- [core_resource_governor.py](file://hledac/universal/core/resource_governor.py)
+- [utils_uma_budget.py](file://hledac/universal/utils/uma_budget.py)
+- [__main__.py](file://hledac/universal/core/__main__.py)
 </cite>
 
 ## Table of Contents
@@ -30,361 +23,382 @@
 7. [Performance Considerations](#performance-considerations)
 8. [Troubleshooting Guide](#troubleshooting-guide)
 9. [Conclusion](#conclusion)
+10. [Appendices](#appendices)
 
 ## Introduction
-This document explains the runtime management subsystem responsible for orchestrating bounded, lifecycle-aware research sprints. It covers the sprint scheduler, lifecycle management, advisory functions, resource governance, and sidecar-based enrichment. The goal is to help both newcomers and experienced engineers understand how the system coordinates data ingestion, quality gates, sidecar processing, and export, while respecting memory and time budgets.
+This document describes the runtime management system of Hledac Universal with a focus on the sprint scheduler, resource governance, memory authority controls, telemetry collection, sprint lifecycle management, and state persistence strategies. It explains how the system coordinates bounded 30-minute sprints, manages memory and concurrency under pressure, and provides structured telemetry for observability. It also covers configuration options, performance tuning, debugging techniques, and production deployment considerations.
 
 ## Project Structure
-The runtime management subsystem centers around the sprint scheduler and its collaborators:
-- Sprint scheduler: orchestrates feed/public/CT discovery cycles, applies tiered priorities, and manages lifecycle transitions.
-- Lifecycle manager and runner: define phases, enforce timing, and coordinate wind-down and teardown.
-- Advisory runner: performs pivot planning, execution, resource governance advisory, and analyst brief generation.
-- Sidecar bus and dispatcher: route accepted findings to specialized enrichment adapters.
-- Resource governor: provides advisory decisions for concurrency and budgeting.
-- Shadow inputs and parity: enable diagnostic-only evaluation of pre-decision and advisory gates.
-- Telemetry and metrics: capture runtime telemetry and diagnostics.
+The runtime management system spans several modules:
+- Runtime orchestrators: sprint lifecycle manager and scheduler runner
+- Resource governance: runtime advisor and canonical memory policy
+- Telemetry: structured logging and event collection
+- Utilities: raw memory sampling and watchdog services
+- Orchestration entry point: core main that wires lifecycle and scheduler
 
 ```mermaid
 graph TB
-subgraph "Runtime Core"
-SCHED["SprintScheduler<br/>runtime/sprint_scheduler.py"]
-LIFE["SprintLifecycleManager<br/>runtime/sprint_lifecycle.py"]
-RUNNER["SprintLifecycleRunner<br/>runtime/sprint_lifecycle_runner.py"]
-ADVISOR["SprintAdvisoryRunner<br/>runtime/sprint_advisory_runner.py"]
+subgraph "Runtime"
+SL["SprintLifecycleManager<br/>(sprint_lifecycle.py)"]
+SLCR["SprintLifecycleRunner<br/>(sprint_lifecycle_runner.py)"]
+SCHED["SprintScheduler<br/>(sprint_scheduler.py)"]
+GOV["M1ResourceGovernor<br/>(runtime/resource_governor.py)"]
+TEL["TelemetryLogger/SprintMetrics<br/>(telemetry.py)"]
 end
-subgraph "Sidecars"
-BUS["FindingSidecarBus<br/>runtime/sidecar_bus.py"]
-DISPATCH["SidecarDispatcher<br/>runtime/sidecar_dispatcher.py"]
-SHADOW["Shadow Inputs & Parity<br/>runtime/shadow_inputs.py<br/>runtime/shadow_parity.py<br/>runtime/shadow_pre_decision.py"]
+subgraph "Core Policy"
+CRG["core/resource_governor.py<br/>(UMA policy)"]
+UMA["utils/uma_budget.py<br/>(raw sampler)"]
 end
-subgraph "Governance"
-GOVERN["ResourceGovernor<br/>runtime/resource_governor.py"]
-MEM["MemoryAuthority<br/>runtime/memory_authority.py"]
-OPS["OpsecPolicy<br/>runtime/opsec_policy.py"]
+subgraph "Orchestrator"
+MAIN["core/__main__.py"]
 end
-subgraph "Telemetry"
-TELE["Telemetry<br/>runtime/telemetry.py"]
-WIND["WindupEngine<br/>runtime/windup_engine.py"]
-end
-SCHED --> LIFE
-SCHED --> RUNNER
-SCHED --> ADVISOR
-SCHED --> BUS
-BUS --> DISPATCH
-SCHED --> GOVERN
-SCHED --> SHADOW
-SCHED --> TELE
-SCHED --> WIND
+MAIN --> SL
+MAIN --> SCHED
+SCHED --> SL
+SCHED --> SLCR
+SCHED --> GOV
+GOV --> CRG
+CRG --> UMA
+SCHED --> TEL
 ```
 
 **Diagram sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [memory_authority.py](file://runtime/memory_authority.py)
-- [opsec_policy.py](file://runtime/opsec_policy.py)
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+- [sprint_lifecycle.py:1-120](file://hledac/universal/runtime/sprint_lifecycle.py#L1-L120)
+- [sprint_lifecycle_runner.py:1-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L1-L120)
+- [resource_governor.py:1-120](file://hledac/universal/runtime/resource_governor.py#L1-L120)
+- [core_resource_governor.py:1-120](file://hledac/universal/core/resource_governor.py#L1-L120)
+- [utils_uma_budget.py:1-120](file://hledac/universal/utils/uma_budget.py#L1-L120)
+- [__main__.py:1000-1150](file://hledac/universal/core/__main__.py#L1000-L1150)
 
 **Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [memory_authority.py](file://runtime/memory_authority.py)
-- [opsec_policy.py](file://runtime/opsec_policy.py)
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+- [sprint_lifecycle.py:1-120](file://hledac/universal/runtime/sprint_lifecycle.py#L1-L120)
+- [sprint_lifecycle_runner.py:1-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L1-L120)
+- [resource_governor.py:1-120](file://hledac/universal/runtime/resource_governor.py#L1-L120)
+- [core_resource_governor.py:1-120](file://hledac/universal/core/resource_governor.py#L1-L120)
+- [utils_uma_budget.py:1-120](file://hledac/universal/utils/uma_budget.py#L1-L120)
+- [__main__.py:1000-1150](file://hledac/universal/core/__main__.py#L1000-L1150)
 
 ## Core Components
-- SprintScheduler: tier-aware scheduler that runs bounded cycles under a lifecycle, supports stable and aggressive modes, and coordinates sidecars and exports.
-- SprintLifecycleManager and SprintLifecycleRunner: define phases (BOOT, WARMUP, ACTIVE, JUDGMENT, EXPORT, TEARDOWN), enforce timing, and manage transitions.
-- SprintAdvisoryRunner: executes pivot planning, pivot execution, resource governor advisory, and analyst brief generation.
-- FindingSidecarBus and SidecarDispatcher: canonical bus for accepted findings and dispatcher for sidecar execution.
-- ResourceGovernor: provides advisory concurrency and budget decisions.
-- Shadow inputs/parity/pre-decision: diagnostic-only evaluation of advisory gates and pre-decision composition.
-- Telemetry and metrics: runtime telemetry capture and windup scorecard extraction.
+- SprintLifecycleManager: state machine controlling BOOT→WARMUP→ACTIVE→WINDUP→EXPORT→TEARDOWN with hard invariants and time-based transitions.
+- SprintLifecycleRunner: lifecycle orchestration helper that starts lifecycle, advances tick, guards wind-down, sleeps with lifecycle ticks, and performs teardown.
+- SprintScheduler: runtime worker that executes acquisition lanes, sidecars, advisory gates, and exports according to lifecycle and governor advice.
+- M1ResourceGovernor: advisory safety layer that evaluates UMA state, model lifecycle, and fetch concurrency to decide safe operating modes.
+- TelemetryLogger/SprintMetrics: structured logging and event collection for phase transitions, events, and finalization.
+- UMA policy and raw sampler: canonical policy in core/resource_governor.py and raw sampling in utils/uma_budget.py.
 
 **Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
+- [sprint_lifecycle.py:54-240](file://hledac/universal/runtime/sprint_lifecycle.py#L54-L240)
+- [sprint_lifecycle_runner.py:38-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L38-L120)
+- [sprint_scheduler.py:620-800](file://hledac/universal/runtime/sprint_scheduler.py#L620-L800)
+- [resource_governor.py:116-220](file://hledac/universal/runtime/resource_governor.py#L116-L220)
+- [telemetry.py:107-245](file://hledac/universal/runtime/telemetry.py#L107-L245)
+- [core_resource_governor.py:388-490](file://hledac/universal/core/resource_governor.py#L388-L490)
+- [utils_uma_budget.py:253-311](file://hledac/universal/utils/uma_budget.py#L253-L311)
 
 ## Architecture Overview
-The runtime subsystem is a bounded, lifecycle-driven pipeline:
-- Lifecycle controls phases and timing; scheduler runs cycles within ACTIVE and reacts to wind-down.
-- Scheduler builds tiered work items, sorts by source economics, and runs feed/public/CT branches.
-- Results are aggregated, deduplicated, and routed to sidecars via the sidecar bus.
-- Advisory runner evaluates pivot plans and governs resources at teardown.
-- Telemetry and windup engine produce diagnostics and scorecards.
+The runtime architecture centers on a bounded sprint with a strict lifecycle and advisory resource governance. The scheduler runs acquisition lanes and sidecars, guided by the lifecycle manager and the resource governor. Telemetry records structured events for observability. The canonical UMA policy resides in core/resource_governor.py, while utils/uma_budget.py provides raw sampling.
 
 ```mermaid
 sequenceDiagram
-participant Owner as "Sprint Owner (__main__.py)"
-participant Life as "SprintLifecycleManager"
+participant Orchestrator as "core/__main__.py"
+participant Lifecycle as "SprintLifecycleManager"
 participant Runner as "SprintLifecycleRunner"
-participant Sched as "SprintScheduler"
-participant Bus as "FindingSidecarBus"
-participant Disp as "SidecarDispatcher"
-Owner->>Life : start()
-Life->>Runner : setup()
-Runner->>Runner : tick() → BOOT→WARMUP
-Runner->>Runner : ensure_active()
-Runner->>Runner : tick() → ACTIVE
-loop Active cycles
-Runner->>Sched : tick()
-Sched->>Sched : _run_one_cycle()
-Sched->>Bus : dispatch(source_branch, findings)
-Bus->>Disp : route/findings/store/query
-Disp-->>Sched : sidecar outcomes
-Sched->>Runner : tick()
-end
-Runner->>Runner : post_sleep_gate()/windup_guard()
-alt windup
-Sched->>Sched : _maybe_export_partial()
-Sched->>Sched : _run_export()
-end
-Runner->>Runner : teardown()
-Sched->>Sched : _run_advisory_runner()
+participant Scheduler as "SprintScheduler"
+participant Governor as "M1ResourceGovernor"
+participant Policy as "core/resource_governor.py"
+participant Sampler as "utils/uma_budget.py"
+participant Telemetry as "TelemetryLogger"
+Orchestrator->>Lifecycle : start()
+Orchestrator->>Runner : setup()
+Runner->>Lifecycle : tick()
+Scheduler->>Lifecycle : tick()
+Scheduler->>Governor : evaluate()
+Governor->>Policy : sample_uma_status()
+Policy->>Sampler : raw memory sampling
+Scheduler->>Scheduler : run acquisition lanes / sidecars
+Scheduler->>Telemetry : log phase transitions / events
+Scheduler->>Lifecycle : should_enter_windup()
+Lifecycle-->>Runner : current phase
+Runner->>Lifecycle : mark_export_started()/mark_teardown_started()
 ```
 
 **Diagram sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [__main__.py](file://core/__main__.py)
+- [__main__.py:1090-1150](file://hledac/universal/core/__main__.py#L1090-L1150)
+- [sprint_lifecycle.py:82-178](file://hledac/universal/runtime/sprint_lifecycle.py#L82-L178)
+- [sprint_lifecycle_runner.py:62-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L62-L120)
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+- [resource_governor.py:137-217](file://hledac/universal/runtime/resource_governor.py#L137-L217)
+- [core_resource_governor.py:388-488](file://hledac/universal/core/resource_governor.py#L388-L488)
+- [utils_uma_budget.py:182-282](file://hledac/universal/utils/uma_budget.py#L182-L282)
+- [telemetry.py:153-215](file://hledac/universal/runtime/telemetry.py#L153-L215)
 
 ## Detailed Component Analysis
 
-### Sprint Scheduler
-The sprint scheduler is the runtime worker that executes bounded cycles under a lifecycle. It:
-- Normalizes lifecycle APIs via a lifecycle adapter.
-- Builds tiered work items and sorts them by source economics and advisory prefetch oracle.
-- Runs feed/public/CT branches in stable or aggressive mode with per-branch timeouts.
-- Manages deduplication (LMDB), sidecar dispatch, and export.
-- Tracks metrics and telemetry, and supports early wind-up and abort triggers.
-
-Key configuration options:
-- sprint_duration_s: total sprint duration (default 1800s)
-- windup_lead_s: lead time to enter wind-down (default 180s)
-- cycle_sleep_s: sleep between cycles (default 5s)
-- max_cycles: safety cap (default 100)
-- max_parallel_sources: concurrent source fetches (default 4)
-- stop_on_first_accepted: early exit when first finding accepted (default False)
-- export_enabled/export_dir: export control and path
-- max_entries_per_cycle: per-source cap (default 50)
-- aggressive_mode/aggressive_branch_timeout_s/branch_timeout_budget_s: aggressive mode controls
-- partial_export_findings_interval: partial export cadence
-- source_tier_map: tier assignment for sources
-
-Result fields include cycle counts, dedup stats, pattern hits, accepted findings, per-source breakdowns, final phase, export paths, abort flags, and sidecar-derived metrics.
-
-Operational semantics:
-- Legacy runtime mode is default; shadow modes are diagnostic-only.
-- Advisory gate and shadow pre-decision are evaluated at wind-down entry.
-- Hermes engine prewarm/unload respects M1 8GB memory invariants.
-
-Usage patterns:
-- run(lifecycle, sources, now_monotonic, query, duckdb_store, ct_log_client, policy_manager, progress_callback)
-- _run_one_cycle(_stable/_aggressive)
-- _dispatch_accepted_findings_sidecars
-- request_early_windup/request_immediate_abort
-
-**Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-#### Source Economics and Prioritization
-- Per-source state includes silent streak, cooldown, and recent health posture.
-- Sorting considers tier, posture, cooldown, and advisory prefetch oracle scores.
-- Deprioritization pushes cold/silent sources to the end of their tier band.
-
-**Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-#### Aggressive vs Stable Modes
-- Stable mode: feed sources first, then public discovery in the same cycle.
-- Aggressive mode: feed/public/CT branches run concurrently with per-branch timeouts; slow branches are cancelled without affecting others.
-
-**Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-#### Sidecar Dispatch and Canonical Bus
-- Accepted findings are routed through FindingSidecarBus and SidecarDispatcher.
-- Dispatcher aggregates batches, tracks skipped heavy sidecars, and handles failures fail-soft.
-- Sidecars include identity stitching, exposure correlation, leak sentinel, temporal archaeology, evidence triage, sprint diff, kill chain tagging, streaming embedding, Wayback diff, RIR/ASN/WHOIS correlation, and social identity surface mining.
-
-**Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-
-#### Deduplication and Persistence
-- Cross-sprint dedup via LMDB with periodic trimming to prevent unbounded growth.
-- In-sprint dedup uses an in-memory set keyed by entry hash.
-- Dedup flush occurs at wind-down; close operations occur at teardown.
-
-**Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-#### Hypothesis Feedback and RL Adaptivity
-- Records pivot outcomes as reward signals and adapts pivot ordering via exponential moving average.
-- Records hypothesis feedback to DuckDB for future pivot planning.
-
-**Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [hypothesis_feedback.py](file://runtime/hypothesis_feedback.py)
-
-### Lifecycle Management
-Lifecycle phases and transitions:
-- BOOT → WARMUP → ACTIVE → JUDGMENT → EXPORT → TEARDOWN
-- Runner enforces timing, wind-down, sleep-or-abort, and terminal checks.
-- Adapter normalizes lifecycle APIs between old utils and runtime versions.
-
-Key methods:
-- start(), tick(), remaining_time(), is_terminal(), should_enter_windup(), _current_phase
-- recommended_tool_mode(), request_abort(), _abort_requested, _abort_reason
-- mark_warmup_done()
-
-**Section sources**
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-### Advisory Functions
-Advisory runner orchestrates:
-- Pivot planner: advisory ordering input for pivots.
-- Pivot executor: executes top pivots via autonomous pivot executor.
-- Resource governor advisory: applies resource governor decision at teardown.
-- Analyst brief: generates analyst brief at teardown.
-
-**Section sources**
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-### Resource Governance
-- ResourceGovernor provides advisory concurrency and branch concurrency decisions.
-- Hermes prewarm respects M1 8GB memory invariants and quantization budget.
-- MemoryAuthority and OpsecPolicy integrate with runtime for memory and policy controls.
-
-**Section sources**
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [memory_authority.py](file://runtime/memory_authority.py)
-- [opsec_policy.py](file://runtime/opsec_policy.py)
-
-### Shadow Inputs, Parity, and Pre-Decision
-- Diagnostic-only evaluation of advisory gate at wind-down entry.
-- Shadow pre-decision composition and parity checks for read-only diagnostics.
-- Shadow inputs collect lifecycle snapshot, graph summary, model control facts, provider runtime facts.
-
-**Section sources**
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-### Telemetry and Windup Engine
-- Telemetry captures runtime telemetry and diagnostics.
-- Windup engine provides windup scorecard extraction for export teardown.
-- Metrics registry records counters/gauges and persists telemetry.
-
-**Section sources**
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-
-## Dependency Analysis
-High-level dependencies:
-- SprintScheduler depends on lifecycle manager/runner, sidecar bus/dispatcher, resource governor, shadow inputs/parity/pre-decision, telemetry, and windup engine.
-- Sidecar bus/dispatcher depends on DuckDB store and various intelligence adapters.
-- Resource governor integrates with UMA sampling and quantization selection.
-- Lifecycle adapter bridges runtime/utils lifecycle APIs.
+### Sprint Lifecycle Management
+- Phases: BOOT, WARMUP, ACTIVE, WINDUP, EXPORT, TEARDOWN.
+- Hard invariants: T-3 minute wind-down, monotonic phase progression, abort shortcut to TEARDOWN.
+- Timekeeping: uses time.monotonic(); tick() automatically enters WINDUP when remaining time ≤ windup_lead_s.
+- Tool mode recommendation: based on remaining time and thermal state.
+- Snapshot and compatibility aliases for migration from legacy APIs.
 
 ```mermaid
-graph LR
-SCHED["SprintScheduler"] --> LIFE["SprintLifecycleManager"]
-SCHED --> RUNNER["SprintLifecycleRunner"]
-SCHED --> ADVISOR["SprintAdvisoryRunner"]
-SCHED --> BUS["FindingSidecarBus"]
-BUS --> DISPATCH["SidecarDispatcher"]
-SCHED --> GOVERN["ResourceGovernor"]
-SCHED --> SHADOW["Shadow Inputs/Parity/Pre-Decision"]
-SCHED --> TELE["Telemetry"]
-SCHED --> WIND["WindupEngine"]
+stateDiagram-v2
+[*] --> BOOT
+BOOT --> WARMUP
+WARMUP --> ACTIVE
+ACTIVE --> WINDUP : remaining <= windup_lead_s
+ACTIVE --> TEARDOWN : abort
+WINDUP --> EXPORT
+EXPORT --> TEARDOWN
+TEARDOWN --> [*]
 ```
 
 **Diagram sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
+- [sprint_lifecycle.py:21-49](file://hledac/universal/runtime/sprint_lifecycle.py#L21-L49)
+- [sprint_lifecycle.py:110-146](file://hledac/universal/runtime/sprint_lifecycle.py#L110-L146)
+- [sprint_lifecycle.py:210-231](file://hledac/universal/runtime/sprint_lifecycle.py#L210-L231)
 
 **Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
-- [sprint_lifecycle.py](file://runtime/sprint_lifecycle.py)
-- [sprint_lifecycle_runner.py](file://runtime/sprint_lifecycle_runner.py)
-- [sprint_advisory_runner.py](file://runtime/sprint_advisory_runner.py)
-- [sidecar_bus.py](file://runtime/sidecar_bus.py)
-- [sidecar_dispatcher.py](file://runtime/sidecar_dispatcher.py)
-- [resource_governor.py](file://runtime/resource_governor.py)
-- [shadow_inputs.py](file://runtime/shadow_inputs.py)
-- [shadow_parity.py](file://runtime/shadow_parity.py)
-- [shadow_pre_decision.py](file://runtime/shadow_pre_decision.py)
-- [telemetry.py](file://runtime/telemetry.py)
-- [windup_engine.py](file://runtime/windup_engine.py)
+- [sprint_lifecycle.py:54-240](file://hledac/universal/runtime/sprint_lifecycle.py#L54-L240)
+- [sprint_lifecycle.py:208-231](file://hledac/universal/runtime/sprint_lifecycle.py#L208-L231)
+
+### Sprint Scheduler and Lifecycle Runner
+- Scheduler responsibilities: lifecycle adapter, acquisition lanes, sidecars, advisory evaluation, export, dedup/forensics flush, result bookkeeping.
+- LifecycleRunner responsibilities: lifecycle start, WARMUP→ACTIVE transition, periodic tick, wind-down guard, sleep with lifecycle tick, teardown, partial export trigger.
+- Wind-down guard supports a pre-windup barrier callback to ensure required lanes reach terminality before wind-down.
+
+```mermaid
+flowchart TD
+Start(["Start"]) --> Setup["Setup lifecycle"]
+Setup --> Tick["Tick lifecycle"]
+Tick --> PhaseCheck{"Phase=WARMUP?"}
+PhaseCheck --> |Yes| TransitionActive["Transition WARMUP→ACTIVE"]
+PhaseCheck --> |No| Continue["Continue work loop"]
+Continue --> WindupGuard["Wind-down guard"]
+WindupGuard --> Allowed{"Allowed?"}
+Allowed --> |No| Continue
+Allowed --> |Yes| Export["Export"]
+Export --> Teardown["Teardown"]
+Teardown --> End(["End"])
+```
+
+**Diagram sources**
+- [sprint_lifecycle_runner.py:62-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L62-L120)
+- [sprint_lifecycle_runner.py:101-206](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L101-L206)
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+
+**Section sources**
+- [sprint_lifecycle_runner.py:38-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L38-L120)
+- [sprint_lifecycle_runner.py:101-206](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L101-L206)
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+
+### Resource Governance and Memory Authority Controls
+- M1ResourceGovernor: advisory layer evaluating UMA state, model lifecycle, and fetch concurrency; provides sidecar admission decisions.
+- Canonical UMA policy: core/resource_governor.py computes state from system_used_gib, hysteresis-based I/O-only mode, and thread QoS hints.
+- Raw sampler: utils/uma_budget.py provides system RAM and MLX memory sampling, pressure levels, and watchdog with callbacks.
+- Memory authority classification: canonical governor vs raw sampler vs layer/allocator/legacy roles.
+
+```mermaid
+classDiagram
+class M1ResourceGovernor {
++evaluate() GovernorDecision
++sidecar_admission(name, est_mb) SidecarAdmission
++apply_decision(decision) void
++snapshot() GovernorSnapshot
+}
+class ResourceGovernor_core {
++sample_uma_status() UMAStatus
++evaluate_uma_state(system_used_gib) string
++should_enter_io_only_mode(...) bool
++set_thread_qos(qos) void
+}
+class UmaWatchdog {
++start() Task
++stop() void
++is_running bool
+}
+M1ResourceGovernor --> ResourceGovernor_core : "reads UMA"
+ResourceGovernor_core --> UmaWatchdog : "policy-aligned"
+```
+
+**Diagram sources**
+- [resource_governor.py:116-220](file://hledac/universal/runtime/resource_governor.py#L116-L220)
+- [core_resource_governor.py:388-488](file://hledac/universal/core/resource_governor.py#L388-L488)
+- [utils_uma_budget.py:380-496](file://hledac/universal/utils/uma_budget.py#L380-L496)
+
+**Section sources**
+- [resource_governor.py:116-220](file://hledac/universal/runtime/resource_governor.py#L116-L220)
+- [core_resource_governor.py:314-372](file://hledac/universal/core/resource_governor.py#L314-L372)
+- [utils_uma_budget.py:182-282](file://hledac/universal/utils/uma_budget.py#L182-L282)
+- [memory_authority.py:37-79](file://hledac/universal/runtime/memory_authority.py#L37-L79)
+
+### Telemetry Collection System
+- TelemetryLogger: fail-soft structured logging with JSON formatter; records phase transitions, events, and finalization.
+- SprintMetrics: wraps TelemetryLogger to record phase_entered, phase transitions, and sprint finalize.
+- Event history bounded by a ring buffer; all methods are void and swallow errors.
+
+```mermaid
+sequenceDiagram
+participant Metrics as "SprintMetrics"
+participant Logger as "TelemetryLogger"
+participant Stdlib as "logging"
+Metrics->>Logger : log_event(phase, component, event, elapsed_ms)
+Logger->>Stdlib : emit structured log record
+Metrics->>Logger : log_phase_transition(...)
+Metrics->>Logger : log_sprint_finalize(final_phase, elapsed_ms)
+```
+
+**Diagram sources**
+- [telemetry.py:107-245](file://hledac/universal/runtime/telemetry.py#L107-L245)
+- [telemetry.py:248-370](file://hledac/universal/runtime/telemetry.py#L248-L370)
+
+**Section sources**
+- [telemetry.py:107-245](file://hledac/universal/runtime/telemetry.py#L107-L245)
+- [telemetry.py:248-370](file://hledac/universal/runtime/telemetry.py#L248-L370)
+
+### State Persistence Strategies
+- Lifecycle snapshot: JSON-serializable dict capturing current state, phase history, and flags for diagnostics.
+- Telemetry events: bounded ring buffer persisted via structured logs; can be aggregated externally.
+- No explicit persistence hooks in the scheduler; persistence is achieved through lifecycle snapshots and telemetry logs.
+
+**Section sources**
+- [sprint_lifecycle.py:182-206](file://hledac/universal/runtime/sprint_lifecycle.py#L182-L206)
+- [telemetry.py:123-150](file://hledac/universal/runtime/telemetry.py#L123-L150)
+
+## Dependency Analysis
+- Scheduler depends on lifecycle manager, lifecycle runner, governor, telemetry, and acquisition/bridge modules.
+- Governor depends on canonical UMA policy and raw sampler.
+- Lifecycle runner depends on lifecycle adapter and optional pre-windup barrier callback.
+- Orchestration entry point wires lifecycle and scheduler.
+
+```mermaid
+graph LR
+SCHED["sprint_scheduler.py"] --> SL["sprint_lifecycle.py"]
+SCHED --> SLCR["sprint_lifecycle_runner.py"]
+SCHED --> GOV["runtime/resource_governor.py"]
+GOV --> CRG["core/resource_governor.py"]
+CRG --> UMA["utils/uma_budget.py"]
+SCHED --> TEL["telemetry.py"]
+MAIN["core/__main__.py"] --> SL
+MAIN --> SCHED
+```
+
+**Diagram sources**
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+- [sprint_lifecycle.py:1-120](file://hledac/universal/runtime/sprint_lifecycle.py#L1-L120)
+- [sprint_lifecycle_runner.py:1-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L1-L120)
+- [resource_governor.py:1-120](file://hledac/universal/runtime/resource_governor.py#L1-L120)
+- [core_resource_governor.py:1-120](file://hledac/universal/core/resource_governor.py#L1-L120)
+- [utils_uma_budget.py:1-120](file://hledac/universal/utils/uma_budget.py#L1-L120)
+- [telemetry.py:1-120](file://hledac/universal/runtime/telemetry.py#L1-L120)
+- [__main__.py:1000-1150](file://hledac/universal/core/__main__.py#L1000-L1150)
+
+**Section sources**
+- [sprint_scheduler.py:1-120](file://hledac/universal/runtime/sprint_scheduler.py#L1-L120)
+- [sprint_lifecycle.py:1-120](file://hledac/universal/runtime/sprint_lifecycle.py#L1-L120)
+- [sprint_lifecycle_runner.py:1-120](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L1-L120)
+- [resource_governor.py:1-120](file://hledac/universal/runtime/resource_governor.py#L1-L120)
+- [core_resource_governor.py:1-120](file://hledac/universal/core/resource_governor.py#L1-L120)
+- [utils_uma_budget.py:1-120](file://hledac/universal/utils/uma_budget.py#L1-L120)
+- [telemetry.py:1-120](file://hledac/universal/runtime/telemetry.py#L1-L120)
+- [__main__.py:1000-1150](file://hledac/universal/core/__main__.py#L1000-L1150)
 
 ## Performance Considerations
-- Concurrency control: max_parallel_sources and branch concurrency limits protect memory and CPU.
-- Adaptive timeouts: per-branch timeouts in aggressive mode prevent tail-latency spikes.
-- Memory pressure safeguards: Hermes prewarm headroom check, sidecar RAM guards, and metrics-based budget tracking.
-- Dedup and persistence: LMDB-based cross-sprint dedup with trimming to cap growth.
-- Metrics and telemetry: lightweight telemetry capture avoids overhead on hot path.
+- Concurrency and fetch limits: governor adjusts fetch concurrency based on UMA state and model load; defaults and reduced limits are defined for M1 8GB.
+- I/O-only mode hysteresis: prevents thrashing near critical boundaries; accelerates entry under systemic pressure (swap).
+- Thermal and device temperature guards: optional GPU thermal and ANE utilization checks in resource governor.
+- Mission budget: hard ceiling for peak RSS in M1 missions; sidecar admission considers estimated memory footprint.
+- Telemetry overhead: bounded event history and fail-soft logging minimize performance impact.
 
 [No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
-Common issues and resolutions:
-- Excessive branch timeouts in aggressive mode: reduce aggressive_branch_timeout_s or branch_timeout_budget_s; monitor branch_timeout_count and dominant blockers.
-- Memory pressure leading to skipped sidecars or Hermes prewarm: check peak_rss_gib and budget_violations; consider disabling heavy sidecars or lowering concurrency.
-- Zero-signal sources: review feed_zero_yield_detected, feed_inaccessible_detected, feed_content_empty_detected, and feed_no_pattern_with_content; adjust source tier or prune mode.
-- Public backend degraded: investigate public_backend_degraded and public_error; verify public pipeline health.
-- Aborted sprints: inspect aborted/abort_reason; check lifecycle abort flags and UMA emergency callbacks.
-- Export failures: ensure export_enabled/export_dir are set; verify partial export cadence and wind-down export path.
+Common issues and remedies:
+- Memory pressure and governor denials:
+  - Symptoms: renderer denied, model load denied, reduced concurrency.
+  - Actions: inspect governor snapshot, review UMA state, reduce sidecar memory estimates, or wait for hysteresis exit.
+- Wind-down guard blocking:
+  - Symptoms: scheduler continues work despite wind-down threshold.
+  - Actions: ensure pre-windup barrier callback completes required lanes; verify callback execution and reasons.
+- Telemetry failures:
+  - Symptoms: missing events or formatting errors.
+  - Actions: confirm JSON formatter handler setup; note that failures are swallowed by design.
+- Lifecycle errors:
+  - Symptoms: invalid phase transitions or abort not reaching TEARDOWN.
+  - Actions: verify lifecycle transitions and abort requests; ensure proper teardown sequencing.
 
 **Section sources**
-- [sprint_scheduler.py](file://runtime/sprint_scheduler.py)
+- [resource_governor.py:301-320](file://hledac/universal/runtime/resource_governor.py#L301-L320)
+- [sprint_lifecycle_runner.py:101-206](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L101-L206)
+- [telemetry.py:138-150](file://hledac/universal/runtime/telemetry.py#L138-L150)
+- [sprint_lifecycle.py:92-106](file://hledac/universal/runtime/sprint_lifecycle.py#L92-L106)
+- [sprint_lifecycle.py:149-158](file://hledac/universal/runtime/sprint_lifecycle.py#L149-L158)
 
 ## Conclusion
-The runtime management subsystem provides a robust, lifecycle-aware framework for bounded research sprints. It balances throughput with safety via tiered prioritization, source economics, and resource governance. The sidecar bus enables modular enrichment, while telemetry and windup scoring support observability and diagnostics. By understanding the scheduler’s configuration, lifecycle transitions, and advisory flows, teams can operate reliably under strict time and memory constraints.
+Hledac Universal’s runtime management system provides a robust, bounded sprint execution model with strict lifecycle guarantees, advisory resource governance, and structured telemetry. The separation of canonical UMA policy, raw sampling, and runtime scheduler enables predictable performance on constrained platforms like M1 8GB, while maintaining observability and recoverability.
+
+[No sources needed since this section summarizes without analyzing specific files]
+
+## Appendices
+
+### Configuration Options and Tuning Parameters
+- SprintSchedulerConfig:
+  - sprint_duration_s, windup_lead_s, cycle_sleep_s, max_cycles, max_parallel_sources, stop_on_first_accepted, export_enabled, export_dir, max_entries_per_cycle, max_hypothesis_depth, max_hypothesis_queries, aggressive_mode, aggressive_branch_timeout_s, branch_timeout_budget_s, tier_of(), sorted_tiers().
+- M1ResourceGovernor:
+  - DEFAULT_FETCH_LIMIT, MODEL_LOADED_FETCH_LIMIT, MISSION_PEAK_RSS_GIB, SIDECAR_DEFAULT_ESTIMATE_MB, HEAVY_SIDECARS, MAX_BUDGET_EVENTS.
+- UMA policy thresholds (M1 8GB):
+  - WARN: 6.0 GiB, CRITICAL: 6.5 GiB, EMERGENCY: 7.0 GiB; IO-only hysteresis exit at 5.8 GiB.
+- Tool mode recommendations:
+  - normal/prune/panic based on remaining time and thermal state.
+
+**Section sources**
+- [sprint_scheduler.py:623-660](file://hledac/universal/runtime/sprint_scheduler.py#L623-L660)
+- [resource_governor.py:52-60](file://hledac/universal/runtime/resource_governor.py#L52-L60)
+- [core_resource_governor.py:56-66](file://hledac/universal/core/resource_governor.py#L56-L66)
+- [sprint_lifecycle.py:210-231](file://hledac/universal/runtime/sprint_lifecycle.py#L210-L231)
+
+### Monitoring Setup
+- TelemetryLogger: structured JSON logs with session_id, phase, component, event, elapsed_ms.
+- SprintMetrics: records phase_entered, phase transitions, and finalize events.
+- UMA watchdog: debounced callbacks for warn/critical/emergency states.
+
+**Section sources**
+- [telemetry.py:107-245](file://hledac/universal/runtime/telemetry.py#L107-L245)
+- [utils_uma_budget.py:380-496](file://hledac/universal/utils/uma_budget.py#L380-L496)
+
+### Examples and Debugging Techniques
+- Runtime customization:
+  - Adjust fetch concurrency via governor decisions; tune aggressive_mode and branch timeouts for throughput vs stability.
+  - Modify source tier mapping and acquisition profile for targeted runs.
+- Debugging:
+  - Inspect governor snapshot and UMA status; review telemetry events and lifecycle snapshots.
+  - Use wind-down guard observations to diagnose pre-windup barrier callback outcomes.
+
+**Section sources**
+- [resource_governor.py:301-320](file://hledac/universal/runtime/resource_governor.py#L301-L320)
+- [core_resource_governor.py:388-488](file://hledac/universal/core/resource_governor.py#L388-L488)
+- [sprint_lifecycle_runner.py:101-206](file://hledac/universal/runtime/sprint_lifecycle_runner.py#L101-L206)
+- [telemetry.py:217-244](file://hledac/universal/runtime/telemetry.py#L217-L244)
+
+### Fault Tolerance and Recovery
+- Abort path: lifecycle can transition directly to TEARDOWN upon abort request; teardown sequences ensure orderly shutdown.
+- Fail-soft telemetry and governor: errors are swallowed to maintain runtime continuity.
+- I/O-only mode hysteresis: prevents oscillation near critical thresholds.
+
+**Section sources**
+- [sprint_lifecycle.py:98-100](file://hledac/universal/runtime/sprint_lifecycle.py#L98-L100)
+- [sprint_lifecycle.py:234-240](file://hledac/universal/runtime/sprint_lifecycle.py#L234-L240)
+- [resource_governor.py:178-204](file://hledac/universal/runtime/resource_governor.py#L178-L204)
+- [core_resource_governor.py:339-372](file://hledac/universal/core/resource_governor.py#L339-L372)
+
+### Production Deployment Considerations
+- Mission budget: enforce peak RSS ceilings; monitor sidecar admission decisions.
+- Platform specifics: QoS hints and swap-based acceleration for I/O-only mode.
+- Observability: rely on telemetry and lifecycle snapshots; ensure logging handler is attached.
+
+**Section sources**
+- [resource_governor.py:56-60](file://hledac/universal/runtime/resource_governor.py#L56-L60)
+- [core_resource_governor.py:636-668](file://hledac/universal/core/resource_governor.py#L636-L668)
+- [telemetry.py:138-150](file://hledac/universal/runtime/telemetry.py#L138-L150)

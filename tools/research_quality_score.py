@@ -477,7 +477,7 @@ def _detect_format(data: dict) -> str:
         rt = data["runtime_truth"]
         if "branch_mix" in rt:
             return "live"
-    if "live_kpi" in data:
+    if "live_kpi" in data or "live_kpi_marker" in data:
         return "live"
     return "benchmark"
 

@@ -416,6 +416,7 @@ def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
         cache_mb = get_mlx_memory_mb()
         if cache_mb > threshold_mb:
             if hasattr(mx.metal, "clear_cache"):
+                mx.eval([])  # Flush pending lazy ops before clearing cache (M1 / MLX invariant)
                 mx.metal.clear_cache()
                 return True
     except Exception:

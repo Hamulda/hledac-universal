@@ -2,16 +2,16 @@
 
 <cite>
 **Referenced Files in This Document**
-- [intelligence/__init__.py](file://intelligence/__init__.py)
-- [intelligence/academic_search.py](file://intelligence/academic_search.py)
-- [intelligence/academic_discovery.py](file://intelligence/academic_discovery.py)
-- [intelligence/document_intelligence.py](file://intelligence/document_intelligence.py)
-- [intelligence/network_intelligence.py](file://intelligence/network_intelligence.py)
-- [intelligence/social_identity_miner.py](file://intelligence/social_identity_miner.py)
-- [intelligence/web_intelligence.py](file://intelligence/web_intelligence.py)
-- [intelligence/workflow_orchestrator.py](file://intelligence/workflow_orchestrator.py)
-- [intelligence/input_detector.py](file://intelligence/input_detector.py)
-- [intelligence/decision_engine.py](file://intelligence/decision_engine.py)
+- [intelligence/__init__.py](file://hledac/universal/intelligence/__init__.py)
+- [web_intelligence.py](file://hledac/universal/intelligence/web_intelligence.py)
+- [cryptographic_intelligence.py](file://hledac/universal/intelligence/cryptographic_intelligence.py)
+- [network_intelligence.py](file://hledac/universal/intelligence/network_intelligence.py)
+- [document_intelligence.py](file://hledac/universal/intelligence/document_intelligence.py)
+- [network_reconnaissance.py](file://hledac/universal/intelligence/network_reconnaissance.py)
+- [workflow_orchestrator.py](file://hledac/universal/intelligence/workflow_orchestrator.py)
+- [streaming_embedder.py](file://hledac/universal/intelligence/streaming_embedder.py)
+- [exposed_service_hunter.py](file://hledac/universal/intelligence/exposed_service_hunter.py)
+- [blockchain_analyzer.py](file://hledac/universal/intelligence/blockchain_analyzer.py)
 </cite>
 
 ## Table of Contents
@@ -27,24 +27,24 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document explains the intelligence modules subsystem that powers academic, network, social identity, and document intelligence within the universal research framework. It covers implementation details, invocation relationships, interfaces, domain models, configuration options, parameters, return values, and usage patterns. The subsystem integrates optional dependencies, provides graceful fallbacks, and exposes a unified interface for downstream components.
+This document describes the Hledac Universal intelligence modules that power domain-specific OSINT and security analysis. It covers web intelligence, cryptographic analysis, network reconnaissance, document analysis, and multimedia intelligence. It explains intelligence gathering workflows, analysis algorithms, output formats, integration patterns, configuration options, performance characteristics, accuracy considerations, privacy and compliance, and practical usage examples.
 
 ## Project Structure
-The intelligence subsystem is organized as a package of specialized modules under the intelligence namespace. A central initializer aggregates capabilities and exposes availability flags to indicate import success. Individual modules encapsulate distinct intelligence domains and are designed for lazy initialization and bounded resource usage.
+The intelligence package exposes a capability forest of modules designed for M1 8GB constrained environments. Each module encapsulates a focused domain with graceful degradation when optional dependencies are unavailable. The package exports availability flags and unified classes for each module, enabling safe integration into broader systems.
 
 ```mermaid
 graph TB
-subgraph "intelligence/"
-A["__init__.py"]
-B["academic_search.py"]
-C["academic_discovery.py"]
-D["document_intelligence.py"]
-E["network_intelligence.py"]
-F["social_identity_miner.py"]
-G["web_intelligence.py"]
-H["workflow_orchestrator.py"]
-I["input_detector.py"]
-J["decision_engine.py"]
+subgraph "Intelligence Package"
+A["intelligence/__init__.py<br/>Exports availability flags and classes"]
+B["web_intelligence.py<br/>UnifiedWebIntelligence"]
+C["cryptographic_intelligence.py<br/>Classical/Modern crypto analyzers"]
+D["network_intelligence.py<br/>BGP/DoH lookup"]
+E["document_intelligence.py<br/>PDF/Office/Image analyzers"]
+F["network_reconnaissance.py<br/>DNS/WHOIS/SSL scanners"]
+G["workflow_orchestrator.py<br/>Multi-module orchestration"]
+H["streaming_embedder.py<br/>Memory-safe embeddings"]
+I["exposed_service_hunter.py<br/>S3/DB/GraphQL hunters"]
+J["blockchain_analyzer.py<br/>Experimental forensics"]
 end
 A --> B
 A --> C
@@ -58,517 +58,563 @@ A --> J
 ```
 
 **Diagram sources**
-- [intelligence/__init__.py:1-686](file://intelligence/__init__.py#L1-686)
+- [intelligence/__init__.py:1-686](file://hledac/universal/intelligence/__init__.py#L1-L686)
+- [web_intelligence.py:1-1075](file://hledac/universal/intelligence/web_intelligence.py#L1-L1075)
+- [cryptographic_intelligence.py:1-1257](file://hledac/universal/intelligence/cryptographic_intelligence.py#L1-L1257)
+- [network_intelligence.py:1-365](file://hledac/universal/intelligence/network_intelligence.py#L1-L365)
+- [document_intelligence.py:1-2154](file://hledac/universal/intelligence/document_intelligence.py#L1-L2154)
+- [network_reconnaissance.py:1-1388](file://hledac/universal/intelligence/network_reconnaissance.py#L1-L1388)
+- [workflow_orchestrator.py:1-1849](file://hledac/universal/intelligence/workflow_orchestrator.py#L1-L1849)
+- [streaming_embedder.py:1-294](file://hledac/universal/intelligence/streaming_embedder.py#L1-L294)
+- [exposed_service_hunter.py:1-1683](file://hledac/universal/intelligence/exposed_service_hunter.py#L1-L1683)
+- [blockchain_analyzer.py:1-1596](file://hledac/universal/intelligence/blockchain_analyzer.py#L1-L1596)
 
 **Section sources**
-- [intelligence/__init__.py:1-686](file://intelligence/__init__.py#L1-686)
+- [intelligence/__init__.py:1-686](file://hledac/universal/intelligence/__init__.py#L1-L686)
 
 ## Core Components
-This section summarizes the primary intelligence modules and their roles.
-
-- Academic Search and Discovery
-  - Multi-source academic search with query expansion, deduplication, and result ranking.
-  - Convenience functions for arXiv, Crossref, and Semantic Scholar.
-- Document Intelligence
-  - PDF, Office, and image analysis with metadata extraction, embedded object detection, and suspicious content scanning.
-  - Optional MLX acceleration and Aho-Corasick integration for keyword detection.
-- Network Intelligence
-  - BGP lookups via pybgpstream with fallback to ipinfo.io; DNS-over-HTTPS resolution via dnspython or direct HTTP.
-- Social Identity Miner
-  - Deterministic extraction of usernames, profile URLs, linked domains, and emails from findings with confidence scoring and deduplication.
-- Web Intelligence Helper
-  - Lightweight wrapper around optional Hledac components with bounded queues, lazy initialization, and graceful degradation.
-- Workflow Orchestrator
-  - Coordinates multiple modules, correlates results, detects anomalies, and produces comprehensive reports.
-- Input Detector
-  - File type detection via magic bytes, content classification, pattern scanning, encoding detection, and complexity estimation.
-- Decision Engine (Deprecated shim)
-  - Re-exports from brain.decision_engine; not intended for new development.
-
-Key availability flags in the initializer indicate import success for each module (e.g., ACADEMIC_SEARCH_AVAILABLE, DOCUMENT_INTELLIGENCE_AVAILABLE, NETWORK_INTELLIGENCE_AVAILABLE, SOCIAL_IDENTITY_MINER_AVAILABLE, WEB_INTEL_AVAILABLE, WORKFLOW_ORCHESTRATOR_AVAILABLE, INPUT_DETECTOR_AVAILABLE).
+- Unified Web Intelligence: Lightweight wrapper around Hledac’s scraping and OSINT components with bounded queues, priority aging, and memory pressure awareness. Provides comprehensive intelligence results including web data, OSINT profiles, threat assessments, and vulnerability analyses.
+- Cryptographic Intelligence: Classical and modern cryptanalysis, hash identification, encryption detection, certificate parsing, and entropy analysis. Self-contained, no external APIs.
+- Network Intelligence: BGP lookups via pybgpstream or fallback to ipinfo.io; DNS-over-HTTPS resolution via dnspython or direct JSON endpoints; integrates results into a knowledge graph.
+- Document Intelligence: PDF, Office, and image analysis with metadata extraction, embedded object detection, suspicious content scanning, and EXIF parsing. Includes MLX-accelerated semantic scoring when available.
+- Network Reconnaissance: DNS enumeration, WHOIS lookup, SSL/TLS certificate analysis, wildcard detection, and passive scanning with private IP filtering.
+- Workflow Orchestrator: Multi-module orchestration coordinating execution, correlation, anomaly detection, and report generation across domains.
+- Streaming Embedder: Memory-safe, chunked async embedding pipeline for canonical findings with model lifecycle integration and RAM guards.
+- Exposed Service Hunter: Discovers S3 buckets, databases, GraphQL endpoints, and certificate transparency exposures using common naming patterns and HTTP checks.
+- Blockchain Forensics: Experimental module for wallet analysis and transaction tracing via Etherscan/Blockchair with hard containment and circuit breaker integration.
 
 **Section sources**
-- [intelligence/__init__.py:25-422](file://intelligence/__init__.py#L25-422)
-- [intelligence/academic_search.py:1-1369](file://intelligence/academic_search.py#L1-1369)
-- [intelligence/academic_discovery.py:1-301](file://intelligence/academic_discovery.py#L1-301)
-- [intelligence/document_intelligence.py:1-2125](file://intelligence/document_intelligence.py#L1-2125)
-- [intelligence/network_intelligence.py:1-365](file://intelligence/network_intelligence.py#L1-365)
-- [intelligence/social_identity_miner.py:1-577](file://intelligence/social_identity_miner.py#L1-577)
-- [intelligence/web_intelligence.py:1-1075](file://intelligence/web_intelligence.py#L1-1075)
-- [intelligence/workflow_orchestrator.py:1-1849](file://intelligence/workflow_orchestrator.py#L1-1849)
-- [intelligence/input_detector.py:1-954](file://intelligence/input_detector.py#L1-954)
-- [intelligence/decision_engine.py:1-4](file://intelligence/decision_engine.py#L1-4)
+- [web_intelligence.py:115-800](file://hledac/universal/intelligence/web_intelligence.py#L115-L800)
+- [cryptographic_intelligence.py:202-800](file://hledac/universal/intelligence/cryptographic_intelligence.py#L202-L800)
+- [network_intelligence.py:29-365](file://hledac/universal/intelligence/network_intelligence.py#L29-L365)
+- [document_intelligence.py:259-800](file://hledac/universal/intelligence/document_intelligence.py#L259-L800)
+- [network_reconnaissance.py:639-1388](file://hledac/universal/intelligence/network_reconnaissance.py#L639-L1388)
+- [workflow_orchestrator.py:335-800](file://hledac/universal/intelligence/workflow_orchestrator.py#L335-L800)
+- [streaming_embedder.py:60-294](file://hledac/universal/intelligence/streaming_embedder.py#L60-L294)
+- [exposed_service_hunter.py:115-800](file://hledac/universal/intelligence/exposed_service_hunter.py#L115-L800)
+- [blockchain_analyzer.py:304-800](file://hledac/universal/intelligence/blockchain_analyzer.py#L304-L800)
 
 ## Architecture Overview
-The intelligence subsystem is designed for modular composition and bounded resource usage. Optional dependencies are lazily imported and guarded to prevent blocking imports. The initializer consolidates exports and availability flags. Downstream consumers can selectively import modules and rely on graceful degradation when dependencies are missing.
+The intelligence modules are designed for composability and resilience. They expose availability flags and lazy-initialization patterns to minimize import-time overhead and memory footprint. The Workflow Orchestrator coordinates domain-specific modules, correlates findings, and produces structured reports. Streaming Embedder ensures memory safety during embedding phases. Network Intelligence and Network Reconnaissance provide foundational network metadata for correlation.
 
 ```mermaid
-graph TB
-Init["intelligence/__init__.py<br/>Exports + Availability Flags"]
-Aca["academic_search.py<br/>Multi-source search + adapters"]
-Disc["academic_discovery.py<br/>Convenience functions"]
-Doc["document_intelligence.py<br/>PDF/Office/Image analysis"]
-Net["network_intelligence.py<br/>BGP + DoH"]
-Soc["social_identity_miner.py<br/>Surface miner"]
-Web["web_intelligence.py<br/>Helper + bounded queue"]
-Wfo["workflow_orchestrator.py<br/>Cross-module orchestration"]
-Inp["input_detector.py<br/>Input analysis + complexity"]
-Dec["decision_engine.py<br/>DEPRECATED shim"]
-Init --> Aca
-Init --> Disc
-Init --> Doc
-Init --> Net
-Init --> Soc
-Init --> Web
-Init --> Wfo
-Init --> Inp
-Init --> Dec
+sequenceDiagram
+participant Client as "Caller"
+participant Orchestrator as "WorkflowOrchestrator"
+participant WebIntel as "UnifiedWebIntelligence"
+participant NetIntel as "NetworkIntelligence"
+participant DocIntel as "DocumentIntelligence"
+participant Recon as "NetworkReconnaissance"
+Client->>Orchestrator : execute_workflow(plan, input_data)
+Orchestrator->>WebIntel : execute_intelligence_operation(target, types)
+Orchestrator->>NetIntel : resolve_dns_doh(domain)
+Orchestrator->>DocIntel : analyze(file_path)
+Orchestrator->>Recon : recon_target(target)
+WebIntel-->>Orchestrator : IntelligenceResult
+NetIntel-->>Orchestrator : DNS/DoH results
+DocIntel-->>Orchestrator : DocumentAnalysis
+Recon-->>Orchestrator : HostInfo
+Orchestrator->>Orchestrator : correlate_results()
+Orchestrator-->>Client : ComprehensiveReport
 ```
 
 **Diagram sources**
-- [intelligence/__init__.py:25-422](file://intelligence/__init__.py#L25-422)
+- [workflow_orchestrator.py:385-609](file://hledac/universal/intelligence/workflow_orchestrator.py#L385-L609)
+- [web_intelligence.py:344-477](file://hledac/universal/intelligence/web_intelligence.py#L344-L477)
+- [network_intelligence.py:153-247](file://hledac/universal/intelligence/network_intelligence.py#L153-L247)
+- [document_intelligence.py:278-351](file://hledac/universal/intelligence/document_intelligence.py#L278-L351)
+- [network_reconnaissance.py:797-800](file://hledac/universal/intelligence/network_reconnaissance.py#L797-L800)
 
 ## Detailed Component Analysis
 
-### Academic Search and Discovery
-- Academic Search Engine
-  - Multi-source adapters for ArXiv, Crossref, and Semantic Scholar with configurable timeouts, weights, and API keys.
-  - Query expansion strategies and deduplication pipeline produce ranked results.
-  - Data models include SourceConfig, SearchResult, SourceResult, AcademicSearchResult, QueryAnalysis, and SourcePerformance.
-  - Methods: search(), execute_search(), get_paper_details(), get_work_by_doi(), get_citations().
-  - Configuration keys: name, enabled, weight, timeout_seconds, max_results, api_key, base_url, rate_limit_per_minute.
-  - Returns: structured results with metadata, relevance scores, and timestamps.
-- Academic Discovery Convenience
-  - Standalone async functions for arXiv, Crossref, and Semantic Scholar with rate-limiting semaphore.
-  - Structured AcademicPaper output with title, authors, year, link, source, abstract, DOI, citations, tags.
-  - search_academic_all() runs all sources concurrently with bounded concurrency.
+### Web Intelligence
+- Purpose: Unified OSINT and web scraping with threat assessment and vulnerability analysis.
+- Key features:
+  - Bounded queue with priority aging and memory pressure checks.
+  - Lazy component initialization for optional dependencies.
+  - Parallel execution of multiple operation types.
+  - Metrics tracking and completion history with FIFO eviction.
+- Inputs: IntelligenceTarget with URLs, selectors, OSINT sources, and operation types.
+- Outputs: IntelligenceResult with web_data, OSINT profiles, threat_assessment, vulnerabilities, and performance metrics.
+- Configuration: max_concurrent_operations, enable_flashattention, enable_osint, enable_stealth, queue limits, and memory budget.
+- Accuracy and performance: Uses intelligent scraper with captcha solving and stealth headers; prioritizes memory-constrained environments; supports graceful degradation.
 
 ```mermaid
 classDiagram
-class AcademicSearchEngine {
-+search(query, max_results, sources) AcademicSearchResult
-+cleanup() void
-}
-class ArxivAdapter {
-+search(query, max_results, analysis, async_session) List[SearchResult]
-+get_paper_details(arxiv_id) Dict
-}
-class CrossrefAdapter {
-+search(query, max_results, analysis, async_session) List[SearchResult]
-+get_work_by_doi(doi) Dict
-}
-class SemanticScholarAdapter {
-+search(query, max_results, analysis, async_session) List[SearchResult]
-+get_paper_details(paper_id) Dict
-+get_citations(paper_id, limit) List[Dict]
-}
-class SourceConfig {
-+name : str
-+enabled : bool
-+weight : float
-+timeout_seconds : float
-+max_results : int
-+api_key : Optional[str]
-+base_url : Optional[str]
-+rate_limit_per_minute : int
-}
-class SearchResult {
-+title : str
-+url : str
-+snippet : str
-+source : str
-+result_type : ResultType
-+metadata : Dict
-+relevance_score : float
-+timestamp : datetime
-}
-class AcademicSearchResult {
-+original_query : str
-+all_results : List[SearchResult]
-+deduplicated_results : List[SearchResult]
-+sources_used : List[str]
-+total_sources : int
-+successful_sources : int
-+execution_time_ms : float
-+expansions_used : int
-+query_variations : List[str]
-+timestamp : datetime
-}
-AcademicSearchEngine --> ArxivAdapter
-AcademicSearchEngine --> CrossrefAdapter
-AcademicSearchEngine --> SemanticScholarAdapter
-AcademicSearchEngine --> SourceConfig
-AcademicSearchEngine --> SearchResult
-AcademicSearchEngine --> AcademicSearchResult
-```
-
-**Diagram sources**
-- [intelligence/academic_search.py:787-1369](file://intelligence/academic_search.py#L787-1369)
-
-**Section sources**
-- [intelligence/academic_search.py:1-1369](file://intelligence/academic_search.py#L1-1369)
-- [intelligence/academic_discovery.py:1-301](file://intelligence/academic_discovery.py#L1-301)
-
-### Document Intelligence
-- PDF Analyzer
-  - Progressive analysis: probe signal score and candidate pages; deep parse only when signal is high.
-  - Extracts metadata, embedded objects, hyperlinks, emails, IP addresses, suspicious indicators.
-  - Suspicious content detection integrates Aho-Corasick if available; otherwise falls back to substring scanning.
-- Office Document Analyzer
-  - ZIP-based OOXML (docx/xlsx/pptx) and legacy OLE formats; extracts core properties, comments, and media.
-- Image Analyzer
-  - EXIF extraction and GPS coordinate parsing via PIL; optional fallback when PIL is unavailable.
-- Data Models
-  - DocumentType, MetadataCategory, GeoLocation, EXIFData, DocumentMetadata, EmbeddedObject, DocumentAnalysis.
-
-```mermaid
-flowchart TD
-Start(["PDF Analyze Entry"]) --> CheckLib["Check PyMuPDF availability"]
-CheckLib --> |Available| OpenDoc["Open PDF"]
-CheckLib --> |Unavailable| BasicPDF["Basic PDF analysis (fallback)"]
-OpenDoc --> Probe["Probe signal score + candidate pages"]
-Probe --> Signal{"Signal >= threshold?"}
-Signal --> |Yes| DeepParse["Deep parse candidate pages"]
-Signal --> |No| QuickText["Quick text extraction from sampled pages"]
-DeepParse --> ExtractObjects["Extract embedded objects"]
-QuickText --> ExtractObjects
-ExtractObjects --> ExtractLinks["Extract hyperlinks/emails/IPs"]
-ExtractLinks --> Suspicious["Detect suspicious keywords (Aho-Corasick or substring)"]
-Suspicious --> Return(["Return DocumentAnalysis"])
-BasicPDF --> Return
-```
-
-**Diagram sources**
-- [intelligence/document_intelligence.py:259-599](file://intelligence/document_intelligence.py#L259-599)
-
-**Section sources**
-- [intelligence/document_intelligence.py:1-2125](file://intelligence/document_intelligence.py#L1-2125)
-
-### Network Intelligence
-- BGP Lookup
-  - Primary: pybgpstream with capped record count and bounded memory footprint.
-  - Fallback: ipinfo.io API with optional bearer token; returns ASN, AS name, country, announced flag.
-- DNS-over-HTTPS Resolution
-  - Primary: dnspython with Cloudflare and Google DoH endpoints.
-  - Fallback: direct JSON-mode DoH via aiohttp; returns A, AAAA, MX, TXT records and provider used.
-- Graph Integration
-  - integrate_bgp_doh_to_graph() adds ASN and IP nodes with relationships to a knowledge graph.
-
-```mermaid
-sequenceDiagram
-participant Caller as "Caller"
-participant BGP as "get_bgp_info(prefix)"
-participant BGPLib as "pybgpstream"
-participant API as "ipinfo.io"
-Caller->>BGP : Request ASN/country for prefix
-BGP->>BGPLib : Stream records (bounded)
-BGPLib-->>BGP : Records or ImportError
-alt ImportError or failure
-BGP->>API : GET /{ip}/json (optional Authorization)
-API-->>BGP : ASN, country, org
-end
-BGP-->>Caller : Result {asn, as_name, country, announced, found}
-```
-
-**Diagram sources**
-- [intelligence/network_intelligence.py:29-151](file://intelligence/network_intelligence.py#L29-151)
-
-**Section sources**
-- [intelligence/network_intelligence.py:1-365](file://intelligence/network_intelligence.py#L1-365)
-
-### Social Identity Miner
-- Surface-level extraction from accepted findings without invasive scraping.
-- URL patterns for major platforms; username and profile URL construction; confidence scoring based on platform, domain/email linkage, and username quality.
-- Bounded concurrency, RAM guard, and deduplication by profile URL.
-- Canonical write path via DuckDBShadowStore.
-
-```mermaid
-sequenceDiagram
-participant Runner as "Runner"
-participant Miner as "SocialIdentityMiner.mine()"
-participant Store as "DuckDBShadowStore"
-Runner->>Miner : Mine(findings, store, query)
-Miner->>Miner : Extract URLs from payload/ioc_value
-Miner->>Miner : Process URLs concurrently (bounded)
-Miner->>Miner : Compute confidence per facet
-Miner->>Store : async_ingest_findings_batch(canonical findings)
-Store-->>Miner : Ack
-Miner-->>Runner : SocialIdentityResult(facets, stats)
-```
-
-**Diagram sources**
-- [intelligence/social_identity_miner.py:187-577](file://intelligence/social_identity_miner.py#L187-577)
-
-**Section sources**
-- [intelligence/social_identity_miner.py:1-577](file://intelligence/social_identity_miner.py#L1-577)
-
-### Web Intelligence Helper
-- UnifiedWebIntelligence provides a bounded, lazy-initialized wrapper around optional Hledac components.
-- Bounded queue with priority aging, memory pressure awareness, and task ownership tracking.
-- Executes web scraping, OSINT collection, threat assessment, and vulnerability analysis with graceful degradation.
-
-```mermaid
-classDiagram
-class UnifiedWebIntelligence {
-+execute_intelligence_operation(target, operation_types) str
-+queue_health() Dict
-+memory_posture() Dict
-+active_posture() Dict
-+completed_operations() Dict
-+completed_count() int
-}
 class IntelligenceTarget {
-+target_id : str
-+name : str
-+urls : List[str]
-+selectors : Dict
-+osint_sources : List[str]
-+operation_types : List[IntelligenceOperationType]
-+max_depth : int
-+priority : str
-+compliance_level : str
-+stealth_level : str
++string target_id
++string name
++string[] urls
++Dict~string,string~ selectors
++string[] osint_sources
++IntelligenceOperationType[] operation_types
++int max_depth
++string priority
++string compliance_level
++string stealth_level
 }
 class IntelligenceResult {
-+operation_id : str
-+target_id : str
-+operation_type : IntelligenceOperationType
-+status : OperationStatus
-+started_at : float
-+completed_at : Optional[float]
-+execution_time : float
-+web_data : Dict
-+osint_data : Dict
-+threat_assessment : Dict
-+vulnerabilities : List[Dict]
-+sources_used : List[str]
-+confidence_score : float
-+requests_made : int
-+errors : List[str]
++string operation_id
++string target_id
++IntelligenceOperationType operation_type
++OperationStatus status
++Dict~string,Any~ web_data
++Dict~string,Any~ osint_data
++Dict~string,Any~ threat_assessment
++Dict[] vulnerabilities
++string[] sources_used
++float confidence_score
++float stealth_score
++int requests_made
++string[] errors
++int flashattention_accelerations
++int captcha_solved
++int detection_evasions
++int pages_processed
 }
-UnifiedWebIntelligence --> IntelligenceTarget
-UnifiedWebIntelligence --> IntelligenceResult
+class UnifiedWebIntelligence {
++execute_intelligence_operation(target, operation_types) str
++queue_health Dict
++memory_posture Dict
++active_posture Dict
++completed_operations Dict
++completed_count int
+}
+IntelligenceTarget --> IntelligenceResult : "produces"
+UnifiedWebIntelligence --> IntelligenceResult : "tracks"
 ```
 
 **Diagram sources**
-- [intelligence/web_intelligence.py:115-800](file://intelligence/web_intelligence.py#L115-800)
+- [web_intelligence.py:69-114](file://hledac/universal/intelligence/web_intelligence.py#L69-L114)
+- [web_intelligence.py:84-113](file://hledac/universal/intelligence/web_intelligence.py#L84-L113)
+- [web_intelligence.py:115-525](file://hledac/universal/intelligence/web_intelligence.py#L115-L525)
 
 **Section sources**
-- [intelligence/web_intelligence.py:1-1075](file://intelligence/web_intelligence.py#L1-1075)
+- [web_intelligence.py:115-800](file://hledac/universal/intelligence/web_intelligence.py#L115-L800)
 
-### Workflow Orchestrator
-- Coordinates execution of analysis modules, correlates results, detects anomalies, and generates comprehensive reports.
-- Configurable execution modes (sequential/parallel), timeouts, and risk thresholds.
-- Data models: Finding, Anomaly, SharedContext, ComprehensiveReport, CorrelationReport, WorkflowPlan, IntelligenceConfig.
+### Cryptographic Intelligence
+- Purpose: Self-hosted cryptanalysis for classical ciphers, modern encryption detection, hash identification, certificate parsing, and entropy analysis.
+- Algorithms:
+  - Classical cryptanalysis: Caesar, Vigenere, Atbash, Rail Fence, frequency analysis, Kasiski examination.
+  - Hash identification: regex and length-based matching, entropy estimation, salting detection.
+  - Encryption detection: entropy, chi-square, index of coincidence, block size hints.
+  - Certificate parsing: subject/issuer, SANs, fingerprints, validity periods.
+- Accuracy considerations: Classical ciphers rely on English language heuristics; hash cracking depends on dictionary coverage and computational resources; entropy analysis helps distinguish encrypted vs. plain text.
+- Performance: Heavily CPU-bound; optimized with NumPy; optional cryptography library for modern crypto operations.
+
+```mermaid
+flowchart TD
+Start(["Input: ciphertext/hash/cert"]) --> ClassCheck["Classical cryptanalysis"]
+Start --> HashCheck["Hash identification"]
+Start --> EncCheck["Encryption detection"]
+Start --> CertCheck["Certificate parsing"]
+ClassCheck --> Score["Score plaintext likelihood"]
+Score --> Best["Select best solution"]
+HashCheck --> Entropy["Compute entropy"]
+Entropy --> Complexity["Estimate cracking complexity"]
+EncCheck --> Stats["Entropy/IOC/Chi-square"]
+Stats --> Cipher["Suggest cipher families"]
+CertCheck --> Fields["Extract fields and validate"]
+```
+
+**Diagram sources**
+- [cryptographic_intelligence.py:202-555](file://hledac/universal/intelligence/cryptographic_intelligence.py#L202-L555)
+- [cryptographic_intelligence.py:557-797](file://hledac/universal/intelligence/cryptographic_intelligence.py#L557-L797)
+- [cryptographic_intelligence.py:799-800](file://hledac/universal/intelligence/cryptographic_intelligence.py#L799-L800)
+
+**Section sources**
+- [cryptographic_intelligence.py:1-1257](file://hledac/universal/intelligence/cryptographic_intelligence.py#L1-L1257)
+
+### Network Intelligence
+- Purpose: Retrieve BGP and DNS-over-HTTPS information with fallbacks and integrate into a knowledge graph.
+- Workflows:
+  - BGP lookup via pybgpstream with capped records; fallback to ipinfo.io API.
+  - DoH resolution via dnspython with Cloudflare/Google endpoints; direct JSON fallback.
+- Output formats: Structured dictionaries with ASN, prefixes, country, A/AAAA/MX/TXT records, and provider/source metadata.
+- Privacy: Uses DoH to avoid local resolver leakage; fallbacks still reach public APIs.
 
 ```mermaid
 sequenceDiagram
 participant Caller as "Caller"
-participant Orchestrator as "WorkflowOrchestrator"
-participant Modules as "Registered Modules"
-participant Reports as "Reports"
-Caller->>Orchestrator : execute_workflow(plan, input_data)
-Orchestrator->>Orchestrator : Create SharedContext
-Orchestrator->>Modules : Execute sequentially/parallel with timeouts
-Modules-->>Orchestrator : Module results
-Orchestrator->>Orchestrator : Correlate results + detect anomalies
-Orchestrator->>Reports : Generate ComprehensiveReport
-Reports-->>Caller : Report (JSON/Markdown/HTML)
+participant Net as "NetworkIntelligence"
+participant BGPS as "pybgpstream"
+participant API as "ipinfo.io"
+participant DoH as "Cloudflare/Google DoH"
+Caller->>Net : get_bgp_info(prefix)
+alt pybgpstream available
+Net->>BGPS : filter prefix
+BGPS-->>Net : records
+else fallback
+Net->>API : GET /{ip}
+API-->>Net : ASN/country
+end
+Net-->>Caller : BGP result
+Caller->>Net : resolve_dns_doh(domain)
+alt dnspython available
+Net->>DoH : HTTPS A/MX/TXT queries
+DoH-->>Net : answers
+else fallback
+Net->>DoH : JSON endpoints
+DoH-->>Net : answers
+end
+Net-->>Caller : DNS/DoH result
 ```
 
 **Diagram sources**
-- [intelligence/workflow_orchestrator.py:335-800](file://intelligence/workflow_orchestrator.py#L335-800)
+- [network_intelligence.py:29-151](file://hledac/universal/intelligence/network_intelligence.py#L29-L151)
+- [network_intelligence.py:153-307](file://hledac/universal/intelligence/network_intelligence.py#L153-L307)
 
 **Section sources**
-- [intelligence/workflow_orchestrator.py:1-1849](file://intelligence/workflow_orchestrator.py#L1-1849)
+- [network_intelligence.py:1-365](file://hledac/universal/intelligence/network_intelligence.py#L1-L365)
 
-### Input Detector
-- IntelligentInputDetector analyzes input data to determine type, content, patterns, and complexity.
-- Magic-byte file type detection, content classification, pattern scanning (hashes, URLs, IPs, emails, etc.), encoding detection, and complexity estimation with time estimates.
-- Data models: Pattern, ComplexityScore, InputAnalysis, IntelligenceConfig.
+### Document Intelligence
+- Purpose: Extract metadata, hidden content, and forensic artifacts from PDFs, Office documents, and images.
+- Features:
+  - PDF: metadata, embedded objects, hyperlinks, emails, suspicious keywords (Aho-Corasick or substring).
+  - Office: OOXML/OLE parsing, comments, embedded media.
+  - Images: EXIF parsing, GPS extraction, orientation, device info.
+  - Progressive parsing: probe first, deepen only on high signal.
+- Accuracy: Metadata extraction is robust; suspicious keyword detection benefits from Aho-Corasick automaton; image forensics depend on EXIF availability.
+- Performance: Streaming processing, optional PyMuPDF and PIL; MPS/MLX acceleration guarded by availability checks.
 
 ```mermaid
 flowchart TD
-Start(["detect(input_data)"]) --> TypeCheck{"Is file/text/binary?"}
-TypeCheck --> |File| ReadFile["Read file bytes"]
-TypeCheck --> |Text| ToBytes["Encode text to bytes"]
-TypeCheck --> |Binary| BytesIn["Use bytes input"]
-ReadFile --> FileType["Detect file type (magic bytes)"]
-ToBytes --> Entropy["Calculate entropy"]
-BytesIn --> Entropy
-FileType --> Entropy
-Entropy --> Patterns["Scan patterns (regex)"]
-Patterns --> Complexity["Estimate complexity + time"]
-Complexity --> Encoding["Detect encoding (BOM/encodings)"]
-Encoding --> Recommendations["Generate recommendations"]
-Recommendations --> Return(["Return InputAnalysis"])
+In(["Document input"]) --> Type{"Detect type"}
+Type --> |PDF| PDF["PyMuPDF or basic PDF analysis"]
+Type --> |Office| OOXML["OOXML/OLE parser"]
+Type --> |Image| IMG["PIL/Piexif analysis"]
+PDF --> Probe["Probe signal score"]
+Probe --> |High| Deep["Deep parse top pages"]
+Probe --> |Low| Quick["Quick extraction"]
+OOXML --> Meta["Extract core properties"]
+OOXML --> Comms["Extract comments"]
+OOXML --> Media["Extract embedded media"]
+IMG --> EXIF["Extract EXIF/GPS"]
+EXIF --> Loc["Geolocation processing"]
+PDF --> Out["DocumentAnalysis"]
+OOXML --> Out
+IMG --> Out
 ```
 
 **Diagram sources**
-- [intelligence/input_detector.py:190-954](file://intelligence/input_detector.py#L190-954)
+- [document_intelligence.py:259-446](file://hledac/universal/intelligence/document_intelligence.py#L259-L446)
+- [document_intelligence.py:601-769](file://hledac/universal/intelligence/document_intelligence.py#L601-L769)
+- [document_intelligence.py:771-800](file://hledac/universal/intelligence/document_intelligence.py#L771-L800)
 
 **Section sources**
-- [intelligence/input_detector.py:1-954](file://intelligence/input_detector.py#L1-954)
+- [document_intelligence.py:1-2154](file://hledac/universal/intelligence/document_intelligence.py#L1-L2154)
 
-### Decision Engine (Deprecated)
-- Re-exports from brain.decision_engine; not intended for new development. Availability flag indicates import success only.
-
-**Section sources**
-- [intelligence/decision_engine.py:1-4](file://intelligence/decision_engine.py#L1-4)
-
-## Dependency Analysis
-- Optional Dependencies and Graceful Degradation
-  - Academic Search: aiohttp, XML parsing; adapters handle timeouts and errors.
-  - Document Intelligence: PyMuPDF (PDF), PIL/piexif (images), MLX (optional), Aho-Corasick (optional).
-  - Network Intelligence: pybgpstream (preferred), dnspython (preferred), ipinfo.io API (fallback), direct DoH via aiohttp.
-  - Social Identity Miner: regex patterns, optional UMA memory guard.
-  - Web Intelligence Helper: optional Hledac components; degraded mode when unavailable.
-  - Workflow Orchestrator: generic dataclasses and asyncio.
-  - Input Detector: regex patterns, math for entropy, optional encoding detection.
-- Coupling and Cohesion
-  - Modules are loosely coupled via explicit imports and availability flags.
-  - Data models are self-contained and serializable.
-- External Integration Points
-  - Academic sources (ArXiv, Crossref, Semantic Scholar).
-  - Network services (pybgpstream, ipinfo.io, Cloudflare/Google DoH).
-  - Knowledge graph integration for BGP/DoH results.
+### Network Reconnaissance
+- Purpose: Passive reconnaissance combining DNS enumeration, WHOIS, SSL/TLS analysis, wildcard detection, and private IP filtering.
+- Algorithms:
+  - DNS enumeration: A/AAAA/MX/NS/TXT/SOA/CNAME/PTR/SRV/CAA with zone transfer attempts.
+  - WHOIS: TLD-specific servers, date parsing, privacy redaction handling.
+  - SSL: Certificate parsing, SAN extraction, expiry calculation.
+  - Wildcard detection: High-entropy random subdomain probing with conservative timeouts.
+- Accuracy: DNS enumeration relies on resolver responses; WHOIS parsing handles various formats; wildcard detection avoids false positives with timeouts and caches.
+- Performance: Async I/O, semaphores, and bounded wildcards to prevent resource exhaustion.
 
 ```mermaid
-graph TB
-Aca["academic_search.py"] --> Ext1["aiohttp"]
-Aca --> Ext2["XML parser"]
-Doc["document_intelligence.py"] --> Ext3["PyMuPDF"]
-Doc --> Ext4["PIL/piexif"]
-Doc --> Ext5["MLX (optional)"]
-Net["network_intelligence.py"] --> Ext6["pybgpstream"]
-Net --> Ext7["dnspython"]
-Net --> Ext8["aiohttp"]
-Soc["social_identity_miner.py"] --> Ext9["regex"]
-Web["web_intelligence.py"] --> Ext10["Optional Hledac components"]
-Inp["input_detector.py"] --> Ext11["regex, math"]
+flowchart TD
+Start(["Target domain/IP"]) --> DNS["DNSEnumerator.enumerate_all"]
+Start --> WHOIS["WHOISLookup.lookup"]
+Start --> SSL["SSLAnalyzer.analyze_certificate"]
+DNS --> Zones["Attempt AXFR"]
+DNS --> Subs["Brute force subdomains"]
+DNS --> Perm["Permutation scan"]
+WHOIS --> Parse["Parse dates/fields"]
+SSL --> Cert["Parse DER, SANs, expiry"]
+Start --> Wildcard["Wildcard detection"]
+Wildcard --> Probe["Random host probes"]
+Probe --> Decide["Conservative decision"]
+DNS --> Out["HostInfo"]
+WHOIS --> Out
+SSL --> Out
+Wildcard --> Out
 ```
 
 **Diagram sources**
-- [intelligence/academic_search.py:35-48](file://intelligence/academic_search.py#L35-48)
-- [intelligence/document_intelligence.py:45-94](file://intelligence/document_intelligence.py#L45-94)
-- [intelligence/network_intelligence.py:55-179](file://intelligence/network_intelligence.py#L55-179)
-- [intelligence/social_identity_miner.py:23-33](file://intelligence/social_identity_miner.py#L23-33)
-- [intelligence/web_intelligence.py:35-47](file://intelligence/web_intelligence.py#L35-47)
-- [intelligence/input_detector.py:23-31](file://intelligence/input_detector.py#L23-31)
+- [network_reconnaissance.py:141-343](file://hledac/universal/intelligence/network_reconnaissance.py#L141-L343)
+- [network_reconnaissance.py:379-523](file://hledac/universal/intelligence/network_reconnaissance.py#L379-L523)
+- [network_reconnaissance.py:525-637](file://hledac/universal/intelligence/network_reconnaissance.py#L525-L637)
+- [network_reconnaissance.py:639-796](file://hledac/universal/intelligence/network_reconnaissance.py#L639-L796)
 
 **Section sources**
-- [intelligence/__init__.py:25-422](file://intelligence/__init__.py#L25-422)
+- [network_reconnaissance.py:1-1388](file://hledac/universal/intelligence/network_reconnaissance.py#L1-L1388)
+
+### Workflow Orchestrator
+- Purpose: Coordinate multi-module analysis, correlate findings, detect anomalies, and produce comprehensive reports.
+- Execution modes: Sequential or parallel with grouped modules and timeouts.
+- Correlation patterns: High-risk combinations (e.g., scrubbed metadata + steganography) increment risk scores; multiple indicators increase risk.
+- Output formats: JSON, Markdown, HTML; timeline of execution events.
+- Configuration: module_timeout, max_parallel_modules, enable_correlation, enable_anomaly_detection, risk thresholds.
+
+```mermaid
+classDiagram
+class WorkflowPlan {
++string[] modules
++string execution_mode
++List[]string~~ parallel_groups
+}
+class SharedContext {
++Any input_data
++Dict~string,Any~ intermediate_results
++Dict~string,string~ module_status
++Dict~string,Any~ resource_usage
+}
+class Finding {
++string finding_type
++string description
++string severity
++float confidence
++string[] modules
+}
+class Anomaly {
++string anomaly_type
++string severity
++string description
++string[] affected_modules
+}
+class CorrelationReport {
++Finding[] cross_module_findings
++float risk_score
++Dict~string,Any~ attribution
+}
+class ComprehensiveReport {
++Dict~string,Any~ input_summary
++Dict~string,Any~ module_results
++CorrelationReport correlations
++Anomaly[] anomalies
++string verdict
++float confidence
++string[] recommendations
++Dict[]string,Any~~ timeline
++Dict~string,Any~ export_data
++to_json() string
++to_markdown() string
++to_html() string
+}
+class WorkflowOrchestrator {
++execute_workflow(workflow, input_data) ComprehensiveReport
++register_module(name, instance) void
+}
+WorkflowOrchestrator --> WorkflowPlan : "consumes"
+WorkflowOrchestrator --> SharedContext : "maintains"
+WorkflowOrchestrator --> Finding : "generates"
+WorkflowOrchestrator --> Anomaly : "generates"
+WorkflowOrchestrator --> CorrelationReport : "generates"
+WorkflowOrchestrator --> ComprehensiveReport : "produces"
+```
+
+**Diagram sources**
+- [workflow_orchestrator.py:24-112](file://hledac/universal/intelligence/workflow_orchestrator.py#L24-L112)
+- [workflow_orchestrator.py:335-609](file://hledac/universal/intelligence/workflow_orchestrator.py#L335-L609)
+- [workflow_orchestrator.py:610-800](file://hledac/universal/intelligence/workflow_orchestrator.py#L610-L800)
+
+**Section sources**
+- [workflow_orchestrator.py:1-1849](file://hledac/universal/intelligence/workflow_orchestrator.py#L1-L1849)
+
+### Streaming Embedder
+- Purpose: Memory-safe, chunked async embedding pipeline for canonical findings with model lifecycle integration and RAM guards.
+- Guarantees: Bounded batch size, text truncation, fail-open behavior, and automatic model load/unload.
+- Integration: Used by sprint scheduler for dedup/ANN ingestion; falls back to embedding pipeline when unavailable.
+
+```mermaid
+sequenceDiagram
+participant Caller as "Sprint Scheduler"
+participant SE as "StreamingEmbedder"
+participant Model as "Embedding Model"
+participant EP as "embedding_pipeline"
+Caller->>SE : embed_findings(findings, batch_size)
+SE->>SE : _ram_guard_ok()
+alt model loaded
+SE->>SE : _embed_chunked()
+SE-->>Caller : (ids, embeddings)
+else model not loaded
+SE->>EP : generate_embeddings(texts, batch_size)
+EP-->>SE : embeddings
+SE-->>Caller : (ids, embeddings)
+end
+```
+
+**Diagram sources**
+- [streaming_embedder.py:150-204](file://hledac/universal/intelligence/streaming_embedder.py#L150-L204)
+- [streaming_embedder.py:205-268](file://hledac/universal/intelligence/streaming_embedder.py#L205-L268)
+
+**Section sources**
+- [streaming_embedder.py:1-294](file://hledac/universal/intelligence/streaming_embedder.py#L1-L294)
+
+### Exposed Service Hunter
+- Purpose: Discover exposed services and misconfigurations including S3 buckets, databases, GraphQL endpoints, and certificate transparency exposures.
+- Techniques:
+  - S3: naming pattern enumeration across regions with permission checks.
+  - Databases: TCP banner probing for MongoDB, Redis, Elasticsearch, CouchDB, and others.
+  - GraphQL: introspection queries to detect schemas and permissions.
+  - Certificate Transparency: queries via crt.sh for subdomain discovery.
+- Risk levels: Critical, High, Medium, Low based on exposure type and service sensitivity.
+
+```mermaid
+flowchart TD
+Start(["Target host/domain"]) --> S3["S3BucketEnumerator.enumerate_buckets"]
+Start --> DB["DatabasePortScanner.scan_hosts"]
+Start --> GraphQL["GraphQLIntrospector.discover_endpoints"]
+Start --> CT["CertificateTransparency.query_domain"]
+S3 --> S3Find["ExposedService(S3)"]
+DB --> DBFind["ExposedService(DB)"]
+GraphQL --> GQLFind["ExposedService(GraphQL)"]
+CT --> CTFind["Subdomains"]
+S3Find --> Out["Findings"]
+DBFind --> Out
+GQLFind --> Out
+CTFind --> Out
+```
+
+**Diagram sources**
+- [exposed_service_hunter.py:115-337](file://hledac/universal/intelligence/exposed_service_hunter.py#L115-L337)
+- [exposed_service_hunter.py:339-541](file://hledac/universal/intelligence/exposed_service_hunter.py#L339-L541)
+- [exposed_service_hunter.py:543-749](file://hledac/universal/intelligence/exposed_service_hunter.py#L543-L749)
+- [exposed_service_hunter.py:751-800](file://hledac/universal/intelligence/exposed_service_hunter.py#L751-L800)
+
+**Section sources**
+- [exposed_service_hunter.py:1-1683](file://hledac/universal/intelligence/exposed_service_hunter.py#L1-L1683)
+
+### Blockchain Forensics (Hard Containment)
+- Status: Experimental, not promoted; designed for offline research with external API keys.
+- Features: Wallet analysis, transaction tracing, clustering, pattern detection, and entity tagging.
+- Containment: Hard upper bounds on cache size, depth-first tracing, and circuit breaker integration; not wired into canonical paths.
+- Compliance: No API key storage; network traffic goes directly to third-party APIs.
+
+```mermaid
+flowchart TD
+Start(["Address/Chain"]) --> Valid["Validate address format"]
+Valid --> Chain{"Chain type"}
+Chain --> |Ethereum| Eth["Fetch balance/tx via Etherscan"]
+Chain --> |Bitcoin| Btc["Fetch stats via Blockchair"]
+Eth --> Trace["Trace transactions (depth-limited)"]
+Btc --> Trace
+Trace --> Patterns["Detect patterns/clusters"]
+Patterns --> Risk["Calculate risk score"]
+Risk --> Out["WalletAnalysis"]
+```
+
+**Diagram sources**
+- [blockchain_analyzer.py:304-548](file://hledac/universal/intelligence/blockchain_analyzer.py#L304-L548)
+- [blockchain_analyzer.py:549-800](file://hledac/universal/intelligence/blockchain_analyzer.py#L549-L800)
+
+**Section sources**
+- [blockchain_analyzer.py:1-1596](file://hledac/universal/intelligence/blockchain_analyzer.py#L1-L1596)
+
+## Dependency Analysis
+- Availability flags: The package exports availability booleans for each module to indicate import success without production readiness.
+- Lazy initialization: Many modules defer component initialization until first use to reduce startup overhead.
+- Optional dependencies: Modules conditionally import optional libraries (e.g., cryptography, PIL, PyMuPDF, dnspython) and degrade gracefully.
+- Integration seams:
+  - Workflow Orchestrator registers modules dynamically and executes them with timeouts.
+  - Streaming Embedder integrates with model lifecycle and resource governor.
+  - Network Intelligence integrates with knowledge graph nodes and edges.
+
+```mermaid
+graph LR
+Init["intelligence/__init__.py"] --> Flags["Availability flags"]
+Init --> Classes["Re-exported classes"]
+Classes --> Web["UnifiedWebIntelligence"]
+Classes --> Crypto["ClassicalCryptanalysis/HashAnalyzer"]
+Classes --> Net["get_bgp_info/resolve_dns_doh"]
+Classes --> Doc["PDFAnalyzer/OfficeDocumentAnalyzer/ImageAnalyzer"]
+Classes --> Recon["DNSEnumerator/WHOISLookup/SSLAnalyzer"]
+Classes --> WF["WorkflowOrchestrator"]
+Classes --> SE["StreamingEmbedder"]
+Classes --> ES["ExposedServiceHunter"]
+Classes --> BC["BlockchainForensics"]
+```
+
+**Diagram sources**
+- [intelligence/__init__.py:425-686](file://hledac/universal/intelligence/__init__.py#L425-L686)
+
+**Section sources**
+- [intelligence/__init__.py:1-686](file://hledac/universal/intelligence/__init__.py#L1-L686)
 
 ## Performance Considerations
-- Bounded Concurrency and Queues
-  - Academic Discovery uses a semaphore to cap concurrent requests (~100 per minute).
-  - Web Intelligence Helper enforces bounded queue sizes, priority aging, and memory limits.
-- Lazy Initialization
-  - Web Intelligence and Social Identity Miner initialize optional components on first use.
-- Memory Management
-  - Document Intelligence uses progressive analysis and optional image size caps.
-  - Network Intelligence enforces a bounded RAM limit for BGP data.
-- Optional Acceleration
-  - Document Intelligence supports MLX and MPS availability checks; graceful fallback when absent.
-- Timeouts and Degradation
-  - Workflow Orchestrator applies per-module timeouts; modules return structured error payloads.
+- Memory safety:
+  - Web Intelligence enforces memory budgets and evicts completed operations with bounded FIFO.
+  - Streaming Embedder caps batch sizes and unloads models under memory pressure.
+  - Document Intelligence uses progressive parsing and optional heavy libraries behind availability checks.
+- Concurrency:
+  - Network modules use semaphores and connection pools to bound concurrent operations.
+  - Workflow Orchestrator supports parallel groups with timeouts.
+- I/O:
+  - Async I/O for DNS, HTTP, and embedding operations; bounded RAM for BGP data.
+- Accuracy trade-offs:
+  - Classical cryptanalysis relies on language heuristics; hash cracking depends on dictionary coverage.
+  - Wildcard detection conservatively handles timeouts and ambiguous responses.
 
 [No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
-- Academic Search
-  - Symptom: Empty results or timeouts.
-  - Actions: Verify API keys, reduce max_results, confirm network connectivity, check rate limits.
-  - References: [intelligence/academic_search.py:231-273](file://intelligence/academic_search.py#L231-273)
-- Document Intelligence
-  - Symptom: PDF analysis fails or returns minimal metadata.
-  - Actions: Install PyMuPDF; verify file integrity; check suspicious keyword extractor availability.
-  - References: [intelligence/document_intelligence.py:278-351](file://intelligence/document_intelligence.py#L278-351)
-- Network Intelligence
-  - Symptom: BGP lookup fails or slow.
-  - Actions: Ensure pybgpstream is installed; if unavailable, configure IPINFO_API_KEY; verify resolver availability.
-  - References: [intelligence/network_intelligence.py:29-151](file://intelligence/network_intelligence.py#L29-151)
-- Social Identity Miner
-  - Symptom: No facets extracted.
-  - Actions: Confirm findings payload contains URLs; check RAM guard conditions; adjust confidence thresholds.
-  - References: [intelligence/social_identity_miner.py:187-299](file://intelligence/social_identity_miner.py#L187-299)
-- Web Intelligence Helper
-  - Symptom: Operations rejected due to queue/memory limits.
-  - Actions: Reduce max_concurrent_operations, monitor memory_posture(), or wait for aging.
-  - References: [intelligence/web_intelligence.py:344-427](file://intelligence/web_intelligence.py#L344-427)
-- Workflow Orchestrator
-  - Symptom: Module timeouts or failures.
-  - Actions: Increase module_timeout; review module status and error messages in results.
-  - References: [intelligence/workflow_orchestrator.py:385-466](file://intelligence/workflow_orchestrator.py#L385-466)
-- Input Detector
-  - Symptom: Incorrect file type or encoding detection.
-  - Actions: Validate magic bytes; ensure content is readable; adjust min_pattern_length.
-  - References: [intelligence/input_detector.py:429-544](file://intelligence/input_detector.py#L429-544)
+- Degraded mode:
+  - If optional dependencies are missing, modules fall back to basic functionality or log warnings. Check availability flags and logs.
+- Queue and memory pressure:
+  - Web Intelligence warns when operations are queued due to memory limits; inspect queue_health and memory_posture.
+- Timeouts:
+  - Workflow Orchestrator applies module timeouts; check module_status and timeline events for failures.
+- Network errors:
+  - Network Intelligence and Exposed Service Hunter may fail due to resolver issues or API limits; verify credentials and rate limits.
+- Privacy and compliance:
+  - Use DoH for DNS resolution; avoid exposing sensitive data in reports; review export formats and retention policies.
 
 **Section sources**
-- [intelligence/academic_search.py:231-273](file://intelligence/academic_search.py#L231-273)
-- [intelligence/document_intelligence.py:278-351](file://intelligence/document_intelligence.py#L278-351)
-- [intelligence/network_intelligence.py:29-151](file://intelligence/network_intelligence.py#L29-151)
-- [intelligence/social_identity_miner.py:187-299](file://intelligence/social_identity_miner.py#L187-299)
-- [intelligence/web_intelligence.py:344-427](file://intelligence/web_intelligence.py#L344-427)
-- [intelligence/workflow_orchestrator.py:385-466](file://intelligence/workflow_orchestrator.py#L385-466)
-- [intelligence/input_detector.py:429-544](file://intelligence/input_detector.py#L429-544)
+- [web_intelligence.py:204-270](file://hledac/universal/intelligence/web_intelligence.py#L204-L270)
+- [workflow_orchestrator.py:462-466](file://hledac/universal/intelligence/workflow_orchestrator.py#L462-L466)
+- [network_intelligence.py:89-96](file://hledac/universal/intelligence/network_intelligence.py#L89-L96)
+- [exposed_service_hunter.py:252-308](file://hledac/universal/intelligence/exposed_service_hunter.py#L252-L308)
 
 ## Conclusion
-The intelligence modules subsystem offers a robust, modular, and resilient foundation for academic, network, social identity, and document intelligence. Its design emphasizes lazy initialization, graceful degradation, bounded resources, and clear interfaces. By leveraging availability flags and structured data models, downstream components can compose workflows that adapt to environment constraints while maintaining high fidelity to the underlying intelligence tasks.
+Hledac Universal intelligence modules provide a resilient, modular, and memory-conscious toolkit for OSINT and security research. They support diverse domains—from web scraping and cryptography to network reconnaissance and document analysis—while maintaining performance and privacy safeguards. The Workflow Orchestrator coordinates these modules into cohesive analyses, and Streaming Embedder ensures memory safety during embedding. For experimental or heavy workloads, modules like Blockchain Forensics are contained and not integrated into canonical paths.
 
 [No sources needed since this section summarizes without analyzing specific files]
 
 ## Appendices
 
-### Configuration Options and Parameters
-- Academic Search Engine
-  - Parameters: enable_expansion, enable_deduplication.
-  - SourceConfig fields: name, enabled, weight, timeout_seconds, max_results, api_key, base_url, rate_limit_per_minute.
-  - References: [intelligence/academic_search.py:795-800](file://intelligence/academic_search.py#L795-800), [intelligence/academic_search.py:79-94](file://intelligence/academic_search.py#L79-94)
-- Document Intelligence
-  - Availability flags: PYMUPDF_AVAILABLE, PIL_AVAILABLE, MLX_AVAILABLE, MPS_AVAILABLE.
-  - Suspicious keywords scanning via Aho-Corasick with lazy import.
-  - References: [intelligence/document_intelligence.py:45-113](file://intelligence/document_intelligence.py#L45-113)
-- Network Intelligence
-  - MAX_BGP_DATA_MB: 300 MB.
-  - DoH endpoints: Cloudflare and Google.
-  - References: [intelligence/network_intelligence.py:22-27](file://intelligence/network_intelligence.py#L22-27)
-- Social Identity Miner
-  - Bounds: MAX_SOCIAL_PROFILES, MAX_LINKS_PER_PROFILE, MAX_SOCIAL_TEXT_BYTES, SOCIAL_MIN_CONFIDENCE.
-  - References: [intelligence/social_identity_miner.py:36-40](file://intelligence/social_identity_miner.py#L36-40)
-- Web Intelligence Helper
-  - Config keys: max_concurrent_operations, enable_flashattention, enable_osint, enable_stealth.
-  - Queue bounds: _MAX_QUEUE, _MAX_QUEUED_OPS.
-  - References: [intelligence/web_intelligence.py:131-199](file://intelligence/web_intelligence.py#L131-199)
-- Workflow Orchestrator
-  - IntelligenceConfig fields: module_timeout, max_parallel_modules, enable_correlation, enable_anomaly_detection, risk_thresholds.
-  - References: [intelligence/workflow_orchestrator.py:315-333](file://intelligence/workflow_orchestrator.py#L315-333)
-- Input Detector
-  - IntelligenceConfig fields: max_file_size, chunk_size, min_pattern_length, entropy_threshold_low, entropy_threshold_high, enable_pattern_scanning, enable_encoding_detection, enable_complexity_analysis.
-  - References: [intelligence/input_detector.py:162-183](file://intelligence/input_detector.py#L162-183)
+### Configuration Options
+- Web Intelligence:
+  - max_concurrent_operations, enable_flashattention, enable_osint, enable_stealth, queue limits, memory budget.
+- Workflow Orchestrator:
+  - module_timeout, max_parallel_modules, enable_correlation, enable_anomaly_detection, risk_thresholds.
+- Network Intelligence:
+  - MAX_BGP_DATA_MB, DoH endpoints, fallbacks.
+- Document Intelligence:
+  - Optional dependencies (PIL, PyMuPDF, MLX), MPS detection, suspicious keywords.
+- Exposed Service Hunter:
+  - S3 patterns, database ports, GraphQL endpoints, CT API base URL.
+- Blockchain Forensics:
+  - Etherscan/Blockchair API keys, cache TTL, max_concurrent_requests, fetch_func seam.
 
-### Return Values and Interfaces
-- Academic Search
-  - search(): AcademicSearchResult with lists of results and metadata.
-  - Convenience functions: List[Dict] with keys title, authors, year, link, source, abstract, DOI, citations, tags.
-  - References: [intelligence/academic_search.py:133-159](file://intelligence/academic_search.py#L133-159), [intelligence/academic_discovery.py:77-122](file://intelligence/academic_discovery.py#L77-122)
-- Document Intelligence
-  - analyze(): DocumentAnalysis with metadata, embedded objects, hyperlinks, emails, IPs, suspicious indicators.
-  - References: [intelligence/document_intelligence.py:278-351](file://intelligence/document_intelligence.py#L278-351)
-- Network Intelligence
-  - get_bgp_info(): Dict with prefix, asn, as_name, country, announced, found, error.
-  - resolve_dns_doh(): Dict with a, aaaa, mx, txt, found, errors, source/provider.
-  - References: [intelligence/network_intelligence.py:29-247](file://intelligence/network_intelligence.py#L29-247)
-- Social Identity Miner
-  - mine(): SocialIdentityResult with facets, scanned_count, skipped_count, elapsed_ms.
-  - References: [intelligence/social_identity_miner.py:187-299](file://intelligence/social_identity_miner.py#L187-299)
-- Web Intelligence Helper
-  - execute_intelligence_operation(): operation_id; results stored in completed_operations.
-  - References: [intelligence/web_intelligence.py:344-427](file://intelligence/web_intelligence.py#L344-427)
-- Workflow Orchestrator
-  - execute_workflow(): ComprehensiveReport with module_results, correlations, anomalies, verdict, confidence, recommendations.
-  - References: [intelligence/workflow_orchestrator.py:385-466](file://intelligence/workflow_orchestrator.py#L385-466)
-- Input Detector
-  - detect(): InputAnalysis with input_type, file_type, content_type, patterns, complexity, recommendations, encoding, size_bytes, entropy.
-  - References: [intelligence/input_detector.py:241-272](file://intelligence/input_detector.py#L241-272)
+**Section sources**
+- [web_intelligence.py:131-199](file://hledac/universal/intelligence/web_intelligence.py#L131-L199)
+- [workflow_orchestrator.py:315-333](file://hledac/universal/intelligence/workflow_orchestrator.py#L315-L333)
+- [network_intelligence.py:21-27](file://hledac/universal/intelligence/network_intelligence.py#L21-L27)
+- [document_intelligence.py:44-81](file://hledac/universal/intelligence/document_intelligence.py#L44-L81)
+- [exposed_service_hunter.py:123-179](file://hledac/universal/intelligence/exposed_service_hunter.py#L123-L179)
+- [blockchain_analyzer.py:315-342](file://hledac/universal/intelligence/blockchain_analyzer.py#L315-L342)
+
+### Example Usage
+- Web Intelligence:
+  - Create IntelligenceTarget with URLs and operation types; call execute_intelligence_operation; inspect IntelligenceResult.
+- Workflow Orchestrator:
+  - Build WorkflowPlan with module names; call execute_workflow; render ComprehensiveReport to JSON/Markdown/HTML.
+- Network Intelligence:
+  - Call get_bgp_info(prefix) and resolve_dns_doh(domain); integrate results into knowledge graph.
+- Document Intelligence:
+  - Instantiate PDFAnalyzer/OfficeDocumentAnalyzer/ImageAnalyzer; call analyze(file_path); examine DocumentAnalysis.
+- Exposed Service Hunter:
+  - Use S3BucketEnumerator.enumerate_buckets(target), DatabasePortScanner.scan_hosts(hosts), GraphQLIntrospector.discover_endpoints(base_url), CertificateTransparency.query_domain(domain).
+- Streaming Embedder:
+  - Call embed_findings(findings, batch_size) to yield (ids, embeddings) batches.
+
+**Section sources**
+- [web_intelligence.py:344-477](file://hledac/universal/intelligence/web_intelligence.py#L344-L477)
+- [workflow_orchestrator.py:385-466](file://hledac/universal/intelligence/workflow_orchestrator.py#L385-L466)
+- [network_intelligence.py:29-151](file://hledac/universal/intelligence/network_intelligence.py#L29-L151)
+- [document_intelligence.py:278-351](file://hledac/universal/intelligence/document_intelligence.py#L278-L351)
+- [exposed_service_hunter.py:198-337](file://hledac/universal/intelligence/exposed_service_hunter.py#L198-L337)
+- [streaming_embedder.py:150-204](file://hledac/universal/intelligence/streaming_embedder.py#L150-L204)

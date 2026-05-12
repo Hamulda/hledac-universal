@@ -389,8 +389,8 @@ def trace_boundaries(
     with open(output_json_path, "w") as fh:
         json.dump(output_data, fh, indent=2)
 
-    # Write markdown
-    md = f"""# F208 Truth Boundary Trace
+    # Write markdown — use list append to avoid O(n²) string concatenation
+    parts = [f"""# F208 Truth Boundary Trace
 
 ## Verdict: `{result.verdict}`
 
@@ -414,35 +414,35 @@ def trace_boundaries(
 
 ## Boundary Snapshots
 
-"""
+"""]
 
     for name, snap_data in result.boundary_snapshots.items():
-        md += f"### {name}\n\n"
+        parts.append(f"### {name}\n\n")
         if snap_data is None:
-            md += "_not readable_\n\n"
+            parts.append("_not readable_\n\n")
             continue
-        md += "| Field | Value |\n|------|-------|\n"
+        parts.append("| Field | Value |\n|------|-------|\n")
         for field, val in snap_data.items():
             if val is None:
-                md += f"| {field} | `null` |\n"
+                parts.append(f"| {field} | `null` |\n")
             elif val == "MISSING":
-                md += f"| {field} | _MISSING_ |\n"
+                parts.append(f"| {field} | _MISSING_ |\n")
             elif isinstance(val, dict):
-                md += f"| {field} | `{json.dumps(val)[:80]}...` |\n"
+                parts.append(f"| {field} | `{json.dumps(val)[:80]}...` |\n")
             elif isinstance(val, list):
-                md += f"| {field} | `{json.dumps(val)[:80]}...` |\n"
+                parts.append(f"| {field} | `{json.dumps(val)[:80]}...` |\n")
             else:
-                md += f"| {field} | `{val}` |\n"
-        md += "\n"
+                parts.append(f"| {field} | `{val}` |\n")
+        parts.append("\n")
 
-    md += "## Acquisition Missing In\n\n"
+    parts.append("## Acquisition Missing In\n\n")
     if result.acquisition_missing_in:
         for item in result.acquisition_missing_in:
-            md += f"- {item}\n"
+            parts.append(f"- {item}\n")
     else:
-        md += "_none_\n"
+        parts.append("_none_\n")
 
-    md += f"""
+    parts.append(f"""
 ## Classification
 
 | Field | Value |
@@ -457,26 +457,27 @@ def trace_boundaries(
 
 | Field | Value |
 |-------|-------|
-"""
+""")
+
     for tf, val in result.terminality_state.items():
-        md += f"| {tf} | `{val}` |\n"
+        parts.append(f"| {tf} | `{val}` |\n")
 
     # Add timing mismatch diagnosis when applicable
     mismatch = result.terminality_source_outcome_mismatch
     if mismatch:
-        md += f"""
+        parts.append(f"""
 ## Timing Diagnosis
 
 **Likely Cause:** terminality_computed_before_nonfeed_predispatch
 
 | Stale Lane | Explanation |
 |------------|-------------|
-"""
+""")
         for lane in mismatch:
-            md += f"| {lane} | appears attempted in `source_family_outcomes` but still listed in `missing_lanes` — terminality snapshot was taken before CT/PUBLIC predispatch completed | `source_family_outcomes` vs `acquisition_terminality_missing_lanes` timing gap |\n"
+            parts.append(f"| {lane} | appears attempted in `source_family_outcomes` but still listed in `missing_lanes` — terminality snapshot was taken before CT/PUBLIC predispatch completed | `source_family_outcomes` vs `acquisition_terminality_missing_lanes` timing gap |\n")
 
     with open(output_md_path, "w") as fh:
-        fh.write(md)
+        fh.write("".join(parts))
 
     return result
 

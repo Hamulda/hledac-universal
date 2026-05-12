@@ -75,6 +75,43 @@ def upsert_ioc(
         return False
 
 
+def upsert_ioc_batch(
+    rows: list[tuple[str, str, float, str]]
+) -> int:
+    """
+    Batch upsert IOCs — single DuckDB round-trip for N rows.
+
+    Idempotency is enforced via _SEEN_IOCS (in-memory dedup set) so duplicate
+    values within a sprint are filtered before the batch is sent to DuckDB.
+
+    Args:
+        rows: List of (value, ioc_type, confidence, source) tuples.
+    Returns:
+        Number of rows passed to DuckDB (not number actually inserted).
+    """
+    if not rows:
+        return 0
+    # Deduplicate before batch — _SEEN_IOCS is session-scoped
+    unique: list[tuple[str, str, float, str]] = []
+    seen_add = _SEEN_IOCS.add
+    for value, ioc_type, confidence, source in rows:
+        key = (value, ioc_type)
+        if key not in _SEEN_IOCS:
+            unique.append((value, ioc_type, confidence, source))
+            seen_add(key)
+    if not unique:
+        return 0
+
+    graph = _get_graph()
+    if graph is None:
+        return 0
+    try:
+        return graph.upsert_ioc_batch(unique)
+    except Exception as e:
+        logger.warning(f"[GraphService] upsert_ioc_batch failed: {e}")
+        return 0
+
+
 def upsert_relation(
     src: str,
     dst: str,

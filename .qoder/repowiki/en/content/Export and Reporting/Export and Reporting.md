@@ -2,16 +2,16 @@
 
 <cite>
 **Referenced Files in This Document**
-- [export/__init__.py](file://export/__init__.py)
-- [export/export_manager.py](file://export/export_manager.py)
-- [export/jsonld_exporter.py](file://export/jsonld_exporter.py)
-- [export/markdown_reporter.py](file://export/markdown_reporter.py)
-- [export/stix_exporter.py](file://export/stix_exporter.py)
-- [export/sprint_exporter.py](file://export/sprint_exporter.py)
-- [export/sprint_markdown_reporter.py](file://export/sprint_markdown_reporter.py)
-- [export/COMPAT_HANDOFF.py](file://export/COMPAT_HANDOFF.py)
-- [export/EXPORT_PLANE_MAP.md](file://export/EXPORT_PLANE_MAP.md)
-- [export/COMPAT_DEBT_LEDGER.md](file://export/COMPAT_DEBT_LEDGER.md)
+- [export/__init__.py](file://hledac/universal/export/__init__.py)
+- [export/export_manager.py](file://hledac/universal/export/export_manager.py)
+- [export/stix_exporter.py](file://hledac/universal/export/stix_exporter.py)
+- [export/markdown_reporter.py](file://hledac/universal/export/markdown_reporter.py)
+- [export/jsonld_exporter.py](file://hledac/universal/export/jsonld_exporter.py)
+- [export/sprint_exporter.py](file://hledac/universal/export/sprint_exporter.py)
+- [export/sprint_markdown_reporter.py](file://hledac/universal/export/sprint_markdown_reporter.py)
+- [export/COMPAT_HANDOFF.py](file://hledac/universal/export/COMPAT_HANDOFF.py)
+- [export/COMPAT_DEBT_LEDGER.md](file://hledac/universal/export/COMPAT_DEBT_LEDGER.md)
+- [export/EXPORT_PLANE_MAP.md](file://hledac/universal/export/EXPORT_PLANE_MAP.md)
 </cite>
 
 ## Table of Contents
@@ -27,35 +27,24 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the export and reporting subsystem of the system. It covers the export framework, report generation, compatibility standards, and data interchange formats. The subsystem provides deterministic, side-effect-free rendering of diagnostic reports and structured artifacts suitable for downstream systems, operators, and analysts. It supports:
-- Markdown diagnostics for human readability
-- JSON-LD for graph ingestion and future synthesis
-- STIX 2.1 bundles for CTI interoperability
-- Sprint-level JSON reports and next-sprint seed tasks
-- An export manager for Obsidian-compatible Markdown and interactive HTML graphs
+This document describes the export and reporting system in Hledac Universal. It covers the export manager for human-readable outputs, the STIX exporter for cyber threat intelligence, the JSON-LD exporter for semantic data, and the sprint exporter for automated reporting and seed generation. It explains supported formats, data transformation rules, configuration options, validation and formatting guarantees, and integration patterns with external systems.
 
 ## Project Structure
-The export subsystem is organized under the export package with clear separation of concerns:
-- Pure diagnostic exporters: Markdown, JSON-LD, STIX
-- Sprint export and seed generation
-- Export manager for Markdown and HTML graph exports
-- Compatibility adapters and canonical path ownership
+The export subsystem is organized under the export package with clear separation between diagnostic (human-readable and semantic) and sprint (automated) reporting planes.
 
 ```mermaid
 graph TB
 subgraph "Export Package"
 A["export/__init__.py"]
-B["export/markdown_reporter.py"]
-C["export/jsonld_exporter.py"]
-D["export/stix_exporter.py"]
-E["export/sprint_exporter.py"]
-F["export/sprint_markdown_reporter.py"]
-G["export/export_manager.py"]
+B["export/export_manager.py"]
+C["export/markdown_reporter.py"]
+D["export/jsonld_exporter.py"]
+E["export/stix_exporter.py"]
+F["export/sprint_exporter.py"]
+G["export/sprint_markdown_reporter.py"]
 H["export/COMPAT_HANDOFF.py"]
-end
-subgraph "Documentation"
-I["export/EXPORT_PLANE_MAP.md"]
-J["export/COMPAT_DEBT_LEDGER.md"]
+I["export/COMPAT_DEBT_LEDGER.md"]
+J["export/EXPORT_PLANE_MAP.md"]
 end
 A --> B
 A --> C
@@ -63,370 +52,326 @@ A --> D
 A --> E
 A --> F
 A --> G
-A --> H
-E --> H
-I --> E
-I --> B
-I --> C
-I --> D
-I --> F
-J --> H
-J --> E
+F --> H
+F --> J
+F --> I
 ```
 
 **Diagram sources**
-- [export/__init__.py:1-47](file://export/__init__.py#L1-L47)
-- [export/markdown_reporter.py:1-474](file://export/markdown_reporter.py#L1-L474)
-- [export/jsonld_exporter.py:1-505](file://export/jsonld_exporter.py#L1-L505)
-- [export/stix_exporter.py:1-1199](file://export/stix_exporter.py#L1-L1199)
-- [export/sprint_exporter.py:1-2738](file://export/sprint_exporter.py#L1-L2738)
-- [export/sprint_markdown_reporter.py:1-833](file://export/sprint_markdown_reporter.py#L1-L833)
-- [export/export_manager.py:1-298](file://export/export_manager.py#L1-L298)
-- [export/COMPAT_HANDOFF.py:1-95](file://export/COMPAT_HANDOFF.py#L1-L95)
-- [export/EXPORT_PLANE_MAP.md:1-189](file://export/EXPORT_PLANE_MAP.md#L1-L189)
-- [export/COMPAT_DEBT_LEDGER.md:1-224](file://export/COMPAT_DEBT_LEDGER.md#L1-L224)
+- [export/__init__.py:1-47](file://hledac/universal/export/__init__.py#L1-L47)
+- [export/export_manager.py:1-300](file://hledac/universal/export/export_manager.py#L1-L300)
+- [export/markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+- [export/jsonld_exporter.py:1-501](file://hledac/universal/export/jsonld_exporter.py#L1-L501)
+- [export/stix_exporter.py:1-1190](file://hledac/universal/export/stix_exporter.py#L1-L1190)
+- [export/sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
+- [export/sprint_markdown_reporter.py:1-889](file://hledac/universal/export/sprint_markdown_reporter.py#L1-L889)
+- [export/COMPAT_HANDOFF.py:1-95](file://hledac/universal/export/COMPAT_HANDOFF.py#L1-L95)
+- [export/COMPAT_DEBT_LEDGER.md:1-224](file://hledac/universal/export/COMPAT_DEBT_LEDGER.md#L1-L224)
+- [export/EXPORT_PLANE_MAP.md:1-189](file://hledac/universal/export/EXPORT_PLANE_MAP.md#L1-L189)
 
 **Section sources**
-- [export/__init__.py:1-47](file://export/__init__.py#L1-L47)
-- [export/EXPORT_PLANE_MAP.md:1-189](file://export/EXPORT_PLANE_MAP.md#L1-L189)
+- [export/__init__.py:1-47](file://hledac/universal/export/__init__.py#L1-L47)
+- [export/EXPORT_PLANE_MAP.md:1-189](file://hledac/universal/export/EXPORT_PLANE_MAP.md#L1-L189)
 
 ## Core Components
-- Markdown diagnostic reporter: renders deterministic Markdown from ObservedRunReport or Mapping inputs.
-- JSON-LD exporter: produces structured JSON-LD with a custom ghost namespace for graph ingestion.
-- STIX exporter: emits STIX 2.1 bundles, including metadata-safe diagnostics and CTI-ready artifacts.
-- Sprint exporter: async JSON report writer plus next-sprint seed generation with privacy sanitization.
-- Sprint Markdown reporter: canonical pure renderer for sprint-level Markdown.
-- Export manager: Obsidian-compatible Markdown export and interactive HTML graph export with safety checks.
-- Compatibility adapters: ensure_export_handoff() and path authorities.
-
-Key responsibilities:
-- Deterministic, side-effect-free rendering for reproducibility
-- Privacy sanitization for outbound artifacts
-- Deterministic IDs and object shapes for standards compliance
-- Bounded outputs and fail-soft behavior for resilience
+- ExportManager: Human-readable Markdown and interactive HTML graph export with output path safety and sensitive data filtering.
+- Markdown Reporter: Deterministic diagnostic report renderer for human consumption.
+- JSON-LD Exporter: Structured semantic export with schema.org and custom ghost namespace.
+- STIX Exporter: Deterministic, side-effect-free STIX 2.1 bundle exporter for diagnostics and CTI.
+- Sprint Exporter: Automated JSON report, next-sprint seeds, and operator brief generation with privacy sanitization.
+- Sprint Markdown Reporter: Canonical deterministic sprint report renderer.
 
 **Section sources**
-- [export/markdown_reporter.py:1-474](file://export/markdown_reporter.py#L1-L474)
-- [export/jsonld_exporter.py:1-505](file://export/jsonld_exporter.py#L1-L505)
-- [export/stix_exporter.py:1-1199](file://export/stix_exporter.py#L1-L1199)
-- [export/sprint_exporter.py:1-2738](file://export/sprint_exporter.py#L1-L2738)
-- [export/sprint_markdown_reporter.py:1-833](file://export/sprint_markdown_reporter.py#L1-L833)
-- [export/export_manager.py:1-298](file://export/export_manager.py#L1-L298)
-- [export/COMPAT_HANDOFF.py:1-95](file://export/COMPAT_HANDOFF.py#L1-L95)
+- [export/export_manager.py:49-300](file://hledac/universal/export/export_manager.py#L49-L300)
+- [export/markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+- [export/jsonld_exporter.py:1-501](file://hledac/universal/export/jsonld_exporter.py#L1-L501)
+- [export/stix_exporter.py:1-1190](file://hledac/universal/export/stix_exporter.py#L1-L1190)
+- [export/sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
+- [export/sprint_markdown_reporter.py:1-889](file://hledac/universal/export/sprint_markdown_reporter.py#L1-L889)
 
 ## Architecture Overview
-The export plane is split into two planes:
-- Diagnostics plane: pure, stateless renderers for Markdown, JSON-LD, and STIX.
-- Sprint export plane: async writer for JSON reports and seed tasks, plus operator briefs and derived metrics.
+The export system separates concerns into two planes:
+- Diagnostics plane: Pure, stateless renderers for Markdown, JSON-LD, and STIX.
+- Sprint plane: Async export with file I/O, privacy sanitization, and seed generation.
 
 ```mermaid
 graph TB
 subgraph "Diagnostics Plane"
-R1["Markdown Reporter<br/>render_diagnostic_markdown()"]
-R2["JSON-LD Exporter<br/>render_jsonld()"]
-R3["STIX Exporter<br/>render_stix_bundle()"]
+MDR["Markdown Reporter<br/>render_diagnostic_markdown()"]
+JLD["JSON-LD Exporter<br/>render_jsonld()"]
+STX["STIX Exporter<br/>render_stix_bundle()"]
 end
-subgraph "Sprint Export Plane"
-S1["export_sprint()<br/>Async writer"]
-S2["_generate_next_sprint_seeds()"]
-S3["Sanitization<br/>UniversalSecurityCoordinator"]
+subgraph "Sprint Plane"
+SPX["Sprint Exporter<br/>export_sprint()"]
+SMR["Sprint Markdown Reporter<br/>render_sprint_markdown()"]
+CH["COMPAT_HANDOFF<br/>ensure_export_handoff()"]
 end
-subgraph "Compatibility"
-C1["ensure_export_handoff()"]
-end
-R1 --> |"Inputs: ObservedRunReport or Mapping"| R1
-R2 --> |"Inputs: ObservedRunReport or Mapping"| R2
-R3 --> |"Inputs: ObservedRunReport or Mapping"| R3
-S1 --> |"ExportHandoff or dict"| C1
-C1 --> S1
-S1 --> S2
-S1 --> S3
+MDR --> |"Deterministic string"| OUT["Human-readable Reports"]
+JLD --> |"Structured dict"| SEM["Semantic Data"]
+STX --> |"Bundle dict"| CTI["CTI Bundles"]
+SPX --> |"JSON report + seeds"| AUT["Automated Reporting"]
+SMR --> |"Deterministic string"| AUT
+CH --> SPX
 ```
 
 **Diagram sources**
-- [export/markdown_reporter.py:372-408](file://export/markdown_reporter.py#L372-L408)
-- [export/jsonld_exporter.py:280-325](file://export/jsonld_exporter.py#L280-L325)
-- [export/stix_exporter.py:749-800](file://export/stix_exporter.py#L749-L800)
-- [export/sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
-- [export/COMPAT_HANDOFF.py:25-94](file://export/COMPAT_HANDOFF.py#L25-L94)
+- [export/markdown_reporter.py:389-425](file://hledac/universal/export/markdown_reporter.py#L389-L425)
+- [export/jsonld_exporter.py:280-325](file://hledac/universal/export/jsonld_exporter.py#L280-L325)
+- [export/stix_exporter.py:749-800](file://hledac/universal/export/stix_exporter.py#L749-L800)
+- [export/sprint_exporter.py:156-556](file://hledac/universal/export/sprint_exporter.py#L156-L556)
+- [export/sprint_markdown_reporter.py:144-282](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L282)
+- [export/COMPAT_HANDOFF.py:25-95](file://hledac/universal/export/COMPAT_HANDOFF.py#L25-L95)
 
 ## Detailed Component Analysis
 
-### Markdown Diagnostic Reporter
-Purpose:
-- Produce deterministic Markdown diagnostics from ObservedRunReport or Mapping inputs.
-- No side effects; pure function.
-
-Key behaviors:
-- Normalizes input to dict via normalize_report_input()
-- Renders sections in a fixed order: Run Metadata, Executive Summary, Runtime Truth, Signal Funnel, Store Rejection Trace, Per-Source Health, Root Cause, Recommended Next Sprint, Known Limits, Machine-Readable Summary.
-- Escapes and links URLs for Markdown safety.
-- Deterministic ordering via sorted keys and lists.
-
-Parameters and return:
-- render_diagnostic_markdown(report) → str
-- render_diagnostic_markdown_to_path(report, path=None) → Path
-
-Privacy and determinism:
-- Uses stable sorting and escaping to ensure deterministic output.
-- Uses environment variable GHOST_EXPORT_DIR or paths.RAMDISK_ROOT for output location.
-
-**Section sources**
-- [export/markdown_reporter.py:63-80](file://export/markdown_reporter.py#L63-L80)
-- [export/markdown_reporter.py:125-312](file://export/markdown_reporter.py#L125-L312)
-- [export/markdown_reporter.py:372-408](file://export/markdown_reporter.py#L372-L408)
-- [export/markdown_reporter.py:414-474](file://export/markdown_reporter.py#L414-L474)
-
-### JSON-LD Exporter
-Purpose:
-- Produce structured JSON-LD with schema.org + ghost namespace for graph ingestion and future synthesis.
-
-Key behaviors:
-- normalize_export_input() converts msgspec.Struct or Mapping to dict.
-- Builds canonical objects: RunMetadata, SignalFunnel, StoreRejectionTrace, RuntimeTruth, RootCause, PerSourceHealth, DiagnosticReport.
-- Uses ghost: namespace URIs and @context mapping.
-- get_root_cause_label() and get_recommendation() for labels and fallback recommendations.
-- render_jsonld() returns dict; render_jsonld_str() returns sorted JSON string; render_jsonld_to_path() writes to file with deterministic naming.
-
-Determinism and safety:
-- Sorted keys and filtered nulls for stable output.
-- Deterministic filenames based on run_id or timestamp.
-
-Analyst Evidence Export:
-- render_analyst_evidence_jsonld() and render_analyst_evidence_jsonld_str() for analyst workbench evidence documents.
-
-**Section sources**
-- [export/jsonld_exporter.py:131-147](file://export/jsonld_exporter.py#L131-L147)
-- [export/jsonld_exporter.py:152-162](file://export/jsonld_exporter.py#L152-L162)
-- [export/jsonld_exporter.py:181-324](file://export/jsonld_exporter.py#L181-L324)
-- [export/jsonld_exporter.py:327-338](file://export/jsonld_exporter.py#L327-L338)
-- [export/jsonld_exporter.py:343-399](file://export/jsonld_exporter.py#L343-L399)
-- [export/jsonld_exporter.py:405-505](file://export/jsonld_exporter.py#L405-L505)
-
-### STIX Exporter
-Purpose:
-- Produce STIX 2.1 bundles for diagnostics and CTI-ready artifacts.
-
-Key behaviors:
-- normalize_export_input() for input normalization.
-- _build_diagnostic_note(), _build_diagnostic_identity(), _build_per_source_notes(), _build_root_cause_object() for metadata-safe diagnostics.
-- CTI upgrade: render_cti_stix_bundle() converts findings, identities, attribution scores, kill-chain tags, and evidence chains into STIX objects with deterministic UUID5 IDs.
-- collect_cti_export_inputs() gathers findings and sidecar data concurrently with bounds.
-
-Guardrails:
-- No fake IOCs when findings list is empty.
-- No network access or model load.
-- Bounded object counts and sizes.
-
-Recommendation and root cause:
-- Uses shared root cause labels and fallback recommendations.
-
-**Section sources**
-- [export/stix_exporter.py:184-196](file://export/stix_exporter.py#L184-L196)
-- [export/stix_exporter.py:249-303](file://export/stix_exporter.py#L249-L303)
-- [export/stix_exporter.py:305-316](file://export/stix_exporter.py#L305-L316)
-- [export/stix_exporter.py:335-364](file://export/stix_exporter.py#L335-L364)
-- [export/stix_exporter.py:366-391](file://export/stix_exporter.py#L366-L391)
-- [export/stix_exporter.py:99-179](file://export/stix_exporter.py#L99-L179)
-- [export/stix_exporter.py:749-800](file://export/stix_exporter.py#L749-L800)
-- [export/stix_exporter.py:415-448](file://export/stix_exporter.py#L415-L448)
-
-### Sprint Exporter
-Purpose:
-- Async JSON report writer and next-sprint seed generator for operational handoff.
-
-Key behaviors:
-- export_sprint(store, handoff, sprint_id) writes canonical JSON report and seeds, and builds operator briefs and derived metrics.
-- export_partial_sprint() writes partial JSON artifacts during aggressive runs.
-- ensure_export_handoff() normalizes ExportHandoff | dict | None to typed ExportHandoff.
-- _generate_next_sprint_seeds() derives seeds from:
-  - IOC follow-up (type-aware)
-  - Query suggestions (based on signal quality and reject breakdown)
-  - Source revisit (circuit breaker and depleted signal)
-  - Low-signal recommendations
-  - Hypothesis-engine-derived queries
-  - Focus/expand recommendations
-  - Branch-driven and trend-driven seeds
-- Sanitization via UniversalSecurityCoordinator with privacy gates.
-
-Outputs:
-- report_json: path to JSON report
-- seeds_json: path to next-sprint seeds
-- Additional derived fields: operator_brief, run_truth_note, branch_truth, best_first_move, why_this_run_matters, research_depth_metric, graph_enriched_findings, envelope_findings, sprint_diff_findings, kill_chain_findings, evidence_chains
-
-**Section sources**
-- [export/sprint_exporter.py:79-142](file://export/sprint_exporter.py#L79-L142)
-- [export/sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
-- [export/sprint_exporter.py:467-577](file://export/sprint_exporter.py#L467-L577)
-- [export/sprint_exporter.py:588-728](file://export/sprint_exporter.py#L588-L728)
-- [export/sprint_exporter.py:817-958](file://export/sprint_exporter.py#L817-L958)
-- [export/COMPAT_HANDOFF.py:25-94](file://export/COMPAT_HANDOFF.py#L25-L94)
-
-### Sprint Markdown Reporter
-Purpose:
-- Canonical pure renderer for sprint-level Markdown reports.
-
-Key behaviors:
-- render_sprint_markdown(report, scorecard, sprint_id) → str
-- Renders executive summary, research metrics, threat actors, top findings, optional sections (source leaderboard, phase timings, evidence envelope, identity candidates, timeline, sprint diff, kill chain heat map, evidence chains, analyst brief)
-- Uses centralized JSON parsing with graceful fallback
-- Deterministic formatting and bounded displays
-
-**Section sources**
-- [export/sprint_markdown_reporter.py:142-280](file://export/sprint_markdown_reporter.py#L142-L280)
-- [export/sprint_markdown_reporter.py:37-54](file://export/sprint_markdown_reporter.py#L37-L54)
-
-### Export Manager
-Purpose:
-- Obsidian-compatible Markdown export and interactive HTML graph export.
-
-Key behaviors:
-- export_markdown(report, findings, file_path, metadata) → Path | None
-- export_graph_html(graph_manager, file_path, title) → Path | None
-- Security: resolves and validates output paths to prevent escaping the configured output directory
-- Sensitive data filtering: removes fields containing sensitive keywords
-- HTML export: uses pyvis with color-coded entity types; falls back to NetworkX + pyvis if needed
-
-**Section sources**
-- [export/export_manager.py:47-298](file://export/export_manager.py#L47-L298)
-
-### Compatibility Adapters and Path Authorities
-- ensure_export_handoff() normalizes inputs to typed ExportHandoff, preserving backward compatibility
-- EXPORT_PLANE_MAP.md and COMPAT_DEBT_LEDGER.md document canonical truths, path ownership, and compat seams
-
-**Section sources**
-- [export/COMPAT_HANDOFF.py:25-94](file://export/COMPAT_HANDOFF.py#L25-L94)
-- [export/EXPORT_PLANE_MAP.md:76-189](file://export/EXPORT_PLANE_MAP.md#L76-L189)
-- [export/COMPAT_DEBT_LEDGER.md:1-224](file://export/COMPAT_DEBT_LEDGER.md#L1-L224)
-
-## Dependency Analysis
-High-level dependencies:
-- Sprint exporter depends on:
-  - paths.py for canonical report and seeds paths
-  - UniversalSecurityCoordinator for sanitization
-  - store for optional fallbacks (get_top_seed_nodes, async_query_recent_findings, annotate_findings_with_graph_context, async_get_findings_with_envelope)
-  - knowledge.evidence_chain for evidence chains
-  - brain.hypothesis_engine for query suggestions (optional)
-- Diagnostic exporters depend only on their input normalization and internal helpers.
-- Export manager depends on pyvis and networkx for HTML graph export.
+### ExportManager
+Exports Markdown and interactive HTML graphs with:
+- Output path safety: resolves and validates paths to prevent escaping the configured output directory.
+- Sensitive data filtering: removes fields containing sensitive keywords from metadata and findings.
+- Obsidian-compatible Markdown: YAML front matter, report body, and findings list.
 
 ```mermaid
-graph TB
-S["sprint_exporter.export_sprint()"]
-P["paths.get_sprint_json_report_path()"]
-U["UniversalSecurityCoordinator"]
-K["knowledge.evidence_chain.get_all_chains()"]
-H["brain.hypothesis_engine.HypothesisEngine"]
-S --> P
-S --> U
-S --> K
-S --> H
+classDiagram
+class ExportManager {
++ExportManager(output_dir)
++export_markdown(report, findings, file_path, metadata) Path|None
++export_graph_html(graph_manager, file_path, title) Path|None
+-_ensure_output_path(file_path) Path
+-_filter_sensitive(data) dict
+}
 ```
 
 **Diagram sources**
-- [export/sprint_exporter.py:181-196](file://export/sprint_exporter.py#L181-L196)
-- [export/sprint_exporter.py:206-238](file://export/sprint_exporter.py#L206-L238)
-- [export/sprint_exporter.py:417-439](file://export/sprint_exporter.py#L417-L439)
-- [export/sprint_exporter.py:980-992](file://export/sprint_exporter.py#L980-L992)
+- [export/export_manager.py:49-300](file://hledac/universal/export/export_manager.py#L49-L300)
 
 **Section sources**
-- [export/sprint_exporter.py:181-238](file://export/sprint_exporter.py#L181-L238)
-- [export/sprint_exporter.py:417-439](file://export/sprint_exporter.py#L417-L439)
+- [export/export_manager.py:49-300](file://hledac/universal/export/export_manager.py#L49-L300)
+
+### Markdown Reporter
+Deterministic diagnostic report renderer with:
+- Normalization of inputs from msgspec.Struct or Mapping.
+- Ordered sections: Run Metadata, Executive Summary, Runtime Truth, Signal Funnel, Store Rejection Trace, Per-Source Health, Root Cause, Recommended Next Sprint, Known Limits, Machine-Readable Summary.
+- Deterministic formatting and JSON block emission.
+
+```mermaid
+flowchart TD
+Start(["Input: report"]) --> Normalize["Normalize input to dict"]
+Normalize --> Sections["Render ordered sections"]
+Sections --> Join["Join sections into markdown"]
+Join --> End(["Output: markdown string"])
+```
+
+**Diagram sources**
+- [export/markdown_reporter.py:65-82](file://hledac/universal/export/markdown_reporter.py#L65-L82)
+- [export/markdown_reporter.py:405-425](file://hledac/universal/export/markdown_reporter.py#L405-L425)
+
+**Section sources**
+- [export/markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+
+### JSON-LD Exporter
+Structured semantic export with:
+- schema.org + ghost namespace context.
+- Deterministic rendering with sorted keys and filtered nulls.
+- Analyst evidence export for workbench answers.
+
+```mermaid
+sequenceDiagram
+participant R as "Caller"
+participant J as "JSON-LD Exporter"
+R->>J : render_jsonld(report)
+J->>J : normalize_export_input()
+J->>J : _build_* helpers
+J-->>R : dict (JSON-LD)
+```
+
+**Diagram sources**
+- [export/jsonld_exporter.py:280-325](file://hledac/universal/export/jsonld_exporter.py#L280-L325)
+
+**Section sources**
+- [export/jsonld_exporter.py:1-501](file://hledac/universal/export/jsonld_exporter.py#L1-L501)
+
+### STIX Exporter
+Deterministic STIX 2.1 bundle exporter for diagnostics and CTI:
+- Diagnostic-only bundle (no fake IOCs) when no findings are present.
+- CTI upgrade: findings → indicators/observed-data, identity candidates → identities, attribution scores → notes, kill-chain tags → notes, evidence chains → observed-data + relationships.
+- Deterministic IDs via UUID5 from stable namespace and content.
+- Bounded object counts and sizes.
+
+```mermaid
+sequenceDiagram
+participant R as "Caller"
+participant S as "STIX Exporter"
+R->>S : render_cti_stix_bundle(findings, identity_candidates, attribution_scores, killchain_tags, evidence_chains)
+S->>S : _make_stix_id() for deterministic IDs
+S->>S : _ioc_to_indicator() / _finding_to_observed_data()
+S->>S : _build_identity_object() / _build_attribution_note()
+S->>S : _build_killchain_note() / _build_evidence_chain_object()
+S->>S : _build_cti_report()
+S-->>R : dict (STIX bundle)
+```
+
+**Diagram sources**
+- [export/stix_exporter.py:450-508](file://hledac/universal/export/stix_exporter.py#L450-L508)
+- [export/stix_exporter.py:562-596](file://hledac/universal/export/stix_exporter.py#L562-L596)
+- [export/stix_exporter.py:711-742](file://hledac/universal/export/stix_exporter.py#L711-L742)
+
+**Section sources**
+- [export/stix_exporter.py:1-1190](file://hledac/universal/export/stix_exporter.py#L1-L1190)
+
+### Sprint Exporter
+Automated reporting and seed generation:
+- JSON report with product value summary, runtime truth, canonical run summary, acquisition truth, capability synthesis, and optional enrichment (evidence chains, envelope findings, kill chain findings, sprint diffs).
+- Privacy sanitization via SecurityCoordinator with fail-soft fallback.
+- Next-sprint seeds derived from top nodes, product value summary, branch value, trend, capability synthesis, and analyst brief.
+- Deterministic partial artifacts for recovery during aggressive runs.
+
+```mermaid
+sequenceDiagram
+participant C as "Consumer"
+participant S as "Sprint Exporter"
+participant SEC as "SecurityCoordinator"
+participant ST as "Store"
+C->>S : export_sprint(store, handoff, sprint_id)
+S->>S : ensure_export_handoff()
+S->>S : _make_serializable() + sanitize outbound
+alt enable_security_enrichment
+S->>SEC : initialize + sanitize_outbound()
+SEC-->>S : sanitized JSON
+else non-stealth
+S->>S : use boundary_text
+end
+S->>S : _build_product_value_summary()
+S->>S : _generate_next_sprint_seeds()
+S->>S : attach optional enrichments
+S-->>C : {"report_json", "seeds_json", ...}
+```
+
+**Diagram sources**
+- [export/sprint_exporter.py:156-556](file://hledac/universal/export/sprint_exporter.py#L156-L556)
+- [export/COMPAT_HANDOFF.py:25-95](file://hledac/universal/export/COMPAT_HANDOFF.py#L25-L95)
+
+**Section sources**
+- [export/sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
+- [export/COMPAT_HANDOFF.py:1-95](file://hledac/universal/export/COMPAT_HANDOFF.py#L1-L95)
+
+### Sprint Markdown Reporter
+Deterministic sprint report renderer:
+- Renders executive summary, research metrics, threat actors, top findings, optional sections (source leaderboard, phase timings, evidence envelope, identity candidates, timelines, sprint diffs, kill chain heat map, analyst brief).
+- Centralized JSON parsing with graceful fallback.
+
+```mermaid
+flowchart TD
+Start(["Inputs: report, scorecard, sprint_id"]) --> Parse["Parse JSON fields (graceful)"]
+Parse --> Sections["Render sections"]
+Sections --> Optional["Add optional sections if present"]
+Optional --> Join["Join parts"]
+Join --> End(["Output: markdown string"])
+```
+
+**Diagram sources**
+- [export/sprint_markdown_reporter.py:144-282](file://hledac/universal/export/sprint_markdown_reporter.py#L144-L282)
+
+**Section sources**
+- [export/sprint_markdown_reporter.py:1-889](file://hledac/universal/export/sprint_markdown_reporter.py#L1-L889)
+
+## Dependency Analysis
+- ExportManager depends on safe rendering utilities and path resolution.
+- Markdown Reporter and JSON-LD Exporter depend on normalization helpers and deterministic formatting.
+- STIX Exporter depends on deterministic ID generation and object builders.
+- Sprint Exporter depends on store APIs for findings and graph context, SecurityCoordinator for sanitization, and path utilities for output locations.
+- Compatibility adapters ensure typed handoff inputs are normalized.
+
+```mermaid
+graph LR
+EM["ExportManager"] --> SAFE["Safe rendering"]
+MR["Markdown Reporter"] --> NORM["Normalization"]
+JLD["JSON-LD Exporter"] --> NORM
+STX["STIX Exporter"] --> IDGEN["UUID5 generation"]
+SPX["Sprint Exporter"] --> STORE["Store APIs"]
+SPX --> SEC["SecurityCoordinator"]
+SPX --> PATHS["Paths utilities"]
+SPX --> COMP["COMPAT_HANDOFF"]
+```
+
+**Diagram sources**
+- [export/export_manager.py:21-300](file://hledac/universal/export/export_manager.py#L21-L300)
+- [export/markdown_reporter.py:65-82](file://hledac/universal/export/markdown_reporter.py#L65-L82)
+- [export/jsonld_exporter.py:131-147](file://hledac/universal/export/jsonld_exporter.py#L131-L147)
+- [export/stix_exporter.py:425-432](file://hledac/universal/export/stix_exporter.py#L425-L432)
+- [export/sprint_exporter.py:209-351](file://hledac/universal/export/sprint_exporter.py#L209-L351)
+- [export/COMPAT_HANDOFF.py:59-95](file://hledac/universal/export/COMPAT_HANDOFF.py#L59-L95)
+
+**Section sources**
+- [export/export_manager.py:1-300](file://hledac/universal/export/export_manager.py#L1-L300)
+- [export/markdown_reporter.py:1-487](file://hledac/universal/export/markdown_reporter.py#L1-L487)
+- [export/jsonld_exporter.py:1-501](file://hledac/universal/export/jsonld_exporter.py#L1-L501)
+- [export/stix_exporter.py:1-1190](file://hledac/universal/export/stix_exporter.py#L1-L1190)
+- [export/sprint_exporter.py:1-3546](file://hledac/universal/export/sprint_exporter.py#L1-L3546)
+- [export/COMPAT_HANDOFF.py:1-95](file://hledac/universal/export/COMPAT_HANDOFF.py#L1-L95)
 
 ## Performance Considerations
-- Deterministic rendering avoids expensive operations; JSON-LD and Markdown exporters are side-effect-free and deterministic.
-- STIX exporter bounds object counts and sizes to control memory and I/O.
-- Sprint exporter uses asyncio.gather for concurrent reads and bounded displays to limit overhead.
-- Export manager enforces output directory containment to prevent path traversal and excessive filesystem churn.
+- Deterministic rendering: Ensures stable outputs and avoids unnecessary recomputation.
+- Bounded object counts and sizes: STIX exporter caps objects and bytes; sprint exporter caps seeds and displays.
+- Compression sidecars: Partial and seed artifacts may be written with zstd sidecars for reduced storage and faster decompression.
+- Async operations: Sprint export uses async store reads and optional enrichment computations.
+
+[No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
-Common issues and resolutions:
-- Export path escapes output directory:
-  - Symptom: ValueError raised when resolving output path
-  - Resolution: Ensure file_path is within configured output_dir; export_manager validates paths
-- Sanitization failures:
-  - Symptom: Partial or degraded sanitized output
-  - Resolution: Export proceeds with degraded structure; check UniversalSecurityCoordinator logs
-- Missing graph backend:
-  - Symptom: HTML export fallback attempts to use NetworkX/pyvis
-  - Resolution: Confirm graph_manager exposes to_networkx() or export_html()
-- Empty findings for CTI:
-  - Symptom: No indicators created
-  - Resolution: By design, metadata-safe diagnostics are exported when findings are absent
-- Partial export artifacts:
-  - Symptom: Partial JSON artifacts written during aggressive runs
-  - Resolution: export_partial_sprint() writes recoverable artifacts; final export does not rely on partials
+Common issues and remedies:
+- Export path escaping: ExportManager enforces output directory boundaries; ensure paths are relative and within configured output directory.
+- Sensitive data leakage: ExportManager filters sensitive fields; verify metadata and findings do not include sensitive keys.
+- STIX object limits: STIX exporter bounds objects and bytes; reduce findings or evidence chains if exceeding limits.
+- Privacy sanitization failures: Sprint export falls back to a degraded structure when sanitization fails; review logs for audit metadata.
+- Seed generation failures: Sprint export writes empty seeds with zstd sidecar when generation fails; verify store connectivity and graph context availability.
 
 **Section sources**
-- [export/export_manager.py:69-86](file://export/export_manager.py#L69-L86)
-- [export/sprint_exporter.py:206-238](file://export/sprint_exporter.py#L206-L238)
-- [export/sprint_exporter.py:245-287](file://export/sprint_exporter.py#L245-L287)
-- [export/stix_exporter.py:749-800](file://export/stix_exporter.py#L749-L800)
-- [export/sprint_exporter.py:79-142](file://export/sprint_exporter.py#L79-L142)
+- [export/export_manager.py:71-88](file://hledac/universal/export/export_manager.py#L71-L88)
+- [export/sprint_exporter.py:238-284](file://hledac/universal/export/sprint_exporter.py#L238-L284)
+- [export/sprint_exporter.py:706-718](file://hledac/universal/export/sprint_exporter.py#L706-L718)
 
 ## Conclusion
-The export and reporting subsystem provides a robust, deterministic, and standards-compliant pipeline for diagnostics, CTI, and operational handoffs. It separates pure rendering from side-effectful writes, ensures privacy and determinism, and maintains compatibility through thin adapters. The design supports future evolution with canonical path ownership and lifecycle hooks.
+The export and reporting system provides deterministic, side-effect-free outputs across multiple formats and planes. It supports human-readable reports, semantic data, CTI bundles, and automated sprint reporting with privacy safeguards and seed generation. The design emphasizes safety, determinism, and integration with store and security layers.
+
+[No sources needed since this section summarizes without analyzing specific files]
 
 ## Appendices
 
-### API Definitions and Usage Patterns
-- Markdown diagnostic:
-  - render_diagnostic_markdown(report) → str
-  - render_diagnostic_markdown_to_path(report, path=None) → Path
-- JSON-LD:
-  - render_jsonld(report) → dict
-  - render_jsonld_str(report) → str
-  - render_jsonld_to_path(report, path=None) → Path
-- STIX:
-  - render_stix_bundle(report) → dict
-  - render_stix_bundle_to_path(report, path=None) → Path
-  - render_cti_stix_bundle(findings, identity_candidates, attribution_scores, killchain_tags, evidence_chains, max_objects) → dict
-  - collect_cti_export_inputs(report, store) → CTIExportInputs
-- Sprint export:
-  - export_sprint(store, handoff, sprint_id) → dict with report_json, seeds_json, and derived fields
-  - export_partial_sprint(store, handoff, sprint_id, finding_count) → dict
-  - _generate_next_sprint_seeds(top_nodes, sprint_id, report_path, pvs, branch_value, sprint_trend) → Path
-- Sprint Markdown:
-  - render_sprint_markdown(report, scorecard, sprint_id) → str
-- Export manager:
-  - export_markdown(report, findings, file_path, metadata) → Path | None
-  - export_graph_html(graph_manager, file_path, title) → Path | None
+### Configuration Options and Customization
+- Output directories:
+  - ExportManager: Configurable base output directory; defaults to user home directory under a project-specific folder. Paths are validated to prevent escaping.
+  - Sprint exporters: JSON report and seeds colocated with canonical paths managed by path utilities.
+- Deterministic formatting:
+  - Markdown reporters: Ordered sections, sorted keys in JSON blocks, and safe link rendering.
+  - JSON-LD: Sorted keys and filtered nulls; schema.org + ghost namespace context.
+  - STIX: Deterministic IDs via UUID5; bounded object counts and sizes.
+- Data transformation rules:
+  - Sensitive fields are filtered from metadata and findings.
+  - Recommendations and root causes are mapped to canonical labels.
+  - Evidence chains and identity candidates are serialized into STIX objects when present.
+- Custom report templates:
+  - Markdown Reporter and Sprint Markdown Reporter produce fixed-section outputs; customization is achieved by adjusting normalization and rendering helpers while preserving determinism.
+- Batch processing:
+  - STIX exporter supports bounded counts and sizes; partial artifacts are written during aggressive runs.
+  - Sprint exporter writes JSON reports and seeds; optional enrichment is gated by export mode.
+- Integration with external systems:
+  - STIX bundles can be consumed by CTI platforms; JSON-LD documents integrate with semantic pipelines.
+  - Privacy sanitization integrates with SecurityCoordinator for outbound content gating.
 
 **Section sources**
-- [export/markdown_reporter.py:372-474](file://export/markdown_reporter.py#L372-L474)
-- [export/jsonld_exporter.py:280-399](file://export/jsonld_exporter.py#L280-L399)
-- [export/stix_exporter.py:366-800](file://export/stix_exporter.py#L366-L800)
-- [export/sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
-- [export/sprint_markdown_reporter.py:142-280](file://export/sprint_markdown_reporter.py#L142-L280)
-- [export/export_manager.py:88-298](file://export/export_manager.py#L88-L298)
+- [export/export_manager.py:59-117](file://hledac/universal/export/export_manager.py#L59-L117)
+- [export/markdown_reporter.py:405-425](file://hledac/universal/export/markdown_reporter.py#L405-L425)
+- [export/jsonld_exporter.py:317-325](file://hledac/universal/export/jsonld_exporter.py#L317-L325)
+- [export/stix_exporter.py:415-432](file://hledac/universal/export/stix_exporter.py#L415-L432)
+- [export/sprint_exporter.py:156-351](file://hledac/universal/export/sprint_exporter.py#L156-L351)
 
-### Configuration Options and Parameters
-- Environment variables:
-  - GHOST_EXPORT_DIR: overrides default export directory for diagnostic outputs
-- Paths:
-  - Diagnostic outputs: paths.RAMDISK_ROOT / "runs"
-  - Sprint reports: ~/.hledac/reports/{sprint_id}_report.json
-  - Sprint seeds: ~/.hledac/reports/{sprint_id}_next_seeds.json
-  - Sprint Markdown: managed by paths.get_sprint_report_path(); shell orchestrates write
-- STIX bounds:
-  - MAX_STIX_OBJECTS=500, MAX_EXPORT_FINDINGS=300, MAX_EXPORT_CHAINS=20, MAX_EXPORT_BYTES≈5MB
-- Deterministic naming:
-  - ghost_diagnostic_{run_id}.jsonld or ghost_diagnostic_{timestamp}.jsonld
-  - {sprint_id}_report.json and {sprint_id}_next_seeds.json
+### Compliance and Validation
+- Deterministic outputs: All renderers enforce deterministic ordering and formatting.
+- Privacy: SecurityCoordinator sanitization with audit metadata; degraded fallback on failure.
+- Standards adherence: STIX 2.1 bundles; schema.org + custom JSON-LD context.
+- Data validation: Input normalization and bounded object counts; graceful fallbacks for optional enrichments.
 
 **Section sources**
-- [export/jsonld_exporter.py:362-399](file://export/jsonld_exporter.py#L362-L399)
-- [export/sprint_exporter.py:196-196](file://export/sprint_exporter.py#L196-L196)
-- [export/EXPORT_PLANE_MAP.md:128-136](file://export/EXPORT_PLANE_MAP.md#L128-L136)
-
-### Data Interchange Formats and Standards
-- Markdown: human-readable diagnostics with YAML front matter and structured sections
-- JSON-LD: schema.org + ghost namespace for graph ingestion
-- STIX 2.1: metadata-safe diagnostics and CTI-ready artifacts with deterministic IDs
-- JSON: structured sprint reports and seed tasks
-
-**Section sources**
-- [export/markdown_reporter.py:125-312](file://export/markdown_reporter.py#L125-L312)
-- [export/jsonld_exporter.py:32-97](file://export/jsonld_exporter.py#L32-L97)
-- [export/stix_exporter.py:49-82](file://export/stix_exporter.py#L49-L82)
-- [export/sprint_exporter.py:144-464](file://export/sprint_exporter.py#L144-L464)
+- [export/sprint_exporter.py:238-284](file://hledac/universal/export/sprint_exporter.py#L238-L284)
+- [export/stix_exporter.py:415-432](file://hledac/universal/export/stix_exporter.py#L415-L432)
+- [export/jsonld_exporter.py:300-325](file://hledac/universal/export/jsonld_exporter.py#L300-L325)

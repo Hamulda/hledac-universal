@@ -774,72 +774,83 @@ def sanity_check(
     ok, msg = _check_benchmark_fail_validator_pass(b, v)
     checks["benchmark_fail_validator_pass"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     ok, msg = _check_stale_terminality(t, allow_stale_trace)
     checks["stale_terminality"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     ok, msg = _check_benchmark_missing_source_family_outcomes(b, t)
     checks["benchmark_shape_source_family_outcomes"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     ok, msg = _check_wallclock_budget(b)
     checks["wallclock_budget"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     ok, msg = _check_feed_only_accepted_nonfeed_attempted(b, v)
     checks["feed_only_nonfeed_attempted"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     # F224C: FAIL_NONFEED_EVIDENCE_MISSING is a research quality failure (nonfeed evidence insufficient)
     ok, msg = _check_nonfeed_evidence_missing(b)
     checks["nonfeed_evidence_missing"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     ok, msg = _check_research_quality(q, min_quality_grade, allow_feed_only)
     checks["research_quality"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     # F214R2: CT loss stage must be present when CT has raw evidence but zero accepted
     ok, msg = _check_ct_loss_stage_present(b)
     checks["ct_loss_stage_present"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     # F214R2: PUBLIC must be in lane_execution_counts when public was attempted
     ok, msg = _check_public_surface_present(b)
     checks["public_surface_present"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     # F214R2: hardware_constrained and research_quality_comparable must be consistent
     ok, msg = _check_hardware_constrained_comparable(b, q)
     checks["hardware_constrained_comparable"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     # F215D: swap gate — active300/active600 must not be marked comparable when swap is high
     ok, msg = _check_swap_gate_comparable(b)
     checks["swap_gate_comparable"] = ok
     if not ok:
-        assert msg is not None
+        if msg is None:
+            raise RuntimeError("Sanity check returned False but msg is None — internal invariant violated")
         result.disagreements.append(msg)
 
     result.checks = checks

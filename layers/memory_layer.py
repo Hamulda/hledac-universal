@@ -743,6 +743,7 @@ class MemoryLayer:
         mx = _get_mlx()
         try:
             if mx is not None:
+                mx.eval([])  # M218A: Flush pending ops before clearing cache
                 mx.clear_cache()
                 self._cache_clears += 1
                 logger.debug(f"🧹 MLX cache cleared #{self._cache_clears}")

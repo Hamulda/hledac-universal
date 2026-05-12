@@ -142,7 +142,7 @@ class WheelGateResult:
     """Result of a wheel gate run."""
     extras_requested: List[str]
     platform_tag: str
-    pip_command: str
+    pip_command: List[str]
     dry_run: bool
     packages_by_extra: Dict[str, List[str]]
     executed: bool = False
@@ -178,7 +178,7 @@ def build_pip_download_command(
     requested_extras: List[str],
     platform_tag: str,
     python_version: str = "314",
-) -> str:
+) -> List[str]:
     """Build the pip download command for the given extras and platform."""
     if "all" in requested_extras:
         extras_list = [e for e in SUPPORTED_EXTRAS if e != "all"]
@@ -186,16 +186,16 @@ def build_pip_download_command(
         extras_list = requested_extras if requested_extras else ["default"]
 
     extra_str = ",".join(sorted(set(extras_list)))
-    # Build pip install command (no deps= only download)
-    cmd = (
-        f"pip download "
-        f"--python-version {python_version} "
-        f"--platform {platform_tag} "
-        f"--only-binary :all: "
-        f"--no-deps "
-        f"-e .[{extra_str}] "
-        f"--dest /tmp/hledac_wheels"
-    )
+    # Build pip install command as list (shell=False — no injection risk)
+    cmd = [
+        "pip", "download",
+        "--python-version", python_version,
+        "--platform", platform_tag,
+        "--only-binary", ":all:",
+        "--no-deps",
+        "-e", f".[{extra_str}]",
+        "--dest", "/tmp/hledac_wheels",
+    ]
     return cmd
 
 
@@ -230,7 +230,7 @@ def run_wheel_gate(
     if not execute:
         print("ERROR: pip download not executed (--execute not provided)", file=sys.stderr)
         print("  Add --execute to run pip download.", file=sys.stderr)
-        print(f"  Command that would run: {pip_cmd}", file=sys.stderr)
+        print(f"  Command that would run: {' '.join(pip_cmd)}", file=sys.stderr)
         result.exit_code = 1
         result.error = "execute flag not set"
         return result
@@ -238,12 +238,12 @@ def run_wheel_gate(
     # Execute pip download
     print(f"[cp314_wheel_gate] Executing pip download for extras: {requested_extras}", file=sys.stderr)
     print(f"[cp314_wheel_gate] Platform: {platform_tag}", file=sys.stderr)
-    print(f"[cp314_wheel_gate] Command: {pip_cmd}", file=sys.stderr)
+    print(f"[cp314_wheel_gate] Command: {' '.join(pip_cmd)}", file=sys.stderr)
 
     try:
         proc = subprocess.run(
             pip_cmd,
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=300,
@@ -327,7 +327,7 @@ def print_report(result: WheelGateResult, out=sys.stdout) -> None:
 
     print(file=out)
     print(f"Pip command:", file=out)
-    print(f"  {result.pip_command}", file=out)
+    print(f"  {' '.join(result.pip_command)}", file=out)
 
 
 def main() -> int:
