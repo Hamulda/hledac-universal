@@ -1,0 +1,414 @@
+{
+  "metadata": {
+    "created": "2026-05-13",
+    "project": "hledac/universal",
+    "total_models": 13,
+    "schema_version": "1.0"
+  },
+  "models": [
+    {
+      "id": "hermes3-3b",
+      "name": "Hermes-3-Llama-3.2-3B-4bit",
+      "type": "LLM",
+      "backend": "MLX",
+      "files": [
+        "brain/hermes3_engine.py",
+        "brain/model_manager.py"
+      ],
+      "connected_to": [
+        "brain/synthesis_runner.py",
+        "pipeline/live_public_pipeline.py",
+        "core/__main__.py"
+      ],
+      "purpose": "Primary runtime LLM — synthesis, decision, planning, hypothesis generation",
+      "lifecycle": "Singleton per session. Lazy load on first synthesis call. Unload on branch timeout or memory pressure.",
+      "memory_gb": 2.0,
+      "tokenizer": "Hermes-3-Llama-3.2-3B tokenizer (autodetected by mlx-lm)",
+      "notes": [
+        "KV quantization at generate time: max_kv_size=8192, kv_bits=4",
+        "Draft model (qwen2.5-0.5b) for speculative decoding — DRAFT ONLY, not independently gated",
+        "mlx_lm.load() with lazy=True, no cache limit set at load time"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "modernbert",
+      "name": "answerdotai-ModernBERT-base-6bit",
+      "type": "embedding",
+      "backend": "MLX-embeddings",
+      "files": [
+        "embeddings/modernbert_embedder.py",
+        "core/mlx_embeddings.py"
+      ],
+      "connected_to": [
+        "knowledge/semantic_store.py",
+        "tools/semantic_router.py"
+      ],
+      "purpose": "Text embedding for semantic dedup and RAG",
+      "lifecycle": "Deferred singleton via _ModernBERTMLXLoader. Loaded on first embed request.",
+      "memory_gb": 0.5,
+      "tokenizer": "ModernBERT tokenizer (bert-base-uncased family)",
+      "notes": [
+        "DRIFT: 4 different ModernBERT IDs across codebase — see Section C",
+        "Output: 768-dimensional dense vectors",
+        "Also available via mlx-community/nomic-ai-ModernBERT-base-4bit for ANE path"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "gliner",
+      "name": "knowledgator/gliner-relex-large-v0.5",
+      "type": "NER + relation extraction",
+      "backend": "GLiNER (transformers)",
+      "files": [
+        "brain/model_manager.py"
+      ],
+      "connected_to": [
+        "brain/hermes3_engine.py (via plan/decide phases)"
+      ],
+      "purpose": "Named entity recognition and entity-relation extraction",
+      "lifecycle": "Lazy load on first NER call via _create_gliner_engine(). Loaded once, cached.",
+      "memory_gb": 0.3,
+      "tokenizer": "GLiNER tokenizer (bert-base-uncased)",
+      "notes": [
+        "CRITICAL CONFLICT: config.py and project_types.py specify gliner-x-base; runtime loads gliner-relex-large-v0.5",
+        "gliner-x-base in config is DISK-ONLY (never loaded by runtime code)"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "flashrank",
+      "name": "ms-marco-MiniLM-L-12-v2",
+      "type": "cross-encoder reranker",
+      "backend": "FlashRank / ONNX",
+      "files": [
+        "brain/synthesis_runner.py",
+        "tools/reranker.py"
+      ],
+      "connected_to": [
+        "brain/synthesis_runner.py"
+      ],
+      "purpose": "Query-document relevance reranking for synthesis results",
+      "lifecycle": "Singleton via _get_flashrank_ranker(). Loaded once on first use.",
+      "memory_gb": 0.05,
+      "tokenizer": "MiniLM tokenizer (uncased)",
+      "notes": [
+        "~4MB ONNX model — very lightweight",
+        "Windup-local (synthesis_runner scope, not runtime-wide)"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "qwen2.5-0.5b",
+      "name": "Qwen2.5-0.5B-Instruct-4bit",
+      "type": "LLM (windup-local)",
+      "backend": "MLX",
+      "files": [
+        "brain/synthesis_runner.py"
+      ],
+      "connected_to": [
+        "brain/synthesis_runner.py (_ensure_model windup)"
+      ],
+      "purpose": "Windup-local lightweight synthesis and claim verification",
+      "lifecycle": "Loaded per-synthesis-run via _ensure_model() 3-tier discovery. Weight 1.0 (primary).",
+      "memory_gb": 0.35,
+      "tokenizer": "Qwen2.5 tokenizer",
+      "notes": [
+        "Windup-local plane — separate from runtime-wide Hermes model plane",
+        "SmolLM2-135M is fallback (weight 0.2) when Qwen unavailable"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "smollm2-135m",
+      "name": "SmolLM2-135M-Instruct",
+      "type": "LLM (windup-local fallback)",
+      "backend": "MLX",
+      "files": [
+        "brain/synthesis_runner.py"
+      ],
+      "connected_to": [
+        "brain/synthesis_runner.py (_ensure_model fallback)"
+      ],
+      "purpose": "Fallback windup model when Qwen2.5-0.5B unavailable",
+      "lifecycle": "Loaded only when Qwen2.5-0.5B fails. Weight 0.2.",
+      "memory_gb": 0.08,
+      "tokenizer": "SmolLM2 tokenizer",
+      "notes": [
+        "Smallest model in system — ~135M parameters",
+        "Windup-local plane only"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "llava-1.5",
+      "name": "mlx-community/llava-1.5-7b-4bit",
+      "type": "VLM",
+      "backend": "mlx-vlm",
+      "files": [
+        "tools/vlm_analyzer.py"
+      ],
+      "connected_to": [
+        "multimodal/analyzer.py"
+      ],
+      "purpose": "Image analysis — evidence triage, document OCR, screenshot interpretation",
+      "lifecycle": "VLMAnalyzer singleton. Loaded on first image request.",
+      "memory_gb": 1.2,
+      "tokenizer": "LLM tokenizer (Vicuna family)",
+      "notes": [
+        "Lazy singleton in VLMAnalyzer",
+        "M1 memory guard at >85% RAM blocks loading"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "vision-encoder",
+      "name": "apple/mobileclip-s0",
+      "type": "VLM (image encoder)",
+      "backend": "CoreML / ANE + MLX",
+      "files": [
+        "multimodal/fusion.py"
+      ],
+      "connected_to": [
+        "multimodal/analyzer.py"
+      ],
+      "purpose": "Image→embedding for text↔image similarity in MambaFusion",
+      "lifecycle": "Loaded on first image encode request",
+      "memory_gb": 0.3,
+      "tokenizer": "CLIP tokenizer",
+      "notes": [
+        "CoreML .mlpackage for ANE acceleration",
+        "MLX fallback for non-ANE paths"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "mambafusion",
+      "name": "MambaFusion",
+      "type": "multimodal fusion",
+      "backend": "MLX nn.Mamba OR MLP fallback",
+      "files": [
+        "multimodal/fusion.py"
+      ],
+      "connected_to": [
+        "multimodal/analyzer.py"
+      ],
+      "purpose": "Fuses image and text embeddings for evidence similarity scoring",
+      "lifecycle": "Loaded on first fusion call. MLP fallback if nn.Mamba unavailable.",
+      "memory_gb": 0.2,
+      "tokenizer": "N/A (embedding fusion)",
+      "notes": [
+        "MLP fallback is default when Mamba not available",
+        "nn.Mamba selected when mlx-lm provides it"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "mobileclip",
+      "name": "apple/mobileclip-s0",
+      "type": "image-text similarity",
+      "backend": "CoreML + MLX",
+      "files": [
+        "multimodal/fusion.py"
+      ],
+      "connected_to": [
+        "multimodal/analyzer.py"
+      ],
+      "purpose": "Text↔image similarity scoring in multimodal pipeline",
+      "lifecycle": "Loaded on first similarity request",
+      "memory_gb": 0.3,
+      "tokenizer": "CLIP tokenizer",
+      "notes": [
+        "Same model as vision-encoder — shared artifact",
+        "Used for text↔image retrieval"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "bge-small",
+      "name": "BAAI/bge-small-en-v1.5",
+      "type": "embedding (fallback / RAG)",
+      "backend": "fastembed",
+      "files": [
+        "knowledge/rag_engine.py"
+      ],
+      "connected_to": [
+        "knowledge/rag_engine.py"
+      ],
+      "purpose": "Fallback embedding for RAG when MLX embeddings unavailable",
+      "lifecycle": "Lazy load in RAG engine. Only loaded if MLX path fails.",
+      "memory_gb": 0.13,
+      "tokenizer": "BERT tokenizer",
+      "notes": [
+        "384-dimensional (smaller than ModernBERT's 768d)",
+        "Pure Python fallback — not MLX"
+      ],
+      "status": "active"
+    },
+    {
+      "id": "draft-model",
+      "name": "qwen2.5-0.5b (draft branch)",
+      "type": "speculative decoding draft",
+      "backend": "MLX",
+      "files": [
+        "brain/hermes3_engine.py"
+      ],
+      "connected_to": [
+        "brain/hermes3_engine.py (_draft_model_obj)"
+      ],
+      "purpose": "Draft tokens for speculative decoding against Hermes-3 main model",
+      "lifecycle": "Loaded lazily on first speculative decode call",
+      "memory_gb": 0.35,
+      "tokenizer": "Qwen2.5 tokenizer",
+      "notes": [
+        "SPECULATIVE DRAFT ONLY — not a standalone model plane",
+        "Draft branch: hermes3_engine lines 193-194, 764-802",
+        "Not independently gated by model_manager"
+      ],
+      "status": "draft"
+    },
+    {
+      "id": "trocr",
+      "name": "microsoft/trocr-base-handwritten",
+      "type": "OCR",
+      "backend": "transformers",
+      "files": [
+        "project_types.py (referenced)"
+      ],
+      "connected_to": [
+        "Unknown — ocr_model field defined but not verified in runtime"
+      ],
+      "purpose": "Handwritten text OCR",
+      "lifecycle": "UNVERIFIED — defined in project_types.py but not confirmed in runtime",
+      "memory_gb": 0.3,
+      "tokenizer": "RoBERTa tokenizer",
+      "notes": [
+        "UNVERIFIED USAGE — ocr_model field exists in ModelConfig but no grep hit confirms loading call",
+        "May be unused or only conditionally loaded"
+      ],
+      "status": "unverified"
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "GLINER_NAME_CONFLICT",
+      "severity": "CRITICAL",
+      "description": "config.py and project_types.py specify 'gliner-x-base'; runtime code loads 'gliner-relex-large-v0.5'",
+      "affected": ["config.py:46", "project_types.py:200", "brain/model_manager.py:299"]
+    },
+    {
+      "id": "MODERNBERT_DRIFT",
+      "severity": "HIGH",
+      "description": "4 different ModernBERT model IDs across codebase",
+      "affected": [
+        "mlx_embeddings.py:86 — nomic-ai/modernbert-embed-base",
+        "modernbert_embedder.py:62 — nomic-ai/modernbert-embed-base",
+        "config.py:45 — answerdotai-ModernBERT-base-6bit",
+        "semantic.py:110 — answerdotai-ModernBERT-base-6bit",
+        "ane_embedder.py:255 — nomic-ai/modernbert-embed-base"
+      ]
+    },
+    {
+      "id": "WINDUP_VS_RUNTIME_SEPARATION",
+      "severity": "MEDIUM",
+      "description": "Windup-local Qwen/SmolLM plane is separate from runtime Hermes plane — different scopes, different loading paths",
+      "affected": ["brain/synthesis_runner.py"]
+    },
+    {
+      "id": "TROCR_UNVERIFIED",
+      "severity": "MEDIUM",
+      "description": "ocr_model defined in project_types.py but no confirmed loading call",
+      "affected": ["project_types.py:344"]
+    },
+    {
+      "id": "DRAFT_MODEL_NOT_GATED",
+      "severity": "MEDIUM",
+      "description": "Draft speculative model in hermes3_engine is not independently gated by model_manager lifecycle",
+      "affected": ["brain/hermes3_engine.py:193-194, 764-802"]
+    },
+    {
+      "id": "DEDUP_EMBEDDING_MISMATCH",
+      "severity": "MEDIUM",
+      "description": "deduplication.py uses nomic-embed-text-v1.5 while MLX embedding pipeline uses answerdotai-ModernBERT-base-6bit",
+      "affected": ["utils/deduplication.py:73"]
+    },
+    {
+      "id": "ANE_VS_EMBEDDER_PATH",
+      "severity": "LOW",
+      "description": "ane_embedder uses different ModernBERT ID than core/mlx_embeddings.py",
+      "affected": ["brain/ane_embedder.py:255 vs core/mlx_embeddings.py:86"]
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "REC-1",
+      "priority": "CRITICAL",
+      "title": "Resolve GLiNER model name conflict",
+      "description": "config.py and project_types.py specify gliner-x-base but runtime loads gliner-relex-large-v0.5. Pick one canonical ID and update all references.",
+      "files": ["config.py", "project_types.py", "brain/model_manager.py"]
+    },
+    {
+      "id": "REC-2",
+      "priority": "HIGH",
+      "title": "Consolidate ModernBERT model IDs",
+      "description": "4 different ModernBERT IDs across codebase. Pick 1-2 canonical IDs and update all references to point to the same model.",
+      "files": ["embeddings/modernbert_embedder.py", "core/mlx_embeddings.py", "config.py", "utils/semantic.py", "brain/ane_embedder.py", "utils/deduplication.py"]
+    },
+    {
+      "id": "REC-3",
+      "priority": "HIGH",
+      "title": "Verify or remove trocr model reference",
+      "description": "ocr_model field in project_types.py has no confirmed loading call. Verify it is actually used or remove the dead reference.",
+      "files": ["project_types.py"]
+    },
+    {
+      "id": "REC-4",
+      "priority": "MEDIUM",
+      "title": "Formalize windup-local model plane",
+      "description": "Qwen/SmolLM windup models are loaded via _ensure_model() in synthesis_runner but not tracked in model_manager. Document the separation or integrate them into the canonical lifecycle.",
+      "files": ["brain/synthesis_runner.py", "brain/model_manager.py"]
+    },
+    {
+      "id": "REC-5",
+      "priority": "MEDIUM",
+      "title": "Gate draft speculative model under model_manager",
+      "description": "Draft model for speculative decoding is set in hermes3_engine but not tracked by model_manager lifecycle. Either integrate it or document why it doesn't need lifecycle management.",
+      "files": ["brain/hermes3_engine.py", "brain/model_manager.py"]
+    },
+    {
+      "id": "REC-6",
+      "priority": "MEDIUM",
+      "title": "Document FlashRank singleton ownership",
+      "description": "FlashRank is loaded via _get_flashrank_ranker() in synthesis_runner and reranker.py but not tracked in model_manager. Confirm it should be excluded from canonical lifecycle.",
+      "files": ["brain/synthesis_runner.py", "tools/reranker.py"]
+    },
+    {
+      "id": "REC-7",
+      "priority": "MEDIUM",
+      "title": "Align deduplication embedding model with MLX embedding pipeline",
+      "description": "deduplication.py uses nomic-embed-text-v1.5 while MLX pipeline uses answerdotai-ModernBERT-base-6bit. These produce different embeddings — align them.",
+      "files": ["utils/deduplication.py", "embeddings/modernbert_embedder.py"]
+    },
+    {
+      "id": "REC-8",
+      "priority": "LOW",
+      "title": "Add tokenizer_claim field to model_manager",
+      "description": "Tokenizers are loaded implicitly but not tracked. Add explicit tokenizer_claim field to each model entry in PHASE_MODEL_MAP for clarity.",
+      "files": ["brain/model_manager.py"]
+    },
+    {
+      "id": "REC-9",
+      "priority": "LOW",
+      "title": "Document ANE/CoreML model path in model_manager",
+      "description": "brain/ane_embedder.py loads CoreML models but bypasses model_manager. Document why ANE path doesn't need canonical lifecycle tracking.",
+      "files": ["brain/ane_embedder.py", "brain/model_manager.py"]
+    },
+    {
+      "id": "REC-10",
+      "priority": "LOW",
+      "title": "Add model_id to all model config dataclasses",
+      "description": "project_types.py ModelConfig has model_name fields but no canonical model_id. Add explicit model_id matching PHASE_MODEL_MAP keys for traceability.",
+      "files": ["project_types.py", "config.py"]
+    }
+  ]
+}

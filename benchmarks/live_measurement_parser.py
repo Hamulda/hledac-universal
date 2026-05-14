@@ -366,6 +366,18 @@ def _parse_legacy_sprint_report(data: dict) -> dict:
     )
     result["scheduler_exit"] = se if isinstance(se, dict) else None
 
+    # F224/F209B: acquisition_prelude fields — top-level keys injected by core.__main__.py
+    # These are NOT inside acquisition_report; they live at JSON root level.
+    result["acquisition_prelude_checked"] = data.get("acquisition_prelude_checked")
+    result["acquisition_prelude_ran"] = data.get("acquisition_prelude_ran")
+    result["acquisition_prelude_required_lanes"] = data.get("acquisition_prelude_required_lanes")
+    result["acquisition_prelude_terminal_lanes"] = data.get("acquisition_prelude_terminal_lanes")
+    result["acquisition_prelude_missing_lanes"] = data.get("acquisition_prelude_missing_lanes")
+    result["acquisition_prelude_skipped_lanes"] = data.get("acquisition_prelude_skipped_lanes")
+    result["acquisition_prelude_errors"] = data.get("acquisition_prelude_errors")
+    result["acquisition_prelude_duration_s"] = data.get("acquisition_prelude_duration_s")
+    result["acquisition_prelude_reason"] = data.get("acquisition_prelude_reason")
+
     return result
 
 

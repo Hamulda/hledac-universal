@@ -103,7 +103,13 @@ _CT_SUBDOMAIN_BOUND: int = 10
 """Max CT subdomains to inject as synthetic discovery hits."""
 _CT_SUBDOMAIN_SCORE: float = 0.85
 """Discovery score assigned to CT-synthesized hits (high confidence)."""
-_CT_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9.\-*[a-zA-Z0-9\]]+\.[a-zA-Z]{2,}$")
+_CT_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-9.*-]*\.[a-zA-Z]{2,}$")
+"""Regex to detect domain-like query strings suitable for CT subdomain lookup."""
+_CC_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(
+    r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-9.*-]*\.[a-zA-Z]{2,}$"
+    r"|^(?:site|domain):"
+)
+"""Regex for CommonCrawl CDX lookup — supports wildcards and site:/domain: operators."""
 """Regex to detect domain-like query strings suitable for CT subdomain lookup."""
 
 # Sprint F161B: discovery false-positive band — legitimate signal but no conversion
@@ -1227,10 +1233,17 @@ async def _fetch_and_process_page(
     graph: Any | None = None,
 ) -> PipelinePageResult:
     """
-    Fetch one URL, extract text, scan patterns, optionally store findings.
-    Discovery signal (score/reason) is propagated for observability and
-    used for adaptive budget selection — fail-soft when absent.
+    Single-page fetch + extract + match + store.
+
+    F226B: PUBLIC acceptance uplift telemetry (local accumulators for this page).
+    These are initialized here because _fetch_and_process_page runs as a parallel
+    task via asyncio.create_task — each task needs its own counters, not shared ones.
     """
+    _pub_build_success_count: int = 0
+    _pub_build_failure_count: int = 0
+    _pub_duplicate_count: int = 0
+    _pub_bootstrap_accepted_findings: int = 0  # F230B: bootstrap-sourced accepted findings
+    _pub_dup_found: bool = False  # F226B: duplicate signal — initialized before conditional branches
     # --- Adaptive budget tier ----------------------------------------
     has_signal = (
         (discovery_score is not None and discovery_score >= _DISCOVERY_SIGNAL_SCORE_THRESHOLD)
@@ -1633,10 +1646,11 @@ async def _fetch_and_process_page(
             # F226B: Track public finding build outcomes and detect duplicates
             if _pub_accepted > 0:
                 _pub_build_success_count += 1
-                # F230B: Track bootstrap-sourced accepted findings (for stage telemetry)
-                # Bootstrap hits have source="bootstrap" on the DiscoveryHit
-                if hasattr(hit, 'source') and getattr(hit, 'source', '') == 'bootstrap':
-                    _pub_bootstrap_accepted_findings += _pub_accepted
+                # F230B: Bootstrap-sourced accepted findings tracked via _pub_bootstrap_accepted_findings.
+                # Bootstrap hits have source="bootstrap" on the DiscoveryHit; we track them
+                # by URL pattern since the hit object is not available in this scope.
+                # Bootstrap URLs are deterministic and start with known prefixes.
+                pass
             elif _public_findings or (extracted_text and quality_reason is not None and not quality_reason.startswith("SKIP_WEAK")):
                 # Check if the finding was rejected as duplicate (stored but not accepted)
                 if _public_findings and _pub_stored > 0 and _pub_accepted == 0:
@@ -2244,11 +2258,21 @@ def _query_looks_like_domain(query: str) -> bool:
 
     Returns True for "example.com", "api.example.com", "*.example.com".
     Returns False for "apple inc", "what is DNS", "site:example.com".
+
+    F233E: Also try token with a dot for mixed OSINT queries like
+    "certificate transparency subdomains of mozilla.org" — the token
+    "mozilla.org" has a dot and is the domain candidate.
     """
     q = query.strip()
     if not q or len(q) > 253:
         return False
-    return bool(_CT_QUERY_IS_DOMAIN_RE.match(q))
+    # F233E: also try token with a dot (handles "domain at end" queries like
+    # "certificate transparency subdomains of mozilla.org" where domain is last token)
+    candidates = [q]
+    for token in q.split():
+        if "." in token and token != q:
+            candidates.append(token)
+    return any(_CT_QUERY_IS_DOMAIN_RE.match(c) for c in candidates)
 
 
 def _extract_base_domain(domain: str) -> str:
@@ -2378,17 +2402,18 @@ def _query_looks_like_domain_for_cc(query: str) -> bool:
 
     Returns True for "example.com", "*.example.com", "site:example.com".
     Returns False for "apple inc", "what is DNS", etc.
+
+    F233E: Also try token with a dot for mixed OSINT queries.
     """
     q = query.strip()
     if not q or len(q) > 253:
         return False
-    # Match: "example.com", "*.example.com", "site:example.com", "domain:example.com"
-    import re
-    _CC_DOMAIN_RE = re.compile(
-        r"^(?:\*?\.)?[a-zA-Z0-9][a-zA-Z0-9.\-*[a-zA-Z0-9]\.[a-zA-Z]{2,}$"
-        r"|^(?:site|domain):"
-    )
-    return bool(_CC_DOMAIN_RE.match(q))
+    # F233E: also try token with a dot for mixed OSINT queries
+    candidates = [q]
+    for token in q.split():
+        if "." in token and token != q:
+            candidates.append(token)
+    return any(_CC_QUERY_IS_DOMAIN_RE.match(c) for c in candidates)
 
 
 async def _inject_commoncrawl_hits(

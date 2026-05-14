@@ -293,6 +293,34 @@ except ImportError:
     OPEN_SOURCE_COLLECTORS_AVAILABLE = False
 
 
+# Academic Discovery (P14 — convenience wrapper around AcademicSearchEngine)
+try:
+    from .academic_discovery import (
+        AcademicPaper,
+        search_arxiv,
+        search_crossref,
+        search_semantic_scholar,
+        search_academic_all,
+        search_arxiv_sync,
+        search_crossref_sync,
+        search_semantic_scholar_sync,
+    )
+    ACADEMIC_DISCOVERY_AVAILABLE = True
+except ImportError:
+    ACADEMIC_DISCOVERY_AVAILABLE = False
+
+
+# PastebinMonitor (P20 — paste site scraper for leak OSINT)
+try:
+    from .pastebin_monitor import (
+        PasteFinding,
+        run as pastebin_run,
+    )
+    PASTEBIN_MONITOR_AVAILABLE = True
+except ImportError:
+    PASTEBIN_MONITOR_AVAILABLE = False
+
+
 # Relationship Discovery (Social Network Analysis)
 try:
     from .relationship_discovery import (
@@ -373,23 +401,6 @@ try:
     BLOCKCHAIN_FORENSICS_AVAILABLE = True
 except ImportError:
     BLOCKCHAIN_FORENSICS_AVAILABLE = False
-
-# Phase 11: Decision Engine
-# WARNING: The imported classes below do NOT exist in decision_engine.py.
-# intelligence.decision_engine is a DEPRECATED re-export shim (from brain.decision_engine).
-# It does NOT contain IntelligentDecisionEngine, ModuleDecision, WorkflowPlan,
-# ResourceEstimate, or create_decision_engine.
-# DECISION_ENGINE_AVAILABLE=True here reflects import success, NOT functionality.
-try:
-    from .decision_engine import (
-        DecisionEngine,  # from brain.decision_engine re-export
-        DecisionType,
-    )
-    DECISION_ENGINE_AVAILABLE = True
-except ImportError:
-    DECISION_ENGINE_AVAILABLE = False
-    DecisionEngine = None  # type: ignore
-    DecisionType = None  # type: ignore
 
 # Phase 11: Input Detector
 try:
@@ -608,6 +619,20 @@ __all__ = [
     "quick_hunt",
     "check_s3_bucket",
     "scan_graphql_endpoint",
+    # Academic Discovery (P14)
+    "ACADEMIC_DISCOVERY_AVAILABLE",
+    "AcademicPaper",
+    "search_arxiv",
+    "search_crossref",
+    "search_semantic_scholar",
+    "search_academic_all",
+    "search_arxiv_sync",
+    "search_crossref_sync",
+    "search_semantic_scholar_sync",
+    # PastebinMonitor (P20)
+    "PASTEBIN_MONITOR_AVAILABLE",
+    "PasteFinding",
+    "pastebin_run",
     # Relationship Discovery
     "RELATIONSHIP_DISCOVERY_AVAILABLE",
     "RelationshipDiscoveryEngine",
@@ -661,7 +686,6 @@ __all__ = [
     "SourceType",
     # Blockchain Forensics
     "BLOCKCHAIN_FORENSICS_AVAILABLE",
-    "DECISION_ENGINE_AVAILABLE",
     "INPUT_DETECTOR_AVAILABLE",
     "WORKFLOW_ORCHESTRATOR_AVAILABLE",
     "BlockchainForensics",
@@ -677,12 +701,6 @@ __all__ = [
     "analyze_blockchain_address",
     "detect_transaction_patterns",
     "get_blockchain_forensics",
-    # Decision Engine (DEPRECATED shim — re-exports from brain.decision_engine)
-    # IntelligentDecisionEngine, ModuleDecision, WorkflowPlan, ResourceEstimate,
-    # create_decision_engine do NOT exist in this module
-    "DecisionEngine",
-    "DecisionType",
-    # NOTE: create_decision_engine intentionally omitted — does not exist
     # Input Detector
     "IntelligentInputDetector",
     "InputAnalysis",

@@ -27,6 +27,15 @@ except ImportError:
     _CoreML = None
     _Foundation = None
 
+try:
+    import mlx.core as _mx
+    from mlx_embeddings import load as _mlx_embeddings_load
+    MLX_EMBED_AVAILABLE = True
+except ImportError:
+    MLX_EMBED_AVAILABLE = False
+    _mx = None
+    _mlx_embeddings_load = None
+
 MODELS_DIR = Path.home() / ".hledac" / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -208,6 +217,8 @@ class ANEEmbedder:
         self.model_name = model_name
         self.hidden_dim = hidden_dim
         self.model = None
+        self._mlx_model = None
+        self._mlx_processor = None
         self._loaded = False
         self._last_load_error: Optional[str] = None
         self.coreml_path = MODELS_DIR / f"{model_name}_ane.mlpackage"
@@ -218,24 +229,38 @@ class ANEEmbedder:
         self._fallback_embedder = fallback_func
 
     async def load(self) -> None:
-        """Pokusí se načíst CoreML model, pokud existuje."""
-        if self._loaded or not ANE_AVAILABLE:
+        """Pokusí se načíst CoreML model, pak MLX ModernBERT fallback."""
+        if self._loaded or self._mlx_model is not None:
             return
-        if not self.coreml_path.exists():
-            logger.info(f"ANE model {self.model_name} not found, skipping (fallback to MLX)")
-            return
-        try:
-            url = _CoreML.NSURL.fileURLWithPath_(str(self.coreml_path))
-            model, err = _CoreML.MLModel.modelWithContentsOfURL_error_(url, None)
-            if err:
-                raise RuntimeError(f"CoreML load failed: {err}")
-            self.model = model
-            self._loaded = True
-            self._last_load_error = None
-            logger.info(f"ANEEmbedder loaded for {self.model_name}")
-        except Exception as e:
-            self._last_load_error = str(e)
-            logger.warning(f"ANE embedder failed to load: {e}, using MLX fallback")
+
+        # Try CoreML first
+        if ANE_AVAILABLE and self.coreml_path.exists():
+            try:
+                url = _CoreML.NSURL.fileURLWithPath_(str(self.coreml_path))
+                model, err = _CoreML.MLModel.modelWithContentsOfURL_error_(url, None)
+                if err:
+                    raise RuntimeError(f"CoreML load failed: {err}")
+                self.model = model
+                self._loaded = True
+                self._last_load_error = None
+                logger.info(f"ANEEmbedder loaded CoreML: {self.model_name}")
+                return
+            except Exception as e:
+                self._last_load_error = str(e)
+                logger.warning(f"CoreML failed ({e}), trying MLX ModernBERT")
+
+        # MLX fallback — ModernBERT přes mlx-embeddings
+        if MLX_EMBED_AVAILABLE:
+            try:
+                model_path = "nomic-ai/modernbert-embed-base"
+                self._mlx_model, self._mlx_processor = _mlx_embeddings_load(model_path, lazy=False)
+                self._loaded = True
+                self._last_load_error = None
+                logger.info(f"ANEEmbedder loaded MLX: {model_path}")
+                return
+            except Exception as e:
+                self._last_load_error = str(e)
+                logger.warning(f"MLX ModernBERT failed ({e}), using hash fallback")
 
     async def convert_to_ane(self) -> bool:
         """Check for pre-compiled .mlmodelc — no conversion needed."""
@@ -284,7 +309,26 @@ class ANEEmbedder:
                 return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
             return await loop.run_in_executor(None, _run)
 
-        # Path 2: Fallback embedder configured — call it
+        # Path 2: MLX ModernBERT loaded
+        if self._mlx_model is not None:
+            _ANE_TELEMETRY["ane_embed_attempted"] += 1
+            loop = asyncio.get_running_loop()
+            def _run():
+                import mlx.core as mx
+                toks = self._mlx_processor(texts, return_tensors="np", padding=True, truncation=True, max_length=512)
+                input_ids = mx.array(toks["input_ids"])
+                attention_mask = mx.array(toks["attention_mask"])
+                embs = self._mlx_model(input_ids, attention_mask=attention_mask)
+                hs = embs.last_hidden_state
+                mask = mx.array(toks["attention_mask"][:, :, None])
+                summed = (hs * mask).sum(axis=1)
+                counts = mx.maximum(mask.sum(axis=1), 1e-9)
+                pooled = summed / counts
+                result = mx.eval(pooled)
+                return np.array(result, dtype=np.float32)
+            return await loop.run_in_executor(None, _run)
+
+        # Path 3: Fallback embedder configured — call it
         if self._fallback_embedder is not None:
             _ANE_TELEMETRY["ane_embed_fallback_used"] += 1
             fb = self._fallback_embedder
@@ -340,8 +384,8 @@ class ANEEmbedder:
 
     @property
     def is_loaded(self) -> bool:
-        """Vrátí True pokud je ANE model načten."""
-        return self._loaded and self.model is not None
+        """Vrátí True pokud je ANE nebo MLX model načten."""
+        return self._loaded and (self.model is not None or self._mlx_model is not None)
 
 
 # Backward compat — importuje z kanonického mista
@@ -355,10 +399,23 @@ _ANE_EMBEDDER: "ANEEmbedder | None" = None
 
 
 def get_ane_embedder() -> "ANEEmbedder | None":
-    """Lazy init CoreML MiniLM-L6-v2 embedder."""
+    """Lazy init CoreML MiniLM-L6-v2 embedder, s MLX ModernBERT pokud CoreML není."""
     global _ANE_EMBEDDER
     if _ANE_EMBEDDER is None:
         _ANE_EMBEDDER = ANEEmbedder(model_name="minilm_ane", hidden_dim=384)
+    # Kick off async load — run synchronously via new event loop in background thread
+    if not _ANE_EMBEDDER._loaded and _ANE_EMBEDDER._mlx_model is None:
+        import threading
+        def _load_bg():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_ANE_EMBEDDER.load())
+                loop.close()
+            except Exception:
+                pass
+        t = threading.Thread(target=_load_bg, daemon=True)
+        t.start()
     return _ANE_EMBEDDER
 
 

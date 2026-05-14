@@ -600,6 +600,8 @@ async def _run_live_sprint(query: str, profile: str, duration_s: int, aggressive
                 result.nonfeed_memory_skips = parsed.get('nonfeed_memory_skips')
                 result.nonfeed_mission_exit_reason = parsed.get('nonfeed_mission_exit_reason')
                 result.claims_runtime_status = parsed.get('claims_runtime_status')
+                # F234: acquisition_report must be copied from parsed canonical report
+                result.acquisition_report = parsed.get('acquisition_report')
                 if result.acquisition_report and isinstance(result.acquisition_report, dict):
                     _ap_from_report = result.acquisition_report.get('acquisition_profile')
                     if _ap_from_report:

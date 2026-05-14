@@ -1245,7 +1245,7 @@ class DuckPGQGraph:
             (_stable_node_id(v), v, it, c, s)
             for v, it, c, s in rows
         ]
-        self.con.execute(
+        self.con.executemany(
             """INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT (id) DO NOTHING""",

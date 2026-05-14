@@ -762,7 +762,7 @@ class UniversalMemoryCoordinator:
 
         # Callbacks and synchronization
         self.callbacks: List[Callable] = []
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()  # Guards sync methods: allocate, free, touch, record_cleanup, get_memory_usage, get_zone_usage
 
         # Neuromorphic memory integration
         self._neuro_memory: Optional[NeuromorphicMemoryManager] = None
@@ -2430,8 +2430,7 @@ class MultiLevelContextCache:
         }
         
         # Thread safety — asyncio.Lock because all callers are async.
-        # Sync boundary methods (allocate/free/touch/record_cleanup/get_memory_usage/get_zone_usage)
-        # use self.lock (threading.Lock, line 739) instead.
+        # Sync boundary methods use self.lock (threading.Lock, line 765) instead.
         self._lock: asyncio.Lock = asyncio.Lock()
         
         # Load existing L2 cache

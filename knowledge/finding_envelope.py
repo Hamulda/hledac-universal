@@ -197,10 +197,16 @@ def deserialize_envelope(payload_text: str | None) -> FindingEnvelope | None:
         try:
             data = json.loads(payload_text)
         except Exception:
-            logger.warning("[ENVELOPE] deserialize failed for payload_text — will degrade to plain finding")
+            # Fail-soft: non-JSON payload_text is expected for legacy findings
+            # that were stored before the envelope format existed. Silent degrade.
+            # Only log if payload_text looks like corrupted JSON (has '{' but failed parse)
+            if payload_text.strip().startswith("{"):
+                logger.warning(
+                    "[ENVELOPE] deserialize failed for payload_text (malformed JSON) — will degrade to plain finding"
+                )
             return None
 
-    if not isinstance(data, dict):
+    if not isinstance(data, dict):  # type: ignore[unreachable]
         return None
 
     # Require audit_reason at minimum — absence means this is not a real envelope

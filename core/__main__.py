@@ -60,6 +60,7 @@ from hledac.universal.runtime.sprint_scheduler import (
     SprintScheduler,
     SprintSchedulerConfig,
 )
+from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
 from hledac.universal.transport.tor_transport import TorTransport
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, _PHASE_ORDER
 from hledac.universal.runtime.acquisition_strategy import (
@@ -927,7 +928,7 @@ async def run_sprint(
     await store.async_initialize()
 
     # Scheduler config
-    # F221: windup_lead_s param allows profile to override default 180s windup
+    # F221: windup_lead_s param (default 180s) + active-budget guard for 'default' profile
     _windup_lead_s = windup_lead_s if windup_lead_s is not None else 180.0
     # F228A: Defensive normalization — benchmark profile aliases must not reach
     # acquisition_strategy as raw values. Record all three phases for telemetry.
@@ -947,6 +948,16 @@ async def run_sprint(
             )
         _acq_effective = "default"
         _acq_normalized = True
+    # Guard: smoke180 profile uses windup_lead=180s — warn when active_budget <= 0
+    # _acq_effective is "default" when input is None (normalized at line above)
+    # nonfeed_diagnostic has windup_lead=0 so it always has an active window
+    _active_budget = duration_s - _windup_lead_s
+    if _active_budget <= 0 and _acq_effective == "default":
+        logger.warning(
+            "[F221] Sprint duration %.0fs <= windup_lead %.0fs → zero active budget. "
+            "Use --duration %.0f+ or --profile nonfeed_diagnostic for an active window.",
+            duration_s, _windup_lead_s, _windup_lead_s + 60,
+        )
     # Propagate normalized value to scheduler and env for downstream seams
     if "HLEDAC_ACQUISITION_PROFILE" not in os.environ:
         os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
@@ -963,12 +974,18 @@ async def run_sprint(
         acquisition_profile=acquisition_profile,
     )
 
+    scheduler = SprintScheduler(config)
+
     # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
     lifecycle = SprintLifecycleManager(
         sprint_duration_s=duration_s,
         windup_lead_s=config.windup_lead_s,
     )
-    scheduler = SprintScheduler(config)
+    # Sprint F223K: Opt-in RL feedback loop — enables quality-weighted source selection
+    policy_manager = SprintPolicyManager(
+        enabled=os.environ.get("ENABLE_RL_FEEDBACK", "false").lower() == "true"
+    )
+    scheduler.inject_policy_manager(policy_manager)
 
     # Sprint F153: Canonical source inventory — real URLs from typed seed surface
     live_feed_urls = _get_live_feed_urls()

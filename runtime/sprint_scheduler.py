@@ -138,6 +138,7 @@ from hledac.universal.runtime.nonfeed_candidate_ledger import (
 from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
 from hledac.universal.runtime.source_finding_bridge import (
     ct_results_to_findings,
+    record_ct_storage_results,
     wayback_results_to_findings,
     passive_dns_results_to_findings,
     REJECTION_UNSUPPORTED_SHAPE,
@@ -3243,19 +3244,13 @@ class SprintScheduler:
                                 )
                                 # NOTE S1: DuckDB ingest failure — findings not lost, only
                                 # acceptance count and rejection ledger may be stale.
+                                ingest_results = []
+                            else:
+                                # Sprint F214A: Update CT telemetry with actual storage results
+                                # Only called when ingest succeeded — ingest_results is guaranteed
+                                # to be defined here (not on exception path).
+                                record_ct_storage_results(_ct_telemetry, ingest_results)
                             # Sprint F216G: Record quality gate rejections from this ingest
-                            self._record_quality_rejections_from_store(duckdb_store)
-                            # Sprint F217E: Mirror quality rejections in ledger
-                            for _rec in self._result.quality_rejection_ledger or ():
-                                try:
-                                    self._nonfeed_ledger.add_quality_rejection(
-                                        source_family=_rec.source_family or "unknown",
-                                        reason=_rec.reason or "unknown",
-                                        sample_url=getattr(_rec, "url_sample", "") or "",
-                                        sample_value=getattr(_rec, "finding_id", "")[:16],
-                                    )
-                                except Exception:
-                                    pass  # fail-soft
                     if ct_outcome.error:
                         _ct_error = ct_outcome.error
 
@@ -4753,31 +4748,38 @@ class SprintScheduler:
             pass  # No running loop — asyncio.run() is safe here
 
         if _loop is not None:
-            # Running loop detected — run on the running loop directly.
-            # F223-D fix: run_until_complete on a new loop failed in Python 3.14
-            # because Python internally calls get_running_loop() which returns the
-            # outer loop, causing "Cannot run the event loop while another loop".
-            # Fix: use the running loop directly — run_until_complete schedules
-            # the coroutine on the same loop; no nested loop needed.
+            # Running loop detected — use run_in_executor to await the coroutine
+            # on a ThreadPool thread. This avoids the M1 crash vector of
+            # run_until_complete on a live loop (raises RuntimeError in Python 3.14
+            # after coroutine starts, leaving it unawaited → RuntimeWarning).
+            # F223-D fix: use thread pool to bridge the async gap.
             self._result.prewindup_guard_async_bridge_used = True
             import time as _time
 
             _t0 = _time.monotonic()
-            result = _loop.run_until_complete(
-                self._ensure_pre_windup_lane_terminal_states(
+
+            async def _await_coro():
+                return await self._ensure_pre_windup_lane_terminal_states(
                     query, self._acquisition_plan, "ok"
-                ),
-            )
-            _elapsed = _time.monotonic() - _t0
-            if _elapsed >= 30.0:
-                self._result.prewindup_guard_async_error = "timeout"
+                )
+
+            # Run the async wrapper on the thread pool — loop.run_until_complete
+            # on a running loop would raise RuntimeError and leave coro unawaited.
+            try:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                    future = _ex.submit(asyncio.run, _await_coro())
+                    result = future.result(timeout=30.0)
+            except Exception as exc:
+                self._result.prewindup_guard_async_error = str(exc)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
                 self._result.prewindup_guard_fail_closed = True
                 log.warning(
-                    "[F223-D] prewindup barrier timeout (blocking windup): %ss wall-clock",
-                    "30.0",
+                    "[F223-D] prewindup barrier error (blocking windup): %s",
+                    exc,
                 )
                 return False
-            return True
         else:
             # No running loop — asyncio.run() is safe (creates its own)
             try:
@@ -8387,6 +8389,21 @@ class SprintScheduler:
             if self._result.budget_violations > 0:
                 scorecard["budget_violations"] = self._result.budget_violations
 
+            # 9. Synthesis engine (set by windup_engine during windup, or "hermes3" if MLX loaded)
+            # F234: Surface synthesis_engine so live KPI can read it from windup_scorecard
+            _se = getattr(self, "_synthesis_engine", None) or "unknown"
+            if _se != "unknown":
+                scorecard["synthesis_engine_used"] = _se
+
+            # 10. Derived telemetry: findings_per_minute (for _signal_quality_classification)
+            # F234: Surface ioc_density and findings_per_minute for signal quality derivation
+            if self._result.accepted_findings > 0 and self._result.sprint_elapsed_s > 0:
+                scorecard["findings_per_minute"] = round(
+                    self._result.accepted_findings / (self._result.sprint_elapsed_s / 60), 2
+                )
+            if self._result.ioc_density > 0:
+                scorecard["ioc_density"] = round(self._result.ioc_density, 4)
+
             # Bound: enforce MAX_WINDUP_SCORECARD_KEYS
             if len(scorecard) > self.MAX_WINDUP_SCORECARD_KEYS:
                 # Prune to bound — keep priority fields
@@ -9622,6 +9639,8 @@ class SprintScheduler:
                 ),
                 # [F207Q-A] Pre-windup barrier telemetry for live KPI diagnosis
                 "prewindup_barrier": self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None,
+                # [F207Q-A] Flat field so live_sprint_measurement can read acquisition_strategy.prewindup_barrier_checked directly
+                "prewindup_barrier_checked": getattr(self._result, "prewindup_barrier_checked", False),
             }
         # Sprint F208H: Surface terminality fields at TOP LEVEL so validator can find them
         report["acquisition_terminality_checked"] = _at_checked
@@ -9973,6 +9992,11 @@ class SprintScheduler:
                 return_guard_errors=getattr(self._result, "return_guard_errors", None) or {},
                 wayback_unchanged_rejected=getattr(self._result, "wayback_unchanged_rejected", 0),
                 nonfeed_provider_failures=getattr(self._result, "nonfeed_provider_failures", None) or [],
+                # F216G/F217E: Quality/duplicate/nonfeed ledger summaries from result fields
+                quality_rejection_summary_by_family=getattr(self._result, "quality_rejection_summary_by_family", None) or {},
+                duplicate_rejection_summary_by_family=getattr(self._result, "duplicate_rejection_summary_by_family", None) or {},
+                low_information_by_family=getattr(self._result, "low_information_by_family", None) or {},
+                nonfeed_candidate_ledger_summary=(self._nonfeed_ledger.summary() if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None and hasattr(self._nonfeed_ledger, "summary") else {}),
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only

@@ -266,6 +266,9 @@ class CTLogClient:
 
         for san in san_names[:MAX]:
             finding_id = f"ct_{hashlib.sha1(san.encode()).hexdigest()[:16]}"
+            # Sprint F234: Include san in payload_text so each CT finding gets a
+            # unique dedup fingerprint. Without san, all 50 entries share one
+            # payload_text → one fingerprint → dedup rejects 49/50 as duplicates.
             findings.append(
                 CanonicalFinding(
                     finding_id=finding_id,
@@ -275,7 +278,7 @@ class CTLogClient:
                     ts=ts,
                     provenance=("ct_log", domain),
                     payload_text=json.dumps(
-                        {"issuer": issuer, "cert_count": ct_result.get("cert_count", 0), "domain": domain},
+                        {"issuer": issuer, "cert_count": ct_result.get("cert_count", 0), "domain": domain, "san": san},
                         ensure_ascii=False,
                     ),
                 )

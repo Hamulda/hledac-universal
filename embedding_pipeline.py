@@ -395,8 +395,8 @@ def _check_memory_guard() -> bool:
         from hledac.universal.utils.uma_budget import get_uma_pressure_level
 
         level_int, level_str = get_uma_pressure_level()
-        if level_int >= 3:  # >= warning
-            logger.warning(f"[EMBED] UmaWatchdog level={level_str} — skipping embedding")
+        if level_str != "normal":
+            logger.warning(f"[EMBED] UmaWatchdog level={level_str} ({level_int}%) — skipping embedding")
             return False
     except Exception:
         pass  # uma_budget not available

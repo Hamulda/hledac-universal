@@ -986,9 +986,108 @@ _FEED_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# F207F: Browser unavailable cache — process-level, set once after first failure
-_browser_unavailable: bool = False
-"""True when both Camoufox and nodriver fail due to missing browser binary."""
+# F207F: JS renderer capability tracking — process-level dict
+# Maps renderer name → reason if unavailable, None if available
+_js_renderer_capability: dict[str, str | None] = {
+    "camoufox": None,  # None = not yet checked, str = unavailable reason
+    "nodriver": None,
+    "playwright": None,
+}
+
+
+def _check_chrome_binary_exists() -> bool:
+    """Check if Chrome/Chromium binary is available on the system (macOS + Linux)."""
+    import os
+
+    candidates = [
+        # macOS
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        # Linux
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ]
+    return any(os.path.exists(p) and os.access(p, os.X_OK) for p in candidates)
+
+
+def _get_js_renderer_capability() -> dict[str, str | None]:
+    """
+    Return capability dict for all JS renderers.
+    Values: None = available, str = unavailable reason.
+    Cached after first call per renderer.
+    """
+    global _js_renderer_capability
+
+    # Check env gates first
+    heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
+    nodriver_enabled = os.environ.get("HLEDAC_ENABLE_NODRIVER", "0") == "1"
+
+    # camoufox check
+    if _js_renderer_capability["camoufox"] is None:
+        try:
+            from camoufox.async_api import AsyncCamoufox  # noqa: F401
+            _js_renderer_capability["camoufox"] = None  # available
+        except ImportError:
+            _js_renderer_capability["camoufox"] = "camoufox_unavailable"
+
+    # nodriver check — requires env gate AND chrome binary
+    if _js_renderer_capability["nodriver"] is None:
+        if not nodriver_enabled:
+            _js_renderer_capability["nodriver"] = "heavy_browser_disabled"
+        elif not _check_chrome_binary_exists():
+            _js_renderer_capability["nodriver"] = "chrome_binary_missing"
+        else:
+            # Check import separately
+            try:
+                import nodriver as uc  # noqa: F401
+                _js_renderer_capability["nodriver"] = None  # available
+            except ImportError:
+                _js_renderer_capability["nodriver"] = "nodriver_unavailable"
+
+    # playwright check
+    if _js_renderer_capability["playwright"] is None:
+        if not heavy_browser_enabled:
+            _js_renderer_capability["playwright"] = "heavy_browser_disabled"
+        else:
+            try:
+                from playwright.async_api import async_playwright  # noqa: F401
+                _js_renderer_capability["playwright"] = None  # available
+            except ImportError:
+                _js_renderer_capability["playwright"] = "playwright_unavailable"
+
+    return _js_renderer_capability
+
+
+def _all_js_renderers_unavailable() -> bool:
+    """Return True if all JS renderers are unavailable."""
+    cap = _get_js_renderer_capability()
+    return all(v is not None for v in cap.values())
+
+
+def reset_js_renderer_capability_cache() -> None:
+    """
+    Reset JS renderer capability cache.
+
+    Use this for tests, diagnostics, or long-running runtime refresh.
+    Does NOT trigger browser startup or heavy imports — only resets
+    the cached capability dict so the next _get_js_renderer_capability()
+    call re-detects from scratch.
+    """
+    global _js_renderer_capability
+    _js_renderer_capability = {"camoufox": None, "nodriver": None, "playwright": None}
+
+
+def refresh_js_renderer_capability() -> dict[str, str | None]:
+    """
+    Force re-detect JS renderer capabilities and return current state.
+
+    Unlike reset_js_renderer_capability_cache(), this also returns
+    the freshly-detected capability dict.
+    """
+    reset_js_renderer_capability_cache()
+    return _get_js_renderer_capability()
 
 
 def _looks_like_feed_url(url: str) -> bool:
@@ -1033,8 +1132,6 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
         from camoufox.async_api import AsyncCamoufox
     except ImportError:
         logger.debug("camoufox not installed, JS fetch unavailable")
-        global _browser_unavailable
-        _browser_unavailable = True
         return ""
 
     async with _CAMOUFOX_LOCK:
@@ -1060,14 +1157,27 @@ async def _fetch_with_camoufox(url: str, timeout: float = 15.0) -> str:
 async def _fetch_with_nodriver(url: str) -> str:
     """
     Fallback JS fetch via nodriver (direct CDP, no WebDriver).
-    Faster startup than Camoufox, suitable for CDP features.
+    Requires HLEDAC_ENABLE_NODRIVER=1 AND Chrome binary present.
+    Otherwise returns "" with telemetry reason.
     """
+    import os
+
+    # Check env gate
+    if os.environ.get("HLEDAC_ENABLE_NODRIVER", "0") != "1":
+        logger.debug(f"nodriver skipped: HLEDAC_ENABLE_NODRIVER != 1")
+        return ""
+
+    # Check chrome binary
+    if not _check_chrome_binary_exists():
+        nodriver_reason = "chrome_binary_missing"
+        logger.debug(f"nodriver skipped: chrome binary not found")
+        return ""
+
     try:
         import nodriver as uc
     except ImportError:
+        _js_renderer_capability["nodriver"] = "nodriver_unavailable"
         logger.debug("nodriver not installed, CDP fetch unavailable")
-        global _browser_unavailable
-        _browser_unavailable = True
         return ""
 
     browser = None
@@ -1081,6 +1191,10 @@ async def _fetch_with_nodriver(url: str) -> str:
         html = await page.get_content()
         await page.close()  # CRITICAL: without close() → memory leak
         return html
+    except asyncio.CancelledError:
+        if browser:
+            browser.stop()
+        raise  # Re-raise CancelledError — must propagate
     except Exception as e:
         logger.warning(f"nodriver fetch failed: {e}")
         return ""
@@ -1764,11 +1878,14 @@ async def async_fetch_public_text(
                             decode_replacement_count = 0
 
                         # P7: Auto-detect JS need and retry via Camoufox → nodriver
-                        # F207F: Skip JS retry for feed URLs, XML content-types, or when browser is unavailable
+                        # F207F: Skip JS retry for feed URLs, XML content-types, or when all JS renderers unavailable
                         skip_js_reason: str | None = None
                         if text and not use_js and _needs_js_fetch(text):
-                            if _browser_unavailable:
-                                skip_js_reason = "browser_unavailable"
+                            if _all_js_renderers_unavailable():
+                                # Use first unavailable reason for telemetry
+                                cap = _get_js_renderer_capability()
+                                unavailable_reasons = [v for v in cap.values() if v is not None]
+                                skip_js_reason = unavailable_reasons[0] if unavailable_reasons else "all_js_renderers_unavailable"
                             elif _looks_like_feed_url(url):
                                 skip_js_reason = "xml_or_feed_url"
                             elif xml_recovered:
@@ -1821,9 +1938,10 @@ async def async_fetch_public_text(
                                         transport_policy_reason="js_required",
                                         transport_counters=_tc,
                                     )
-                                # F207F: Both JS renders failed — mark browser unavailable if binary missing
+                                # F207F: Both JS renders failed — update capability tracking
                                 if not js_html:
-                                    _browser_unavailable = True
+                                    # Set all renderers as unavailable with reasons
+                                    cap = _get_js_renderer_capability()
                                     logger.warning(f"All JS renders failed for {url}, returning aiohttp result")
 
                         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -2019,6 +2137,10 @@ __all__ = [
     "_needs_js_fetch",
     "_fetch_with_camoufox",
     "_fetch_with_nodriver",
+    "_get_js_renderer_capability",
+    "_all_js_renderers_unavailable",
+    "reset_js_renderer_capability_cache",
+    "refresh_js_renderer_capability",
     # F206AT: Pool authority seam
     "PUBLIC_FETCHER_POOL_AUTHORITY",
     "inject_session_provider",

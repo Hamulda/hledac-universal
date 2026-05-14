@@ -1,7 +1,7 @@
 """Sprint F193A — CT log canonical pipeline integration tests."""
 import time
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 
 class TestSprintF193A:
@@ -89,6 +89,13 @@ class TestSprintF193A:
         sched = SprintScheduler.__new__(SprintScheduler)
         sched._result = SprintSchedulerResult()
         sched._ct_log_client = mock_client
+        # bypassed __init__ — set all attrs that _run_ct_log_discovery_in_cycle touches
+        sched._forensics_enricher = None
+        sched._forensics_lmdb_env = None
+        sched._multimodal_enricher = None
+        sched._multimodal_lmdb_env = None
+        sched.sprint_id = ""  # used by _accumulate_findings_to_graph
+        sched._sidecar_dispatcher = None  # bypassed __init__
 
         await sched._run_ct_log_discovery_in_cycle(query="example.com", store=mock_store)
 
@@ -191,6 +198,13 @@ class TestSprintF194A:
         sched = SprintScheduler.__new__(SprintScheduler)
         sched._result = SprintSchedulerResult()
         sched._ct_log_client = mock_client
+        # bypassed __init__ — set all attrs that _run_ct_log_discovery_in_cycle touches
+        sched._forensics_enricher = None
+        sched._forensics_lmdb_env = None
+        sched._multimodal_enricher = None
+        sched._multimodal_lmdb_env = None
+        sched.sprint_id = ""  # used by _accumulate_findings_to_graph
+        sched._sidecar_dispatcher = None  # bypassed __init__
 
         import asyncio
         asyncio.run(sched._run_ct_log_discovery_in_cycle(query="example.com", store=mock_store))

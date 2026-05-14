@@ -256,7 +256,15 @@ def _ensure_metal_memory_limits() -> bool:
         errors = []
 
         # ── set_cache_limit ───────────────────────────────────────────────────
-        if hasattr(mx.metal, 'set_cache_limit'):
+        if hasattr(mx, 'set_cache_limit'):
+            try:
+                mx.set_cache_limit(_METAL_CACHE_LIMIT_BYTES)
+                _cache_limit_actual = _METAL_CACHE_LIMIT_BYTES
+            except Exception as e:
+                _last_setter_error = f"set_cache_limit failed: {e}"
+                errors.append(_last_setter_error)
+                logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
+        elif hasattr(mx.metal, 'set_cache_limit'):
             try:
                 mx.metal.set_cache_limit(_METAL_CACHE_LIMIT_BYTES)
                 _cache_limit_actual = _METAL_CACHE_LIMIT_BYTES
@@ -265,11 +273,21 @@ def _ensure_metal_memory_limits() -> bool:
                 errors.append(_last_setter_error)
                 logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
         else:
-            _last_setter_error = "mx.metal.set_cache_limit not available"
+            _last_setter_error = "mx.set_cache_limit not available"
             errors.append(_last_setter_error)
 
         # ── set_wired_limit ────────────────────────────────────────────────────
-        if hasattr(mx.metal, 'set_wired_limit'):
+        if hasattr(mx, 'set_wired_limit'):
+            try:
+                mx.set_wired_limit(_METAL_WIRED_LIMIT_BYTES)
+                _wired_limit_actual = _METAL_WIRED_LIMIT_BYTES
+            except Exception as e:
+                err = f"set_wired_limit failed: {e}"
+                errors.append(err)
+                if not _last_setter_error:
+                    _last_setter_error = err
+                logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {err}")
+        elif hasattr(mx.metal, 'set_wired_limit'):
             try:
                 mx.metal.set_wired_limit(_METAL_WIRED_LIMIT_BYTES)
                 _wired_limit_actual = _METAL_WIRED_LIMIT_BYTES
@@ -280,7 +298,7 @@ def _ensure_metal_memory_limits() -> bool:
                     _last_setter_error = err
                 logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {err}")
         else:
-            _last_setter_error = "mx.metal.set_wired_limit not available"
+            _last_setter_error = "mx.set_wired_limit not available"
             errors.append(_last_setter_error)
 
         if errors:
@@ -393,40 +411,40 @@ def mlx_cleanup_aggressive() -> None:
     if not MLX_AVAILABLE:
         return
     try:
-        # F185C: cache mx ref once, check metal.* API FIRST (canonical MLX API)
+        # F185C: cache mx ref once, check mx.* API first (mx.metal.* is deprecated)
         mx = _get_mx()
 
-        # Uložit starý limit
-        if hasattr(mx.metal, 'get_cache_limit'):
-            old_limit = mx.metal.get_cache_limit()
-        elif hasattr(mx, 'get_cache_limit'):
+        # Uložit starý limit — prefer mx.get_cache_limit (canonical) over mx.metal.* (deprecated)
+        if hasattr(mx, 'get_cache_limit'):
             old_limit = mx.get_cache_limit()
+        elif hasattr(mx.metal, 'get_cache_limit'):
+            old_limit = mx.metal.get_cache_limit()
         else:
             old_limit = None
 
-        # Nastavit nízký limit
-        if hasattr(mx.metal, 'set_cache_limit'):
+        # Nastavit nízký limit — prefer mx.set_cache_limit over mx.metal.* (deprecated)
+        if hasattr(mx, 'set_cache_limit'):
+            mx.set_cache_limit(64 * 1024 * 1024)  # 64MB
+        elif hasattr(mx.metal, 'set_cache_limit'):
             mx.metal.set_cache_limit(64 * 1024 * 1024)  # 64MB
-        elif hasattr(mx, 'set_cache_limit'):
-            mx.set_cache_limit(64 * 1024 * 1024)
 
-        # Clear cache — canonical order: gc.collect() → mx.eval([]) → clear_cache()
-        # mx.eval([]) settles the GPU lazy-evaluation queue before clearing cache.
+        # F183C canonical cleanup order: gc.collect() → mx.eval([]) → clear_cache()
+        gc.collect()
         try:
             mx.eval([])
-        except Exception:
-            pass
-        if hasattr(mx.metal, 'clear_cache'):
-            mx.metal.clear_cache()
-        elif hasattr(mx, 'clear_cache'):
+        except Exception as e:
+            logger.debug(f"[MLX] mx.eval([]) barrier skipped: {e}")
+        if hasattr(mx, 'clear_cache'):
             mx.clear_cache()
+        elif hasattr(mx.metal, 'clear_cache'):
+            mx.metal.clear_cache()
 
         # Obnovit starý limit
         if old_limit is not None:
-            if hasattr(mx.metal, 'set_cache_limit'):
-                mx.metal.set_cache_limit(old_limit)
-            elif hasattr(mx, 'set_cache_limit'):
+            if hasattr(mx, 'set_cache_limit'):
                 mx.set_cache_limit(old_limit)
+            elif hasattr(mx.metal, 'set_cache_limit'):
+                mx.metal.set_cache_limit(old_limit)
     except Exception:
         mlx_cleanup_sync()  # fallback
 

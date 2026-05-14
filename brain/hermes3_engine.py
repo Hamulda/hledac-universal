@@ -32,7 +32,12 @@ from pydantic import BaseModel, Field
 T = TypeVar('T', bound=BaseModel)
 
 # SECURITY: Import fallback sanitizer for LLM input sanitization (failsafe)
-from ..security.pii_gate import fallback_sanitize
+try:
+    from ..security.pii_gate import fallback_sanitize
+except ImportError:
+    # Standalone import guard: provide stub when loaded outside package context
+    def fallback_sanitize(text: str, max_length: int = 8192) -> str:
+        return text[:max_length] if text else ""
 
 # Sprint 7H/7I: Emergency unload seam consumer
 try:

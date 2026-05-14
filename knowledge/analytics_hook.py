@@ -113,14 +113,10 @@ class _ShadowRecorder:
         self._store: Optional[Any] = None  # DuckDBShadowStore, lazy
         self._worker_started: bool = False
         self._worker_lock: threading.Lock = threading.Lock()
-        # SAFETY: _worker_lock is FALSE_POSITIVE — not a blocking risk.
-        # _ensure_worker() is called from async code (shadow_record_finding → enqueue → _ensure_worker).
-        # It guards _worker_started with double-checked locking:
-        #   1. Fast path: if _worker_started=True, return without acquiring lock
-        #   2. Slow path: under lock, re-check and only start worker if asyncio loop exists
-        # The worker (self._worker()) is async, started via loop.create_task() — thread-safe
-        # because the thread that holds the lock is the async caller's thread.
-        # No await occurs inside the lock; _closed flag is never written from inside a lock.
+        # SAFETY: _worker_lock is a threading.Lock (not asyncio.Lock) because
+        # _ensure_worker() is called from enqueue() which is sync. The lock guards
+        # _worker_started with double-checked locking pattern. No await occurs inside
+        # the lock; worker is started via loop.create_task().
         self._closed: bool = False
         self._flush_failures: int = 0
 

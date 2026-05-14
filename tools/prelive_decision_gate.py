@@ -20,6 +20,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+# Ensure hledac.universal is on sys.path so bare 'from core …' works when
+# this file is run directly as a script (python tools/prelive_decision_gate.py).
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 # --------------------------------------------------------------------------- #
 # Decision enum
 # --------------------------------------------------------------------------- #

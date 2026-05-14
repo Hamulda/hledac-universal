@@ -1206,6 +1206,10 @@ def _build_product_value_summary(
         runtime_findings_per_minute = round(runtime_accepted_findings / (actual_duration / 60.0), 2)
     else:
         runtime_findings_per_minute = 0.0
+    # [F241] Fallback: if scorecard findings_per_minute is 0.0 but we have valid runtime
+    # data, compute from runtime values so PVS doesn't show 0.0 for a productive sprint.
+    if findings_per_minute == 0.0 and runtime_findings_per_minute > 0:
+        findings_per_minute = runtime_findings_per_minute
 
     # 2. Dedup status — Sprint 8AV extended ingest outcome counters
     dedup_status: dict[str, Any] | None = None
