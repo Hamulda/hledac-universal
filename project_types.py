@@ -188,7 +188,7 @@ class ReasoningMode(Enum):
 class ModelConfig:
     """Model configuration for M1 8GB - 3 model stack only"""
     # LLM: Hermes-3 for reasoning and generation
-    HERMES_MODEL: str = "mlx-community/Hermes-3-Llama-3.2-3B-4bit"
+    HERMES_MODEL: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
     HERMES_CONTEXT: int = 8192
     HERMES_TEMP: float = 0.3
 

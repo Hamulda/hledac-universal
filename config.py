@@ -41,7 +41,7 @@ class M1Presets:
     THERMAL_THRESHOLD_C = 85.0
     
     # Model settings - 3 model stack only (M1 8GB optimized)
-    HERMES_MODEL = "mlx-community/Hermes-3-Llama-3.2-3B-4bit"
+    HERMES_MODEL = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
     MODERNBERT_MODEL = "mlx-community/answerdotai-ModernBERT-base-6bit"
     GLINER_MODEL = "knowledgator/gliner-x-base"
     

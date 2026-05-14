@@ -21,9 +21,21 @@ import random
 import re
 import time
 import urllib.parse
-from typing import Final, Optional
+from typing import TYPE_CHECKING, Final, Optional
 
-import psutil
+# psutil lazy import — only needed inside fetch function at runtime
+_psutil = None
+
+def _get_psutil():
+    global _psutil
+    if _psutil is not None:
+        return _psutil
+    try:
+        import psutil
+        _psutil = psutil
+    except Exception:
+        _psutil = None
+    return _psutil
 
 # Sprint F206AL: Import canonical M1 8GB threshold from uma_budget.
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
@@ -1690,9 +1702,11 @@ async def async_fetch_public_text(
         # Sprint F206AL: 5.5GB ceiling now unified via uma_budget.M1_FETCH_SOFT_CEILING_GB
         if not use_tor and not use_i2p and not use_stealth:
             try:
-                rss_gb = psutil.Process().memory_info().rss / 1e9
-                if rss_gb > M1_FETCH_SOFT_CEILING_GB:
-                    await asyncio.sleep(0.05)
+                _ps = _get_psutil()
+                if _ps is not None:
+                    rss_gb = _ps.Process().memory_info().rss / 1e9
+                    if rss_gb > M1_FETCH_SOFT_CEILING_GB:
+                        await asyncio.sleep(0.05)
             except Exception as e:
                 logger.debug(f"Memory check failed (non-fatal): {e}")
 

@@ -531,17 +531,17 @@ class LeakSentinelAdapter:
         sources_to_run: list[tuple[str, asyncio.Task]] = []
 
         # Always try pastebin (works with any query)
-        t = asyncio.create_task(_fetch_paste_findings(query, self._semaphore))
+        t = asyncio.create_task(_fetch_paste_findings(query, self._semaphore), name="leak_sentinel:paste_findings")
         sources_to_run.append(("pastebin", t))
 
         # Try github if query looks like 'owner/repo'
         if "/" in query and len(query) > 3:
-            t = asyncio.create_task(_fetch_github_secret_findings(query, self._semaphore))
+            t = asyncio.create_task(_fetch_github_secret_findings(query, self._semaphore), name="leak_sentinel:github_findings")
             sources_to_run.append(("github", t))
 
         # Try breach for email/domain/username queries
         if "@" in query or ("." in query and "/" not in query):
-            t = asyncio.create_task(_fetch_breach_findings(query, self._semaphore))
+            t = asyncio.create_task(_fetch_breach_findings(query, self._semaphore), name="leak_sentinel:breach_findings")
             sources_to_run.append(("breach", t))
 
         self._stats.sources_run = len(sources_to_run)

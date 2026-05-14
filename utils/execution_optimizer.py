@@ -20,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import threading
 from collections import deque
 from collections import OrderedDict
-import yaml
 
 # Machine learning for optimization - lazy imports to reduce cold-start
 from typing import TYPE_CHECKING
@@ -335,6 +334,7 @@ class ParallelExecutionOptimizer:
             import os
             if os.path.exists(config_path):
                 with open(config_path, 'r') as f:
+                    import yaml
                     config = yaml.safe_load(f)
                     default_config.update(config)
 

@@ -18,7 +18,7 @@
 | 5 | `NEREngine` | `brain/ner_engine.py:76` | `knowledgator/gliner-relex-large-v0.5` | PyTorch CPU (GLiNER.from_pretrained) | NER+RE | `unload()` | **ACTIVE** |
 | 6 | `ModelLifecycle._ensure_loaded()` | `brain/model_lifecycle.py:714` | Discovered Qwen3-0.6B or ≤1B at `~/.cache/huggingface/hub/` | MLX (mlx_lm.load) | Structured JSON gen (windup-local) | windup-local, isolated | **ACTIVE** |
 | 7 | FlashRank `Ranker` | `brain/synthesis_runner.py:304` | `ms-marco-MiniLM-L-12-v2` | ONNX (flashrank) | Reranker (pre-synthesis) | singleton | **ACTIVE** |
-| 8 | `VLMAnalyzer` | `tools/vlm_analyzer.py:28` | `mlx-community/llava-1.5-7b-4bit` | MLX-VLM (mlx_vlm.load) | Vision-language | unload() | **ACTIVE** (HEAVY) |
+| 8 | `VLMAnalyzer` | `tools/vlm_analyzer.py:28` | *(none — VLM_MODEL_ID env var required) | MLX-VLM (mlx_vlm.load) | Vision-language | unload() | **INACTIVE** (no default — future small VLM deferred to benchmark) |
 | 9 | `VisionOCR` | `tools/ocr_engine.py:18` | Apple Vision via `ocrmac` | macOS Vision | OCR | lazy import | **ACTIVE** |
 | 10 | `VisionEncoder` | `multimodal/vision_encoder.py:22` | CoreML model (user-provided path) | CoreML | Document image encoding | async load() | **ACTIVE** |
 | 11 | `VisionCaptchaSolver` | `captcha_solver.py:85` | YOLO CoreML + VNCoreMLModel | CoreML | CAPTCHA solving | lazy import | **ACTIVE** |
@@ -47,7 +47,7 @@ GLiNER ~300MB
 |--------|-------|---------|
 | ModernBERT ×3 | `embeddings/modernbert_embedder.py`, `core/mlx_embeddings.py`, `brain/ane_embedder.py` | Three wrappers around same `nomic-ai/modernbert-embed-base` |
 | Reranking ×4 | `brain/synthesis_runner.py:flashrank`, `tools/reranker.py:LightweightReranker`, `discovery/fusion_ranker.py`, `prefetch/ssm_reranker.py` | Multiple reranking implementations, winner unclear |
-| VLM ×2 | `tools/vlm_analyzer.py:LLaVA-7B`, `multimodal/vision_encoder.py:CoreML` | Different vision paths, no unified dispatcher |
+| VLM ×2 | `tools/vlm_analyzer.py:*(removed — M1 8GB unsafe)*`, `multimodal/vision_encoder.py:CoreML` | Different vision paths, no unified dispatcher |
 | Legacy Hermes load | `layers/memory_layer.py:716` | Loads `Hermes-3-Llama-3.2-3B-bf16` (different quantization than canonical 4bit) |
 | Legacy autonomous_orchestrator | `legacy/autonomous_orchestrator.py` | 31k line God Object, separate runtime from `__main__.py` pipeline |
 
@@ -65,7 +65,7 @@ GLiNER ~300MB
 | `brain/ner_engine.py:87` | `knowledgator/gliner-relex-large-v0.5` | Primary ✅ |
 | `brain/model_manager.py:299` | `knowledgator/gliner-relex-large-v0.5` | Matches ✅ |
 | `brain/synthesis_runner.py:309` | `ms-marco-MiniLM-L-12-v2` | FlashRank model ✅ |
-| `tools/vlm_analyzer.py:65` | `mlx-community/llava-1.5-7b-4bit` | 7B VLM, HEAVY ✅ |
+| `tools/vlm_analyzer.py:65` | `*(removed — M1 8GB unsafe)*` | 7B VLM, HEAVY ✅ |
 | `layers/memory_layer.py:716` | `mlx-community/Hermes-3-Llama-3.2-3B-bf16` | **BF16 variant — different from canonical 4bit** |
 
 ---
@@ -210,7 +210,7 @@ GLiNER ~300MB
 ## 2.7 vision_ocr_doc
 
 **Current**: Three parallel paths:
-1. `tools/vlm_analyzer.py:VLMAnalyzer` — LLaVA-1.5-7B-4bit (HEAVY, 7B)
+1. `tools/vlm_analyzer.py:VLMAnalyzer` — *(removed — M1 8GB unsafe)* (HEAVY, 7B)
 2. `tools/ocr_engine.py:VisionOCR` — Apple Vision via ocrmac (lightweight)
 3. `multimodal/vision_encoder.py:VisionEncoder` — CoreML document images
 
@@ -221,12 +221,12 @@ GLiNER ~300MB
 - PaddleOCR-VL-0.9B — document parsing, but not confirmed MLX-available
 
 **Integration**:
-- `tools/vlm_analyzer.py:65` — replace llava-7b with SmolVLM2-500M
+- `tools/vlm_analyzer.py:65` — replace *(removed — M1 8GB unsafe)* with SmolVLM2-500M
 - OR add OCR-first path as default, VLM only for complex images
 
-**Redundancy risk**: MEDIUM — LLaVA 7B is memory-expensive on M1 8GB
+**Redundancy risk**: MEDIUM — *(removed — M1 8GB unsafe)* is memory-expensive on M1 8GB
 **Expected benefit**: M1-safe VLM, faster load, lower memory
-**Must benchmark**: image understanding quality vs LLaVA 7B, memory footprint
+**Must benchmark**: image understanding quality vs *(removed — M1 8GB unsafe)*, memory footprint
 
 ---
 
@@ -257,8 +257,8 @@ GLiNER ~300MB
 | Reranker | FlashRank `MiniLM-L-12-v2` | `BAAI/bge-reranker-v2-m3` | benchmark_first | `synthesis_runner.py:307` | Multilingual support | MEDIUM | MEDIUM | Phase 4: add as conditional heavy reranker |
 | Reranker | FlashRank `MiniLM-L-12-v2` | `jinaai/jena-reranker-v2-base` | benchmark_first | `synthesis_runner.py:307` | Multilingual, good quality | MEDIUM | MEDIUM | Phase 4: add as conditional |
 | GLiNER | `knowledgator/gliner-relex-large-v0.5` | Keep + add Panchajit1989/gliner-relik-v0.5 | add | `ner_engine.py:87` | Joint NER+RE improvement | LOW | LOW | Phase 4: add as second GLiNER option |
-| VLM | `mlx-community/llava-1.5-7b-4bit` | `mlx-community/SmolVLM2-500M-4bit` | replace | `vlm_analyzer.py:65` | M1-safe, fast load | LOW | LOW | Phase 3: replace with SmolVLM2 |
-| VLM | LLaVA-7B | OCR-first + small VLM for complex | add | `vlm_analyzer.py`, `ocr_engine.py` | M1-safe, OCR-dominant | MEDIUM | MEDIUM | Phase 3: OCR-first default, VLM on fallback |
+| VLM | `*(removed — M1 8GB unsafe)*` | `mlx-community/SmolVLM2-500M-4bit` | replace | `vlm_analyzer.py:65` | M1-safe, fast load | LOW | LOW | Phase 3: replace with SmolVLM2 |
+| VLM | *(removed — M1 8GB unsafe)* | OCR-first + small VLM for complex | add | `vlm_analyzer.py`, `ocr_engine.py` | M1-safe, OCR-dominant | MEDIUM | MEDIUM | Phase 3: OCR-first default, VLM on fallback |
 | Legacy Hermes bf16 | `Hermes-3-Llama-3.2-3B-bf16` (memory_layer) | Remove bf16 variant | deprecate | `layers/memory_layer.py:716` | Single canonical model | LOW | MEDIUM | Phase 1: remove memory_layer bf16 load |
 | Legacy autonomous_orchestrator | Hermes via legacy orchestrator | Keep as-is (smoke tests only) | keep | `legacy/autonomous_orchestrator.py` | Test coverage | N/A | N/A | Keep for smoke tests |
 
@@ -297,14 +297,14 @@ GLiNER ~300MB
 ## 4.3 VLM Paths
 
 **Problem**: Two vision paths with unclear routing:
-1. `tools/vlm_analyzer.py` — LLaVA 7B (heavy)
+1. `tools/vlm_analyzer.py` — *(removed — M1 8GB unsafe)* (heavy)
 2. `multimodal/vision_encoder.py` — CoreML document images
 3. `tools/ocr_engine.py` — Vision OCR (lightweight)
 
 **Recommendation**:
 - OCR-first for documents (VisionOCR is correct and fast)
 - VLM only for complex images requiring visual reasoning
-- SmolVLM2-500M replace LLaVA-7B for VLM use
+- SmolVLM2-500M replace *(removed — M1 8GB unsafe)* for VLM use
 
 ## 4.4 Legacy Runtime
 
@@ -358,7 +358,7 @@ Priority layers for M1 8GB production:
 **Hard ceiling**: 8GB total UMA. macOS baseline: ~2.5GB. **Usable: ~5.5GB**.
 
 **Strict operational limits**:
-- **ONE heavy model at a time** — Hermes 3B (2GB) OR LLaVA 7B (cannot both be loaded)
+- **ONE heavy model at a time** — Hermes 3B (2GB) OR *(removed — M1 8GB unsafe)* (cannot both be loaded)
 - **Safe AI budget**: <5.5GB active, never exceed 5GB RSS warning threshold
 - **System reserved**: ~2.5GB for macOS + Python runtime
 - **KV cache estimate**: 8192 context × 4 bits × 28 layers ≈ 32MB (already bounded in hermes3_engine.py:1056)
@@ -408,7 +408,7 @@ Priority layers for M1 8GB production:
 | ModernBERT vs nomic-embed-text-v1.5 (if available) | Retrieval recall@k | ANN probe lane |
 | FlashRank MiniLM vs bge-reranker-v2-m3 | NDCG@k on multilingual corpus | Dedicated rerank probe |
 | GLiNER-relex vs GLiNER-relik (joint NER+RE) | F1 NER, relation accuracy | NER probe lane |
-| LLaVA-7B vs SmolVLM2-500M vs OCR-first | Image understanding quality | Multimodal probe |
+| *(removed — M1 8GB unsafe)* vs SmolVLM2-500M vs OCR-first | Image understanding quality | Multimodal probe |
 | Hermes-3-4bit vs Hermes-3-bf16 | Quality vs memory | Memory probe |
 
 ---
@@ -499,11 +499,11 @@ Priority layers for M1 8GB production:
 **Goal**: GGUF mmap, ANE-only vision, smaller VLM
 
 **Files**:
-- `tools/vlm_analyzer.py:65` — swap LLaVA-7B for SmolVLM2-500M
+- `tools/vlm_analyzer.py:65` — swap *(removed — M1 8GB unsafe)* for SmolVLM2-500M
 - Optionally add GGUF path in `brain/hermes3_engine.py` — only if benchmarks justify
 
 **Acceptance**: VLM quality acceptable, memory < 5.5GB RSS
-**Rollback**: Revert to LLaVA-7B
+**Rollback**: Revert to *(removed — M1 8GB unsafe)*
 
 ---
 
@@ -511,7 +511,7 @@ Priority layers for M1 8GB production:
 
 1. **DO NOT** replace all models at once — Phase 0→6 is sequential for a reason
 2. **DO NOT** add a new model if an existing one already covers the role — verify with grep before adding
-3. **DO NOT** load two heavy models concurrently — Hermes 3B + LLaVA 7B would OOM M1 8GB
+3. **DO NOT** load two heavy models concurrently — Hermes 3B + *(removed — M1 8GB unsafe)* would OOM M1 8GB
 4. **DO NOT** use preview models without fallback — DeepHermes-3-3B-Preview may not persist on HuggingFace
 5. **DO NOT** change tokenizer ownership incorrectly — `mlx_lm.load()` returns (model, tokenizer) together; don't split them
 6. **DO NOT** implement dynamic runtime quantization as a core feature — `kv_bits=4` at generate time is already set
@@ -541,7 +541,7 @@ Priority layers for M1 8GB production:
 ## Benchmark BEFORE Implementation
 - DeepHermes 3B vs Nanbeige4.1-3B vs Hermes 3B (primary reasoner quality)
 - Qwen3-1.7B vs Qwen3-0.6B (structured JSON quality/speed)
-- SmolVLM2-500M vs LLaVA-7B (VLM quality on M1)
+- SmolVLM2-500M vs *(removed — M1 8GB unsafe)* (VLM quality on M1)
 - bge-reranker-v2-m3 vs jina-reranker (multilingual reranking)
 
 ## Deprecate (cleanup)

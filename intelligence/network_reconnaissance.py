@@ -35,7 +35,7 @@ import ssl
 import struct
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -600,10 +600,10 @@ class SSLAnalyzer:
             sha256_fp = hashlib.sha256(cert_der).hexdigest()
             sha1_fp = hashlib.sha1(cert_der).hexdigest()
 
-            # Parse dates
-            not_before = datetime.strptime(x509.get_notBefore().decode(), "%Y%m%d%H%M%SZ")
-            not_after = datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ")
-            days_until_expiry = (not_after - datetime.utcnow()).days
+            # Parse dates (naive UTC from DER timestamp strings)
+            not_before = datetime.strptime(x509.get_notBefore().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=timezone.utc)
+            not_after = datetime.strptime(x509.get_notAfter().decode(), "%Y%m%d%H%M%SZ").replace(tzinfo=timezone.utc)
+            days_until_expiry = (not_after - datetime.now(timezone.utc)).days
 
             return SSLCertificate(
                 subject=subject,
@@ -625,8 +625,8 @@ class SSLAnalyzer:
                 subject={},
                 issuer={},
                 serial_number="unknown",
-                not_before=datetime.utcnow(),
-                not_after=datetime.utcnow(),
+                not_before=datetime.now(timezone.utc),
+                not_after=datetime.now(timezone.utc),
                 fingerprint_sha256=hashlib.sha256(cert_der).hexdigest(),
                 fingerprint_sha1=hashlib.sha1(cert_der).hexdigest(),
                 version=3,

@@ -214,7 +214,9 @@ class StatisticalStegoDetector:
         self._initialized = False
         self._image_lib = None
         # Sprint 53: Thread pool for MPS operations
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="stego_mps"
+        )
 
     async def detect(self, image_bytes: bytes) -> Dict[str, Any]:
         """Main detection method - chooses MPS or CPU based on availability.

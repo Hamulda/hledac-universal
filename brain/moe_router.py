@@ -57,11 +57,11 @@ class MoERouterConfig:
         "osint", "security", "temporal", "graph", "synthesis"
     ])
     model_paths: Dict[str, str] = field(default_factory=lambda: {
-        "osint": "mlx-community/Hermes-3-Llama-3.2-3B-4bit",
-        "security": "mlx-community/Hermes-3-Llama-3.2-3B-4bit",
-        "temporal": "mlx-community/Hermes-3-Llama-3.2-3B-4bit",
-        "graph": "mlx-community/Hermes-3-Llama-3.2-3B-4bit",
-        "synthesis": "mlx-community/Hermes-3-Llama-3.2-3B-4bit",
+        "osint": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
+        "security": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
+        "temporal": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
+        "graph": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
+        "synthesis": "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit",
     })
     max_active_experts: int = 2  # M1 8GB limit
     temperature: float = 0.3

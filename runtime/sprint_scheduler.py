@@ -7740,12 +7740,12 @@ class SprintScheduler:
         await self._run_ct_to_passivedns_pivot_advisory()
 
         # Sprint F234: BGP advisory sidecar (fail-soft, non-blocking)
-        _bgp_task = asyncio.create_task(self._run_bgp_advisory_sidecar())
+        _bgp_task = asyncio.create_task(self._run_bgp_advisory_sidecar(), name="sprint:bgp_advisory_sidecar")
         self._bg_tasks.add(_bgp_task)
         _bgp_task.add_done_callback(self._bg_tasks.discard)
 
         # Sprint F234: WaybackCDX deep advisory sidecar (fail-soft, non-blocking)
-        _wayback_task = asyncio.create_task(self._run_wayback_cdx_deep_sidecar())
+        _wayback_task = asyncio.create_task(self._run_wayback_cdx_deep_sidecar(), name="sprint:wayback_cdx_sidecar")
         self._bg_tasks.add(_wayback_task)
         _wayback_task.add_done_callback(self._bg_tasks.discard)
 

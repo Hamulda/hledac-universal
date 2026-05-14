@@ -141,8 +141,8 @@
       "status": "active"
     },
     {
-      "id": "llava-1.5",
-      "name": "mlx-community/llava-1.5-7b-4bit",
+      "id": "*(removed — M1 8GB unsafe)*-1.5",
+      "name": "*(removed — M1 8GB unsafe)*",
       "type": "VLM",
       "backend": "mlx-vlm",
       "files": [

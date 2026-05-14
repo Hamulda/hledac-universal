@@ -3,7 +3,8 @@
 =================================================
 
 This is the CANONICAL implementation for decision making and orchestration.
-Uses Hermes-3-Llama-3.2-3B-4bit as the primary model.
+DeepHermes 3 3B 4bit is the default primary reasoning model.
+Hermes 3 3B 4bit remains rollback/fallback.
 Supports ChatML formatting, AI-driven query analysis, and research synthesis.
 
 NOTE (Sprint 8VH): brain/inference_engine.py is FUNKČNĚ ODLIŠNÝ:
@@ -139,7 +140,7 @@ MAX_PENDING_FUTURES = 256
 @dataclass
 class HermesConfig:
     """Konfigurace pro Hermes-3"""
-    model_path: str = "mlx-community/Hermes-3-Llama-3.2-3B-4bit"
+    model_path: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
     temperature: float = 0.3
     max_tokens: int = 2048
     context_window: int = 8192

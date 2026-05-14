@@ -53,7 +53,9 @@ class ParallelResearchScheduler:
         self._work_done.set()
 
         # ThreadPoolExecutor pro CPU úlohy
-        self._cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent_cpu)
+        self._cpu_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_concurrent_cpu, thread_name_prefix="parallel_cpu"
+        )
 
     async def get_recommended_concurrency(self, task_type: str) -> int:
         """Vrátí doporučenou concurrency podle typu úlohy a aktuálních zdrojů."""

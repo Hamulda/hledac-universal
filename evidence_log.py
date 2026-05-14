@@ -59,7 +59,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set
 
@@ -123,7 +123,7 @@ class EvidenceEvent(BaseModel):
     event_type: Literal["tool_call", "observation", "synthesis", "error", "decision", "evidence_packet"] = Field(
         ..., description="Typ události"
     )
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     payload: Dict[str, Any] = Field(default_factory=dict, description="Data události")
     source_ids: List[str] = Field(default_factory=list, description="ID zdrojových událostí")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Spolehlivost 0-1")
@@ -277,7 +277,7 @@ class EvidenceLog:
             "evidence_packet": [],
         }
         self._index_by_source: Dict[str, List[int]] = {}
-        self._created_at: datetime = datetime.utcnow()
+        self._created_at: datetime = datetime.now(timezone.utc)
         self._frozen: bool = False
         self._closed: bool = False  # H1: closed flag for post-close guards
         self._total_count: int = 0  # Celkový počet událostí (včetně na disku)

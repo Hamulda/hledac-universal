@@ -28,6 +28,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 try:
+    import compression.zstd as _zstd
+    ZSTD_AVAILABLE = True
+except (ImportError, Exception):
+    ZSTD_AVAILABLE = False
+    _zstd = None
+
+try:
     import orjson
     ORJSON_AVAILABLE = True
 except ImportError:
@@ -99,7 +106,7 @@ def _list_to_ndarray(obj: Any, target_type: Any = None) -> Any:
 
 
 def _serialize_cache(data: Dict[str, CacheEntry]) -> bytes:
-    """Serialize cache data to bytes using orjson."""
+    """Serialize cache data to bytes using orjson, compressed with zstd."""
     serializable = {}
     for k, v in data.items():
         entry_dict = {
@@ -114,17 +121,23 @@ def _serialize_cache(data: Dict[str, CacheEntry]) -> bytes:
             'metadata': v.metadata,
         }
         serializable[k] = entry_dict
-    if ORJSON_AVAILABLE:
-        return orjson.dumps(serializable)
-    return _json.dumps(serializable).encode()
+    payload = orjson.dumps(serializable) if ORJSON_AVAILABLE else _json.dumps(serializable).encode()
+    if ZSTD_AVAILABLE and _zstd is not None:
+        return _zstd.compress(payload)
+    return payload
 
 
 def _deserialize_cache(data: bytes) -> Dict[str, CacheEntry]:
-    """Deserialize cache data from bytes using orjson."""
-    if ORJSON_AVAILABLE:
-        raw = orjson.loads(data)
+    """Deserialize cache data from bytes; zstd-compressed or raw orjson JSON."""
+    raw: Any
+    if ZSTD_AVAILABLE:
+        try:
+            raw = orjson.loads(_zstd.decompress(data))
+        except Exception:
+            # Backward compat: try raw JSON (old .json files)
+            raw = orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
     else:
-        raw = _json.loads(data.decode())
+        raw = orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
 
     result = {}
     for k, v in raw.items():
@@ -330,23 +343,29 @@ class MultiLevelContextCache:
             self.embedding_dim = 384
     
     def _load_l2_cache(self):
-        """Load L2 cache from disk."""
+        """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.json"
-            if cache_file.exists():
-                with open(cache_file, 'rb') as f:
+            zst_file = self.l2_storage_path / "l2_cache.json.zst"
+            json_file = self.l2_storage_path / "l2_cache.json"
+            if zst_file.exists():
+                with open(zst_file, 'rb') as f:
                     self.l2_cache = _deserialize_cache(f.read())
-                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache")
-        except FileNotFoundError:
-            self.l2_cache = {}
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
+            elif json_file.exists():
+                # Backward compat: read old plain JSON
+                with open(json_file, 'rb') as f:
+                    self.l2_cache = _deserialize_cache(f.read())
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)")
+            else:
+                self.l2_cache = {}
         except Exception as e:
             logger.warning(f"Could not load L2 cache: {e}")
             self.l2_cache = {}
 
     def _save_l2_cache(self):
-        """Save L2 cache to disk."""
+        """Save L2 cache to disk as zstd-compressed .json.zst."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.json"
+            cache_file = self.l2_storage_path / "l2_cache.json.zst"
             with open(cache_file, 'wb') as f:
                 f.write(_serialize_cache(self.l2_cache))
         except Exception as e:

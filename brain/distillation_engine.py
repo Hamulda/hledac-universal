@@ -383,7 +383,7 @@ class DistillationEngine:
             # Prepare data - parallelize embeddings via run_in_executor
             # F214M: get_running_loop() replaces deprecated get_event_loop() in async context
             loop = asyncio.get_running_loop()
-            with ThreadPoolExecutor() as executor:
+            with ThreadPoolExecutor(max_workers=2) as executor:
                 embedding_tasks = [
                     loop.run_in_executor(executor, self._get_chain_embedding, example.chain)
                     for example in examples
@@ -754,10 +754,7 @@ async def distil(
             rerank_findings_cosine,
         )
         # Dedup
-        if _asyncio.get_event_loop().is_running():
-            findings = await semantic_dedup_findings(findings, threshold=0.90)
-        else:
-            findings = _asyncio.run(semantic_dedup_findings(findings, threshold=0.90))
+        findings = await semantic_dedup_findings(findings, threshold=0.90)
         # Rerank by relevance if we have a query
         _query_for_ane = getattr(findings[0], 'query', None) if findings else None
         if _query_for_ane and len(findings) > 5:

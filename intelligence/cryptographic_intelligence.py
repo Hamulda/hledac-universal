@@ -34,7 +34,7 @@ import re
 import string
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -1037,7 +1037,7 @@ class CertificateAnalyzer:
         is_self_signed = cert.subject == cert.issuer
 
         # Check expiry
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         is_expired = now > cert.not_valid_after
         days_until_expiry = (cert.not_valid_after - now).days
 

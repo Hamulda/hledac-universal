@@ -16,7 +16,7 @@
 | 4 | `ms-marco-MiniLM-L-12-v2` | Reranker | FlashRank/ONNX | `tools/reranker.py:65` (default), `brain/synthesis_runner.py:309` (singleton) | LightweightReranker, SynthesisRunner._rerank_pass() | Cross-encoder reranking before LLM synthesis | Singleton, loaded once per process | ~4MB | FlashRank internal | **RUNTIME ACTIVE** |
 | 5 | `mlx-community/Qwen2.5-0.5B-Instruct-4bit` | LLM (windup) | mlx-lm | `brain/synthesis_runner.py:1075` (Tier 3 primary) | SynthesisRunner via windup_engine lifecycle | Windup-local structured generation (secondary plane) | Windup-local, 3-tier discovery (cache→filesystem→download) | ~400MB | Own via mlx_lm | **RUNTIME ACTIVE (windup)** |
 | 6 | `mlx-community/SmolLM2-135M-Instruct-4bit` | LLM (windup fallback) | mlx-lm | `brain/synthesis_runner.py:1076` (Tier 3 fallback) | SynthesisRunner via windup_engine lifecycle | Fallback if Qwen download fails | Windup-local | ~70MB | Own | **FALLBACK ONLY** |
-| 7 | `mlx-community/llava-1.5-7b-4bit` | VLM | mlx-vlm | `tools/vlm_analyzer.py:64` | VLMAnalyzer singleton | Image understanding via mlx-vlm | Singleton, lazy-loaded on first analyze_image_vlm() | uncertain | Own processor | **RUNTIME ACTIVE** |
+| 7 | `*(removed — M1 8GB unsafe)*` | VLM | mlx-vlm | `tools/vlm_analyzer.py:64` | VLMAnalyzer singleton | Image understanding via mlx-vlm | Singleton, lazy-loaded on first analyze_image_vlm() | uncertain | Own processor | **RUNTIME ACTIVE** |
 | 8 | VisionEncoder (CoreML artifact, path via model_path param) | VLM image encoder | CoreML/coremltools | `multimodal/vision_encoder.py:31-64` | MultimodalEnricher | Image→embedding for multimodal enrichment | Lazy-loaded via run_in_executor | ~300MB CoreML (if compiled) | None | **RUNTIME ACTIVE (optional CoreML)** |
 | 9 | MambaFusion (MLX nn.Mamba or MLP fallback) | Fusion model | MLX nn | `multimodal/fusion.py:23-80` | MultimodalEnricher._fusion_model | Fuses (vision, text, graph) embeddings | Optional, loaded with vision path | uncertain | None (MLP/Mamba) | **RUNTIME ACTIVE (optional)** |
 | 10 | `mobileclip_s0` | CLIP | mobileclip | `multimodal/fusion.py:125`, `multimodal/analyzer.py:463` | MultimodalEnricher (optional) | Text↔image similarity scoring | Optional, loaded on demand | uncertain | Own tokenizer | **OPTIONAL** |
@@ -88,7 +88,7 @@ The **canonical 3-model runtime plane** is governed by `brain/model_manager.py` 
 
 | Model | File | Line |
 |-------|------|------|
-| mlx-community/llava-1.5-7b-4bit | `tools/vlm_analyzer.py` | 64 |
+| *(removed — M1 8GB unsafe)* | `tools/vlm_analyzer.py` | 64 |
 
 **Owner:** `VLMAnalyzer` singleton class
 
@@ -285,7 +285,7 @@ Peak allocation:
 | GLiNER | GLiNER library (internal) | NER tokenization |
 | Qwen2.5-0.5B-Instruct-4bit | ModelLifecycle via `_ensure_loaded()` | Windup synthesis |
 | SmolLM2-135M-Instruct-4bit | Same as Qwen | Windup fallback |
-| llava-1.5-7b-4bit | VLMAnalyzer (via mlx-vlm processor) | Image understanding |
+| *(removed — M1 8GB unsafe)* | VLMAnalyzer (via mlx-vlm processor) | Image understanding |
 | FlashRank ms-marco-MiniLM | FlashRank internal | Reranking |
 
 **Shared-tokenizer risk:** None identified — each model owns its tokenizer independently. No shared tokenizer instances found across model boundaries.

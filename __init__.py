@@ -6,7 +6,7 @@ Explicit exports only. Use load_optional() for optional module access.
 
 Active parts:
 - Config: from .config
-- public_fetcher: from .fetching.public_fetcher
+- public_fetcher: lazy-loaded via __getattr__ (aiohttp cost at import time)
 - pattern_matcher: from .patterns.pattern_matcher
 - duckdb_store: from .knowledge.duckdb_store
 """
@@ -15,17 +15,6 @@ from importlib import import_module
 
 # Config
 from .config import UniversalConfig, create_config, load_config_from_file
-
-# Public fetcher
-from .fetching.public_fetcher import (
-    async_fetch_public_text,
-    process_html_payload,
-    DEFAULT_UA,
-    MAX_BYTES_DEFAULT,
-    MAX_BYTES_HARD,
-    MAX_RETRIES,
-    FetchResult,
-)
 
 # Pattern matcher
 from .patterns.pattern_matcher import (
@@ -56,6 +45,43 @@ from .knowledge.duckdb_store import (
 # P19: FETCH_SEMAPHORE moved to utils.concurrency to break circular import
 from .resource_allocator import AdaptiveSemaphore
 from .utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers
+
+
+# Lazy import for public_fetcher — defers aiohttp/crypto imports to first-use
+# F214-PERF: public_fetcher was 485ms of import cost at `import hledac.universal` boot
+_PUBLIC_FETCHER_EXPORTS = (
+    "async_fetch_public_text",
+    "process_html_payload",
+    "DEFAULT_UA",
+    "MAX_BYTES_DEFAULT",
+    "MAX_BYTES_HARD",
+    "MAX_RETRIES",
+    "FetchResult",
+)
+
+
+def __getattr__(name: str):
+    if name in _PUBLIC_FETCHER_EXPORTS:
+        from .fetching.public_fetcher import (
+            async_fetch_public_text,
+            process_html_payload,
+            DEFAULT_UA,
+            MAX_BYTES_DEFAULT,
+            MAX_BYTES_HARD,
+            MAX_RETRIES,
+            FetchResult,
+        )
+        globals().update({
+            "async_fetch_public_text": async_fetch_public_text,
+            "process_html_payload": process_html_payload,
+            "DEFAULT_UA": DEFAULT_UA,
+            "MAX_BYTES_DEFAULT": MAX_BYTES_DEFAULT,
+            "MAX_BYTES_HARD": MAX_BYTES_HARD,
+            "MAX_RETRIES": MAX_RETRIES,
+            "FetchResult": FetchResult,
+        })
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def load_optional(name: str):

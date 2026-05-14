@@ -1049,7 +1049,9 @@ class DeepForensicsAnalyzer:
         # Sprint 45: Persistent server for fast analysis
         self._stegdetect_server = StegdetectServer()
         # Sprint 53: Thread pool for MPS operations
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="stego_detect"
+        )
 
     async def _ensure_stegdetect(self):
         """Compile and install stegdetect if missing."""
@@ -1213,7 +1215,9 @@ class DeepForensicsAnalyzer:
             logger.warning(f"MPS ELA failed, falling back to CPU: {e}")
             # Fallback to CPU on error
             import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="ela_cpu_fallback"
+            ) as executor:
                 future = executor.submit(self._ela_analysis_cpu_sync, content)
                 return future.result()
         finally:

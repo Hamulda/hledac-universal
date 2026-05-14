@@ -3378,7 +3378,7 @@ async def run_enabled_acquisition_lanes(
             )
             continue
 
-        tasks.append(asyncio.create_task(lane_runners[lane](plan)))
+        tasks.append(asyncio.create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
 
     if not tasks:
         return tuple(outcomes)

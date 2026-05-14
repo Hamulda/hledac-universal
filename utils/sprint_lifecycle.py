@@ -397,7 +397,7 @@ class SprintLifecycleManager:
                     break
 
         try:
-            self._windown_task = asyncio.create_task(_monitor(), name="lifecycle_winddown_monitor")
+            self._windown_task = asyncio.create_task(_monitor(), name="sprint_lifecycle:winddown_monitor")
             self._bg_tasks.add(self._windown_task)
             self._windown_task.add_done_callback(self._bg_tasks.discard)
         except RuntimeError:

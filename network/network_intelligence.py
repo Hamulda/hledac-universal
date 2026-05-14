@@ -88,9 +88,9 @@ class NetworkIntelAdapter:
         try:
             async with asyncio.timeout(NETWORKINTEL_TIMEOUT_S):
                 # Parallel fetch across all sources
-                dns_task = asyncio.create_task(self._query_dns(target))
-                fp_task = asyncio.create_task(self._query_fp(target))
-                bgp_task = asyncio.create_task(self._query_bgp(target))
+                dns_task = asyncio.create_task(self._query_dns(target), name="network_intel:dns_query")
+                fp_task = asyncio.create_task(self._query_fp(target), name="network_intel:fp_query")
+                bgp_task = asyncio.create_task(self._query_bgp(target), name="network_intel:bgp_query")
 
                 done, pending = await asyncio.wait(
                     [dns_task, fp_task, bgp_task],

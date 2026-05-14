@@ -1387,9 +1387,16 @@ class WaybackCDX:
 
         # xxhash cache key
         key = xxhash.xxh64(f"wb_{url_or_domain}_{from_year}".encode()).hexdigest()
-        cp = self._cache_dir / f"{key}.json"
-        if cp.exists() and (time.time() - cp.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(cp.read_bytes())
+        zst_path = self._cache_dir / f"{key}.json.zst"
+        json_path = self._cache_dir / f"{key}.json"
+        if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
+            try:
+                import compression.zstd as _zstd
+                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+            except (ImportError, Exception):
+                pass
+        if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
+            return orjson.loads(json_path.read_bytes())
 
         await self._throttle()
 
@@ -1430,7 +1437,12 @@ class WaybackCDX:
             if len(row) > 3 and row[3].startswith("text/") or len(row) <= 3
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cp.write_bytes(orjson.dumps(result))
+        import orjson
+        try:
+            import compression.zstd as _zstd
+            zst_path.write_bytes(_zstd.compress(orjson.dumps(result)))
+        except (ImportError, Exception):
+            json_path.write_bytes(orjson.dumps(result))
         return result
 
     async def fetch_snapshot_text(

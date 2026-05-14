@@ -580,7 +580,7 @@ class ModelManager:
             logger.error("[MODEL DOWNLOAD] mlx_lm not available - cannot download Hermes")
             raise RuntimeError("mlx_lm required for Hermes model download")
 
-        model_id = "mlx-community/Hermes-3-Llama-3.2-3B-4bit"
+        model_id = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
 
         # Check if model exists locally (mlx_lm caches in ~/.cache/huggingface/)
         try:

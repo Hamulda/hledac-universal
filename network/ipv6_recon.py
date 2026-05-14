@@ -317,9 +317,9 @@ class IPv6Recon:
         errors: list[str] = []
 
         # Parallel RDAP, WHOIS, BGP
-        rdap_task = asyncio.create_task(self._rdap_lookup(ip))
-        whois_task = asyncio.create_task(self._whois_lookup(ip))
-        bgp_task = asyncio.create_task(self.get_bgp_peer(ip))
+        rdap_task = asyncio.create_task(self._rdap_lookup(ip), name="ipv6_recon:rdap_lookup")
+        whois_task = asyncio.create_task(self._whois_lookup(ip), name="ipv6_recon:whois_lookup")
+        bgp_task = asyncio.create_task(self.get_bgp_peer(ip), name="ipv6_recon:bgp_peer")
 
         done, pending = await asyncio.wait(
             [rdap_task, whois_task, bgp_task],
@@ -370,7 +370,7 @@ class IPv6Recon:
         t0 = time.monotonic()
         errors: list[str] = []
 
-        aaaa_task = asyncio.create_task(self.get_aaaa(domain))
+        aaaa_task = asyncio.create_task(self.get_aaaa(domain), name="ipv6_recon:get_aaaa")
         aaaa_records = []
         try:
             aaaa_records = await aaaa_task
@@ -378,7 +378,7 @@ class IPv6Recon:
             errors.append(f"aaaa:{e}")
 
         # Recon each AAAA
-        bgp_tasks = [asyncio.create_task(self.get_bgp_peer(ip)) for ip in aaaa_records[:10]]
+        bgp_tasks = [asyncio.create_task(self.get_bgp_peer(ip), name=f"ipv6_recon:bgp_peer:{ip}") for ip in aaaa_records[:10]]
         bgp_results: list[dict] = []
         if bgp_tasks:
             done, pending = await asyncio.wait(bgp_tasks, return_when=asyncio.ALL_COMPLETED)

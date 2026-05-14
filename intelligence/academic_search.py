@@ -1280,9 +1280,16 @@ class SemanticScholarClient:
         import xxhash, orjson
 
         key = xxhash.xxh64(f"ss_{query[:80]}".encode()).hexdigest()
-        cp = self._cache_dir / f"{key}.json"
-        if cp.exists() and (time.time() - cp.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(cp.read_bytes())
+        zst_path = self._cache_dir / f"{key}.json.zst"
+        json_path = self._cache_dir / f"{key}.json"
+        if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
+            try:
+                import compression.zstd as _zstd
+                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+            except (ImportError, Exception):
+                pass
+        if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
+            return orjson.loads(json_path.read_bytes())
 
         await self._throttle()
         params = {
@@ -1312,7 +1319,12 @@ class SemanticScholarClient:
             for p in data.get("data", [])
         ]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cp.write_bytes(orjson.dumps(items))
+        import orjson
+        try:
+            import compression.zstd as _zstd
+            zst_path.write_bytes(_zstd.compress(orjson.dumps(items)))
+        except (ImportError, Exception):
+            json_path.write_bytes(orjson.dumps(items))
         return items
 
     async def search_arxiv(
@@ -1325,9 +1337,16 @@ class SemanticScholarClient:
         import xxhash, orjson
 
         key = xxhash.xxh64(f"ax_{query[:80]}".encode()).hexdigest()
-        cp = self._cache_dir / f"{key}_ax.json"
-        if cp.exists() and (time.time() - cp.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(cp.read_bytes())
+        zst_path = self._cache_dir / f"{key}_ax.json.zst"
+        json_path = self._cache_dir / f"{key}_ax.json"
+        if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
+            try:
+                import compression.zstd as _zstd
+                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+            except (ImportError, Exception):
+                pass
+        if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
+            return orjson.loads(json_path.read_bytes())
 
         await self._throttle()
         params = {
@@ -1367,7 +1386,12 @@ class SemanticScholarClient:
             items = []
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cp.write_bytes(orjson.dumps(items))
+        import orjson
+        try:
+            import compression.zstd as _zstd
+            zst_path.write_bytes(_zstd.compress(orjson.dumps(items)))
+        except (ImportError, Exception):
+            json_path.write_bytes(orjson.dumps(items))
         return items
 
     async def _throttle(self) -> None:

@@ -132,7 +132,9 @@ class SessionManager:
         self._env = lmdb_env
         self._cache: Dict[str, Dict] = {}  # domain -> {cookies, headers, last_used}
         # S49-B: Thread pool executor for async LMDB operations
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="session_lmdb"
+        )
         # F300K: explicit closed state — guards post-close truthfulness
         self._closed: bool = False
         # F206L: Fernet cipher for cookie encryption (P25)

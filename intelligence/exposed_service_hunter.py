@@ -25,7 +25,7 @@ import re
 import socket
 import ssl
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
@@ -74,7 +74,7 @@ class ExposedService:
     exposure_type: str
     metadata: Dict[str, Any] = field(default_factory=dict)
     risk_level: str = RiskLevel.MEDIUM.value
-    discovered_at: datetime = field(default_factory=datetime.utcnow)
+    discovered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""

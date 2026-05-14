@@ -436,7 +436,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot))
+                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name="uma_budget:emergency_callback")
                         except Exception as e:
                             logger.error(f"[UMA-WATCHDOG] on_emergency callback error: {e}")
 
@@ -448,7 +448,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot))
+                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name="uma_budget:critical_callback")
                         except Exception as e:
                             logger.error(f"[UMA-WATCHDOG] on_critical callback error: {e}")
 
@@ -460,7 +460,7 @@ class UmaWatchdog:
                         )
                         try:
                             # P2-12 fix: run blocking cleanup in thread to avoid blocking event loop
-                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot))
+                            asyncio.create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name="uma_budget:warn_callback")
                         except Exception as e:
                             logger.error(f"[UMA-WATCHDOG] on_warn callback error: {e}")
 

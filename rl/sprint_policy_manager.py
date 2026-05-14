@@ -27,6 +27,13 @@ if TYPE_CHECKING:
 
 from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
 
+try:
+    import compression.zstd as _zstd
+    ZSTD_AVAILABLE = True
+except (ImportError, Exception):
+    ZSTD_AVAILABLE = False
+    _zstd = None
+
 log = logging.getLogger(__name__)
 
 # Path for persisted policy state
@@ -87,30 +94,41 @@ class SprintPolicyManager:
     # ── Persistence ──────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        """Load persisted state from disk. No-op if file missing or invalid."""
+        """Load persisted state from disk. Prefer .json.zst, fallback to .json."""
         if self._loaded:
             return
         try:
-            if self._policy_path.exists():
-                data = json.loads(self._policy_path.read_text())
-                self._state = SprintPolicyState(
-                    sprint_sequence_number=data.get("sprint_sequence_number", 0),
-                    epsilon=data.get("epsilon", _DEFAULT_EPSILON),
-                    total_reward=data.get("total_reward", 0.0),
-                    sprint_rewards=data.get("sprint_rewards", []),
-                )
+            zst_path = Path(str(self._policy_path) + ".zst")
+            if zst_path.exists() and ZSTD_AVAILABLE and _zstd is not None:
+                data = json.loads(_zstd.decompress(zst_path.read_bytes()))
                 log.debug(
-                    f"[SprintPolicyManager] Loaded state: "
+                    f"[SprintPolicyManager] Loaded state from .zst: "
                     f"sprint #{self._state.sprint_sequence_number}, "
                     f"epsilon={self._state.epsilon:.3f}"
                 )
+            elif self._policy_path.exists():
+                # Backward compat: read old plain JSON
+                data = json.loads(self._policy_path.read_text())
+                log.debug(
+                    f"[SprintPolicyManager] Loaded state from .json legacy: "
+                    f"sprint #{self._state.sprint_sequence_number}, "
+                    f"epsilon={self._state.epsilon:.3f}"
+                )
+            else:
+                return
+            self._state = SprintPolicyState(
+                sprint_sequence_number=data.get("sprint_sequence_number", 0),
+                epsilon=data.get("epsilon", _DEFAULT_EPSILON),
+                total_reward=data.get("total_reward", 0.0),
+                sprint_rewards=data.get("sprint_rewards", []),
+            )
         except Exception as e:
             log.warning(f"[SprintPolicyManager] Failed to load policy state: {e}")
             self._state = SprintPolicyState()
         self._loaded = True
 
     def _save(self) -> None:
-        """Persist state to disk. Fail-safe — do not crash on write errors."""
+        """Persist state to disk as .json.zst. Fail-safe — do not crash on write errors."""
         if not self._enabled:
             return
         try:
@@ -120,7 +138,8 @@ class SprintPolicyManager:
                 "total_reward": self._state.total_reward,
                 "sprint_rewards": self._state.sprint_rewards[-100:],  # keep last 100
             }
-            self._policy_path.write_text(json.dumps(data, indent=2))
+            zst_path = Path(str(self._policy_path) + ".zst")
+            zst_path.write_bytes(_zstd.compress(json.dumps(data).encode()) if _zstd is not None else json.dumps(data).encode())
         except Exception as e:
             log.warning(f"[SprintPolicyManager] Failed to save policy state: {e}")
 

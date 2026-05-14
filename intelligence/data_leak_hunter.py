@@ -863,9 +863,16 @@ class PasteMonitorClient:
         """Vrátí [{key, date, title, size, syntax, user}]"""
         import orjson
 
-        cp = self._cache_dir / "paste_recent.json"
-        if cp.exists() and (time.time() - cp.stat().st_mtime < self._CACHE_TTL):
-            return orjson.loads(cp.read_bytes())
+        zst_path = self._cache_dir / "paste_recent.json.zst"
+        json_path = self._cache_dir / "paste_recent.json"
+        if zst_path.exists() and (time.time() - zst_path.stat().st_mtime < self._CACHE_TTL):
+            try:
+                import compression.zstd as _zstd
+                return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+            except (ImportError, Exception):
+                pass
+        if json_path.exists() and (time.time() - json_path.stat().st_mtime < self._CACHE_TTL):
+            return orjson.loads(json_path.read_bytes())
 
         await self._throttle()
         try:
@@ -883,7 +890,12 @@ class PasteMonitorClient:
             return []
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cp.write_bytes(orjson.dumps(data or []))
+        import orjson
+        try:
+            import compression.zstd as _zstd
+            zst_path.write_bytes(_zstd.compress(orjson.dumps(data or [])))
+        except (ImportError, Exception):
+            json_path.write_bytes(orjson.dumps(data or []))
         return data or []
 
     async def fetch_paste_content(

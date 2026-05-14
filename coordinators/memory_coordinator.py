@@ -51,6 +51,13 @@ except ImportError:
     ORJSON_AVAILABLE = False
     import json as _json
 
+try:
+    import compression.zstd as _zstd
+    ZSTD_AVAILABLE = True
+except (ImportError, Exception):
+    ZSTD_AVAILABLE = False
+    _zstd = None
+
 # Sprint 26: Optional hnswlib for ANN search (replaces FAISS)
 try:
     import hnswlib
@@ -91,18 +98,22 @@ def _ndarray_to_list(obj: Any) -> Any:
 
 
 def _serialize_to_json(data: Any) -> bytes:
-    """Serialize data to JSON bytes using orjson if available."""
+    """Serialize data to JSON bytes using orjson, compressed with zstd."""
     converted = _ndarray_to_list(data)
-    if ORJSON_AVAILABLE:
-        return orjson.dumps(converted)
-    return _json.dumps(converted).encode()
+    payload = orjson.dumps(converted) if ORJSON_AVAILABLE else _json.dumps(converted).encode()
+    if ZSTD_AVAILABLE and _zstd is not None:
+        return _zstd.compress(payload)
+    return payload
 
 
 def _deserialize_from_json(data: bytes) -> Any:
-    """Deserialize data from JSON bytes using orjson if available."""
-    if ORJSON_AVAILABLE:
-        return orjson.loads(data)
-    return _json.loads(data.decode())
+    """Deserialize from zstd-compressed or raw JSON bytes."""
+    if ZSTD_AVAILABLE and _zstd is not None:
+        try:
+            return orjson.loads(_zstd.decompress(data))
+        except Exception:
+            pass
+    return orjson.loads(data) if ORJSON_AVAILABLE else _json.loads(data.decode())
 
 
 logger = logging.getLogger(__name__)
@@ -2480,21 +2491,28 @@ class MultiLevelContextCache:
             self.embedder = None
     
     def _load_l2_cache(self):
-        """Load L2 cache from disk."""
+        """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.json"
-            if cache_file.exists():
-                with open(cache_file, 'rb') as f:
+            zst_file = self.l2_storage_path / "l2_cache.json.zst"
+            json_file = self.l2_storage_path / "l2_cache.json"
+            if zst_file.exists():
+                with open(zst_file, 'rb') as f:
                     self.l2_cache = _deserialize_from_json(f.read())
-                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache")
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
+            elif json_file.exists():
+                with open(json_file, 'rb') as f:
+                    self.l2_cache = _deserialize_from_json(f.read())
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)")
+            else:
+                self.l2_cache = {}
         except Exception as e:
             logger.warning(f"Could not load L2 cache: {e}")
             self.l2_cache = {}
 
     def _save_l2_cache(self):
-        """Save L2 cache to disk."""
+        """Save L2 cache to disk as zstd-compressed .json.zst."""
         try:
-            cache_file = self.l2_storage_path / "l2_cache.json"
+            cache_file = self.l2_storage_path / "l2_cache.json.zst"
             with open(cache_file, 'wb') as f:
                 f.write(_serialize_to_json(self.l2_cache))
         except Exception as e:

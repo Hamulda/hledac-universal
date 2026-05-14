@@ -435,7 +435,7 @@ class UnifiedWebIntelligence:
 
         # Execute operation asynchronously
         self.active_operations[operation_id] = result
-        self._track_task(asyncio.create_task(self._execute_operation_async(target, operation_types, operation_id)))
+        self._track_task(asyncio.create_task(self._execute_operation_async(target, operation_types, operation_id), name="web_intelligence:execute_operation"))
 
         return operation_id
 
@@ -510,7 +510,7 @@ class UnifiedWebIntelligence:
         self._queued_op_times.pop(operation_id, None)
         # Place result where _execute_operation_async expects it
         self.active_operations[operation_id] = result
-        self._track_task(asyncio.create_task(self._execute_operation_async(target, op_types, operation_id)))
+        self._track_task(asyncio.create_task(self._execute_operation_async(target, op_types, operation_id), name="web_intelligence:process_queued"))
         logger.info(f"⏭️ Processing queued operation: {operation_id}")
 
     async def _ensure_components_initialized(self) -> None:
@@ -529,7 +529,7 @@ class UnifiedWebIntelligence:
                 await self._initialize_components()
                 # Start aging task AFTER successful init — don't orphan it on failure
                 if self._aging_task is None:
-                    self._aging_task = asyncio.create_task(self._age_queued_priorities())
+                    self._aging_task = asyncio.create_task(self._age_queued_priorities(), name="web_intelligence:aging_loop")
                 self._components_initialized = True
             except Exception as e:
                 self._components_init_error = e

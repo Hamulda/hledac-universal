@@ -3326,7 +3326,8 @@ class FullyAutonomousOrchestrator:
         self._action_echo_telemetry: dict = {}
         # Sprint 82A: Streaming findings queue (bounded, non-blocking emit)
         # Sprint 82C: Use _FINDINGS_QUEUE_MAX constant
-        self._streaming_findings_queue: asyncio.Queue = asyncio.Queue()
+        # F214-PERF: bounded to prevent unbounded growth on M1 8GB
+        self._streaming_findings_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._streaming_findings_max_size: int = _FINDINGS_QUEUE_MAX
         # Sprint 82A: Convergence tracking
         self._convergence_signals: Dict[str, Any] = {

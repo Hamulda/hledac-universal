@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Optional, Set, TypeVar, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Optional, Set, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
@@ -433,7 +433,7 @@ class ToolRegistry:
         def _get_executor():
             nonlocal _dns_exec
             if _dns_exec is None:
-                _dns_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                _dns_exec = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="dns_tunnel_exec")
             return _dns_exec
 
         async def _execute_dns_tunnel_async(args: dict) -> dict:

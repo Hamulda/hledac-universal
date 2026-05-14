@@ -48,8 +48,17 @@ class CTLogClient:
         import xxhash
 
         cache_path = self._cache_dir / f"{xxhash.xxh64(domain.encode()).hexdigest()}.json"
+        zst_path = self._cache_dir / f"{xxhash.xxh64(domain.encode()).hexdigest()}.json.zst"
 
-        # Cache check (read-only, no lock needed)
+        # Backward compat: try compressed first, fall back to plain json
+        if zst_path.exists():
+            age = time.time() - zst_path.stat().st_mtime
+            if age < self._CACHE_TTL:
+                try:
+                    import compression.zstd as _zstd
+                    return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                except (ImportError, Exception):
+                    pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
             if age < self._CACHE_TTL:
@@ -59,6 +68,14 @@ class CTLogClient:
         # Serialize concurrent pivots to prevent redundant rate-limited requests
         async with self._lock:
             # Double-check cache after acquiring lock (another caller may have populated it)
+            if zst_path.exists():
+                age = time.time() - zst_path.stat().st_mtime
+                if age < self._CACHE_TTL:
+                    try:
+                        import compression.zstd as _zstd
+                        return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                    except (ImportError, Exception):
+                        pass
             if cache_path.exists():
                 age = time.time() - cache_path.stat().st_mtime
                 if age < self._CACHE_TTL:
@@ -93,7 +110,11 @@ class CTLogClient:
         # Cache write (outside lock — no throttle needed)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         import orjson
-        cache_path.write_bytes(orjson.dumps(result))
+        try:
+            import compression.zstd as _zstd
+            zst_path.write_bytes(_zstd.compress(orjson.dumps(result)))
+        except (ImportError, Exception):
+            cache_path.write_bytes(orjson.dumps(result))
         return result
 
     def _parse_crt_response(self, domain: str, raw: list) -> dict:
@@ -155,19 +176,21 @@ class CTLogClient:
 
         cache_key = f"certs_{xxhash.xxh64(domain.encode()).hexdigest()}.json"
         cache_path = self._cache_dir / cache_key
+        zst_path = self._cache_dir / (cache_key + ".zst")
 
+        if zst_path.exists():
+            age = time.time() - zst_path.stat().st_mtime
+            if age < self._CACHE_TTL:
+                try:
+                    import compression.zstd as _zstd
+                    return orjson.loads(_zstd.decompress(zst_path.read_bytes()))
+                except (ImportError, Exception):
+                    pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
             if age < self._CACHE_TTL:
                 import orjson
                 return orjson.loads(cache_path.read_bytes())
-
-        async with self._lock:
-            if cache_path.exists():
-                age = time.time() - cache_path.stat().st_mtime
-                if age < self._CACHE_TTL:
-                    import orjson
-                    return orjson.loads(cache_path.read_bytes())
 
             elapsed = time.time() - self._last_request
             if elapsed < self._RATE_LIMIT_S:
@@ -187,8 +210,11 @@ class CTLogClient:
         certs = self._parse_certs(raw)
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
-        cache_path.write_bytes(orjson.dumps(certs))
+        try:
+            import compression.zstd as _zstd
+            zst_path.write_bytes(_zstd.compress(orjson.dumps(certs)))
+        except (ImportError, Exception):
+            cache_path.write_bytes(orjson.dumps(certs))
         return certs
 
     def _parse_certs(self, raw: list) -> list[dict]:

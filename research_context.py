@@ -33,7 +33,7 @@ This module is the CORRECT context carrier for orchestrator <-> agent communicat
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
@@ -233,7 +233,7 @@ class Entity(BaseModel):
     entity_type: EntityType = Field(default=EntityType.UNKNOWN)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    first_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    first_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source_urls: List[str] = Field(default_factory=list)
 
     @field_validator('source_urls', mode='before')
@@ -252,7 +252,7 @@ class Hypothesis(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     supporting_evidence: List[str] = Field(default_factory=list)
     contradicting_evidence: List[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     tested_at: Optional[datetime] = None
 
     @property
@@ -264,7 +264,7 @@ class Hypothesis(BaseModel):
 class ErrorRecord(BaseModel):
     """Záznam o chybě během výzkumu"""
     error_id: str = Field(..., description="Unikátní ID chyby")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     severity: ErrorSeverity = Field(default=ErrorSeverity.MEDIUM)
     component: str = Field(..., description="Komponenta, kde chyba nastala")
     message: str = Field(..., description="Chybová zpráva")
@@ -340,7 +340,7 @@ class ResearchContext(BaseModel):
         The metadata is stored at context_metadata["handoff"] key.
         """
         self.context_metadata["handoff"] = metadata
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def get_correlation_for_handoff(self) -> Dict[str, Optional[str]]:
         """
@@ -366,8 +366,8 @@ class ResearchContext(BaseModel):
         return handoff.to_correlation_dict()
 
     # Časové značky
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -392,19 +392,19 @@ class ResearchContext(BaseModel):
         existing = [e for e in self.active_entities if e.entity_id == entity.entity_id]
         if not existing:
             self.active_entities.append(entity)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         """Přidá hypotézu pokud ještě neexistuje"""
         existing = [h for h in self.hypotheses if h.hypothesis_id == hypothesis.hypothesis_id]
         if not existing:
             self.hypotheses.append(hypothesis)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def add_error(self, error: ErrorRecord) -> None:
         """Přidá chybový záznam"""
         self.errors.append(error)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def add_visited_url(self, url: str) -> None:
         """Zaznamená navštívenou URL"""
@@ -417,13 +417,13 @@ class ResearchContext(BaseModel):
                 self.visited_domains.add(domain)
         except Exception:
             pass
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def increment_iteration(self) -> None:
         """Zvýší číslo iterace"""
         self.iteration += 1
         self.budgets.iterations_used = self.iteration
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
         """Vrátí entity daného typu"""

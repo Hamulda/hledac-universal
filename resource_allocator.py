@@ -23,10 +23,24 @@ uma_budget.py absolute-MB thresholds. These serve different purposes:
 """
 
 import time
-import psutil
 import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
+
+# psutil lazy import — only needed inside functions at runtime
+_psutil = None
+
+
+def _get_psutil():
+    global _psutil
+    if _psutil is not None:
+        return _psutil
+    try:
+        import psutil
+        _psutil = psutil
+    except Exception:
+        _psutil = None
+    return _psutil
 
 # Sprint F206AL: Import canonical M1 8GB thresholds from uma_budget.
 # MAX_RAM_GB mirrors M1_FETCH_SOFT_CEILING_GB — do not change independently.
@@ -204,7 +218,10 @@ class ResourceAllocator:
         Returns cancelled request_id or None.
         """
         try:
-            mem = psutil.virtual_memory()
+            _ps = _get_psutil()
+            if _ps is None:
+                return None
+            mem = _ps.virtual_memory()
             if mem.used < self.SOFT_PREEMPT_RAM_GIB * (1024 ** 3):
                 return None
 
@@ -256,9 +273,12 @@ def get_memory_pressure_level() -> str:
     Swap is used as a secondary signal.
     """
     try:
-        vm = psutil.virtual_memory()
+        _ps = _get_psutil()
+        if _ps is None:
+            return "normal"
+        vm = _ps.virtual_memory()
         pct = vm.percent
-        sw = psutil.swap_memory()
+        sw = _ps.swap_memory()
         if pct > 93 or sw.percent > 50:
             return "critical"
         if pct > 85 or sw.percent > 25:

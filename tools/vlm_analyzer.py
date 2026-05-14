@@ -1,22 +1,22 @@
 """
-VLMAnalyzer - MLX-VLM for complex image understanding.
+VLMAnalyzer - Vision-Language Model interface.
 
-Provides vision-language model capabilities using mlx-vlm for detailed
-image description and understanding. Optimized for M1 Mac with fail-safe
-memory management.
+Provides vision-language model capabilities via mlx-vlm.
+On M1 8GB: no local VLM is configured by default.
+OCR-first pipeline is canonical; VLM is deferred to future small model benchmark.
 
-Sprint 71: Singleton pattern, lazy loading, memory pressure handling.
+Sprint F216C: No default VLM on M1 8GB. VLM_MODEL_ID env var required for opt-in.
 """
 
 import asyncio
 import logging
 import os
 import tempfile
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Lazy import guard
+# Lazy import guard — mlx-vlm is optional
 MLX_VLM_AVAILABLE = False
 try:
     from mlx_vlm import load as vlm_load, generate as vlm_generate
@@ -25,17 +25,21 @@ except ImportError:
     logger.debug("mlx-vlm not available")
 
 
+class VLMUnavailableError(Exception):
+    """Raised when no local VLM is configured on M1 8GB."""
+    pass
+
+
 class VLMAnalyzer:
     """
-    Vision-Language Model analyzer using MLX-VLM.
+    Vision-Language Model interface.
 
-    Features:
-    - Singleton model loading (memory efficiency)
-    - Lazy initialization
-    - Memory pressure handling
-    - Automatic cleanup
+    On M1 8GB: No local VLM is configured by default.
+    Use analyze() to attempt VLM analysis — returns empty string when unavailable.
+    OCR-first pipeline remains canonical.
 
-    Sprint 71: Singleton pattern with proper unload safety.
+    To enable VLM: set VLM_MODEL_ID environment variable to an M1-safe model.
+    No automatic loading occurs — explicit configuration required.
     """
 
     _model: Optional[Any] = None
@@ -50,25 +54,47 @@ class VLMAnalyzer:
         return cls._lock
 
     @classmethod
-    async def _ensure_loaded(cls) -> None:
-        """Ensure model is loaded (singleton pattern)."""
+    def _get_model_id(cls) -> Optional[str]:
+        """
+        Get configured VLM model ID from environment.
+
+        Returns None if no VLM is configured.
+        Must be set explicitly — no default on M1 8GB.
+        """
+        return os.environ.get("VLM_MODEL_ID")
+
+    @classmethod
+    async def _ensure_loaded(cls) -> bool:
+        """
+        Ensure model is loaded if configured.
+
+        Returns:
+            True if model is loaded and available, False otherwise.
+        """
         async with cls._get_lock():
             if cls._model is not None:
-                return
+                return True
+
+            model_id = cls._get_model_id()
+            if model_id is None:
+                logger.debug("[VLMAnalyzer] No VLM configured — set VLM_MODEL_ID to enable")
+                return False
 
             if not MLX_VLM_AVAILABLE:
                 logger.warning("[VLMAnalyzer] mlx-vlm not available")
-                return
+                return False
 
             try:
                 cls._model, cls._processor = await asyncio.to_thread(
-                    vlm_load, "mlx-community/llava-1.5-7b-4bit"
+                    vlm_load, model_id
                 )
-                logger.info("[VLMAnalyzer] Model loaded successfully")
+                logger.info(f"[VLMAnalyzer] Model loaded: {model_id}")
+                return True
             except Exception as e:
                 logger.warning(f"[VLMAnalyzer] Model load failed: {e}")
                 cls._model = None
                 cls._processor = None
+                return False
 
     @classmethod
     async def unload(cls) -> None:
@@ -116,11 +142,11 @@ class VLMAnalyzer:
         except ImportError:
             pass
 
-        # Ensure model loaded
-        await self._ensure_loaded()
+        # Try to load model if configured
+        loaded = await self._ensure_loaded()
 
-        if self._model is None or self._processor is None:
-            logger.warning("[VLMAnalyzer] Model not available")
+        if not loaded:
+            logger.debug("[VLMAnalyzer] No local VLM configured — OCR-first path is canonical")
             return ""
 
         # Write to temp file (mlx_vlm expects file path)

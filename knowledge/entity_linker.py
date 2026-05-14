@@ -37,12 +37,18 @@ import logging
 import re
 from dataclasses import dataclass, field
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
+
+def _ensure_utc_aware(value: datetime) -> datetime:
+    """Normalize datetime to UTC-aware (required for TTL comparisons in Python 3.14+)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 # Optional imports with fallback
 aiohttp = None
@@ -218,7 +224,7 @@ class SimpleCache:
         value, timestamp = self._cache[key]
 
         # Check expiration
-        if datetime.utcnow() - timestamp > self.ttl:
+        if datetime.now(timezone.utc) - _ensure_utc_aware(timestamp) > self.ttl:
             del self._cache[key]
             if key in self._access_order:
                 self._access_order.remove(key)
@@ -241,7 +247,7 @@ class SimpleCache:
             if oldest_key in self._cache:
                 del self._cache[oldest_key]
 
-        self._cache[key] = (value, datetime.utcnow())
+        self._cache[key] = (value, datetime.now(timezone.utc))
 
         # Update access order
         if key in self._access_order:

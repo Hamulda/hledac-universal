@@ -29,7 +29,7 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set
 from urllib.parse import urlparse, urlunparse
@@ -590,7 +590,7 @@ class PersistentFrontier:
                         'added_urls': self._frontier._stats.added_urls,
                         'false_positives': self._frontier._stats.false_positives,
                     },
-                    'timestamp': datetime.utcnow().isoformat()
+                    'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 if ORJSON_AVAILABLE:
                     with open(storage_file, 'wb') as f:
@@ -612,7 +612,7 @@ class PersistentFrontier:
                             'added_urls': self._frontier._stats.added_urls,
                             'false_positives': self._frontier._stats.false_positives,
                         },
-                        'timestamp': datetime.utcnow().isoformat()
+                        'timestamp': datetime.now(timezone.utc).isoformat()
                     }, f)
 
             elif self.backend == 'sqlite':
@@ -640,7 +640,7 @@ class PersistentFrontier:
             ''')
 
             cursor.execute('DELETE FROM frontier')
-            timestamp = datetime.utcnow().isoformat()
+            timestamp = datetime.now(timezone.utc).isoformat()
 
             data = [(url, timestamp) for url in self._frontier._exact_set]
             cursor.executemany(

@@ -131,6 +131,21 @@ HEX_CHARSET = re.compile(r'^[0-9a-fA-F]+$')
 BASE64_CHARSET = re.compile(r'^[A-Za-z0-9+/=]+$')
 ALPHANUM_CHARSET = re.compile(r'^[A-Za-z0-9]+$')
 
+# Pre-compiled pattern hashes: (compiled_regex, algorithm, original_pattern)
+_COMPILED_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str, str], ...] = tuple(
+    (re.compile(pattern), algo, pattern)
+    for pattern, algo in PATTERN_HASHES.items()
+)
+
+# Pre-compiled hex hash scan pattern (shared across identify_in_file)
+_HEX_HASH_SCAN_RE = re.compile(r'\b[0-9a-fA-F]{32,128}\b')
+
+# Pre-compiled scan patterns for identify_in_file: (compiled_regex, original_pattern)
+_COMPILED_SCAN_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern + r'\S+'), pattern)
+    for pattern in PATTERN_HASHES.keys()
+)
+
 
 @dataclass
 class HashMatch:
@@ -242,9 +257,9 @@ class HashIdentifier:
             List of (algorithm, pattern) tuples
         """
         matches = []
-        for pattern, algo in PATTERN_HASHES.items():
-            if re.match(pattern, hash_string):
-                matches.append((algo, pattern))
+        for compiled_re, algo, original_pattern in _COMPILED_PATTERN_HASHES:
+            if compiled_re.match(hash_string):
+                matches.append((algo, original_pattern))
                 self._stats['pattern_matches'] += 1
         return matches
 
@@ -454,9 +469,7 @@ class HashIdentifier:
                 content = f.read()
 
             # Find potential hashes (hex strings of specific lengths)
-            hash_pattern = re.compile(r'\b[0-9a-fA-F]{32,128}\b')
-
-            for match in hash_pattern.finditer(content):
+            for match in _HEX_HASH_SCAN_RE.finditer(content):
                 hash_string = match.group(0)
                 matches = await self.identify(hash_string)
 
@@ -474,9 +487,8 @@ class HashIdentifier:
                     ))
 
             # Also look for pattern-based hashes (bcrypt, etc.)
-            for pattern in PATTERN_HASHES.keys():
-                pattern_regex = re.compile(pattern + r'\S+')
-                for match in pattern_regex.finditer(content):
+            for compiled_re, _ in _COMPILED_SCAN_PATTERN_HASHES:
+                for match in compiled_re.finditer(content):
                     hash_string = match.group(0)
                     matches = await self.identify(hash_string)
 

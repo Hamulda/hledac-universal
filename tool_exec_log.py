@@ -21,7 +21,7 @@ import logging
 import os
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -304,7 +304,7 @@ class ToolExecLog:
 
         event = ToolExecEvent(
             event_id=event_id,
-            ts=datetime.utcnow(),
+            ts=datetime.now(timezone.utc),
             tool_name=tool_name,
             input_hash=input_hash,
             output_hash=output_hash,

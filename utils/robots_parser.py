@@ -23,8 +23,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-import aiohttp
-
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL_SECONDS = 900  # 15 minutes
@@ -88,6 +86,7 @@ class RobotsParser:
 
     async def __aenter__(self) -> 'RobotsParser':
         """Async context manager entry - create shared session."""
+        import aiohttp
         timeout = aiohttp.ClientTimeout(total=10.0)
         self._session = aiohttp.ClientSession(timeout=timeout)
         return self
@@ -158,6 +157,7 @@ class RobotsParser:
             agent = user_agent or self._user_agent
 
             # Use shared session if available, otherwise create temporary
+            import aiohttp
             session = self._session
             if session is None or session.closed:
                 timeout = aiohttp.ClientTimeout(total=10.0)
@@ -330,6 +330,7 @@ class RobotsParser:
             close_after = False
 
             if session is None or session.closed:
+                import aiohttp
                 timeout = aiohttp.ClientTimeout(total=30.0)
                 session = aiohttp.ClientSession(timeout=timeout)
                 close_after = True
