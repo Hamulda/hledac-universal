@@ -100,6 +100,15 @@ F206_PROBE_LANES = [
 # Full f206-regression profile: F204 + F205 + F206 lanes
 F206_REGRESSION_LANES = GREEN_PROBE_LANES + F206_PROBE_LANES
 
+# F214 JS rendering lanes (optional profile — not part of f205-green or f206-regression)
+# F214AC (WKWebView renderer) excluded — requires explicit env gate, not run by baseline
+F214_JS_RENDERING_LANES = [
+    "probe_f214x_js_renderer_capability",
+    "probe_f214y_static_hydration",
+    "probe_f214z_static_hydration_telemetry",
+    "probe_f214aa_static_hydration_impact",
+]
+
 
 @dataclass
 class BaselineResult:
@@ -296,6 +305,8 @@ async def run_baseline_profile(
         probe_lanes = GREEN_PROBE_LANES
     elif profile == "f206-regression":
         probe_lanes = F206_REGRESSION_LANES
+    elif profile == "f214-js-rendering":
+        probe_lanes = F214_JS_RENDERING_LANES
     else:
         raise ValueError(f"Unknown profile: {profile!r}")
 
@@ -324,46 +335,27 @@ async def run_baseline_profile(
             inventory=inventory,
         )
 
-    # Step 2: smoke
-    smoke_result = run_smoke()
-    commands.append({
-        "step": "smoke",
-        "cmd": "python smoke_runner.py --smoke",
-        "returncode": smoke_result["returncode"],
-        "duration_s": smoke_result["duration_s"],
-        "stdout": smoke_result["stdout"],
-        "stderr": smoke_result["stderr"],
-    })
-
-    # Step 3: run F204 probe lanes (first 10)
-    f204_passed = f204_failed = 0
-    for lane in probe_lanes[:10]:  # F204 lanes first 10
-        lane_path = TESTS_ROOT / lane
-        if not lane_path.exists():
-            continue
-        result = run_pytest([str(lane_path), "-q", "--maxfail=1"], timeout=120)
-        f204_passed += result["passed"]
-        f204_failed += result["failed"]
+    # Step 2: smoke — skip for f214-js-rendering (only JS rendering lanes, no smoke)
+    if profile != "f214-js-rendering":
+        smoke_result = run_smoke()
         commands.append({
-            "step": "probe",
-            "lane": lane,
-            "cmd": f"pytest tests/{lane} -q --maxfail=1",
-            "returncode": result["returncode"],
-            "passed": result["passed"],
-            "failed": result["failed"],
-            "skipped": result["skipped"],
-            "duration_s": result["duration_s"],
+            "step": "smoke",
+            "cmd": "python smoke_runner.py --smoke",
+            "returncode": smoke_result["returncode"],
+            "duration_s": smoke_result["duration_s"],
+            "stdout": smoke_result["stdout"],
+            "stderr": smoke_result["stderr"],
         })
 
-    # Step 4: run F205/F206 probe lanes (remaining)
-    remaining_passed = remaining_failed = 0
-    for lane in probe_lanes[10:]:  # F205 + F206 lanes
+    # Step 3: run all probe lanes (split at index 10 only for f205-green/f206-regression)
+    all_passed = all_failed = 0
+    for lane in probe_lanes:
         lane_path = TESTS_ROOT / lane
         if not lane_path.exists():
             continue
         result = run_pytest([str(lane_path), "-q", "--maxfail=1"], timeout=120)
-        remaining_passed += result["passed"]
-        remaining_failed += result["failed"]
+        all_passed += result["passed"]
+        all_failed += result["failed"]
         commands.append({
             "step": "probe",
             "lane": lane,
@@ -376,8 +368,8 @@ async def run_baseline_profile(
         })
 
     elapsed = time.monotonic() - overall_start
-    total_passed = f204_passed + remaining_passed
-    total_failed = f204_failed + remaining_failed
+    total_passed = all_passed
+    total_failed = all_failed
 
     # Known failures: these are from the pre-F205 historical probe lanes
     # that are NOT part of the green baseline. We report them separately.
@@ -401,8 +393,8 @@ def main() -> int:
     parser.add_argument(
         "--profile",
         default="f205-green",
-        choices=["f205-green", "f206-regression"],
-        help="Baseline profile (default: f205-green, f206-regression adds F206 lanes)",
+        choices=["f205-green", "f206-regression", "f214-js-rendering"],
+        help="Baseline profile (default: f205-green; f206-regression adds F206 lanes; f214-js-rendering runs F214 JS rendering lanes)",
     )
     parser.add_argument(
         "--json",
