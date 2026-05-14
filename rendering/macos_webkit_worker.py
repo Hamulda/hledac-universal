@@ -51,7 +51,7 @@ def _do_capability_check() -> bytes:
     """Check if PyObjC and WebKit are importable, return status as JSON."""
     try:
         # Try importing the WebKit framework via PyObjC
-        from objc import load_framework
+        from objc import dyld_framework
         import os
 
         # Attempt to load WebKit — this fails if PyObjC or WebKit is missing
@@ -60,11 +60,13 @@ def _do_capability_check() -> bytes:
             return _build_response(False, "macos_webkit_unavailable")
 
         # Use NSClassFromString to probe WKWebView without fully initializing
-        load_framework("AppKit", "/System/Library/Frameworks/AppKit.framework")
-        load_framework("WebKit", path)
+        dyld_framework("/System/Library/Frameworks/AppKit.framework", "AppKit")
+        dyld_framework(path, "WebKit")
 
         from objc import nil
-        wk_class = _nsclass("WKWebView")
+        from Foundation import NSBundle
+        bundle = NSBundle.bundleWithPath_(path)
+        wk_class = bundle.classNamed_("WKWebView")
         if wk_class is None or wk_class == nil:
             return _build_response(False, "macos_webkit_pyobjc_missing")
 
@@ -127,7 +129,7 @@ def _do_render(payload: dict) -> bytes:
     t0 = time.monotonic()
 
     try:
-        from objc import nil, load_framework, SEL, objc_block
+        from objc import nil, dyld_framework
         from Foundation import (
             NSURL,
             NSURLRequest,
@@ -138,8 +140,8 @@ def _do_render(payload: dict) -> bytes:
         from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
 
         # Load frameworks (WKWebView requires AppKit + WebKit)
-        load_framework("AppKit", "/System/Library/Frameworks/AppKit.framework")
-        load_framework("WebKit", "/System/Library/Frameworks/WebKit.framework")
+        dyld_framework("/System/Library/Frameworks/AppKit.framework", "AppKit")
+        dyld_framework("/System/Library/Frameworks/WebKit.framework", "WebKit")
 
         # Create WKWebView — non-persistent session (no shared cookies)
         config = WKWebViewConfiguration()
