@@ -1,14 +1,21 @@
 """
 Universal Coordinators
-======================
+=======================
 
 Consolidated coordinators for Hledac Universal Orchestrator v4.0.
 
-Active Coordinators (20 -> 8 core + 4 advanced):
-- Core: Research, Execution, Security, Monitoring, Memory, Validation
-- Advanced: MetaReasoning, Swarm, AdvancedResearch
-- Optimization: Performance, Benchmark, ResourceAllocator
-- Multi-agent: AgentCoordinationEngine
+Domain Organization (via CoordinatorCatalog):
+    from coordinators import catalog
+    catalog.domains                       # List all domains
+    catalog.get('core')                   # Get domain coordinator mappings
+    catalog.load('UniversalMemoryCoordinator')  # Lazy load
+
+Domain Groups:
+    - core: Research, Execution, Security, Monitoring, Memory, Validation
+    - advanced: AdvancedResearch, Swarm, MetaReasoning, PrivacyEnhanced
+    - optimization: Performance, Benchmark, Resource, ResearchOptimizer
+    - infrastructure: Base, Registry, Mixins
+    - specialized: Fetch, Graph, Archive, Claims, Multimodal, Render, AgentCoordination
 
 Legacy coordinators moved to legacy/coordinators/:
 - quantum_coordinator (moved 2025-02-14)
@@ -146,6 +153,9 @@ from .research_optimizer import (
 # Registry
 from .coordinator_registry import CoordinatorRegistry
 
+# Coordinator catalog for domain-grouped lazy access
+from ._catalog import catalog
+
 # LEGACY IMPORTS - Deprecated, moved to legacy/coordinators/
 # These imports will be removed in v5.0
 try:
@@ -269,4 +279,7 @@ __all__ = [
 
     # Registry
     'CoordinatorRegistry',
+
+    # Catalog
+    'catalog',
 ]

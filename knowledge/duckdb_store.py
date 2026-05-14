@@ -117,6 +117,10 @@ from .quality_assessment import (
 # Also import DEDUP_HOT_CACHE_MAX since it's used in get_dedup_runtime_status
 from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX
 
+# Sprint F216G: WAL Manager and Dedup Manager (extracted from this file)
+from .wal import WALManager
+from .dedup import DedupManager
+
 
 class ActivationResult(TypedDict):
     """
@@ -579,22 +583,32 @@ class DuckDBShadowStore:
         # Ledger:   _quality_rejection_ledger (bounded, max 200 entries)
         self._quality_state: QualityAssessmentState = QualityAssessmentState()
 
+        # Sprint F216G: WAL Manager — owns LMDB for pending sync markers, deadletters, WAL replay
+        # (extracted from duckdb_store.py in Sprint F216G refactor)
+        self._wal_manager: Optional["WALManager"] = None
+
+        # Sprint F216G: Dedup Manager — owns persistent dedup LMDB, hot cache, semantic dedup
+        # (extracted from duckdb_store.py in Sprint F216G refactor)
+        self._dedup_manager: Optional["DedupManager"] = None
+
+        # Sprint F216G: Backward-compat aliases — code that reads _wal_lmdb / _dedup_lmdb directly
+        # gets None so hasattr checks return False (store uses manager methods now).
+        # Remove after all callers migrated to WALManager/DedupManager methods.
+        self._wal_lmdb: Optional[Any] = None
+        self._dedup_lmdb: Optional[Any] = None
+
         # Sprint 8AV: Dead-letter namespace for ingested-but-rejected findings
         self.DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
+
+        # Sprint 8AG §6.17: Persistent dedup LMDB — now managed by DedupManager
+        # (legacy aliases kept for backward compat during migration)
+        self._dedup_lmdb_path: Optional[Path] = None
+        self._dedup_lmdb_last_error: Optional[str] = None
+        self._dedup_lmdb_boot_error: Optional[str] = None
 
         # Sprint 8W: In-memory dedup set (key = BLAKE2b fingerprint, val = finding_id)
         # Hot cache only — LMDB is the authority for persistence across restarts
         self._dedup_fingerprints: dict[str, str] = {}
-
-        # Sprint 8AG §6.17: Persistent dedup LMDB — separate from WAL LMDB
-        # Namespace: b"dedup:{fingerprint_hex}" → finding_id (UTF-8 bytes)
-        self._dedup_lmdb: Optional[Any] = None
-        self._dedup_lmdb_path: Optional[Path] = None
-        self._dedup_lmdb_last_error: Optional[str] = None
-        self._dedup_lmdb_boot_error: Optional[str] = None
-        # Bounded hot cache — hard limit to prevent unbounded memory growth
-        self._dedup_hot_cache: dict[str, str] = {}  # fp → finding_id, bounded
-        self._dedup_hot_cache_order: OrderedDict = OrderedDict()  # FIFO order for eviction (O(1) move_to_end)
 
         # Sprint 8QA: Background task tracking for graph ingest
         self._bg_tasks: set[asyncio.Task] = set()
@@ -624,11 +638,8 @@ class DuckDBShadowStore:
         # Lazy init — created on first async_initialize() call
         self._semantic_dedup_cache: Optional[Any] = None
 
-        # Sprint F233A: WAL LMDB — initialized lazily in async_initialize(), NOT in __init__.
-        # Added to __init__ so aclose() guards work correctly before first async_initialize():
-        #   if getattr(self, "_wal_lmdb", None) is not None: ...
-        # is safe even when the store was never async_initialize()d.
-        self._wal_lmdb: Optional[Any] = None
+        # Sprint F233A: WAL LMDB — now managed by WALManager
+        # Backward-compat alias: _wal_lmdb = None (see __init__ section above for new managers)
 
 
     def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
@@ -2198,13 +2209,13 @@ class DuckDBShadowStore:
             except Exception:
                 pass
             self._file_conn = None
-        # Sprint 8L: Close WAL LMDB to release lock files for re-init
-        if hasattr(self, "_wal_lmdb") and self._wal_lmdb is not None:
+        # Sprint 8L + F216G: Close WALManager to release lock files for re-init
+        if self._wal_manager is not None:
             try:
-                self._wal_lmdb.close()
+                self._wal_manager.close()
             except Exception:
                 pass
-            self._wal_lmdb = None
+            self._wal_manager = None
 
     # ------------------------------------------------------------------
     # Public sync API (from 8AO, kept for backward compat)
@@ -2397,21 +2408,18 @@ class DuckDBShadowStore:
             self._initialized = False
             return False
 
-        # Sprint 8L: Re-initialize WAL LMDB if it was closed by a previous aclose()
-        # This is needed because aclose() sets _wal_lmdb = None to release the lock file
-        if not hasattr(self, "_wal_lmdb") or self._wal_lmdb is None:
+        # Sprint 8L: Initialize WALManager (replaces direct _wal_lmdb creation)
+        if self._wal_manager is None:
             _wal_root = self._db_path.parent if self._db_path else None
             if _wal_root is not None:
-                from hledac.universal.tools.lmdb_kv import LMDBKVStore
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
 
-        # Sprint 8AG §6.17: Initialize persistent dedup LMDB after WAL LMDB
+        # Sprint 8AG §6.17 + F216G: Initialize DedupManager
         # Uses PERSISTENT LMDB root (LMDB_ROOT), not sprint LMDB
-        self._init_persistent_dedup_lmdb()
-
-        # Sprint F195: Initialize semantic dedup cache (embedding-based near-duplicate detection)
-        # Memory-aware: skips init if RSS > 6GB threshold
-        self._init_semantic_dedup_cache()
+        if self._dedup_manager is None:
+            self._dedup_manager = DedupManager()
+            self._dedup_manager.initialize()
 
         # Sprint 8L: Bounded startup replay — only when limit is set and positive
         if replay_pending_limit:
@@ -4250,17 +4258,15 @@ class DuckDBShadowStore:
 
         # Step 1: LMDB WAL first — msgspec serialization
         try:
-            from hledac.universal.tools.lmdb_kv import LMDBKVStore
-
-            if not hasattr(self, "_wal_lmdb"):
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     result["error"] = "no wal root"
                     return result
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
 
             key = f"finding:{finding.finding_id}"
-            # Provenance is part of WAL payload — use msgspec for consistent serialization
             wal_payload = {
                 "id": finding.finding_id,
                 "query": finding.query,
@@ -4270,7 +4276,7 @@ class DuckDBShadowStore:
                 "provenance": finding.provenance,
                 "payload_text": finding.payload_text,
             }
-            lmdb_ok = self._wal_lmdb.put(key, wal_payload)
+            lmdb_ok = self._wal_manager.wal_put(key, wal_payload)
             result["lmdb_success"] = lmdb_ok
             if not lmdb_ok:
                 _logger.warning(f"[Sprint 8P] WAL failed for {finding.finding_id}")
@@ -4295,14 +4301,14 @@ class DuckDBShadowStore:
             result["duckdb_success"] = duckdb_ok
             if not duckdb_ok:
                 _logger.error(f"[Sprint 8P] DuckDB failed for {finding.finding_id}, LMDB preserved")
-                self._wal_write_pending_sync_marker(
+                self._wal_manager.wal_write_pending_sync_marker(
                     finding.finding_id, finding.query, finding.source_type, finding.confidence,
                 )
         except Exception as e:
             result["duckdb_success"] = False
             result["error"] = str(e)
             _logger.error(f"[Sprint 8P] DuckDB exception for {finding.finding_id}: {e}, LMDB preserved")
-            self._wal_write_pending_sync_marker(
+            self._wal_manager.wal_write_pending_sync_marker(
                 finding.finding_id, finding.query, finding.source_type, finding.confidence,
             )
 
@@ -4881,9 +4887,7 @@ class DuckDBShadowStore:
         # Step 1: LMDB WAL first — msgspec serialization
         lmdb_ok = False
         try:
-            from hledac.universal.tools.lmdb_kv import LMDBKVStore
-
-            if not hasattr(self, "_wal_lmdb"):
+            if not hasattr(self, "_wal_manager") or self._wal_manager is None:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     for f in findings:
@@ -4894,7 +4898,8 @@ class DuckDBShadowStore:
                             "error": "no wal root",
                         })
                     return results
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager.initialize()
 
             items = []
             for f in findings:
@@ -4911,7 +4916,7 @@ class DuckDBShadowStore:
                 items.append((key, wal_payload))
 
             if items:
-                lmdb_ok = self._wal_lmdb.put_many(items)
+                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, 'wal_put_many') else False
                 if not lmdb_ok:
                     _logger.warning(f"[Sprint 8P] Batch WAL failed for {len(items)} items")
                     for f in findings:
@@ -6656,16 +6661,17 @@ class DuckDBShadowStore:
             self._executor.shutdown(wait=False)
         except Exception:
             pass
-        # Sprint 8AG: close dedup LMDB (WAL LMDB already closed via _sync_close_on_worker)
-        if hasattr(self, "_dedup_lmdb") and self._dedup_lmdb is not None:
+        # Sprint 8AG + F216G: close DedupManager (WAL already closed via _sync_close_on_worker)
+        if self._dedup_manager is not None:
             try:
-                self._dedup_lmdb.close()
+                self._dedup_manager.close()
             except Exception:
                 pass
-            self._dedup_lmdb = None
+            self._dedup_manager = None
 
     # =============================================================================
-    # Sprint 8AG §6.17: Persistent Dedup LMDB
+    # Sprint 8AG §6.17 + F216G: Dedup Manager delegate
+    # (persistence methods moved to DedupManager; DuckDBShadowStore is thin orchestrator)
     # =============================================================================
 
     DEDUP_NAMESPACE: str = "dedup:"
@@ -6679,11 +6685,7 @@ class DuckDBShadowStore:
         return key.decode("utf-8")[len(self.DEDUP_NAMESPACE):]
 
     def _init_persistent_dedup_lmdb(self) -> None:
-        """
-        Initialize persistent dedup LMDB at PERSISTENT LMDB_ROOT/dedup.lmdb.
-
-        Fails softly: any exception is caught and stored in _dedup_lmdb_boot_error.
-        """
+        """Deprecated: initialization moved to DedupManager.initialize()."""
         try:
             from hledac.universal.paths import LMDB_ROOT
             dedup_path = LMDB_ROOT / "dedup.lmdb"

@@ -2702,6 +2702,389 @@ async def async_run_live_public_pipeline(
         except Exception:
             rag_context = []  # Fail-soft: memory errors don't fail pipeline
 
+    # ---- Engines -----------------------------------------------------------
+    # Sprint F214: Refactored into focused engine classes for maintainability.
+    # Each engine is a dataclass with async run() method that encapsulates a
+    # logical phase of the pipeline. Backward compatible — same inputs/outputs.
+
+    @dataclass
+    class _DiscoveryEngine:
+        """
+        Engine 1: Handles all discovery-related logic.
+
+        Input state: query, store, max_results, public_bootstrap_enabled
+        Output state: enriched hits tuple + all discovery telemetry accumulators
+        """
+        query: str
+        store: Any
+        max_results: int
+        public_bootstrap_enabled: bool
+
+        async def run(
+            self,
+            uma_state: str,
+        ) -> tuple[
+            tuple,  # hits
+            str | None,  # discovery_error
+            str | None,  # discovery_error_type
+            float | None,  # discovery_elapsed_s
+            bool,  # discovery_attempted
+            dict,  # discovery_telemetry
+            int,  # academic_findings_count
+            int,  # ct_injected
+            int,  # cc_injected
+            int,  # onion_findings_count
+            int,  # pastebin_findings_count
+            int,  # github_secrets_count
+        ]:
+            # ---- Discovery (8AC) -----------------------------------------------------
+            discovery_error: str | None = None
+            discovery_error_type: str | None = None
+            discovery_elapsed_s: float | None = None
+            discovery_attempted: bool = False
+            hits: tuple = ()
+            # Sprint F213B: stage failure accounting
+            public_stage_failure: str | None = None
+            public_stage_failure_reason: str | None = None
+            public_discovery_raw_count: int = 0
+            public_discovery_deduped_count: int = 0
+            _discovery_start: float | None = None
+            # F207I-A: discovery telemetry counters (initialized before try block)
+            public_discovery_cache_hit: int = 0
+            public_discovery_query_count: int = 0
+
+            # Sprint F217C: Deterministic bootstrap telemetry (initialized before try block)
+            _pub_bootstrap_candidates_count: int = 0
+            _pub_bootstrap_fetch_attempted: int = 0
+            _pub_bootstrap_fetch_success: int = 0
+            _pub_bootstrap_accepted_findings: int = 0
+            _pub_bootstrap_errors: int = 0
+            _pub_bootstrap_order: str = "disabled"
+            _pub_bootstrap_prevented_discovery_timeout: bool = False
+            _pub_bootstrap_first_fetch_attempted: bool = False
+
+            # F226B: PUBLIC acceptance uplift telemetry (initialized before try block)
+            _pub_build_success_count: int = 0
+            _pub_build_failure_count: int = 0
+            _pub_duplicate_count: int = 0
+
+            # F232: Provider surface telemetry — local accumulators (reset each run)
+            _pub_provider_selected: list[str] = []
+            _pub_provider_skipped: list[dict] = []
+            _pub_provider_stub: list[str] = []
+            _pub_provider_errors: list[dict] = []
+            _pub_query_variants: list[str] = []
+            _pub_provider_timeout_count: list[int] = [0]
+            _pub_provider_import_error_count: list[int] = [0]
+            _pub_discovery_empty_reason: list[str] = []
+
+            # F231A: PUBLIC Candidate Ledger — stage counters
+            _public_candidates_discovered: int = 0
+            _public_candidates_fetch_attempted: int = 0
+            _public_candidates_fetch_success: int = 0
+            _public_candidates_parse_success: int = 0
+            _public_candidates_pattern_matched: int = 0
+            _public_candidates_built: int = 0
+            _public_candidates_store_attempted: int = 0
+            _public_candidates_stored: int = 0
+            _public_candidates_rejected: int = 0
+
+            # Sprint F217C: Deterministic bootstrap — generate before discovery attempt
+            bootstrap_hits: list[DiscoveryHit] = []
+            if self.public_bootstrap_enabled:
+                try:
+                    bootstrap_urls = generate_bootstrap_urls(self.query, max_urls=_MAX_BOOTSTRAP_URLS)
+                    _pub_bootstrap_candidates_count = len(bootstrap_urls)
+                    for idx, url in enumerate(bootstrap_urls):
+                        bootstrap_hits.append(DiscoveryHit(
+                            query=self.query,
+                            title=f"Bootstrap {idx+1}",
+                            url=url,
+                            snippet=f"Deterministic bootstrap URL: {url}",
+                            score=0.85,
+                            reason="deterministic_bootstrap",
+                            rank=-1,
+                            source="bootstrap",
+                            retrieved_ts=0.0,
+                        ))
+                except Exception:
+                    _pub_bootstrap_candidates_count = 0
+
+            try:
+                _discovery_start = time.monotonic()
+                discovery_attempted = True
+                discovery_result = await _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results)
+                discovery_elapsed_s = time.monotonic() - _discovery_start
+
+                cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False
+                public_discovery_cache_hit += int(cache_hit)
+                public_discovery_query_count += 1
+
+                _extract_provider_surface(discovery_result, _pub_provider_selected, _pub_provider_skipped,
+                                          _pub_provider_stub, _pub_provider_errors,
+                                          _pub_provider_timeout_count, _pub_provider_import_error_count,
+                                          _pub_discovery_empty_reason)
+
+                if hasattr(discovery_result, "hits"):
+                    hits = discovery_result.hits
+                elif isinstance(discovery_result, dict):
+                    hits = discovery_result.get("hits", ())
+
+                if bootstrap_hits:
+                    hits = tuple(bootstrap_hits) + tuple(hits)
+                    _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
+                    _pub_bootstrap_order = "before_discovery"
+                    _pub_bootstrap_first_fetch_attempted = True
+                    _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else ()
+                    if len(_disc_hits) == 0:
+                        _pub_bootstrap_prevented_discovery_timeout = True
+
+                err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
+                if err_val:
+                    discovery_error = str(err_val)
+
+                discovery_error_type = classify_discovery_error(
+                    discovery_error,
+                    elapsed_s=discovery_elapsed_s,
+                    timeout_s=35.0,
+                    hits_count=len(hits),
+                )
+            except asyncio.CancelledError:
+                discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
+                discovery_error_type = classify_discovery_error(
+                    asyncio.CancelledError("cancelled"),
+                    elapsed_s=discovery_elapsed_s,
+                    hits_count=0,
+                )
+                raise  # [I6]
+            except Exception as exc:
+                discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
+                discovery_error = f"discovery_exception:{type(exc).__name__}:{exc}"
+                discovery_error_type = classify_discovery_error(
+                    discovery_error,
+                    elapsed_s=discovery_elapsed_s,
+                    hits_count=0,
+                )
+                hits = ()
+
+            # Sprint F229A: Check for hits AFTER bootstrap prepend
+            if not hits:
+                # Build zeroed telemetry for early return
+                discovery_telemetry = {
+                    'discovery_result': None,
+                    'public_stage_failure': 'discovery_empty',
+                    'public_stage_failure_reason': discovery_error if discovery_error else 'no URLs returned from discovery',
+                    'public_discovery_raw_count': 0,
+                    'public_discovery_deduped_count': 0,
+                    'public_discovery_attempted': discovery_attempted,
+                    'public_discovery_cache_hit': public_discovery_cache_hit,
+                    'public_discovery_query_count': public_discovery_query_count,
+                    'public_bootstrap_order': 'disabled',
+                    'public_bootstrap_prevented_discovery_timeout': False,
+                    'public_bootstrap_first_fetch_attempted': False,
+                    'public_build_success_count': 0,
+                    'public_build_failure_count': 0,
+                    'public_duplicate_count': 0,
+                    'public_provider_selected': list(_pub_provider_selected),
+                    'public_provider_skipped': list(_pub_provider_skipped),
+                    'public_provider_stub': list(_pub_provider_stub),
+                    'public_provider_errors': list(_pub_provider_errors),
+                    'public_query_variants': list(_pub_query_variants),
+                    'public_provider_timeout_count': _pub_provider_timeout_count[0],
+                    'public_provider_import_error_count': _pub_provider_import_error_count[0],
+                    'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',
+                    'public_candidates_discovered': 0,
+                    'public_candidates_fetch_attempted': 0,
+                    'public_candidates_fetch_success': 0,
+                    'public_candidates_parse_success': 0,
+                    'public_candidates_pattern_matched': 0,
+                    'public_candidates_built': 0,
+                    'public_candidates_store_attempted': 0,
+                    'public_candidates_stored': 0,
+                    'public_candidates_rejected': 0,
+                }
+                return (
+                    (), None, discovery_error, discovery_error_type, discovery_elapsed_s, discovery_attempted,
+                    discovery_telemetry, 0, 0, 0, 0, 0, 0
+                )
+
+            # P16: Academic discovery integration
+            academic_findings_count = 0
+            if self.store is not None:
+                try:
+                    from hledac.universal.intelligence.academic_discovery import search_academic_all
+                    academic_semaphore = asyncio.Semaphore(3)
+                    async def limited_academic_search():
+                        async with academic_semaphore:
+                            return await search_academic_all(self.query, max_results=10, rate_limit=50)
+                    academic_results = await limited_academic_search()
+                    all_papers = []
+                    for source, papers in academic_results.items():
+                        for paper in papers:
+                            all_papers.append(paper)
+                    if all_papers:
+                        academic_findings = []
+                        for paper in all_papers[:20]:
+                            paper_id = hashlib.sha256(
+                                f"{self.query}\x00{paper.get('link', '')}\x00academic".encode()
+                            ).hexdigest()[:16]
+                            provenance = ("academic", source, paper.get('title', ''))
+                            academic_finding = CanonicalFinding(
+                                finding_id=paper_id,
+                                query=self.query,
+                                source_type="academic_discovery",
+                                confidence=0.7,
+                                ts=time.time(),
+                                provenance=provenance,
+                                payload_text=f"{paper.get('title', '')}\n{paper.get('abstract', '')}".strip()[:500],
+                            )
+                            academic_findings.append(academic_finding)
+                        if academic_findings:
+                            await self.store.async_ingest_findings_batch(academic_findings)
+                            academic_findings_count = len(academic_findings)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"[P16] Academic discovery failed: {e}")
+
+            # Sprint F188B: CT winner-slice injection
+            original_hit_count = len(hits)
+            hits = await _inject_ct_subdomain_hits(hits, self.query)
+            ct_injected = len(hits) - original_hit_count
+
+            # F192E: CommonCrawl CDX domain injection
+            original_hit_count = len(hits)
+            hits = await _inject_commoncrawl_hits(hits, self.query)
+            cc_injected = len(hits) - original_hit_count
+
+            # Sprint F193A: Onion discovery
+            onion_findings_count = 0
+            if self.store is not None:
+                try:
+                    onion_findings_count = await _inject_onion_hits(hits, self.query, self.store)
+                except Exception as e:
+                    logger.debug(f"[F193A] Onion discovery failed: {e}")
+
+            # P20: PastebinMonitor + GitHubSecretScanner
+            pastebin_findings_count = 0
+            github_secrets_count = 0
+            if self.store is not None:
+                try:
+                    import re as _re
+                    _DOMAIN_ORG_RE = _re.compile(
+                        r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
+                    )
+                    _match = _DOMAIN_ORG_RE.search(self.query)
+                    if _match:
+                        target = _match.group()
+                        logger.info(f"[P20] PastebinMonitor targeting: {target}")
+                        from hledac.universal.intelligence.pastebin_monitor import run as pastebin_run
+                        paste_findings = await pastebin_run(target)
+                        if paste_findings:
+                            p20_findings = []
+                            for pf in paste_findings:
+                                pf_id = hashlib.sha256(
+                                    f"{self.query}\x00{pf.uri}\x00pastebin".encode()
+                                ).hexdigest()[:16]
+                                masked = pf.masked_secrets()
+                                p20_findings.append(CanonicalFinding(
+                                    finding_id=pf_id,
+                                    query=self.query,
+                                    source_type="pastebin_monitor",
+                                    confidence=0.6,
+                                    ts=time.time(),
+                                    provenance=("pastebin", pf.source, target),
+                                    payload_text=(
+                                        f"uri={pf.uri}\n"
+                                        f"emails={pf.emails}\n"
+                                        f"ips={pf.ip_addresses}\n"
+                                        f"masked_secrets={masked}\n"
+                                        f"snippet={pf.context_snippet[:300]}"
+                                    ),
+                                ))
+                            if p20_findings:
+                                await self.store.async_ingest_findings_batch(p20_findings)
+                                pastebin_findings_count = len(p20_findings)
+
+                        org_candidate = _match.group().rsplit(".", 1)[0]
+                        from hledac.universal.intelligence.github_secret_scanner import (
+                            search_org_secrets,
+                        )
+                        gh_findings: list[CanonicalFinding] = []
+                        if org_candidate:
+                            try:
+                                gh_results = await search_org_secrets(org_candidate)
+                            except Exception:
+                                gh_results = []
+                            for gf in gh_results:
+                                gf_id = hashlib.sha256(
+                                    f"{self.query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
+                                ).hexdigest()[:16]
+                                gh_findings.append(CanonicalFinding(
+                                    finding_id=gf_id,
+                                    query=self.query,
+                                    source_type="github_secret_scanner",
+                                    confidence=0.55,
+                                    ts=time.time(),
+                                    provenance=("github", gf.pattern, org_candidate),
+                                    payload_text=(
+                                        f"pattern={gf.pattern}\n"
+                                        f"file={gf.file_path}\n"
+                                        f"line={gf.line}\n"
+                                        f"context={gf.context[:300]}"
+                                    ),
+                                ))
+                        if gh_findings:
+                            await self.store.async_ingest_findings_batch(gh_findings)
+                            github_secrets_count = len(gh_findings)
+                except Exception as e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(f"[P20] Pastebin/GitHub scan failed: {e}")
+
+            discovery_telemetry = {
+                'discovery_result': discovery_result,
+                'public_stage_failure': public_stage_failure,
+                'public_stage_failure_reason': public_stage_failure_reason,
+                'public_discovery_raw_count': len(hits),
+                'public_discovery_deduped_count': public_discovery_deduped_count,
+                'public_discovery_attempted': discovery_attempted,
+                'public_discovery_cache_hit': public_discovery_cache_hit,
+                'public_discovery_query_count': public_discovery_query_count,
+                'public_bootstrap_order': _pub_bootstrap_order,
+                'public_bootstrap_prevented_discovery_timeout': _pub_bootstrap_prevented_discovery_timeout,
+                'public_bootstrap_first_fetch_attempted': _pub_bootstrap_first_fetch_attempted,
+                'public_bootstrap_candidates_count': _pub_bootstrap_candidates_count,
+                'public_bootstrap_fetch_attempted': _pub_bootstrap_fetch_attempted,
+                'public_bootstrap_fetch_success': _pub_bootstrap_fetch_success,
+                'public_bootstrap_accepted_findings': _pub_bootstrap_accepted_findings,
+                'public_bootstrap_errors': _pub_bootstrap_errors,
+                'public_build_success_count': _pub_build_success_count,
+                'public_build_failure_count': _pub_build_failure_count,
+                'public_duplicate_count': _pub_duplicate_count,
+                'public_provider_selected': list(_pub_provider_selected),
+                'public_provider_skipped': list(_pub_provider_skipped),
+                'public_provider_stub': list(_pub_provider_stub),
+                'public_provider_errors': list(_pub_provider_errors),
+                'public_query_variants': list(_pub_query_variants),
+                'public_provider_timeout_count': _pub_provider_timeout_count[0],
+                'public_provider_import_error_count': _pub_provider_import_error_count[0],
+                'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',
+                'public_candidates_discovered': _public_candidates_discovered,
+                'public_candidates_fetch_attempted': _public_candidates_fetch_attempted,
+                'public_candidates_fetch_success': _public_candidates_fetch_success,
+                'public_candidates_parse_success': _public_candidates_parse_success,
+                'public_candidates_pattern_matched': _public_candidates_pattern_matched,
+                'public_candidates_built': _public_candidates_built,
+                'public_candidates_store_attempted': _public_candidates_store_attempted,
+                'public_candidates_stored': _public_candidates_stored,
+                'public_candidates_rejected': _public_candidates_rejected,
+            }
+
+            return (
+                hits, discovery_result, discovery_error, discovery_error_type, discovery_elapsed_s, discovery_attempted,
+                discovery_telemetry, academic_findings_count, ct_injected, cc_injected,
+                onion_findings_count, pastebin_findings_count, github_secrets_count
+            )
+
     # ---- UMA check -----------------------------------------------------------
     # Sprint 8AK: SSOT labels from resource_governor — no local string literals
     from hledac.universal.core.resource_governor import (
@@ -2799,405 +3182,63 @@ async def async_run_live_public_pipeline(
 
     semaphore = asyncio.Semaphore(effective_concurrency)
 
-    # ---- Discovery (8AC) -----------------------------------------------------
-    discovery_error: str | None = None
-    discovery_error_type: str | None = None
-    discovery_elapsed_s: float | None = None
-    discovery_attempted: bool = False
-    hits: tuple = ()
-    # Sprint F213B: stage failure accounting
-    public_stage_failure: str | None = None
-    public_stage_failure_reason: str | None = None
-    public_discovery_raw_count: int = 0
-    public_discovery_deduped_count: int = 0
-    _discovery_start: float | None = None
-    # F207I-A: discovery telemetry counters (initialized before try block)
-    public_discovery_cache_hit: int = 0
-    public_discovery_query_count: int = 0
+    # ---- Call Discovery Engine -----------------------------------------------
+    # Sprint F214: Refactored — inline discovery replaced with _DiscoveryEngine.run()
+    (
+        hits,
+        discovery_result,
+        discovery_error,
+        discovery_error_type,
+        discovery_elapsed_s,
+        discovery_attempted,
+        discovery_telemetry,
+        academic_findings_count,
+        ct_injected,
+        cc_injected,
+        onion_findings_count,
+        pastebin_findings_count,
+        github_secrets_count,
+    ) = await _DiscoveryEngine(
+        query=query,
+        store=store,
+        max_results=max_results,
+        public_bootstrap_enabled=public_bootstrap_enabled,
+    ).run(uma_state=uma_state)
 
-    # Sprint F217C: Deterministic bootstrap telemetry (initialized before try block)
-    # Local telemetry vars — public_bootstrap_enabled parameter used directly
-    _pub_bootstrap_candidates_count: int = 0
-    _pub_bootstrap_fetch_attempted: int = 0
-    _pub_bootstrap_fetch_success: int = 0
-    _pub_bootstrap_accepted_findings: int = 0
-    _pub_bootstrap_errors: int = 0
-    # Sprint F229A: Bootstrap ordering telemetry
-    _pub_bootstrap_order: str = "disabled"
-    _pub_bootstrap_prevented_discovery_timeout: bool = False
-    _pub_bootstrap_first_fetch_attempted: bool = False
-
-    # F226B: PUBLIC acceptance uplift telemetry (initialized before try block)
-    _pub_build_success_count: int = 0
-    _pub_build_failure_count: int = 0
-    _pub_duplicate_count: int = 0
-
-    # F232: Provider surface telemetry — local accumulators (reset each run)
-    _pub_provider_selected: list[str] = []  # providers with selected=True
-    _pub_provider_skipped: list[dict] = []  # [{provider, reason}] with selected=False
-    _pub_provider_stub: list[str] = []  # providers in ADVISORY_STUB state
-    _pub_provider_errors: list[dict] = []  # [{provider, error, error_type}] provider-level errors
-    _pub_query_variants: list[str] = []  # query variants emitted to providers
-    _pub_provider_timeout_count: list[int] = [0]  # providers that timed out
-    _pub_provider_import_error_count: list[int] = [0]  # providers that failed to import/initialize
-    _pub_discovery_empty_reason: list[str] = []  # explicit reason when discovery returns zero
-
-    # F231A: PUBLIC Candidate Ledger — stage counters
-    # Tracks where PUBLIC candidates disappear: discovery→fetch→parse→match→build→store→accepted
-    _public_candidates_discovered: int = 0
-    _public_candidates_fetch_attempted: int = 0
-    _public_candidates_fetch_success: int = 0
-    _public_candidates_parse_success: int = 0
-    _public_candidates_pattern_matched: int = 0
-    _public_candidates_built: int = 0
-    _public_candidates_store_attempted: int = 0
-    _public_candidates_stored: int = 0
-    _public_candidates_rejected: int = 0
-
-    # Sprint F217C: Deterministic bootstrap — generate before discovery attempt
-    # Only runs when bootstrap is enabled; bootstrap URLs are prepended to duckduckgo hits.
-    bootstrap_hits: list[DiscoveryHit] = []
-    if public_bootstrap_enabled:
-        try:
-            bootstrap_urls = generate_bootstrap_urls(query, max_urls=_MAX_BOOTSTRAP_URLS)
-            _pub_bootstrap_candidates_count = len(bootstrap_urls)
-            for idx, url in enumerate(bootstrap_urls):
-                bootstrap_hits.append(DiscoveryHit(
-                    query=query,
-                    title=f"Bootstrap {idx+1}",
-                    url=url,
-                    snippet=f"Deterministic bootstrap URL: {url}",
-                    score=0.85,  # High confidence — deterministic, not speculative
-                    reason="deterministic_bootstrap",
-                    rank=-1,  # Negative rank: bootstrap hits sort before discovery hits
-                    source="bootstrap",
-                    retrieved_ts=0.0,
-                ))
-        except Exception:
-            _pub_bootstrap_candidates_count = 0
-
-    try:
-        # 8AC surface — duckduckgo_search passive discovery
-        _discovery_start = time.monotonic()
-        discovery_attempted = True
-        discovery_result = await _ASYNC_DISCOVERY_SEARCH(query, max_results)
-        discovery_elapsed_s = time.monotonic() - _discovery_start
-
-        # F207I-A: discovery telemetry
-        cache_hit = getattr(discovery_result, "cache_hit", False) if hasattr(discovery_result, "cache_hit") else False
-        public_discovery_cache_hit += int(cache_hit)
-        public_discovery_query_count += 1
-
-        # F232: Extract provider surface telemetry from discovery result
-        _extract_provider_surface(discovery_result, _pub_provider_selected, _pub_provider_skipped,
-                                  _pub_provider_stub, _pub_provider_errors,
-                                  _pub_provider_timeout_count, _pub_provider_import_error_count,
-                                  _pub_discovery_empty_reason)
-
-        if hasattr(discovery_result, "hits"):
-            hits = discovery_result.hits
-        elif isinstance(discovery_result, dict):
-            hits = discovery_result.get("hits", ())
-
-        # Sprint F217C: Prepend deterministic bootstrap hits to discovery results
-        # bootstrap_hits is empty list when public_bootstrap_enabled is False
-        if bootstrap_hits:
-            hits = tuple(bootstrap_hits) + tuple(hits)
-            _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
-            # Sprint F229A: Bootstrap was attempted and produced candidates.
-            # Record the order so telemetry reflects bootstrap ran BEFORE discovery providers.
-            _pub_bootstrap_order = "before_discovery"
-            _pub_bootstrap_first_fetch_attempted = True
-            # Sprint F229A: If discovery returned 0 hits, bootstrap prevented discovery timeout.
-            # Bootstrap candidates are now in the hits tuple, so the early-return won't fire.
-            _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else (discovery_result.get("hits", ()) if isinstance(discovery_result, dict) else ())
-            if len(_disc_hits) == 0:
-                _pub_bootstrap_prevented_discovery_timeout = True
-
-        err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
-        if err_val:
-            discovery_error = str(err_val)
-
-        # F206AB: classify concrete error type from error string
-        discovery_error_type = classify_discovery_error(
-            discovery_error,
-            elapsed_s=discovery_elapsed_s,
-            timeout_s=35.0,
-            hits_count=len(hits),
-        )
-    except asyncio.CancelledError:
-        discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
-        discovery_error_type = classify_discovery_error(
-            asyncio.CancelledError("cancelled"),
-            elapsed_s=discovery_elapsed_s,
-            hits_count=0,
-        )
-        raise  # [I6]
-    except Exception as exc:
-        discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
-        discovery_error = f"discovery_exception:{type(exc).__name__}:{exc}"
-        discovery_error_type = classify_discovery_error(
-            discovery_error,
-            elapsed_s=discovery_elapsed_s,
-            hits_count=0,
-        )
-        hits = ()
-
-    # Sprint F229A: Check for hits AFTER bootstrap prepend (fixes bootstrap-before-discovery bug).
-    # Previously this block was at line 2695, BEFORE bootstrap was prepended at line 2662-2664.
-    # That caused bootstrap URLs to never be fetched for domain queries: the early return
-    # fired before bootstrap hits could be added to the hits tuple, so bootstrap candidates
-    # were silently dropped and public_terminal_stage became DISCOVERY_TIMEOUT.
-    if not hits:
-        return PipelineRunResult(
-            query=query,
-            discovered=0,
-            fetched=0,
-            matched_patterns=0,
-            accepted_findings=0,
-            stored_findings=0,
-            patterns_configured=_get_patterns_configured_count(),
-            pages=(),
-            error=discovery_error or "discovery_empty",
-            public_proof_grade="no_discovery",
-            public_discovery_blocker=discovery_error if discovery_error else "no_discovery",
-            public_fetch_accessibility_blocker=False,
-            public_discovery_fallback_state="primary_failed_fallback_failed" if discovery_error else None,
-            dominant_public_failure_mode=discovery_error if discovery_error else "no_discovery",
-            # Sprint F213B: stage failure accounting
-            public_stage_failure="discovery_empty",
-            public_stage_failure_reason=discovery_error if discovery_error else "no URLs returned from discovery",
-            public_discovery_attempted=discovery_attempted,
-            public_discovery_raw_count=0,
-            public_discovery_deduped_count=0,
-            public_pages_fetched=0,
-            public_pages_accepted=0,
-            public_pages_rejected=0,
-            public_findings_accepted=0,
-            public_fetch_attempted=0,
-            # F207J-C: PUBLIC Acceptance — zeroed (no hits means no fetch attempted)
-            public_acceptance_attempted=0,
-            public_acceptance_accepted=0,
-            public_acceptance_rejected=0,
-            public_acceptance_reject_reasons={},
-            public_accepted_url_sample=(),
-            public_rejected_url_sample=(),
-            # F208G-A: PUBLIC Yield Taxonomy — zeros (no URLs reached terminal classification)
-            public_terminal_classified_count=0,
-            public_unclassified_count=0,
-            public_terminal_reason_counts={},
-            public_fetch_success=0,
-            public_fetch_failed=0,
-            public_skipped_duplicate=0,
-            public_skipped_unsupported_scheme=0,
-            public_skipped_memory_gate=0,
-            public_skipped_quality_gate=0,
-            public_skipped_browser_unavailable=0,
-            public_skipped_xml_or_feed=0,
-            public_skipped_timeout=0,
-            public_skipped_fetch_error=0,
-            public_rejected_no_pattern_match=0,
-            public_rejected_low_information=0,
-            public_rejected_duplicate=0,
-            public_rejected_storage_rejected=0,
-            public_build_success_count=0,
-            public_build_failure_count=0,
-            public_duplicate_count=0,
-            public_acceptance_ratio=0.0,
-            public_skipped_url_sample=(),
-            public_rejected_url_samples=(),
-            # Sprint F229A: Bootstrap ordering telemetry
-            public_bootstrap_order="disabled",
-            public_bootstrap_prevented_discovery_timeout=False,
-            public_bootstrap_first_fetch_attempted=False,
-            # F231A: PUBLIC Candidate Ledger — zeroed (discovery_empty)
-            public_candidates_discovered=0,
-            public_candidates_fetch_attempted=0,
-            public_candidates_fetch_success=0,
-            public_candidates_parse_success=0,
-            public_candidates_pattern_matched=0,
-            public_candidates_built=0,
-            public_candidates_store_attempted=0,
-            public_candidates_stored=0,
-            public_candidates_rejected=0,
-            public_rejection_summary={},
-            public_terminal_stage="discovery_empty",
-            # F232: Provider surface telemetry
-            public_provider_selected=list(_pub_provider_selected),
-            public_provider_skipped=list(_pub_provider_skipped),
-            public_provider_stub=list(_pub_provider_stub),
-            public_provider_errors=list(_pub_provider_errors),
-            public_query_variants=list(_pub_query_variants),
-            public_provider_timeout_count=_pub_provider_timeout_count[0],
-            public_provider_import_error_count=_pub_provider_import_error_count[0],
-            # F232: Refined discovery_empty subtype
-            public_discovery_empty_reason=_pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else "",
-        )
-
-    # P16: Academic discovery integration — run after DuckDuckGo discovery
-    # Max 3 concurrent queries via shared semaphore
-    academic_findings_count = 0
-    if store is not None:
-        try:
-            from hledac.universal.intelligence.academic_discovery import search_academic_all
-            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-            # P16: Use semaphore to limit concurrent academic queries to 3
-            academic_semaphore = asyncio.Semaphore(3)
-
-            async def limited_academic_search():
-                async with academic_semaphore:
-                    return await search_academic_all(query, max_results=10, rate_limit=50)
-
-            academic_results = await limited_academic_search()
-
-            # Convert academic papers to CanonicalFinding and store
-            all_papers = []
-            for source, papers in academic_results.items():
-                for paper in papers:
-                    all_papers.append(paper)
-
-            if all_papers:
-                academic_findings = []
-                for paper in all_papers[:20]:  # Limit to 20 academic findings
-                    paper_id = hashlib.sha256(
-                        f"{query}\x00{paper.get('link', '')}\x00academic".encode()
-                    ).hexdigest()[:16]
-                    provenance = ("academic", source, paper.get('title', ''))
-                    academic_finding = CanonicalFinding(
-                        finding_id=paper_id,
-                        query=query,
-                        source_type="academic_discovery",
-                        confidence=0.7,
-                        ts=time.time(),
-                        provenance=provenance,
-                        payload_text=f"{paper.get('title', '')}\n{paper.get('abstract', '')}".strip()[:500],
-                    )
-                    academic_findings.append(academic_finding)
-
-                if academic_findings:
-                    await store.async_ingest_findings_batch(academic_findings)
-                    academic_hits_count = len(academic_findings)
-                    academic_findings_count = academic_hits_count
-                    logger.info(f"[P16] Stored {academic_hits_count} academic findings")
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"[P16] Academic discovery failed: {e}")
-
-    # Sprint F188B: CT winner-slice injection — augment discovery with CT subdomains
-    # One bounded adapter: _inject_ct_subdomain_hits. Fail-soft, shared session reuse.
-    # NOT a new discovery world — same fetch batch processes both DDG and CT hits.
-    original_hit_count = len(hits)
-    hits = await _inject_ct_subdomain_hits(hits, query)
-    ct_injected = len(hits) - original_hit_count
-
-    # F192E: CommonCrawl CDX domain injection — thin archival URL augmentation
-    # One bounded adapter: _inject_commoncrawl_hits. Fail-soft, domain queries only.
-    # NOT a new discovery world — same fetch batch processes DDG, CT, and CC hits.
-    original_hit_count = len(hits)
-    hits = await _inject_commoncrawl_hits(hits, query)
-    cc_injected = len(hits) - original_hit_count
-
-    # Sprint F193A: Onion discovery + scraping block
-    # Discover .onion URLs via Ahmia search, scrape via Tor-capable async_fetch_public_text.
-    # Bounded: max 5 onion hits, circuit breaker after 3 failures, fail-soft.
-    # Produces CanonicalFinding with source_type="onion_discovery".
-    onion_findings_count = 0
-    if store is not None:
-        try:
-            onion_findings_count = await _inject_onion_hits(hits, query, store)
-        except Exception as e:
-            logger.debug(f"[F193A] Onion discovery failed: {e}")
-
-    # P20: PastebinMonitor + GitHubSecretScanner — run only when query contains
-    # a domain name or organization identifier (limits API calls to targeted searches)
-    pastebin_findings_count = 0
-    github_secrets_count = 0
-    if store is not None:
-        try:
-            import re as _re
-            _DOMAIN_ORG_RE = _re.compile(
-                r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
-            )
-            _match = _DOMAIN_ORG_RE.search(query)
-            if _match:
-                target = _match.group()
-                logger.info(f"[P20] PastebinMonitor targeting: {target}")
-
-                # PastebinMonitor — rate-limited async paste scraping
-                from hledac.universal.intelligence.pastebin_monitor import run as pastebin_run
-                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-                paste_findings = await pastebin_run(target)
-                if paste_findings:
-                    p20_findings = []
-                    for pf in paste_findings:
-                        pf_id = hashlib.sha256(
-                            f"{query}\x00{pf.uri}\x00pastebin".encode()
-                        ).hexdigest()[:16]
-                        masked = pf.masked_secrets()
-                        p20_findings.append(CanonicalFinding(
-                            finding_id=pf_id,
-                            query=query,
-                            source_type="pastebin_monitor",
-                            confidence=0.6,
-                            ts=time.time(),
-                            provenance=("pastebin", pf.source, target),
-                            payload_text=(
-                                f"uri={pf.uri}\n"
-                                f"emails={pf.emails}\n"
-                                f"ips={pf.ip_addresses}\n"
-                                f"masked_secrets={masked}\n"
-                                f"snippet={pf.context_snippet[:300]}"
-                            ),
-                        ))
-                    if p20_findings:
-                        await store.async_ingest_findings_batch(p20_findings)
-                        pastebin_findings_count = len(p20_findings)
-                        logger.info(f"[P20] Stored {pastebin_findings_count} pastebin findings")
-
-                # GitHubSecretScanner — public repo scanning for exposed secrets
-                # Strip TLD to get potential org name, scan up to 10 public repos
-                org_candidate = _match.group().rsplit(".", 1)[0]
-                from hledac.universal.intelligence.github_secret_scanner import (
-                    search_org_secrets,
-                    scan_repo,
-                )
-
-                # Try org-level scan first; fall back to direct repo scan
-                gh_findings: list[CanonicalFinding] = []
-                if org_candidate:
-                    try:
-                        gh_results = await search_org_secrets(org_candidate)
-                    except Exception:
-                        gh_results = []
-
-                    for gf in gh_results:
-                        gf_id = hashlib.sha256(
-                            f"{query}\x00{gf.file_path}\x00{gf.pattern}\x00github".encode()
-                        ).hexdigest()[:16]
-                        gh_findings.append(CanonicalFinding(
-                            finding_id=gf_id,
-                            query=query,
-                            source_type="github_secret_scanner",
-                            confidence=0.55,
-                            ts=time.time(),
-                            provenance=("github", gf.pattern, org_candidate),
-                            payload_text=(
-                                f"pattern={gf.pattern}\n"
-                                f"file={gf.file_path}\n"
-                                f"line={gf.line}\n"
-                                f"context={gf.context[:300]}"
-                            ),
-                        ))
-
-                if gh_findings:
-                    await store.async_ingest_findings_batch(gh_findings)
-                    github_secrets_count = len(gh_findings)
-                    logger.info(f"[P20] Stored {github_secrets_count} GitHub secret findings")
-        except Exception as e:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(f"[P20] Pastebin/GitHub scan failed: {e}")
+    # Unpack discovery telemetry into main-line state
+    public_stage_failure = discovery_telemetry.get('public_stage_failure')
+    public_stage_failure_reason = discovery_telemetry.get('public_stage_failure_reason')
+    public_discovery_deduped_count = discovery_telemetry.get('public_discovery_deduped_count', 0)
+    public_discovery_cache_hit = discovery_telemetry.get('public_discovery_cache_hit', 0)
+    public_discovery_query_count = discovery_telemetry.get('public_discovery_query_count', 0)
+    _pub_bootstrap_candidates_count = discovery_telemetry.get('public_bootstrap_candidates_count', 0)
+    _pub_bootstrap_fetch_attempted = discovery_telemetry.get('public_bootstrap_fetch_attempted', 0)
+    _pub_bootstrap_fetch_success = discovery_telemetry.get('public_bootstrap_fetch_success', 0)
+    _pub_bootstrap_accepted_findings = discovery_telemetry.get('public_bootstrap_accepted_findings', 0)
+    _pub_bootstrap_errors = discovery_telemetry.get('public_bootstrap_errors', 0)
+    _pub_bootstrap_order = discovery_telemetry.get('public_bootstrap_order', 'disabled')
+    _pub_bootstrap_prevented_discovery_timeout = discovery_telemetry.get('public_bootstrap_prevented_discovery_timeout', False)
+    _pub_bootstrap_first_fetch_attempted = discovery_telemetry.get('public_bootstrap_first_fetch_attempted', False)
+    _pub_build_success_count = discovery_telemetry.get('public_build_success_count', 0)
+    _pub_build_failure_count = discovery_telemetry.get('public_build_failure_count', 0)
+    _pub_duplicate_count = discovery_telemetry.get('public_duplicate_count', 0)
+    _pub_provider_selected = discovery_telemetry.get('public_provider_selected', [])
+    _pub_provider_skipped = discovery_telemetry.get('public_provider_skipped', [])
+    _pub_provider_stub = discovery_telemetry.get('public_provider_stub', [])
+    _pub_provider_errors = discovery_telemetry.get('public_provider_errors', [])
+    _pub_query_variants = discovery_telemetry.get('public_query_variants', [])
+    _pub_provider_timeout_count = [discovery_telemetry.get('public_provider_timeout_count', 0)]
+    _pub_provider_import_error_count = [discovery_telemetry.get('public_provider_import_error_count', 0)]
+    _pub_discovery_empty_reason = [discovery_telemetry.get('public_discovery_empty_reason', '')]
+    _public_candidates_discovered = discovery_telemetry.get('public_candidates_discovered', 0)
+    _public_candidates_fetch_attempted = discovery_telemetry.get('public_candidates_fetch_attempted', 0)
+    _public_candidates_fetch_success = discovery_telemetry.get('public_candidates_fetch_success', 0)
+    _public_candidates_parse_success = discovery_telemetry.get('public_candidates_parse_success', 0)
+    _public_candidates_pattern_matched = discovery_telemetry.get('public_candidates_pattern_matched', 0)
+    _public_candidates_built = discovery_telemetry.get('public_candidates_built', 0)
+    _public_candidates_store_attempted = discovery_telemetry.get('public_candidates_store_attempted', 0)
+    _public_candidates_stored = discovery_telemetry.get('public_candidates_stored', 0)
+    _public_candidates_rejected = discovery_telemetry.get('public_candidates_rejected', 0)
 
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
@@ -4301,6 +4342,8 @@ async def async_run_live_public_pipeline(
         public_candidates_rejected=public_candidates_rejected,
         public_rejection_summary=public_rejection_summary,
         public_terminal_stage=public_terminal_stage,
+        # F232: Provider surface — discovery_empty subtype
+        public_discovery_empty_reason=_pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else "",
     )
 
 

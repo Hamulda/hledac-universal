@@ -66,7 +66,15 @@ def __getattr__(name: str):
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    module = import_module(module_name)
+    try:
+        module = import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name == "hledac" and module_name.startswith("hledac.universal."):
+            local_path = module_name[len("hledac.universal."):]
+            module = import_module(local_path)
+        else:
+            raise
+
     value = getattr(module, name)
     globals()[name] = value
     return value

@@ -170,10 +170,40 @@ __all__ = sorted(_LAZY_EXPORT_MAP.keys()) + sorted(_LEGACY_NAMES)
 def __getattr__(name: str) -> Any:
     if name in _LAZY_EXPORT_MAP:
         module_path = _LAZY_EXPORT_MAP[name]
-        module = import_module(module_path)
+        try:
+            module = import_module(module_path)
+        except ModuleNotFoundError as exc:
+            if exc.name == "hledac" and module_path.startswith("hledac.universal."):
+                local_path = module_path[len("hledac.universal."):]
+                module = import_module(local_path)
+            else:
+                raise
         value = getattr(module, name)
         globals()[name] = value
         return value
     if name in _LEGACY_NAMES:
-        return _legacy_compat.__getattr__(name)
+        try:
+            return _legacy_compat.__getattr__(name)
+        except (ModuleNotFoundError, ImportError):  # ModuleNotFoundError for bare not-found; ImportError for relative-import failure in local mode
+            if name in (
+                "AtomicJSONKnowledgeGraph", "KnowledgeEntry", "get_atomic_storage",
+                "PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
+                "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend",
+            ):
+                import importlib
+                rel_path = "legacy.atomic_storage" if name not in (
+                    "PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
+                    "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend",
+                ) else "legacy.persistent_layer"
+                try:
+                    mod = importlib.import_module(rel_path)
+                except ModuleNotFoundError:
+                    # Local mode: try without legacy prefix
+                    if name in ("PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
+                                "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend"):
+                        mod = importlib.import_module("persistent_layer")
+                    else:
+                        mod = importlib.import_module("atomic_storage")
+                return getattr(mod, name)
+            raise
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
