@@ -172,19 +172,13 @@ def _probe_worker_capability() -> tuple[bool, str]:
                 return (True, MACOS_WEBKIT_REASONS.SUCCESS)
             return (False, result.get("reason", MACOS_WEBKIT_REASONS.WORKER_ERROR))
 
-        # Run probe in a fresh event loop (this function is called from sync context)
+        # Run probe — use existing loop if available (M1-safe), else fresh loop
         try:
             loop = asyncio.get_running_loop()
-            # Can't await in a running loop from sync context — create a task
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    _probe(),
-                )
-                return future.result(timeout=10.0)
+            # Running loop exists — use it directly with run_until_complete (M1-safe)
+            return loop.run_until_complete(_probe())
         except RuntimeError:
-            # No running loop — safe to use asyncio.run()
+            # No running loop — create a fresh one
             return asyncio.run(_probe())
 
     except Exception:

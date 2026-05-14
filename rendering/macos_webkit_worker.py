@@ -182,7 +182,7 @@ def _do_render(payload: dict) -> bytes:
         # Wait for load finish using run-loop pump (not time.sleep)
         # This allows WKWebView navigation callbacks to be processed
         def is_not_loading() -> bool:
-            return webview.isLoading() == False
+            return webview.isLoading() is False
 
         _run_loop_until_condition(is_not_loading, timeout_s, poll_interval=0.05)
 
