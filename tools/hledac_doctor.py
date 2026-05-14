@@ -89,7 +89,8 @@ DEPENDENCY_REGISTRY: List[Dict] = [
     {"name": "msgspec",      "import": "msgspec",           "spec": "msgspec>=0.21.1,<0.22.0",   "extra": None,         "baseline": True},
     {"name": "orjson",        "import": "orjson",            "spec": "orjson>=3.9.0",           "extra": None,         "baseline": True},
     # MOVED_TO_OPTIONAL_BROWSER_BY_CP314_CLEANUP: "camoufox[geoip]",   # see browser extra
-    {"name": "nodriver",      "import": "nodriver",          "spec": "nodriver>=0.1.0",        "extra": None,         "baseline": True},
+    # MOVED_TO_BROWSER_EXTRA_BY_F214AD: nodriver (was baseline=True, extra=None)
+    {"name": "nodriver",      "import": "nodriver",          "spec": "nodriver>=0.1.0",        "extra": "browser",    "baseline": False},
     {"name": "duckduckgo-search","import": "duckduckgo_search", "spec": "duckduckgo-search>=8.0.0", "extra": None, "baseline": True},
     {"name": "beautifulsoup4","import": "bs4",               "spec": "beautifulsoup4>=4.12.0", "extra": None,         "baseline": True},
     {"name": "pytesseract",   "import": "pytesseract",      "spec": "pytesseract>=0.3.10",    "extra": None,         "baseline": True},

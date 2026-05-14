@@ -80,8 +80,8 @@ dependencies = [
     "pyahocorasick>=2.3.1,<2.4.0",
     "xxhash>=3.6.0,<4.0.0",
     "lmdb>=2.2.0,<3.0.0",
-    # Fallback browser (nodriver — camoufox is primary, see browser extra)
-    "nodriver>=0.1.0",
+    # Fallback browser (nodriver — camoufox is primary)
+    # MOVED_TO_BROWSER_EXTRA_BY_F214AD: "nodriver>=0.1.0",
     "coremltools==8.2",
     "pyobjc-framework-coreml>=12.1",
     "flashrank>=0.2.10",
@@ -166,6 +166,7 @@ rerank = [
 # --- browser: full JS rendering with browser binary ---
 browser = [
     "camoufox[geoip]>=0.4.0",  # JA3 fingerprint + bundled browser binary
+    "nodriver>=0.1.0",        # fallback CDP browser (lazy import, fail-soft)
 ]
 
 # --- webkit: macOS WKWebView JS renderer (lightweight, no Chrome/Chromium) ---

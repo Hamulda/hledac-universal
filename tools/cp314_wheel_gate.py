@@ -77,8 +77,8 @@ WHEEL_REPORT_PACKAGES: List[Dict[str, str]] = [
     {"name": "duckdb", "spec": "duckdb>=1.2.0", "extra": "default"},
     {"name": "msgspec", "spec": "msgspec>=0.21.1,<0.22.0", "extra": "default"},
     {"name": "orjson", "spec": "orjson>=3.9.0", "extra": "default"},
-    # MOVED_TO_OPTIONAL_BROWSER_BY_CP314_CLEANUP: camoufox[geoip] — see browser extra
-    {"name": "nodriver", "spec": "nodriver>=0.1.0", "extra": "default"},
+    # MOVED_TO_BROWSER_EXTRA_BY_F214AD: nodriver (was extra="default")
+    {"name": "nodriver", "spec": "nodriver>=0.1.0", "extra": "browser"},
     {"name": "duckduckgo-search", "spec": "duckduckgo-search>=8.0.0", "extra": "default"},
     {"name": "beautifulsoup4", "spec": "beautifulsoup4>=4.12.0", "extra": "default"},
     {"name": "pytesseract", "spec": "pytesseract>=0.3.10", "extra": "default"},
