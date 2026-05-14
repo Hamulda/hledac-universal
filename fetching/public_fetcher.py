@@ -186,6 +186,10 @@ class TransportCounters:
         "fallback_count",
         "curl_cffi_fallback_to_aiohttp_count",
         "httpx_h2_fallback_to_aiohttp_count",
+        # F214Z: Static hydration telemetry (bounded, M1-safe)
+        "static_hydration_attempted",
+        "static_hydration_sufficient",
+        "static_hydration_insufficient",
     )
 
     def __init__(
@@ -199,6 +203,9 @@ class TransportCounters:
         fallback_count: int = 0,
         curl_cffi_fallback_to_aiohttp_count: int = 0,
         httpx_h2_fallback_to_aiohttp_count: int = 0,
+        static_hydration_attempted: int = 0,
+        static_hydration_sufficient: int = 0,
+        static_hydration_insufficient: int = 0,
     ) -> None:
         self.aiohttp_count = min(aiohttp_count, _MAX_COUNT)
         self.httpx_h2_count = min(httpx_h2_count, _MAX_COUNT)
@@ -209,6 +216,9 @@ class TransportCounters:
         self.fallback_count = min(fallback_count, _MAX_COUNT)
         self.curl_cffi_fallback_to_aiohttp_count = min(curl_cffi_fallback_to_aiohttp_count, _MAX_COUNT)
         self.httpx_h2_fallback_to_aiohttp_count = min(httpx_h2_fallback_to_aiohttp_count, _MAX_COUNT)
+        self.static_hydration_attempted = min(static_hydration_attempted, _MAX_COUNT)
+        self.static_hydration_sufficient = min(static_hydration_sufficient, _MAX_COUNT)
+        self.static_hydration_insufficient = min(static_hydration_insufficient, _MAX_COUNT)
 
 
 class FetchResult(msgspec.Struct, frozen=True, gc=False):
@@ -252,6 +262,9 @@ class FetchResult(msgspec.Struct, frozen=True, gc=False):
     transport_counters: "TransportCounters | None" = None
     # Added in F207F — PUBLIC Yield: why JS renderer was skipped
     js_renderer_skipped_reason: str | None = None  # xml_or_feed_url | xml_recovered | browser_unavailable
+    # Added in F214Z — Static Hydration Telemetry
+    hydration_score: float | None = None  # 0.0–1.0, set when static hydration was attempted
+    hydration_sources: tuple[str, ...] = ()  # e.g. ("next_data", "json_ld")
 
 
 # ---------------------------------------------------------------------------
@@ -1895,13 +1908,17 @@ async def async_fetch_public_text(
                             from hledac.universal.utils.hydration_extractor import extract_static_hydration as _extract_static_hydration
 
                             hydration = _extract_static_hydration(text)
+                            # F214Z: Update hydration counters
+                            _tc.static_hydration_attempted += 1
                             if hydration.sufficient:
+                                _tc.static_hydration_sufficient += 1
                                 # Use static result — skip JS renderer entirely
                                 logger.info(
                                     f"Static hydration sufficient for {url}: reason={hydration.reason}"
                                 )
                                 skip_js_reason = f"static_hydration_sufficient:{hydration.reason}"
                             elif hydration.found:
+                                _tc.static_hydration_insufficient += 1
                                 # Hydration found but not sufficient — proceed to JS rendering
                                 logger.debug(
                                     f"Static hydration found but insufficient for {url}: {hydration.reason}"
@@ -1937,6 +1954,8 @@ async def async_fetch_public_text(
                                     transport_fallback_reason=_fallback_info,
                                     transport_counters=_tc,
                                     js_renderer_skipped_reason=skip_js_reason,
+                                    hydration_score=hydration.hydration_score,
+                                    hydration_sources=hydration.sources,
                                 )
 
                             # Fall through to JS renderer (was already the else case below)
