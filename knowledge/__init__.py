@@ -9,18 +9,74 @@ Obsahuje:
 - PersistentKnowledgeLayer: KuzuDB + Model2Vec for semantic search
 - GraphRAGOrchestrator: Multi-hop reasoning over knowledge graph
 - KnowledgeGraphBuilder: Regex-based fact extraction
+
+Lazy facade — heavy modules (duckdb, numpy, mlx, aiohttp, igraph, psutil)
+are NOT imported at module load time. Access any export and the actual
+module is loaded on demand. This dramatically reduces `import knowledge`
+first-access cost.
 """
 
-from .graph_layer import KnowledgeGraphLayer
-from .context_graph import ContextGraph
-from .rag_engine import RAGEngine, RAGConfig, Document, RetrievedChunk, BM25Index, HNSWVectorIndex
+from importlib import import_module
+from typing import Any
+
+# Maps public export name → module path (used by __getattr__)
+_LAZY_EXPORT_MAP: dict[str, str] = {
+    # duckdb_store — heavy: duckdb, psutil, msgspec
+    "DuckDBShadowStore": "knowledge.duckdb_store",
+    "ActivationResult": "knowledge.duckdb_store",
+    "ReplayResult": "knowledge.duckdb_store",
+    "CanonicalFinding": "knowledge.duckdb_store",
+    "create_owned_store": "knowledge.duckdb_store",
+    # context_graph — lightweight (no heavy deps), kept eager
+    "ContextGraph": "knowledge.context_graph",
+    # graph_layer — heavy: kuzu, duckdb
+    "KnowledgeGraphLayer": "knowledge.graph_layer",
+    # rag_engine — heavy: numpy (3x), hledac.universal.core.mlx_embeddings, duckdb
+    "RAGEngine": "knowledge.rag_engine",
+    "RAGConfig": "knowledge.rag_engine",
+    "Document": "knowledge.rag_engine",
+    "RetrievedChunk": "knowledge.rag_engine",
+    "BM25Index": "knowledge.rag_engine",
+    "HNSWVectorIndex": "knowledge.rag_engine",
+    # graph_rag — heavy: numpy (2x), hledac.universal.core.mlx_embeddings, duckdb
+    "GraphRAGOrchestrator": "knowledge.graph_rag",
+    "CentralityScores": "knowledge.graph_rag",
+    "Community": "knowledge.graph_rag",
+    "GraphContradiction": "knowledge.graph_rag",
+    # graph_builder — lightweight (no heavy deps), kept eager
+    "KnowledgeGraphBuilder": "knowledge.graph_builder",
+    # entity_linker — heavy: aiohttp
+    "EntityLinker": "knowledge.entity_linker",
+    "EntityCandidate": "knowledge.entity_linker",
+    "LinkedEntity": "knowledge.entity_linker",
+    "SimpleCache": "knowledge.entity_linker",
+    "link_entities": "knowledge.entity_linker",
+    "resolve_entity": "knowledge.entity_linker",
+    "get_linker": "knowledge.entity_linker",
+}
+
+# Legacy compat — same names used by _LazyLegacyCompatModule
+_LEGACY_NAMES: frozenset[str] = frozenset(
+    (
+        "AtomicJSONKnowledgeGraph",
+        "KnowledgeEntry",
+        "get_atomic_storage",
+        "PersistentKnowledgeLayer",
+        "KnowledgeNode",
+        "KnowledgeEdge",
+        "NodeType",
+        "EdgeType",
+        "KuzuDBBackend",
+        "JSONBackend",
+    )
+)
+
+import warnings as _warnings
 
 # Sprint 8VC: atomic_storage and persistent_layer moved to legacy/
 # Legacy imports are LAZY (deferred) to prevent import-time coupling.
 # They are accessible ONLY via _lazy_legacycompat() to enforce boundary quarantine.
 # Canonical sprint consumers should use knowledge.duckdb_store instead.
-
-import warnings as _warnings
 
 
 def _lazy_legacycompat():
@@ -66,18 +122,13 @@ def _lazy_legacycompat():
 
 
 class _LegacyCompatModule:
-    """Lazy wrapper that defers legacy imports until first attribute access.
-
-    This prevents the legacy world from being loaded when sprint path modules
-    import from knowledge/, while still allowing explicit backward-compatible
-    consumers to access legacy types via attribute access.
-    """
+    """Lazy wrapper that defers legacy imports until first attribute access."""
 
     __slots__ = ("_loaded", "_cache")
 
     def __init__(self):
         self._loaded = False
-        self._cache = {}
+        self._cache: dict[str, Any] = {}
 
     def _ensure_loaded(self):
         if not self._loaded:
@@ -98,7 +149,7 @@ class _LegacyCompatModule:
             ))
             self._loaded = True
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         self._ensure_loaded()
         try:
             return self._cache[name]
@@ -111,78 +162,18 @@ class _LegacyCompatModule:
 
 
 _legacy_compat = _LegacyCompatModule()
-from .graph_rag import (
-    GraphRAGOrchestrator,
-    CentralityScores,
-    Community,
-    GraphContradiction,
-)
-from .graph_builder import KnowledgeGraphBuilder
-from .entity_linker import (
-    EntityLinker,
-    EntityCandidate,
-    LinkedEntity,
-    SimpleCache,
-    link_entities,
-    resolve_entity,
-    get_linker,
-)
 
-# Canonical exports — no legacy coupling at import time
-__all__ = [
-    "KnowledgeGraphLayer",
-    "ContextGraph",
-    "RAGEngine",
-    "RAGConfig",
-    "Document",
-    "RetrievedChunk",
-    "BM25Index",
-    "HNSWVectorIndex",
-    "GraphRAGOrchestrator",
-    "KnowledgeGraphBuilder",
-    "EntityLinker",
-    "EntityCandidate",
-    "LinkedEntity",
-    "SimpleCache",
-    "link_entities",
-    "resolve_entity",
-    "get_linker",
-    "CentralityScores",
-    "Community",
-    "GraphContradiction",
-    # Legacy compat — accessed via __getattr__ lazy loading
-    "AtomicJSONKnowledgeGraph",
-    "KnowledgeEntry",
-    "get_atomic_storage",
-    "PersistentKnowledgeLayer",
-    "KnowledgeNode",
-    "KnowledgeEdge",
-    "NodeType",
-    "EdgeType",
-    "KuzuDBBackend",
-    "JSONBackend",
-]
+# Canonical exports — no heavy modules loaded at import time
+__all__ = sorted(_LAZY_EXPORT_MAP.keys()) + sorted(_LEGACY_NAMES)
 
 
-# Module-level __getattr__ for lazy legacy re-exports (PEP 562)
-# Only triggered for explicit attribute access, not for module-level code.
-_LEGACY_NAMES = frozenset(
-    (
-        "AtomicJSONKnowledgeGraph",
-        "KnowledgeEntry",
-        "get_atomic_storage",
-        "PersistentKnowledgeLayer",
-        "KnowledgeNode",
-        "KnowledgeEdge",
-        "NodeType",
-        "EdgeType",
-        "KuzuDBBackend",
-        "JSONBackend",
-    )
-)
-
-
-def __getattr__(name):
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORT_MAP:
+        module_path = _LAZY_EXPORT_MAP[name]
+        module = import_module(module_path)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
     if name in _LEGACY_NAMES:
         return _legacy_compat.__getattr__(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

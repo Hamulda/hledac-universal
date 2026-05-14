@@ -738,6 +738,48 @@ def reset_ner_engine() -> None:
         _default_engine = None
 
 
+def get_ner_backend() -> str:
+    """
+    Return the active NER/RE backend name.
+
+    Returns:
+        "gliner-relex" when model loaded,
+        "nltagger" when ANE available,
+        "coreml" when CoreML model loaded,
+        "unavailable" when no backend available.
+    """
+    engine = _default_engine
+    if engine is None:
+        return "unavailable"
+    if engine._model is not None:
+        return "gliner-relex"
+    if engine._coreml_ner_model is not None:
+        return "coreml"
+    if engine._nl_available:
+        return "nltagger"
+    return "unavailable"
+
+
+def get_extraction_status() -> dict:
+    """
+    Return diagnostic snapshot of extraction subsystem health.
+
+    Returns:
+        dict with keys: ner_backend, ner_loaded, pii_backend,
+                        coreml_ner_inactive, nltagger_inactive,
+                        relex_model, config_model
+    """
+    return {
+        "ner_backend": get_ner_backend(),
+        "ner_loaded": _default_engine._model is not None if _default_engine else False,
+        "pii_backend": "regex",
+        "coreml_ner_inactive": True,
+        "nltagger_inactive": not (_default_engine._nl_available if _default_engine else False),
+        "relex_model": "knowledgator/gliner-relex-large-v0.5",
+        "config_model": "knowledgator/gliner-x-base",
+    }
+
+
 # ============================================================================
 # Sprint 8VF + 8VG: IOC Extraction — kanonické místo pro NER/IOC
 # ============================================================================
@@ -1622,6 +1664,8 @@ __all__ = [
     "NEREngine",
     "get_ner_engine",
     "reset_ner_engine",
+    "get_ner_backend",
+    "get_extraction_status",
     # F150I bounded entity seams
     "extract_entities_from_texts",
     "extract_entities_from_findings",

@@ -631,8 +631,24 @@ async def test_public_fetcher_wkwebview_canonical_wiring(monkeypatch):
             mock_nodriver.assert_not_called()
 
         finally:
+            # CRITICAL: Also close the session_runtime clearnet session that
+            # async_fetch_public_text created (via async_get_aiohttp_session).
+            # close_public_fetcher_sessions_async() only closes Tor/I2P sessions,
+            # NOT the clearnet session. If we don't close it here, it remains
+            # in a dangling state with a closed event loop, causing test 15
+            # to fail with "Event loop is closed" when it tries to make a request.
+            try:
+                from hledac.universal.network import session_runtime
+                await session_runtime.close_aiohttp_session_async()
+            except Exception:
+                pass
+
+            # Yield to event loop so session close tasks drain before cleanup.
+            await asyncio.sleep(0)
             if runner:
                 await runner.cleanup()
+            # Reset capability cache so next test gets a clean probe state.
+            renderer_module._WEBKIT_CAPABILITY_CACHE = None
 
 
 # --------------------------------------------------------------------------
@@ -649,12 +665,26 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
     # Mock at the source module (rendering.macos_webkit_renderer) — the import
     # inside public_fetcher does: from ...macos_webkit_renderer import fetch_with_macos_webkit
     # so patching at the source intercepts the binding that public_fetcher uses.
-    import hledac.universal.rendering.macos_webkit_renderer as renderer_module
+    import hledac.universal.rendering.macos_webkit_renderer as renderer
 
     from hledac.universal.rendering.macos_webkit_renderer import (
         WebKitRenderResult,
         MACOS_WEBKIT_REASONS,
     )
+
+    # Mock is_macos_webkit_available at the renderer module so the inline import
+    # inside public_fetcher gets our mocked version. We also patch
+    # _probe_worker_capability to prevent any real subprocess spawning during
+    # the capability check (which could fail if cache is None and we're not on darwin).
+    original_is_available = renderer.is_macos_webkit_available
+    original_probe = renderer._probe_worker_capability
+
+    def _fake_available():
+        return (True, MACOS_WEBKIT_REASONS.SUCCESS)
+
+    renderer.is_macos_webkit_available = _fake_available
+    renderer._probe_worker_capability = lambda: (True, MACOS_WEBKIT_REASONS.SUCCESS)
+    renderer._WEBKIT_CAPABILITY_CACHE = (True, MACOS_WEBKIT_REASONS.SUCCESS)
 
     fake_html = "<html><body>rendered by js</body></html>"
 
@@ -672,11 +702,22 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
     mock_nodriver = AsyncMock(return_value="")
 
     with (
-        mock.patch.object(renderer_module, "fetch_with_macos_webkit", mock_fetch),
+        mock.patch.object(renderer, "fetch_with_macos_webkit", mock_fetch),
         mock.patch.object(public_fetcher, "_fetch_with_camoufox", mock_camoufox),
         mock.patch.object(public_fetcher, "_fetch_with_nodriver", mock_nodriver),
     ):
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
+        # Close any lingering public fetcher sessions from prior tests.
+        # Prior tests may have left open aiohttp sessions in a bad state,
+        # causing "Event loop is closed" errors when this test tries to
+        # create its own aiohttp session.
+        try:
+            await public_fetcher.close_public_fetcher_sessions_async()
+        except Exception:
+            pass
+        # Give the event loop a tick to drain the close tasks.
+        await asyncio.sleep(0)
 
         html_content = (
             "<html><head><title>Test</title></head>"
@@ -712,6 +753,18 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
             mock_nodriver.assert_not_called()
 
         finally:
+            # Restore originals to avoid polluting module state for subsequent tests.
+            renderer.is_macos_webkit_available = original_is_available
+            renderer._probe_worker_capability = original_probe
+            renderer._WEBKIT_CAPABILITY_CACHE = None
+            # Close the session_runtime clearnet session that async_fetch_public_text
+            # created — this is what causes "Event loop is closed" in subsequent tests.
+            try:
+                from hledac.universal.network import session_runtime
+                await session_runtime.close_aiohttp_session_async()
+            except Exception:
+                pass
+            await asyncio.sleep(0)
             if runner:
                 await runner.cleanup()
 
@@ -769,8 +822,10 @@ async def test_public_fetcher_wkwebview_unavailable_fallback_soft(monkeypatch):
     monkeypatch.setenv("HLEDAC_ENABLE_HEAVY_BROWSER", "0")
     monkeypatch.setenv("HLEDAC_ENABLE_NODRIVER", "0")
 
+    from hledac.universal.fetching import public_fetcher as pf
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
     import hledac.universal.rendering.macos_webkit_renderer as renderer
+    from hledac.universal.network import session_runtime
 
     # Mock WKWebView unavailable
     original_is_available = renderer.is_macos_webkit_available
@@ -781,9 +836,41 @@ async def test_public_fetcher_wkwebview_unavailable_fallback_soft(monkeypatch):
 
     monkeypatch.setattr(renderer, "is_macos_webkit_available", _fake_unavailable)
 
-    # Use a real URL but heavy browser disabled — result should fail gracefully
-    # with a clean FetchResult (error set, no traceback)
+    # Mock the JS renderer capability dict so _all_js_renderers_unavailable()
+    # returns True — forcing the fallback path where all JS renderers are unavailable.
+    # Also mock the aiohttp session to return an error since we don't want to
+    # make real network calls in this test.
+    original_js_cap = pf._js_renderer_capability.copy()
+
+    async def _fake_session():
+        class _FakeResp:
+            ok = False
+            status = 0
+            headers = {}
+            async def text(self):
+                return ""
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                pass
+        class _FakeSession:
+            async def request(self, method, url, **kwargs):
+                return _FakeResp()
+            async def close(self):
+                pass
+        return _FakeSession()
+
     try:
+        # Force all JS renderers unavailable and mock session to error.
+        # Patch async_get_aiohttp_session at the public_fetcher import site
+        # so the fetch call uses our fake instead of making a real network call.
+        pf._js_renderer_capability = {
+            "camoufox": "heavy_browser_disabled",
+            "nodriver": "heavy_browser_disabled",
+            "playwright": "heavy_browser_disabled",
+        }
+        monkeypatch.setattr(pf, "async_get_aiohttp_session", _fake_session)
+
         result = await async_fetch_public_text("https://example.com", timeout_s=5)
         # Should not raise — must return FetchResult with error
         assert hasattr(result, "error"), "Result must be a FetchResult with .error"
@@ -794,3 +881,4 @@ async def test_public_fetcher_wkwebview_unavailable_fallback_soft(monkeypatch):
     finally:
         monkeypatch.setattr(renderer, "is_macos_webkit_available", original_is_available)
         renderer._WEBKIT_CAPABILITY_CACHE = None
+        pf._js_renderer_capability = original_js_cap

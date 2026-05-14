@@ -299,9 +299,18 @@ OSINT_JSON_SCHEMA: str = _json.dumps({
 
 
 # Sprint 8VF: flashrank singleton — loaded once, reused across sprint cycles
+# NOTE: This is a COMPATIBILITY WRAPPER for the synthesis rerank path.
+# Canonical reranker owner is tools/reranker.py (LightweightReranker).
+# This instance exists for historical reasons and serves the synthesis context.
 _FLASHRANK_RANKER = None
 
 def _get_flashrank_ranker():
+    """Get FlashRank reranker for synthesis path.
+
+    Canonical owner: tools/reranker.py
+    This is a compatibility wrapper serving the synthesis context only.
+    Uses ms-marco-MiniLM-L-12-v2 model (same as canonical).
+    """
     global _FLASHRANK_RANKER
     if _FLASHRANK_RANKER is None:
         from flashrank import Ranker

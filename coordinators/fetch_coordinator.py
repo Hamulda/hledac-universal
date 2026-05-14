@@ -61,7 +61,20 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from .base import UniversalCoordinator
-from ..tools.url_dedup import RotatingBloomFilter, create_rotating_bloom_filter
+from ..tools.url_dedup import RotatingBloomFilterAdapter
+
+
+def _create_dedup_strategy():
+    # type: () -> RotatingBloomFilterAdapter
+    """Create the dedup strategy used by FetchCoordinator.
+
+    Sprint F214AD: Factory shields callers from concrete RotatingBloomFilter type.
+    Swap this function to use a different DeduplicationStrategy implementation.
+    """
+    from ..tools.url_dedup import create_rotating_bloom_filter
+    return RotatingBloomFilterAdapter(create_rotating_bloom_filter())
+
+
 from ..utils.async_helpers import async_getaddrinfo
 
 # Sprint 8C1: Flow trace
@@ -433,7 +446,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         # State
         self._frontier: deque = deque(maxlen=1000)
-        self._processed_urls = create_rotating_bloom_filter()
+        self._processed_urls = _create_dedup_strategy()
         self._evidence_ids: deque = deque(maxlen=500)
         self._urls_fetched_count: int = 0
         self._stop_reason: Optional[str] = None
@@ -1607,7 +1620,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         self._frontier.clear()
         # Recreate bloom filter instead of clear() (not available in RotatingBloomFilter)
-        self._processed_urls = create_rotating_bloom_filter()
+        self._processed_urls = _create_dedup_strategy()
 
         # Sprint F3/F8/F9: persist local corpus manifest at windup
         if self._corpus_ingester is not None:

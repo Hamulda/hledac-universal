@@ -1433,7 +1433,7 @@ class SprintScheduler:
         self._pivot_planner: Any = None
         self._planned_pivots: list = []  # Last planned pivots for diagnostics
         # Sprint F204A: Canonical sidecar bus for all accepted-finding sidecars
-        self._sidecar_bus: Any = None
+        # (moved to SidecarOrchestrator — sprint_scheduler no longer directly owns a bus instance)
         # Sprint F204D: Target memory service for cross-sprint target state
         self._target_memory_service: Optional[TargetMemoryService] = None
         # Sprint F204E: Analyst workbench for sprint brief generation
@@ -1777,14 +1777,12 @@ class SprintScheduler:
             log.warning("failed to initialize M1 resource governor: %s", _exc)
             self._governor = None
 
-        # Sprint F204A: Initialize canonical sidecar bus (bounded orchestrator for all accepted-finding sidecars)
-        self._sidecar_bus = create_sidecar_bus(governor=self._governor)
-
-        # Sprint F205F: Extracted sidecar dispatch bookkeeping
-        self._sidecar_dispatcher = SidecarDispatcher(
-            bus=self._sidecar_bus,
-            governor=self._governor,
+        # Sprint F205F: Sidecar orchestration delegated to SidecarOrchestrator
+        # FindingSidecarBus is created inside SidecarOrchestrator.__init__
+        from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
+        self._sidecar_orchestrator = SidecarOrchestrator(
             result_sink=self._result,
+            governor=self._governor,
         )
 
         # Sprint F193A: CT log client can be injected at run() call time
@@ -5774,12 +5772,11 @@ class SprintScheduler:
         query: str,
     ) -> None:
         """
-        F205C/F205F: Route accepted findings from any branch through FindingSidecarBus.
+        F205C/F205F: Route accepted findings from any branch through SidecarOrchestrator.
 
-        Delegates to SidecarDispatcher (F205F extracted bookkeeping). All
-        batch construction, empty guards, skipped heavy sidecar tracking,
-        CancelledError propagation, and fail-soft handling live in the
-        dispatcher.
+        SidecarOrchestrator dispatches to FindingSidecarBus + individual sidecar runners.
+        All batch construction, empty guards, skipped heavy sidecar tracking,
+        CancelledError propagation, and fail-soft handling live in the dispatcher.
 
         Args:
             source_branch: "feed" | "public" | "ct"
@@ -5787,10 +5784,10 @@ class SprintScheduler:
             store: DuckDBShadowStore instance
             query: Original sprint query
         """
-        if self._sidecar_dispatcher is None:
+        if self._sidecar_orchestrator is None:
             return
         # CancelledError re-raised by dispatcher; all other exceptions fail-soft
-        await self._sidecar_dispatcher.dispatch(
+        await self._sidecar_orchestrator.dispatch_findings(
             source_branch=source_branch,
             findings=findings,
             store=store,
@@ -11805,10 +11802,9 @@ class SprintScheduler:
             pass
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
         self._governor = None  # Will be re-initialized on next run()
-        # Sprint F205F: Reset sidecar dispatcher tracking
-        # F206S: hasattr guard needed — _sidecar_dispatcher is set in run() after _reset_result() is called
-        if hasattr(self, "_sidecar_dispatcher") and self._sidecar_dispatcher is not None:
-            self._sidecar_dispatcher.reset()
+        # Sprint F205F: Reset sidecar orchestrator tracking
+        if hasattr(self, "_sidecar_orchestrator") and self._sidecar_orchestrator is not None:
+            self._sidecar_orchestrator.reset()
         # Sprint F204J: Mission budget tracking
         # F205F: sidecars_skipped written by SidecarDispatcher via result_sink.
         # Fallback if dispatcher was never called.

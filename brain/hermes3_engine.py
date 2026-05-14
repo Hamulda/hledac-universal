@@ -75,9 +75,10 @@ logger = logging.getLogger(__name__)
 
 # Sprint 81: MLX memory management
 try:
-    from ..utils.mlx_utils import mlx_managed, get_mlx_memory_stats, reset_metal_peak
+    from .adaptive_context_policy import decide_context_budget, apply_context_budget
 except ImportError:
-    mlx_managed = None  # Fallback - decorator not available
+    decide_context_budget = None  # type: ignore
+    apply_context_budget = None  # type: ignore
 
 
 # F219B: Safe MLX eval + clear cache helper
@@ -1134,6 +1135,40 @@ class Hermes3Engine:
         try:
             temp = temperature or self.config.temperature
             max_tok = max_tokens or self.config.max_tokens
+
+            # F219A: Adaptive context preflight — estimate and truncate based on memory
+            # Uses raw prompt (before sanitization) since truncation is a memory preflight,
+            # not a security measure. If truncation is applied, the result becomes the
+            # sanitized_prompt for the rest of the pipeline.
+            if decide_context_budget is not None and apply_context_budget is not None:
+                decision = decide_context_budget(
+                    prompt,
+                    requested_context_window=self.context_window,
+                )
+                if decision.mode == "reject":
+                    # Memory critical — record and fail soft
+                    logger.warning(
+                        f"[CONTEXT] memory_admission_blocked: {decision.reason}"
+                    )
+                    if record_model_failure is not None:
+                        record_model_failure(
+                            "hermes",
+                            failure_kind="memory_admission_blocked",
+                        )
+                    raise RuntimeError(
+                        f"hermes context preflight rejected: {decision.reason}"
+                    )
+                if decision.truncated:
+                    prompt = apply_context_budget(prompt, decision)
+                    logger.debug(
+                        f"[CONTEXT] truncated {decision.original_chars}"
+                        f"→{decision.final_chars} chars, mode={decision.mode}"
+                    )
+                    # Record telemetry
+                    self._telemetry_counters["adaptive_context_truncated"] = (
+                        self._telemetry_counters.get("adaptive_context_truncated", 0) + 1
+                    )
+                    self._telemetry_counters["adaptive_context_mode"] = decision.mode
 
             # SECURITY: Sanitize prompt before inference (sanitize first, then bound)
             # Priority: injected callback > fallback (failsafe)

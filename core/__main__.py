@@ -41,6 +41,7 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
 import uuid
@@ -1890,6 +1891,30 @@ async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
         await store.close()
 
 
+# P1E-A: Cooperative signal shutdown
+_signal_shutdown_received = False
+
+def _install_signal_handler() -> None:
+    """Install SIGINT/SIGTERM handlers. Fail-soft on platforms without signal."""
+    global _signal_shutdown_received
+    try:
+        def _handler(signum: int, frame: Any) -> None:
+            global _signal_shutdown_received
+            sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+            logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
+            _signal_shutdown_received = True
+            try:
+                loop = asyncio.get_running_loop()
+                loop.stop()
+            except Exception:
+                pass
+        signal.signal(signal.SIGINT, _handler)
+        signal.signal(signal.SIGTERM, _handler)
+        logging.info("[SIGNAL] SIGINT/SIGTERM handlers installed")
+    except (ImportError, AttributeError, OSError, TypeError) as e:
+        logging.warning(f"[SIGNAL] Signal handlers not available: {e}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hledac Sprint 8RA Runner")
     parser.add_argument("--sprint", action="store_true", help="Run in sprint mode")
@@ -1950,10 +1975,19 @@ def main() -> None:
     # F216B: Set acquisition profile env var so build_acquisition_plan picks it up
     os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
 
+    # P1E-A: Install signal handlers before asyncio.run() creates the event loop
+    _install_signal_handler()
+
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
-        asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile))
+        try:
+            asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile))
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Signal handler initiated cooperative teardown via loop.stop()
+            # asyncio.CancelledError: loop.stop() from signal handler
+            # KeyboardInterrupt: fallback for direct SIGINT
+            pass
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:

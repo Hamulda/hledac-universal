@@ -1019,12 +1019,12 @@ def get_embedding_backend() -> str:
     F218A: Return which embedding backend is currently active.
 
     Inspects the EmbeddingRouter state to determine the active path:
-      - "ane"        — ANEEmbedder (CoreML MiniLM-L6-v2)
-      - "mlx"        — MLX ModernBERT (ModernBERTEmbedder via mlx-embeddings)
-      - "mlx_manager" — MLXEmbeddingManager fallback
-      - "hash_fallback" — deterministic hash fallback (zero RAM)
-      - "not_loaded" — router initialized but no model loaded yet
-      - "unknown"    — cannot determine (error state)
+      - "ane"           — ANEEmbedder (CoreML MiniLM-L6-v2)
+      - "mlx"           — MLX ModernBERT (ModernBERTEmbedder via mlx-embeddings)
+      - "mlx_manager"   — MLXEmbeddingManager fallback (when ModernBERT unavailable)
+      - "zero_fallback" — fail-open zero-array fallback (model load failed)
+      - "not_loaded"    — router initialized but no model loaded yet
+      - "unknown"       — cannot determine (error state)
 
     This is a read-only diagnostic — does not trigger model loading.
     """
@@ -1052,10 +1052,11 @@ def get_embedding_backend() -> str:
         if not router._initialized:
             return "not_loaded"
 
-        # Check what fallback path EmbeddingRouter would use
-        # If ANE not available, router uses ModernBERT; if that fails, MLXEmbeddingManager
+        # If ANE not available, ModernBERT would be loaded next; report that intent
         if not router._ane_available:
-            return "mlx"  # Would fall through to ModernBERT path
+            # ANE unavailable — router would fall through to ModernBERT path
+            # but nothing is loaded yet, so report not_loaded (not mlx)
+            return "not_loaded"
 
         return "not_loaded"
 

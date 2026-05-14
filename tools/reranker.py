@@ -314,17 +314,51 @@ class RerankerConfig:
 def create_reranker(config: Optional[RerankerConfig] = None) -> LightweightReranker:
     """
     Convenience function to create reranker.
-    
+
     Args:
         config: Optional reranker configuration
-        
+
     Returns:
         Initialized LightweightReranker instance
     """
     if config is None:
         config = RerankerConfig()
-    
+
     return RerankerFactory.create_lightweight_reranker(
         model_name=config.model_name,
         cache_dir=config.cache_dir
     )
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic helpers
+# ---------------------------------------------------------------------------
+
+def get_reranker_backend() -> str:
+    """Return the current reranker backend/model name.
+
+    This is a read-only diagnostic - does not load or initialize anything.
+    """
+    return "FlashRank / ms-marco-MiniLM-L-12-v2"
+
+
+def get_reranker_status() -> dict:
+    """Return reranker status diagnostics.
+
+    Read-only diagnostic - does not load any models.
+
+    Returns:
+        dict with backend, model, and status info
+    """
+    return {
+        "backend": "FlashRank",
+        "model": "ms-marco-MiniLM-L-12-v2",
+        "model_size_mb": 4,
+        "canonical_owner": "tools/reranker.py",
+        "future_candidates": {
+            "bge_reranker": "BAAI/bge-reranker-v2-m3 (DEFERRED)",
+            "jina_reranker": "jinaai/jina-reranker-v2-base (DEFERRED)",
+            "mem_reranker": "MemGPT/MemReranker-0.6B (DEFERRED)"
+        },
+        "note": "bge/jina/MemReranker require benchmark evidence before activation"
+    }

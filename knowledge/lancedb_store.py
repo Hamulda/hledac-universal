@@ -1001,7 +1001,12 @@ class LanceDBIdentityStore:
             return None
 
     async def _get_flashrank_ranker(self):
-        """Lazy load FlashRank."""
+        """Lazy load FlashRank for retrieval path.
+
+        Canonical owner: tools/reranker.py
+        This is a compatibility wrapper serving the retrieval context only.
+        Uses ms-marco-MiniLM-L-12-v2 model (same as canonical).
+        """
         if self._flashrank_loaded:
             return self._flashrank_ranker
         try:

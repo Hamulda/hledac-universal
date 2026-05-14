@@ -91,7 +91,31 @@ try:
 except ImportError:
     pass
 
-__all__ = ["DuckDBShadowStore", "ActivationResult", "ReplayResult", "CanonicalFinding"]
+__all__ = [
+    "DuckDBShadowStore",
+    "ActivationResult",
+    "ReplayResult",
+    "CanonicalFinding",
+    "FindingQualityDecision",
+    "QualityRejectionRecord",  # backward compat — real def moved to quality_assessment
+]
+
+# Import QualityRejectionRecord from quality_assessment (moved in Sprint F216G refactor)
+from .quality_assessment import (
+    QualityRejectionRecord,
+    QualityAssessmentState,
+    QualityAssessor,
+    _QUALITY_ENTROPY_THRESHOLD,
+    _QUALITY_MIN_ENTROPY_LEN,
+    _normalize_for_quality,
+    _compute_entropy,
+    _normalize_osint_url,
+    _compute_dedup_fingerprint,
+    _compute_url_fingerprint,
+)
+
+# Also import DEDUP_HOT_CACHE_MAX since it's used in get_dedup_runtime_status
+from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX
 
 
 class ActivationResult(TypedDict):
@@ -199,28 +223,7 @@ class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     duplicate: bool
 
 
-# Sprint F216G: Quality Rejection Ledger
-@dataclass(frozen=True, slots=True)
-class QualityRejectionRecord:
-    """
-    Sprint F216G: Bounded per-finding quality gate rejection record.
-
-    Records individual quality gate rejections for CanonicalFinding ingest,
-    grouped by source_family and reason. Used to diagnose accepted=0
-    without changing quality/dedup/storage behavior.
-
-    Fields:
-        source_family: source_type of the finding (e.g., "ct", "public", "wayback")
-        reason:         FindingQualityDecision.reason (e.g., "low_entropy_rejected",
-                       "persistent_duplicate", "semantic_duplicate")
-        finding_id:     Bounded sample: first 40 chars of finding_id
-        url_sample:      Bounded sample: provenance URL if available, else query (max 200 chars)
-    """
-
-    source_family: str
-    reason: str
-    finding_id: str
-    url_sample: str
+# Sprint F216G: QualityRejectionRecord moved to quality_assessment.py
 
 
 # ---------------------------------------------------------------------------
@@ -249,159 +252,7 @@ def _check_graph_capability(graph: Any, slot_name: str) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Quality helper constants and functions
-# ---------------------------------------------------------------------------
-
-# Sprint 8W: Configurable entropy threshold (bits per character)
-_QUALITY_ENTROPY_THRESHOLD: float = 0.5
-# Strings shorter than this skip entropy filtering
-_QUALITY_MIN_ENTROPY_LEN: int = 8
-
-
-def _normalize_for_quality(text: str) -> str:
-    """
-    Sprint 8W: Normalize text for entropy and dedup quality checks.
-
-    Normalization rules:
-      - lowercase
-      - strip leading/trailing whitespace
-      - collapse internal whitespace to single space (includes tabs/newlines)
-      - remove non-printable chars (ord < 32) that are NOT whitespace
-
-    Tabs and newlines (ord 9, 10) are whitespace and get collapsed to space first.
-    Other non-printable chars (BEL, NUL, etc.) are removed after whitespace normalization.
-
-    No stemming, lemmatization, transliteration, or locale-dependent logic.
-    """
-    # Lowercase first
-    lowered = text.lower()
-    # Strip leading/trailing whitespace
-    stripped = lowered.strip()
-    # Collapse ALL whitespace (space, tab, newline) to single space
-    normalized = " ".join(stripped.split())
-    # Remove non-printable chars (ord < 32) that are NOT whitespace
-    # Whitespace chars: tab(9), newline(10), vertical tab(11), form feed(12), carriage return(13)
-    import string
-    whitespace_chars = set(string.whitespace)  # includes space, \t, \n, \v, \f, \r
-    cleaned = "".join(ch for ch in normalized if ord(ch) >= 32 or ch in whitespace_chars)
-    return cleaned
-
-
-def _compute_entropy(text: str) -> float:
-    """
-    Sprint 8W: Compute Shannon entropy in bits per character.
-
-    Uses collections.Counter for efficiency (no Python for-loop over characters).
-    Returns 0.0 for empty text.
-    """
-    if not text:
-        return 0.0
-    char_counts = Counter(text)
-    total = len(text)
-    entropy = 0.0
-    for count in char_counts.values():
-        p = count / total
-        if p > 0:
-            import math as _math
-            entropy -= p * _math.log2(p)
-    return entropy
-
-
-def _normalize_osint_url(url: str) -> str:
-    """
-    Sprint 8AK: Normalize an OSINT URL for deterministic dedup fingerprinting.
-
-    Rules:
-      - lowercase scheme + host
-      - strip fragment (#...)
-      - strip trailing slash from non-root paths
-      - remove common tracking query params (utm_source, utm_medium, utm_campaign, ref, etc.)
-      - preserve query params that may affect content identity
-
-    Returns normalized URL string.
-    """
-    if not url or not isinstance(url, str):
-        return ""
-
-    try:
-        from urllib.parse import urlparse, urlencode, parse_qsl
-    except ImportError:
-        return url
-
-    # Strip leading/trailing whitespace
-    url = url.strip()
-
-    # Parse — lenient on malformed URLs
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return url
-
-    # 1. Lowercase scheme and host
-    scheme = parsed.scheme.lower() if parsed.scheme else "http"
-    netloc = parsed.netloc.lower()
-
-    # 2. Strip fragment
-    fragment = ""
-
-    # 3. Normalize path: strip trailing slash unless root "/"
-    path = parsed.path.rstrip("/") if len(parsed.path) > 1 else parsed.path
-
-    # 4. Filter tracking query params — Sprint 8AM spec only
-    # Sprint 8AM C.0: strip only these 7 params; preserve "source" param
-    TRACKING_QUERY_PARAMS = frozenset({
-        "utm_source", "utm_medium", "utm_campaign",
-        "utm_content", "utm_term",
-        "fbclid",
-        "ref",
-    })
-    try:
-        query_params = parse_qsl(parsed.query, keep_blank_values=True)
-        filtered = [(k, v) for k, v in query_params if k.lower() not in TRACKING_QUERY_PARAMS]
-        query = urlencode(filtered) if filtered else ""
-    except Exception:
-        query = parsed.query
-
-    # Reconstruct
-    # netloc may contain port
-    normalized = f"{scheme}://{netloc}{path}"
-    if query:
-        normalized += f"?{query}"
-    if fragment:
-        normalized += f"#{fragment}"
-
-    return normalized
-
-
-def _compute_dedup_fingerprint(text: str) -> str:
-    """
-    Sprint 8W: Compute BLAKE2b-128 fingerprint of normalized text.
-
-    Uses hashlib.blake2b (NOT Python built-in hash()).
-    digest_size=16 → 32 hex chars.
-    Stable across process restarts.
-    """
-    normalized = _normalize_for_quality(text)
-    return hashlib.blake2b(normalized.encode("utf-8"), digest_size=16).hexdigest()
-
-
-def _compute_url_fingerprint(url: str) -> str:
-    """
-    Sprint 8AK: URL-first dedup fingerprint.
-
-    If a canonical URL is available in provenance, use it as the primary
-    dedup signal (source-independent, deterministic). Falls back to
-    BLAKE2b(text) when no URL is present.
-
-    URL is normalized before fingerprinting per OSINT URL normalization rules.
-
-    Returns 32-char hex BLAKE2b-128 fingerprint.
-    """
-    normalized_url = _normalize_osint_url(url)
-    if normalized_url:
-        return hashlib.blake2b(normalized_url.encode("utf-8"), digest_size=16).hexdigest()
-    return ""
+# Quality helper constants and functions moved to quality_assessment.py
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +372,7 @@ def _validate_path_setting(value: Path, setting_name: str) -> str:
 
 # Sprint 8AG §6.17: Persistent dedup config
 _DEDUP_LMDB_MAP_SIZE: int = 64 * 1024 * 1024  # 64MB dedicated dedup LMDB
-_DEDUP_HOT_CACHE_MAX: int = 10_000  # hard cap on in-memory dedup cache entries
+# _DEDUP_HOT_CACHE_MAX moved to quality_assessment.py (Sprint F216G refactor)
 
 
 # ---------------------------------------------------------------------------
@@ -721,22 +572,12 @@ class DuckDBShadowStore:
         self._startup_ready: asyncio.Event = asyncio.Event()  # set after init + optional replay
         self._startup_replay_done: bool = False  # True once startup replay has run
 
-        # Sprint 8W: Quality gate counters (separate from storage counters)
-        self._quality_rejected_count: int = 0   # low-entropy reject count
-        self._quality_duplicate_count: int = 0  # in-memory / quality-layer duplicate count
-        self._quality_fail_open_count: int = 0  # quality helper exception → fail-open
-
-        # Sprint 8AK: Persistent duplicate counter (LMDB-backed, cross-source dedup)
-        self._persistent_duplicate_count: int = 0
-
-        # Sprint F216G: Quality Rejection Ledger — bounded per-finding rejection records
-        # Used to diagnose accepted=0 by source_family and reason
-        # Max 200 entries; oldest dropped when cap reached
-        self._quality_rejection_ledger: list[QualityRejectionRecord] = []
-        self._MAX_QUALITY_REJECTION_LEDGER: int = 200
-
-        # Sprint 8AV: Accepted findings counter (quality gate passed → stored)
-        self._accepted_count: int = 0
+        # Sprint F216G: Quality assessment state — delegated to QualityAssessmentState
+        # (extracted from duckdb_store.py in Sprint F216G refactor)
+        # Counters: _quality_rejected_count, _quality_duplicate_count, _quality_fail_open_count,
+        #           _persistent_duplicate_count, _accepted_count
+        # Ledger:   _quality_rejection_ledger (bounded, max 200 entries)
+        self._quality_state: QualityAssessmentState = QualityAssessmentState()
 
         # Sprint 8AV: Dead-letter namespace for ingested-but-rejected findings
         self.DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
@@ -4453,7 +4294,7 @@ class DuckDBShadowStore:
 
             # Count accepted (lmdb_success) findings for _accepted_count
             accepted_total = sum(1 for r in results if r.get("lmdb_success"))
-            self._accepted_count += accepted_total
+            self._quality_state._accepted_count += accepted_total
 
             return [
                 ActivationResult(
@@ -5057,31 +4898,18 @@ class DuckDBShadowStore:
         """
         Sprint F216G: Record a quality gate rejection to the bounded ledger.
 
-        Bounded: max 200 entries; oldest dropped when cap exceeded.
-        No full payload text stored — only bounded samples.
+        Delegates to QualityAssessmentState.record_rejection().
         """
-        if decision.accepted:
-            return
-        source_family = getattr(finding, "source_type", "unknown") or "unknown"
-        url = self._extract_url_from_provenance(getattr(finding, "provenance", ()) or ())
-        url_sample = url[:200] if url else (getattr(finding, "query", "") or "")[:200]
-        record = QualityRejectionRecord(
-            source_family=source_family,
-            reason=decision.reason or "unknown",
-            finding_id=(getattr(finding, "finding_id", "") or "")[:40],
-            url_sample=url_sample,
-        )
-        self._quality_rejection_ledger.append(record)
-        if len(self._quality_rejection_ledger) > self._MAX_QUALITY_REJECTION_LEDGER:
-            self._quality_rejection_ledger.pop(0)
+        self._quality_state.record_rejection(finding, decision)
 
     def get_quality_rejection_ledger(self) -> tuple[QualityRejectionRecord, ...]:
         """
         Sprint F216G: Expose the quality rejection ledger to callers (e.g. scheduler).
 
         Returns a tuple (immutable view) of all recorded rejection records.
+        Delegates to QualityAssessmentState for backward compat.
         """
-        return tuple(self._quality_rejection_ledger)
+        return self._quality_state.get_rejection_history()
 
     def _assess_finding_quality(self, finding: CanonicalFinding) -> FindingQualityDecision:
         """
@@ -5129,7 +4957,7 @@ class DuckDBShadowStore:
         # Tier 1: hot cache (fast path, bounded)
         duplicate = self._hot_cache_lookup(fingerprint) is not None
         if duplicate:
-            self._quality_duplicate_count += 1
+            self._quality_state._quality_duplicate_count += 1
             reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
             return FindingQualityDecision(
                 accepted=False,
@@ -5144,7 +4972,7 @@ class DuckDBShadowStore:
         if stored_finding_id is not None:
             # Miss in hot cache but hit in LMDB — populate hot cache, reject
             self._add_to_hot_cache(fingerprint, stored_finding_id)
-            self._persistent_duplicate_count += 1
+            self._quality_state._persistent_duplicate_count += 1
             reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
             return FindingQualityDecision(
                 accepted=False,
@@ -5179,7 +5007,7 @@ class DuckDBShadowStore:
                     if text_for_embed and len(text_for_embed) >= 16:
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
                         if is_dup:
-                            self._quality_duplicate_count += 1
+                            self._quality_state._quality_duplicate_count += 1
                             return FindingQualityDecision(
                                 accepted=False,
                                 reason="semantic_duplicate",
@@ -5203,7 +5031,7 @@ class DuckDBShadowStore:
 
         # Entropy threshold check
         if entropy < _QUALITY_ENTROPY_THRESHOLD:
-            self._quality_rejected_count += 1
+            self._quality_state._quality_rejected_count += 1
             return FindingQualityDecision(
                 accepted=False,
                 reason="low_entropy_rejected",
@@ -5222,7 +5050,7 @@ class DuckDBShadowStore:
                 if text_for_embed and len(text_for_embed) >= 16:
                     is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
                     if is_dup:
-                        self._quality_duplicate_count += 1
+                        self._quality_state._quality_duplicate_count += 1
                         return FindingQualityDecision(
                             accepted=False,
                             reason="semantic_duplicate",
@@ -5272,7 +5100,7 @@ class DuckDBShadowStore:
             # Fail-open: quality gate failed, but store anyway
             # _accepted_count is NOT incremented here — async_record_canonical_finding
             # handles it on success, and we don't double-count on the fail-open path
-            self._quality_fail_open_count += 1
+            self._quality_state._quality_fail_open_count += 1
             result = await self.async_record_canonical_finding(finding)
             return result
 
@@ -5289,7 +5117,7 @@ class DuckDBShadowStore:
         else:
             lmdb_ok = bool(result.lmdb_success)
         if lmdb_ok:
-            self._accepted_count += 1
+            self._quality_state._accepted_count += 1
         return result
 
     async def async_ingest_findings_batch(
@@ -5321,11 +5149,11 @@ class DuckDBShadowStore:
             try:
                 decision = self._assess_finding_quality(f)
             except Exception:
-                self._quality_fail_open_count += 1
+                self._quality_state._quality_fail_open_count += 1
                 result = await self.async_record_canonical_finding(f)
                 # Count if LMDB succeeded — this is the fail-open success path
                 if getattr(result, 'lmdb_success', False) if hasattr(result, 'lmdb_success') else result.get('lmdb_success', False) if isinstance(result, dict) else False:
-                    self._accepted_count += 1
+                    self._quality_state._accepted_count += 1
                 results[i] = result
                 continue
 
@@ -6954,13 +6782,13 @@ class DuckDBShadowStore:
             "dedup_namespace": self.DEDUP_NAMESPACE,
             "hot_cache_size": len(self._dedup_hot_cache),
             "hot_cache_capacity": _DEDUP_HOT_CACHE_MAX,
-            "in_memory_duplicate_count": self._quality_duplicate_count,
-            "persistent_duplicate_count": self._persistent_duplicate_count,
-            "accepted_count": self._accepted_count,
-            "low_information_rejected_count": self._quality_rejected_count,
-            "in_memory_duplicate_rejected_count": self._quality_duplicate_count,
-            "persistent_duplicate_rejected_count": self._persistent_duplicate_count,
-            "other_rejected_count": self._quality_fail_open_count,
+            "in_memory_duplicate_count": self._quality_state._quality_duplicate_count,
+            "persistent_duplicate_count": self._quality_state._persistent_duplicate_count,
+            "accepted_count": self._quality_state._accepted_count,
+            "low_information_rejected_count": self._quality_state._quality_rejected_count,
+            "in_memory_duplicate_rejected_count": self._quality_state._quality_duplicate_count,
+            "persistent_duplicate_rejected_count": self._quality_state._persistent_duplicate_count,
+            "other_rejected_count": self._quality_state._quality_fail_open_count,
         }
 
     def reset_ingest_reason_counters(self) -> None:
@@ -6968,18 +6796,13 @@ class DuckDBShadowStore:
         Sprint 8AV: Reset all ingest outcome counters to zero.
 
         Side-effect free, test-safe, can be called any time.
-        Resets:
-          - _accepted_count
-          - _quality_rejected_count
-          - _quality_duplicate_count
-          - _persistent_duplicate_count
-          - _quality_fail_open_count
+        Resets all counters on QualityAssessmentState.
         """
-        self._accepted_count = 0
-        self._quality_rejected_count = 0
-        self._quality_duplicate_count = 0
-        self._persistent_duplicate_count = 0
-        self._quality_fail_open_count = 0
+        self._quality_state._accepted_count = 0
+        self._quality_state._quality_rejected_count = 0
+        self._quality_state._quality_duplicate_count = 0
+        self._quality_state._persistent_duplicate_count = 0
+        self._quality_state._quality_fail_open_count = 0
 
     def classify_ingest_outcome(
         self,

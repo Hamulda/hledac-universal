@@ -13380,21 +13380,36 @@ class TestSprint11Temporal:
 class TestSprint11FetchCoordinator:
     """Test Sprint 11: FetchCoordinator uses RotatingBloomFilter."""
 
-    def test_processed_urls_is_bloom_filter(self):
-        """Verify _processed_urls is RotatingBloomFilter, not set."""
+    def test_processed_urls_is_dedup_strategy(self):
+        """Verify _processed_urls satisfies DeduplicationStrategy protocol.
+
+        Sprint F214AD: Now a RotatingBloomFilterAdapter, not raw RotatingBloomFilter.
+        """
         from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
-        from hledac.universal.tools.url_dedup import RotatingBloomFilter
+        from hledac.universal.tools.url_dedup import (
+            DeduplicationStrategy,
+            RotatingBloomFilterAdapter,
+        )
 
         # Create FetchCoordinator
         fc = FetchCoordinator()
 
-        # Assert it's a RotatingBloomFilter
-        assert isinstance(fc._processed_urls, RotatingBloomFilter), \
-            f"Expected RotatingBloomFilter, got {type(fc._processed_urls)}"
+        # Assert it satisfies the DeduplicationStrategy protocol
+        assert isinstance(fc._processed_urls, DeduplicationStrategy), \
+            f"Expected DeduplicationStrategy, got {type(fc._processed_urls)}"
 
-        # Assert it's not a set
+        # Assert it's specifically the adapter (not a raw RotatingBloomFilter)
+        assert isinstance(fc._processed_urls, RotatingBloomFilterAdapter), \
+            f"Expected RotatingBloomFilterAdapter, got {type(fc._processed_urls)}"
+
+        # Assert it's not a bare set
         assert not isinstance(fc._processed_urls, set), \
-            "_processed_urls must not be a set"
+            "_processed_urls must not be a bare set"
+
+        # Verify add + __contains__ work
+        fc._processed_urls.add("http://test.local")
+        assert "http://test.local" in fc._processed_urls
+        assert "http://notadded.local" not in fc._processed_urls
 
 
 class TestSprint11Reranker:

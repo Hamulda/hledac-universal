@@ -3,6 +3,7 @@ Lehká grafová neuronová síť (GraphSAGE) implementovaná v MLX.
 Trénink na pozadí, inference volitelná podle velikosti grafu.
 """
 
+import heapq
 import logging
 import time
 import array
@@ -380,9 +381,10 @@ class GNNPredictor:
 
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(_CPU, _sync)
+            result = await loop.run_in_executor(_CPU, _sync)
         finally:
             _CPU.shutdown(wait=False)
+        return result
 
     # ---------------------------------------------------------------------------
     # Sprint 8VG-C: GNN IOC Link Prediction
@@ -496,8 +498,9 @@ class GNNPredictor:
             # Sort by probability descending
             predictions.sort(key=lambda x: x["predicted_link_probability"], reverse=True)
 
-            # Uvolni MLX cache — M1 critical
+            # Uvolni MLX cache — M1 critical (mx.eval([]) required before clear_cache)
             if hasattr(mx.metal, "clear_cache"):
+                mx.eval([])
                 mx.metal.clear_cache()
 
             return predictions[:top_k]
@@ -625,12 +628,12 @@ def predict_from_edge_list(
 
             if unique_dsts:
                 scores = predictor.score_ioc_batch(unique_dsts, ioc_graph=None)
-                # Sort by score descending
-                sorted_scores = sorted(
-                    scores.items(), key=lambda x: x[1], reverse=True
+                # Get top_k by score — heapq is ~7x faster than full sorted for large collections
+                top_k_items = heapq.nlargest(
+                    top_k, scores.items(), key=lambda x: x[1]
                 )
                 results = []
-                for val, score in sorted_scores[:top_k]:
+                for val, score in top_k_items:
                     rel = _most_common_rel(edge_list, val)
                     results.append({
                         "src": "graph",

@@ -19,6 +19,14 @@ import logging
 import os
 from collections import deque
 
+# orjson is optional — faster serialization for metrics flush
+try:
+    import orjson as _orjson
+    _ORJSON_AVAILABLE = True
+except ImportError:
+    _orjson = None  # type: ignore[assignment]
+    _ORJSON_AVAILABLE = False
+
 # psutil is optional — lazy import with fail-soft fallback
 try:
     import psutil
@@ -297,8 +305,12 @@ class MetricsRegistry:
         if self._persist_file:
             try:
                 for m in metrics:
-                    line = json.dumps(m, separators=(',', ':'))
-                    self._persist_file.write(line.encode('utf-8') + b'\n')
+                    if _ORJSON_AVAILABLE and _orjson is not None:
+                        line = _orjson.dumps(m, option=_orjson.OPT_APPEND_NEWLINE)
+                        self._persist_file.write(line)
+                    else:
+                        line = json.dumps(m, separators=(',', ':'))
+                        self._persist_file.write(line.encode('utf-8') + b'\n')
                 self._persist_file.flush()
                 os.fsync(self._persist_file.fileno())
             except Exception as e:

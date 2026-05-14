@@ -13,7 +13,6 @@ Consolidated from:
 
 from __future__ import annotations
 
-import base64
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1243,6 +1242,7 @@ class SNNEncryptedContainer:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization"""
+        import base64
         return {
             "ciphertext": base64.b64encode(self.ciphertext).decode(),
             "neural_signature": base64.b64encode(self.neural_signature.tobytes()).decode(),
@@ -1254,6 +1254,7 @@ class SNNEncryptedContainer:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SNNEncryptedContainer":
         """Create from dictionary"""
+        import base64
         return cls(
             ciphertext=base64.b64decode(data["ciphertext"]),
             neural_signature=np.frombuffer(

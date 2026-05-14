@@ -553,3 +553,13 @@ def fallback_sanitize(text: str, max_length: int = MAX_FALLBACK_LENGTH) -> str:
 def is_fallback_available() -> bool:
     """Check if fallback sanitizer is available (always True)."""
     return True
+
+
+def get_pii_backend() -> str:
+    """
+    Return the active PII/privacy backend name.
+
+    Returns:
+        "regex" — always regex-based (no ML models in this module)
+    """
+    return "regex"
