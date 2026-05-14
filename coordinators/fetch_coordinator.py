@@ -27,17 +27,23 @@ import time
 import lmdb
 from collections import deque
 
-# Sprint 41: zstd compression with passive dictionary
+# Sprint 41: zstd compression — re-exported from tools/zstd_compressor
+from hledac.universal.tools.zstd_compressor import ZstdCompressor
+
 try:
     import zstandard as zstd
+
     ZSTD_AVAILABLE = True
 except ImportError:
     ZSTD_AVAILABLE = False
     zstd = None
 
-# Sprint 44: Lightpanda for JS-heavy pages
+# Sprint 44: Lightpanda for JS-heavy pages — re-exported from tools/lightpanda_manager
+from hledac.universal.tools.lightpanda_manager import LightpandaManager, NODRIVER_AVAILABLE
+
 try:
     import aiohttp
+
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
@@ -177,31 +183,12 @@ import fcntl
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
 F_NOCACHE = 48 if platform.system() == "Darwin" else None
 
+# Re-exported from tools/file_cache.py for backward compatibility
+from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
-    """
-    Apply F_NOCACHE flag to file descriptor for large downloads.
-
-    This tells Darwin's kernel not to cache the file data in memory,
-    which is beneficial for very large downloads (>50MB) on memory-constrained systems.
-
-    Args:
-        fd: File descriptor to apply the flag to
-        content_length: Size of the content being written (if known)
-    """
-    if content_length is None or content_length <= NOCACHE_THRESHOLD_BYTES:
-        return
-
-    # LOW-7 fix: F_NOCACHE is Darwin-only
-    if F_NOCACHE is None:
-        return
-
-    try:
-        fcntl.fcntl(fd, F_NOCACHE, 1)
-    except OSError:
-        # Fail-safe: never let fcntl failure abort the write
-        # Catches: platform not supported, invalid fd, etc.
-        pass
+    """Wrapper for backward compatibility — delegates to tools/file_cache.py."""
+    _apply_fcntl_nocache(fd, content_length)
 
 
 @dataclass(slots=True)
@@ -215,214 +202,8 @@ class FetchCoordinatorConfig:
     budget_snapshots: int = 20
 
 
-# Sprint 41: zstd compressor with passive dictionary
-class ZstdCompressor:
-    """Compressor with content-aware levels and passive dictionary."""
-
-    def __init__(self):
-        self._dctx = zstd.ZstdDecompressor() if ZSTD_AVAILABLE else None
-        self._dictionary_data = None
-        self._response_counter = 0
-        self._response_samples: deque = deque(maxlen=100)
-
-    def compress(self, data: bytes, content_type: str = 'text') -> bytes:
-        """Compress with optional dictionary and content-aware level."""
-        if not ZSTD_AVAILABLE or data is None:
-            return data
-        level = 1 if content_type == 'json' else 3
-        try:
-            if self._dictionary_data and self._response_counter > 100:
-                cctx = zstd.ZstdCompressor(level=level, dict_data=self._dictionary_data)
-            else:
-                cctx = zstd.ZstdCompressor(level=level)
-            return cctx.compress(data)
-        except Exception:
-            return data
-
-    def decompress(self, data: bytes) -> bytes:
-        if not ZSTD_AVAILABLE or data is None:
-            return data
-        try:
-            if self._dictionary_data:
-                dctx = zstd.ZstdDecompressor(dict_data=self._dictionary_data)
-                return dctx.decompress(data)
-            return self._dctx.decompress(data)
-        except Exception:
-            return data
-
-    def add_sample(self, data: bytes, content_type: str):
-        """Collect samples for dictionary building. Rebuilds dictionary every 100 samples."""
-        if not ZSTD_AVAILABLE:
-            return
-        # P2-2 fix: always collect samples (deque maxlen=100 auto-evicts oldest)
-        self._response_samples.append((data, content_type))
-        self._response_counter += 1
-        # Rebuild dictionary every 100 samples (not just once at counter==100)
-        if self._response_counter >= 100 and self._response_counter % 100 == 0:
-            self._build_dictionary()
-
-    def _build_dictionary(self):
-        """Build zstd dictionary from collected samples."""
-        if not ZSTD_AVAILABLE:
-            return
-        try:
-            samples = [s[0] for s in self._response_samples]
-            if samples:
-                self._dictionary_data = zstd.train_dictionary(1024 * 1024, samples)
-        except Exception:
-            pass
-
-
-# Sprint 44: Lightpanda Manager for JS-heavy pages
-class LightpandaManager:
-    """Manages Lightpanda headless browser for JS-heavy page rendering."""
-
-    def __init__(self):
-        self._proc = None
-        self._endpoint = os.environ.get("CDP_ENDPOINT", "ws://127.0.0.1:9222")  # Configurable via CDP_ENDPOINT env variable
-        from hledac.universal.paths import DB_ROOT
-        self._bin_path = DB_ROOT / 'bin' / 'lightpanda'
-
-    async def _download_if_missing(self):
-        """Download Lightpanda binary if missing."""
-        if self._bin_path.exists():
-            return
-        os.makedirs(self._bin_path.parent, exist_ok=True)
-
-        if not AIOHTTP_AVAILABLE:
-            logger.warning("[LIGHTPANDA] aiohttp not available, cannot download")
-            raise ImportError("aiohttp not available")
-
-        url = "https://github.com/lightpanda-io/browser/releases/latest/download/lightpanda-aarch64-macos"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        # P3-7 fix: compute hash for security auditing
-                        # Expected hash from trusted source stored in LIGHTPANDA_SHA256 env var
-                        actual_hash = hashlib.sha256(content).hexdigest()
-                        expected_hash = os.environ.get('LIGHTPANDA_SHA256')
-                        if not expected_hash:
-                            raise ValueError(
-                                "[LIGHTPANDA] LIGHTPANDA_SHA256 env var must be set to verify "
-                                "binary integrity before download. Set it to the trusted SHA256 hash."
-                            )
-                        if actual_hash != expected_hash:
-                            raise ValueError(
-                                f"[LIGHTPANDA] Hash mismatch! "
-                                f"expected={expected_hash}, actual={actual_hash}"
-                            )
-                        logger.info(f"[LIGHTPANDA] Hash verified: {actual_hash[:16]}...")
-                        with open(self._bin_path, 'wb') as f:
-                            f.write(content)
-                        os.chmod(self._bin_path, 0o755)
-                    else:
-                        logger.warning(f"[LIGHTPANDA] Download failed: {resp.status}")
-        except Exception as e:
-            logger.warning(f"[LIGHTPANDA] Download error: {e}")
-            raise
-
-    async def ensure_running(self):
-        """Ensure Lightpanda process is running."""
-        if self._proc is None or self._proc.returncode is not None:
-            await self._download_if_missing()
-            self._proc = await asyncio.create_subprocess_exec(
-                str(self._bin_path), "serve", "--port", "9222",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            # Wait for port to be open
-            for _ in range(50):  # max 5s
-                try:
-                    reader, writer = await asyncio.open_connection('127.0.0.1', 9222)
-                    writer.close()
-                    await writer.wait_closed()
-                    break
-                except Exception:
-                    await asyncio.sleep(0.1)
-            else:
-                raise RuntimeError("Lightpanda failed to start")
-
-    # SEC-07: Guard for tab.evaluate() - prevents JS injection if made dynamic
-    # Currently uses static string literal (safe). If refactored to accept dynamic input,
-    # validate with _SAFE_JS_IDENTIFIER_PATTERN below.
-    _SAFE_JS_PATTERN = re.compile(r"^[a-zA-Z0-9_.\[\]]+$")
-
-    def _validate_js_expression(self, expr: str) -> str:
-        """Validate a JavaScript expression is safe for tab.evaluate()."""
-        if not self._SAFE_JS_PATTERN.match(expr):
-            raise ValueError(f"Unsafe JS expression rejected: {expr!r}")
-        return expr
-
-    async def fetch_js(self, url: str, proxy: str = None) -> bytes:
-        """Fetch URL with JS rendering using nodriver."""
-        try:
-            from nodriver import start, Config
-        except ImportError:
-            logger.warning("[LIGHTPANDA] nodriver not installed, falling back")
-            raise ImportError("nodriver not available")
-
-        await self.ensure_running()
-        config = Config(browserWSEndpoint=self._endpoint)
-        browser = await start(config)
-
-        try:
-            if proxy:
-                await browser.settings.set_proxy(proxy)
-
-            tab = await browser.get(url)
-            await tab.wait_domcontentloaded()
-            # SEC-07: Static string - safe from injection. Guard validates if ever made dynamic.
-            js_expr = self._validate_js_expression("document.documentElement.outerHTML")
-            content = await tab.evaluate(js_expr)
-            await browser.stop()
-            return content.encode()
-        except Exception as e:
-            await browser.stop()
-            raise
-
-
-# Sprint 45: Lightpanda Pool for concurrent JS rendering
-class LightpandaPool:
-    """Pool of Lightpanda instances for concurrent JS rendering."""
-
-    def __init__(self, size: int = 2):
-        self._size = size
-        # F207N-D: bounded for M1 8GB safety — pool size is small (default 2),
-        # so maxsize=8 gives headroom without starving the pool.
-        self._available = asyncio.Queue(maxsize=max(4, size * 4))
-        self._all_instances = []
-        self._started = False
-
-    async def start(self):
-        """Initialize pool with N Lightpanda instances."""
-        if self._started:
-            return
-
-        for i in range(self._size):
-            lp = LightpandaManager()
-            try:
-                await lp.ensure_running()
-                self._all_instances.append(lp)
-                await self._available.put(lp)
-            except Exception as e:
-                logger.warning(f"[POOL] Failed to start instance {i}: {e}")
-
-        self._started = True
-        logger.info(f"[POOL] Started {len(self._all_instances)} Lightpanda instances")
-
-    async def get_instance(self) -> LightpandaManager:
-        """Get available instance or wait."""
-        if not self._started:
-            await self.start()
-
-        # Wait for available instance
-        return await self._available.get()
-
-    async def release(self, instance: LightpandaManager):
-        """Return instance to pool."""
-        await self._available.put(instance)
+# Sprint 45: Lightpanda Pool — re-exported from tools/lightpanda_pool
+from hledac.universal.tools.lightpanda_pool import LightpandaPool
 
 
 class FetchCoordinator(UniversalCoordinator):
@@ -1662,6 +1443,14 @@ class FetchCoordinator(UniversalCoordinator):
                 pass
         self._i2p_sessions.clear()
         self._i2p_last_used.clear()
+
+        # Sprint 45: Lightpanda pool cleanup
+        if self._lightpanda_pool is not None:
+            try:
+                await self._lightpanda_pool.close()
+            except Exception:
+                pass
+            self._lightpanda_pool = None
 
         # Sprint 4B: Small drain to allow SSL/TCP to flush
         await asyncio.sleep(0.25)

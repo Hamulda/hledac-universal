@@ -55,18 +55,19 @@ GLiNER ~300MB
 
 | Config Location | Value | Notes |
 |----------------|-------|-------|
-| `HermesConfig.model_path` | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | Primary (hermes3_engine.py:128) |
-| `config.py:HERMES_MODEL` | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | Matches ✅ |
-| `project_types.py:HERMES_MODEL` | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | Matches ✅ |
+| `HermesConfig.model_path` | `mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit` | **DeepHermes is current default** (hermes3_engine.py:147) |
+| `config.py:HERMES_MODEL` | `mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit` | DeepHermes primary ✅ |
+| `project_types.py:HERMES_MODEL` | `mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit` | DeepHermes primary ✅ |
 | `brain/ane_embedder.py:255` | `nomic-ai/modernbert-embed-base` | MLX fallback, matches ✅ |
-| `brain/ane_embedder.py:405` | `model_name="minilm_ane"` | Unclear what this CoreML path is |
 | `mlx_embeddings.py:86` | `nomic-ai/modernbert-embed-base` | Matches ✅ |
 | `embeddings/modernbert_embedder.py:62` | `nomic-ai/modernbert-embed-base` | Matches ✅ |
+| `config.py:GLINER_MODEL` | `knowledgator/gliner-relex-large-v0.5` | **FIXED F220A** — was gliner-x-base ❌ |
+| `project_types.py:GLINER_MODEL` | `knowledgator/gliner-relex-large-v0.5` | **FIXED F220A** — was gliner-x-base ❌ |
 | `brain/ner_engine.py:87` | `knowledgator/gliner-relex-large-v0.5` | Primary ✅ |
 | `brain/model_manager.py:299` | `knowledgator/gliner-relex-large-v0.5` | Matches ✅ |
 | `brain/synthesis_runner.py:309` | `ms-marco-MiniLM-L-12-v2` | FlashRank model ✅ |
-| `tools/vlm_analyzer.py:65` | `*(removed — M1 8GB unsafe)*` | 7B VLM, HEAVY ✅ |
-| `layers/memory_layer.py:716` | `mlx-community/Hermes-3-Llama-3.2-3B-bf16` | **BF16 variant — different from canonical 4bit** |
+| `tools/vlm_analyzer.py` | *(none — VLM disabled by default on M1 8GB)* | VLM default: none ✅ |
+| `security/pii_gate.py` | regex/deterministic fallback | No model default ✅ |
 
 ---
 
@@ -74,23 +75,26 @@ GLiNER ~300MB
 
 ## 2.1 primary_reasoner
 
-**Current**: `Hermes-3-Llama-3.2-3B-4bit` via `Hermes3Engine` (`brain/hermes3_engine.py:147`)
+**Current (F217C)**: `DeepHermes-3-Llama-3-3B-Preview-4bit` via `Hermes3Engine` (`brain/hermes3_engine.py:147`)
 - Load: `mlx_lm.load(self.config.model_path)` at line 756
-- Config: `HermesConfig.model_path = "mlx-community/Hermes-3-Llama-3.2-3B-4bit"`
+- Config: `HermesConfig.model_path = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"`
 - KV quantization: `kv_bits=4, max_kv_size=8192` at generate time (NOT at load time)
 - Context window: 8192 tokens
 - Temperature: 0.3, Max tokens: 2048
 
-**Proposed candidates**:
-- `mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit` — same family, potential instruction-following upgrade
-- `mlx-community/Nanbeige4.1-3B-4bit` — strong instruction following, smaller community model
-- `mlx-community/SmolLM3-3B-4bit` — Apple-native, memory-efficient
+**Rollback**: `mlx-community/Hermes-3-Llama-3.2-3B-4bit` — Hermes-3 remains fallback only
 
 **Integration**:
-- Files: `brain/hermes3_engine.py:128`, `config.py:44`, `project_types.py:191`
-- Replace `HermesConfig.model_path` default — no code change needed
+- Files: `brain/hermes3_engine.py:147`, `config.py:44`, `project_types.py:191`
+- DeepHermes is production default (F217C swap complete)
+- Hermes-3-Llama-3.2-3B-4bit is rollback/fallback only
 - Tokenizer: `mlx_lm.load()` returns (model, tokenizer) — same pattern
 - Outlines integration: already present at `hermes3_engine.py:779`
+
+**Future candidates** (benchmark-first, not active):
+- `mlx-community/Nanbeige4.1-3B-4bit` — A/B test candidate
+- `mlx-community/SmolLM3-3B-4bit` — Apple-native, memory-efficient
+- `mlx-community/Qwen3-0.6B-4bit` — structured JSON only (F217B), not primary reasoner
 
 **Would replace**: `mlx-community/Hermes-3-Llama-3.2-3B-4bit`
 **Would keep as fallback**: existing Hermes 4bit

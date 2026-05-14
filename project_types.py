@@ -195,8 +195,8 @@ class ModelConfig:
     MODERNBERT_MODEL: str = "mlx-community/answerdotai-ModernBERT-base-6bit"
     EMBED_DIM: int = 768
 
-    # NER: GLiNER-X for entity extraction
-    GLINER_MODEL: str = "knowledgator/gliner-x-base"
+    # NER: GLiNER-Relex for entity extraction + relation extraction
+    GLINER_MODEL: str = "knowledgator/gliner-relex-large-v0.5"
 
 
 @dataclass

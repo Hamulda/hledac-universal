@@ -1495,6 +1495,257 @@ class DuckDBShadowStore:
         except Exception:
             pass  # table already exists or connection not ready
 
+    # --------------------------------------------------------------------------
+    # Sprint F214: DuckDB Query Executor — SQL template & transaction consolidation
+    # Consolidates SQL strings and transaction framing that were duplicated across
+    # 38 _sync_* methods. One place to change a SQL template; all callers benefit.
+    # --------------------------------------------------------------------------
+
+    class _DuckDBQueryExecutor:
+        """
+        Private SQL construction and execution engine for DuckDBShadowStore.
+
+        NOT part of the public API — exists solely to concentrate SQL string
+        templates and transaction patterns that were previously copy-pasted
+        across 38 _sync_* methods.
+
+        Design:
+        - All SQL templates are class-level string constants
+        - Transaction framing (_begin/_commit/_rollback) is shared
+        - Connection routing (MODE A file conn vs MODE B persistent conn) is shared
+        - Arrow→dict conversion helpers are shared
+        """
+
+        __slots__ = ("_store",)
+
+        # ── SQL Templates ──────────────────────────────────────────────────
+
+        _SQL_INSERT_SHADOW_FINDING = (
+            "INSERT INTO shadow_findings "
+            "(id, query, source_type, confidence, ts, provenance_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        _SQL_INSERT_SHADOW_RUN = (
+            "INSERT INTO shadow_runs "
+            "(run_id, started_at, ended_at, total_fds, rss_mb) "
+            "VALUES (?, ?, ?, ?, ?)"
+        )
+        _SQL_INSERT_SPRINT_DELTA = (
+            "INSERT INTO sprint_delta VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        )
+        _SQL_INSERT_SOURCE_HIT = (
+            "INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)"
+        )
+        _SQL_INSERT_HYPOTHESIS_FEEDBACK = "INSERT INTO hypothesis_feedback"
+        _SQL_UPSERT_TARGET_PROFILE = "INSERT OR REPLACE INTO target_profiles"
+        _SQL_SELECT_TARGET_PROFILE = "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"
+        _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
+        _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json"
+
+        def __init__(self, store: DuckDBShadowStore) -> None:
+            object.__setattr__(self, "_store", store)
+
+        # ── Connection routing ─────────────────────────────────────────────
+
+        def _conn(self):
+            """Return the active write connection (MODE A file or MODE B persistent)."""
+            s = self._store
+            if s._db_path:
+                s._prewarm_file_conn()
+                return s._file_conn
+            return s._persistent_conn
+
+        # ── Transaction framing ─────────────────────────────────────────────
+
+        @staticmethod
+        def _begin(conn) -> None:
+            conn.execute("BEGIN TRANSACTION")
+
+        @staticmethod
+        def _commit(conn) -> None:
+            conn.execute("COMMIT")
+
+        @staticmethod
+        def _rollback(conn) -> None:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+
+        def _with_transaction(self, conn, fn):
+            """
+            Run fn(conn) inside an explicit transaction.
+            Commits on success, rolls back on any exception.
+            Returns fn's return value.
+            """
+            self._begin(conn)
+            try:
+                result = fn(conn)
+                self._commit(conn)
+                return result
+            except Exception:
+                self._rollback(conn)
+                raise
+
+        # ── Query methods — one method per _sync_* operation ───────────────
+
+        def insert_finding(
+            self,
+            finding_id: str,
+            query: str,
+            source_type: str,
+            confidence: float,
+            ts: float | None,
+            provenance_json: str | None,
+        ) -> bool:
+            """Insert a single shadow finding. Returns True on success."""
+            conn = self._conn()
+            if conn is None:
+                return False
+            params = [finding_id, query, source_type, confidence, ts, provenance_json]
+            try:
+                self._with_transaction(conn, lambda c: c.execute(self._SQL_INSERT_SHADOW_FINDING, params))
+                return True
+            except Exception:
+                return False
+
+        def insert_findings_bulk(self, findings: list[dict[str, Any]]) -> int:
+            """
+            Bulk insert shadow findings. Returns number of successfully inserted records.
+            MUST be called on the worker thread.
+            """
+            if not findings:
+                return 0
+            rows = [
+                [r["id"], r["query"], r["source_type"], r["confidence"],
+                 r.get("ts"), r.get("provenance_json")]
+                for r in findings
+            ]
+            conn = self._conn()
+            if conn is None:
+                return 0
+            try:
+                def _do(conn):
+                    conn.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
+                self._with_transaction(conn, _do)
+                return len(rows)
+            except Exception:
+                return 0
+
+        def insert_findings_bulk_as_tuples(self, rows: list[list]) -> int:
+            """
+            Bulk insert shadow findings from pre-built tuple rows.
+            MUST be called on the worker thread.
+            Returns number of successfully inserted records.
+            """
+            if not rows:
+                return 0
+            conn = self._conn()
+            if conn is None:
+                return 0
+            try:
+                def _do(conn):
+                    conn.executemany(self._SQL_INSERT_SHADOW_FINDING, rows)
+                self._with_transaction(conn, _do)
+                return len(rows)
+            except Exception:
+                return 0
+
+        def insert_run(
+            self,
+            run_id: str,
+            started_at: float | None,
+            ended_at: float | None,
+            total_fds: int,
+            rss_mb: int,
+        ) -> bool:
+            conn = self._conn()
+            if conn is None:
+                return False
+            # DuckDB accepts ISO timestamp strings via CAST(? AS TIMESTAMP)
+            started_iso = _dt.datetime.fromtimestamp(started_at).isoformat() if started_at is not None else None
+            ended_iso = _dt.datetime.fromtimestamp(ended_at).isoformat() if ended_at is not None else None
+            params = [run_id, started_iso, ended_iso, total_fds, rss_mb]
+            cast_sql = (
+                "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) "
+                "VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?)"
+            )
+            try:
+                self._with_transaction(conn, lambda c: c.execute(cast_sql, params))
+                return True
+            except Exception:
+                return False
+
+        def upsert_target_profile(self, profile) -> None:
+            """Upsert target profile. Silently returns on failure."""
+            conn = self._conn()
+            if conn is None:
+                return
+            sql = (
+                "INSERT OR REPLACE INTO target_profiles "
+                "(target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json) "
+                "VALUES (?, ?, ?, ?, ?)"
+            )
+            params = [
+                profile.target_id,
+                profile.first_seen,
+                profile.last_seen,
+                profile.cumulative_finding_count,
+                profile.entity_summary_json,
+            ]
+            try:
+                conn.execute(sql, params)
+            except Exception:
+                pass
+
+        def get_target_profile(self, target_id: str):
+            """Get target profile. Returns row tuple or None."""
+            conn = self._conn()
+            if conn is None:
+                return None
+            sql = (
+                "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json "
+                "FROM target_profiles WHERE target_id = ?"
+            )
+            try:
+                return conn.execute(sql, [target_id]).fetchone()
+            except Exception:
+                return None
+
+        def query_findings(self, limit: int) -> list[dict]:
+            """Select recent shadow findings. Returns list of dicts."""
+            conn = self._conn()
+            if conn is None:
+                return []
+            sql = (
+                "SELECT id, query, source_type, confidence, ts, provenance_json "
+                "FROM shadow_findings ORDER BY ts DESC LIMIT ?"
+            )
+            try:
+                result = conn.execute(sql, [limit]).fetchall()
+                return [
+                    {
+                        "id": row[0],
+                        "query": row[1],
+                        "source_type": row[2],
+                        "confidence": row[3],
+                        "ts": row[4],
+                        "provenance_json": row[5],
+                    }
+                    for row in result
+                ]
+            except Exception:
+                return []
+
+    # ── Instantiate executor lazily; _sync_* methods use self._qe when available ──
+
+    def _qe(self):
+        """Lazy executor — created on first _sync_* access, shared for instance lifetime."""
+        if not hasattr(self, "_query_executor"):
+            object.__setattr__(self, "_query_executor", self._DuckDBQueryExecutor(self))
+        return self._query_executor
+
     def _sync_insert_finding(
         self,
         finding_id: str,
@@ -1505,34 +1756,7 @@ class DuckDBShadowStore:
         provenance_json: str | None = None,
     ) -> bool:
         """Sync insert — MUST be called on the worker thread."""
-        try:
-            if self._db_path:
-                # MODE A: Use persistent _file_conn (always initialized before any write)
-                self._file_conn.execute("BEGIN TRANSACTION")
-                try:
-                    self._file_conn.execute(
-                        """
-                        INSERT INTO shadow_findings (id, query, source_type, confidence, ts, provenance_json)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        [finding_id, query, source_type, confidence, ts, provenance_json],
-                    )
-                    self._file_conn.execute("COMMIT")
-                except Exception:
-                    self._file_conn.execute("ROLLBACK")
-                    return False
-            else:
-                # MODE B: :memory: — use persistent single connection
-                self._persistent_conn.execute(
-                    """
-                    INSERT INTO shadow_findings (id, query, source_type, confidence, ts, provenance_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    [finding_id, query, source_type, confidence, ts, provenance_json],
-                )
-            return True
-        except Exception:
-            return False
+        return self._qe().insert_finding(finding_id, query, source_type, confidence, ts, provenance_json)
 
     def _sync_insert_findings_bulk(
         self,
@@ -1543,53 +1767,7 @@ class DuckDBShadowStore:
         MUST be called on the worker thread.
         Returns number of successfully inserted records.
         """
-        if not findings:
-            return 0
-
-        try:
-            # Build rows list — dict-based, ts/provenance_json optional
-            rows = [
-                [
-                    r["id"], r["query"], r["source_type"], r["confidence"],
-                    r.get("ts"), r.get("provenance_json"),
-                ]
-                for r in findings
-            ]
-            if self._db_path:
-                # MODE A: Use persistent _file_conn (always initialized before writes)
-                self._prewarm_file_conn()
-                self._file_conn.execute("BEGIN TRANSACTION")
-                try:
-                    self._file_conn.executemany(
-                        """
-                        INSERT INTO shadow_findings (id, query, source_type, confidence, ts, provenance_json)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        rows,
-                    )
-                    self._file_conn.execute("COMMIT")
-                    return len(rows)
-                except Exception:
-                    self._file_conn.execute("ROLLBACK")
-                    return 0
-            else:
-                # MODE B: :memory: — use persistent single connection
-                self._persistent_conn.execute("BEGIN TRANSACTION")
-                try:
-                    self._persistent_conn.executemany(
-                        """
-                        INSERT INTO shadow_findings (id, query, source_type, confidence, ts, provenance_json)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        rows,
-                    )
-                    self._persistent_conn.execute("COMMIT")
-                    return len(rows)
-                except Exception:
-                    self._persistent_conn.execute("ROLLBACK")
-                    return 0
-        except Exception:
-            return 0
+        return self._qe().insert_findings_bulk(findings)
 
     def _sync_insert_run(
         self,
@@ -1599,116 +1777,25 @@ class DuckDBShadowStore:
         total_fds: int,
         rss_mb: int,
     ) -> bool:
-        """Sync insert run — MUST be called on the worker thread. Uses persistent _file_conn."""
-        try:
-            started_iso = _dt.datetime.fromtimestamp(started_at).isoformat() if started_at is not None else None
-            ended_iso = _dt.datetime.fromtimestamp(ended_at).isoformat() if ended_at is not None else None
-
-            if self._db_path:
-                # MODE A: Use persistent _file_conn (always initialized before writes)
-                self._prewarm_file_conn()
-                self._file_conn.execute(
-                    """
-                    INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb)
-                    VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?)
-                    """,
-                    [run_id, started_iso, ended_iso, total_fds, rss_mb],
-                )
-            else:
-                # MODE B: :memory: — use persistent single connection
-                self._persistent_conn.execute(
-                    """
-                    INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb)
-                    VALUES (?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), ?, ?)
-                    """,
-                    [run_id, started_iso, ended_iso, total_fds, rss_mb],
-                )
-            return True
-        except Exception:
-            return False
+        """Sync insert run — MUST be called on the worker thread."""
+        return self._qe().insert_run(run_id, started_at, ended_at, total_fds, rss_mb)
 
     def _sync_query_findings(self, limit: int) -> list[dict[str, Any]]:
-        """Sync query — MUST be called on the worker thread. Uses persistent _file_conn."""
-        try:
-            if self._db_path:
-                # MODE A: Use persistent _file_conn (always initialized before queries)
-                self._prewarm_file_conn()
-                result = self._file_conn.execute(
-                    """
-                    SELECT id, query, source_type, confidence, ts, provenance_json
-                    FROM shadow_findings
-                    ORDER BY ts DESC
-                    LIMIT ?
-                    """,
-                    [limit],
-                ).fetchall()
-            else:
-                # MODE B: :memory: — use persistent single connection
-                result = self._persistent_conn.execute(
-                    """
-                    SELECT id, query, source_type, confidence, ts, provenance_json
-                    FROM shadow_findings
-                    ORDER BY ts DESC
-                    LIMIT ?
-                    """,
-                    [limit],
-                ).fetchall()
-
-            return [
-                {
-                    "id": row[0],
-                    "query": row[1],
-                    "source_type": row[2],
-                    "confidence": row[3],
-                    "ts": row[4],
-                    "provenance_json": row[5],
-                }
-                for row in result
-            ]
-        except Exception:
-            return []
+        """Sync query — MUST be called on the worker thread."""
+        return self._qe().query_findings(limit)
 
     # ── Sprint F202K: target_profiles sync helpers ───────────────────────────
 
     def _sync_upsert_target_profile(self, profile: TargetProfileSummary) -> None:
-        """Sync upsert — MUST be called on the worker thread. Uses persistent connection."""
-        try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
-            if conn is None:
-                return
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO target_profiles
-                (target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [
-                    profile.target_id,
-                    profile.first_seen,
-                    profile.last_seen,
-                    profile.cumulative_finding_count,
-                    profile.entity_summary_json,
-                ],
-            )
-        except Exception as e:
-            logger.warning(f"[F206L] _sync_upsert_target_profile failed for {profile.target_id}: {e}")
+        """Sync upsert — MUST be called on the worker thread."""
+        self._qe().upsert_target_profile(profile)
 
     def _sync_get_target_profile(self, target_id: str) -> TargetProfileSummary | None:
         """Sync get — MUST be called on the worker thread. Returns None if not found."""
+        result = self._qe().get_target_profile(target_id)
+        if result is None:
+            return None
         try:
-            conn = self._file_conn if self._db_path else self._persistent_conn
-            if conn is None:
-                return None
-            result = conn.execute(
-                """
-                SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json
-                FROM target_profiles
-                WHERE target_id = ?
-                """,
-                [target_id],
-            ).fetchone()
-            if result is None:
-                return None
             return TargetProfileSummary(
                 target_id=result[0],
                 first_seen=result[1],
@@ -5340,44 +5427,7 @@ class DuckDBShadowStore:
         MUST be called on the worker thread.
         Returns number of successfully inserted records.
         """
-        if not rows:
-            return 0
-
-        try:
-            # Guard: both file and persistent connections must be available
-            if self._db_path and self._file_conn is not None:
-                self._prewarm_file_conn()
-                self._file_conn.execute("BEGIN TRANSACTION")
-                try:
-                    self._file_conn.executemany(
-                        """
-                        INSERT INTO shadow_findings (id, query, source_type, confidence, ts, provenance_json)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        rows,
-                    )
-                    self._file_conn.execute("COMMIT")
-                    return len(rows)
-                except Exception:
-                    self._file_conn.execute("ROLLBACK")
-                    return 0
-            elif self._persistent_conn is not None:
-                self._persistent_conn.execute("BEGIN TRANSACTION")
-                try:
-                    self._persistent_conn.executemany(
-                        """
-                        INSERT INTO shadow_findings (id, query, source_type, confidence, ts, provenance_json)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        rows,
-                    )
-                    self._persistent_conn.execute("COMMIT")
-                    return len(rows)
-                except Exception:
-                    self._persistent_conn.execute("ROLLBACK")
-                    return 0
-        except Exception:
-            return 0
+        return self._qe().insert_findings_bulk_as_tuples(rows)
 
 
     # ------------------------------------------------------------------

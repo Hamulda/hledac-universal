@@ -10,18 +10,19 @@ F217C will swap the winner based on benchmark data.
 
 ---
 
-## 1. Current Production Default
+## 1. Current Production Default (Updated F220A — F217C swap completed)
 
 | Role | Model | Source |
 |------|-------|--------|
-| **Primary Reasoner** | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | `HermesConfig.model_path` (brain/hermes3_engine.py:142) |
-| **Structured JSON** | Discovered Qwen3-0.6B at runtime | `model_lifecycle.py:_discover_model_path()` |
-| **Fallback Reasoner** | Same as primary (hermes) | No separate fallback model |
+| **Primary Reasoner** | `mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit` | `HermesConfig.model_path` (brain/hermes3_engine.py:147) |
+| **Fallback Reasoner** | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | `HermesConfig.model_path` fallback only |
+| **Structured JSON** | `mlx-community/Qwen3-0.6B-4bit` (deferred candidate, not active) | `brain/llm_candidate_registry.py` |
 
-**Key invariants:**
-- `HermesConfig.model_path` default: `"mlx-community/Hermes-3-Llama-3.2-3B-4bit"` (line 142)
-- `config.py:HERMES_MODEL` and `project_types.py:HERMES_MODEL` both match ✅
-- No production model is swapped in F217B
+**Key invariants (F220A):**
+- `HermesConfig.model_path` default: `"mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"` (line 147)
+- `config.py:HERMES_MODEL` and `project_types.py:HERMES_MODEL` both: `"mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"` ✅
+- Hermes-3 is rollback/fallback only — NOT production default
+- This plan document is historical (F217B era) — see `MODEL_RUNTIME_MAP.md` for current map
 
 ---
 
@@ -66,9 +67,9 @@ FALLBACK_REASONER = "fallback_reasoner"    # fallback when primary fails
 | Missing model at runtime | No change — F217B does not implement runtime loading |
 | Structured JSON env mismatch (wrong role) | Fall back to `qwen3_0_6b` |
 
-**Safe defaults (no env vars):**
-- Primary: `hermes` (current production baseline)
-- Fallback: `hermes` (same as primary)
+**Safe defaults (no env vars) — F217B historical:**
+- Primary: `deephermes` (now production default as of F217C)
+- Fallback: `hermes` (Hermes-3 rollback, not production default)
 - Structured JSON: `qwen3_0_6b` (mirrors windup-local discovery)
 
 ---
@@ -77,8 +78,8 @@ FALLBACK_REASONER = "fallback_reasoner"    # fallback when primary fails
 
 | Env Variable | Controls | Default if unset |
 |---|---|---|
-| `HLEDAC_PRIMARY_REASONER` | primary reasoner candidate | `hermes` |
-| `HLEDAC_FALLBACK_REASONER` | fallback reasoner candidate | `hermes` |
+| `HLEDAC_PRIMARY_REASONER` | primary reasoner candidate | `deephermes` (DeepHermes is production default) |
+| `HLEDAC_FALLBACK_REASONER` | fallback reasoner candidate | `hermes` (Hermes-3 rollback) |
 | `HLEDAC_STRUCTURED_JSON_MODEL` | structured JSON candidate | `qwen3_0_6b` |
 
 **Validation rules:**

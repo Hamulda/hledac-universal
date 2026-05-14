@@ -65,7 +65,13 @@ try:
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
-    from hledac.universal.utils._warnings import warn_once_log
+    try:
+        from hledac.universal.utils._warnings import warn_once_log
+    except (ImportError, ModuleNotFoundError) as exc:
+        if exc.name == "hledac":
+            from utils._warnings import warn_once_log
+        else:
+            raise
 
     warn_once_log("rapidfuzz-missing", "rapidfuzz not available. Install with: pip install rapidfuzz")
 

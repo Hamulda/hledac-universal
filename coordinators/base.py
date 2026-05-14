@@ -27,6 +27,9 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Protocol
 from collections import OrderedDict
 import logging
 
+from .enums import MemoryPressureLevel
+from .mixins import OperationTrackingMixin, LoadFactorMixin, MemoryPressureMixin
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,24 +80,15 @@ class CoordinatorCapabilities:
     current_operations: int
 
 
-class MemoryPressureLevel(Enum):
-    """Memory pressure levels for M1 8GB optimization."""
-    NORMAL = "normal"
-    ELEVATED = "elevated"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-class UniversalCoordinator(ABC):
+class UniversalCoordinator(ABC, OperationTrackingMixin, LoadFactorMixin, MemoryPressureMixin):
     """
     Universal base class for all coordinators.
-    
-    Integrates best features from DeepSeek R1 and Hermes3 coordinators:
-    - Operation lifecycle management
-    - Memory-aware scheduling (M1 8GB optimization)
-    - Graceful degradation
-    - Comprehensive metrics
-    
+
+    Uses focused mixins for separation of concerns:
+    - OperationTrackingMixin: Operation lifecycle management
+    - LoadFactorMixin: Capacity and load management
+    - MemoryPressureMixin: M1 memory monitoring
+
     Args:
         name: Unique coordinator name
         max_concurrent: Maximum concurrent operations (default 10)
@@ -110,26 +104,26 @@ class UniversalCoordinator(ABC):
         self._name = name
         self._max_concurrent = max_concurrent
         self._memory_aware = memory_aware
-        
-        # Operation tracking (from DeepSeek R1)
+
+        # Operation tracking (from OperationTrackingMixin)
         self._active_operations: Dict[str, Dict[str, Any]] = {}
         self._operation_counter = 0
         self._operation_history: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._max_history = 100
-        
+
         # State
         self._initialized = False
         self._available = False
         self._initialization_error: Optional[str] = None
-        
-        # Memory awareness (M1 Master Optimizer integration)
+
+        # Memory awareness (from MemoryPressureMixin)
         self._current_memory_pressure = MemoryPressureLevel.NORMAL
         self._memory_thresholds = {
             MemoryPressureLevel.ELEVATED: 0.75,
             MemoryPressureLevel.HIGH: 0.85,
             MemoryPressureLevel.CRITICAL: 0.95,
         }
-        
+
         # Metrics
         self._total_operations = 0
         self._successful_operations = 0
