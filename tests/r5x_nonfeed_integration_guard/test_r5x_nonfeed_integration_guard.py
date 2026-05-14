@@ -299,7 +299,7 @@ class TestWaybackOutcomeSourceFamily:
     """Assertion 5: Wayback outcome reaches source_family_outcomes."""
 
     def test_assertion_5_wayback_outcome_normalizes_to_source_family_outcomes(self):
-        """Assertion 5: Wayback outcome normalizes to WAYBACK in source_family_outcomes."""
+        """Assertion 5: Wayback outcome normalizes to lowercase 'wayback' in source_family_outcomes."""
         wayback_outcome = FakeAcquisitionLaneOutcome(
             lane="WAYBACK", enabled=True, attempted=True,
             wayback_raw_count=10,
@@ -319,7 +319,7 @@ class TestWaybackOutcomeSourceFamily:
             "terminal_state": "attempted",
         }
         result = normalize_source_family_outcome("WAYBACK", raw_dict)
-        assert result["family"] == "WAYBACK"
+        assert result["family"] == "wayback"
         assert result["accepted_count"] == 1
 
 
