@@ -790,10 +790,11 @@ def _close_tor_session_sync() -> None:
     try:
         _loop = asyncio.get_running_loop()
         # A loop is running — spawn a daemon thread to run the async cleanup
+        # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
             global _tor_session
             try:
-                asyncio.run(_tor_session.close())
+                _loop.run_until_complete(_tor_session.close())
             except Exception as e:
                 logger.warning("Error closing Tor session in thread: %s", e)
             finally:
@@ -848,10 +849,11 @@ def _close_i2p_session_sync() -> None:
     try:
         _loop = asyncio.get_running_loop()
         # A loop is running — spawn a daemon thread to run the async cleanup
+        # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
             global _i2p_session
             try:
-                asyncio.run(_i2p_session.close())
+                _loop.run_until_complete(_i2p_session.close())
             except Exception as e:
                 logger.warning("Error closing I2P session in thread: %s", e)
             finally:
