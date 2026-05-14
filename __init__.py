@@ -4,84 +4,72 @@ Universal Package — Minimal Export Surface
 
 Explicit exports only. Use load_optional() for optional module access.
 
-Active parts:
-- Config: from .config
-- public_fetcher: lazy-loaded via __getattr__ (aiohttp cost at import time)
-- pattern_matcher: from .patterns.pattern_matcher
-- duckdb_store: from .knowledge.duckdb_store
+Active parts (all lazy-loaded via __getattr__):
+- Config: lazy
+- public_fetcher: lazy (aiohttp cost at import time)
+- pattern_matcher: lazy
+- duckdb_store: lazy
+- resource/concurrency: lazy
 """
 
 from importlib import import_module
 
-# Config
-from .config import UniversalConfig, create_config, load_config_from_file
+# Lazy export map — defers all heavy module imports to first-use
+# F214-PERF: eliminates ~48ms of eager import cost at boot
+_LAZY_EXPORTS = {
+    # Config
+    "UniversalConfig": "hledac.universal.config",
+    "create_config": "hledac.universal.config",
+    "load_config_from_file": "hledac.universal.config",
 
-# Pattern matcher
-from .patterns.pattern_matcher import (
-    PatternHit,
-    ExtractedEntity,
-    get_pattern_pack_metadata,
-    extract_high_precision_entities,
-    get_pattern_matcher,
-    configure_patterns,
-    match_text,
-    reset_pattern_matcher,
-    get_default_bootstrap_patterns,
-    configure_default_bootstrap_patterns_if_empty,
-    benchmark_build,
-    benchmark_match,
-)
+    # Pattern matcher
+    "PatternHit": "hledac.universal.patterns.pattern_matcher",
+    "ExtractedEntity": "hledac.universal.patterns.pattern_matcher",
+    "get_pattern_pack_metadata": "hledac.universal.patterns.pattern_matcher",
+    "extract_high_precision_entities": "hledac.universal.patterns.pattern_matcher",
+    "get_pattern_matcher": "hledac.universal.patterns.pattern_matcher",
+    "configure_patterns": "hledac.universal.patterns.pattern_matcher",
+    "match_text": "hledac.universal.patterns.pattern_matcher",
+    "reset_pattern_matcher": "hledac.universal.patterns.pattern_matcher",
+    "get_default_bootstrap_patterns": "hledac.universal.patterns.pattern_matcher",
+    "configure_default_bootstrap_patterns_if_empty": "hledac.universal.patterns.pattern_matcher",
+    "benchmark_build": "hledac.universal.patterns.pattern_matcher",
+    "benchmark_match": "hledac.universal.patterns.pattern_matcher",
 
-# DuckDB store
-from .knowledge.duckdb_store import (
-    DuckDBShadowStore,
-    ActivationResult,
-    ReplayResult,
-    CanonicalFinding,
-    create_owned_store,
-)
+    # DuckDB store
+    "DuckDBShadowStore": "hledac.universal.knowledge.duckdb_store",
+    "ActivationResult": "hledac.universal.knowledge.duckdb_store",
+    "ReplayResult": "hledac.universal.knowledge.duckdb_store",
+    "CanonicalFinding": "hledac.universal.knowledge.duckdb_store",
+    "create_owned_store": "hledac.universal.knowledge.duckdb_store",
 
-# Resource allocator — FETCH_SEMAPHORE at root level
-# P19: FETCH_SEMAPHORE moved to utils.concurrency to break circular import
-from .resource_allocator import AdaptiveSemaphore
-from .utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers
+    # Resource allocator
+    "AdaptiveSemaphore": "hledac.universal.resource_allocator",
 
+    # Concurrency utilities
+    "FETCH_SEMAPHORE": "hledac.universal.utils.concurrency",
+    "adjust_fetch_workers": "hledac.universal.utils.concurrency",
 
-# Lazy import for public_fetcher — defers aiohttp/crypto imports to first-use
-# F214-PERF: public_fetcher was 485ms of import cost at `import hledac.universal` boot
-_PUBLIC_FETCHER_EXPORTS = (
-    "async_fetch_public_text",
-    "process_html_payload",
-    "DEFAULT_UA",
-    "MAX_BYTES_DEFAULT",
-    "MAX_BYTES_HARD",
-    "MAX_RETRIES",
-    "FetchResult",
-)
+    # Public fetcher
+    "async_fetch_public_text": "hledac.universal.fetching.public_fetcher",
+    "process_html_payload": "hledac.universal.fetching.public_fetcher",
+    "DEFAULT_UA": "hledac.universal.fetching.public_fetcher",
+    "MAX_BYTES_DEFAULT": "hledac.universal.fetching.public_fetcher",
+    "MAX_BYTES_HARD": "hledac.universal.fetching.public_fetcher",
+    "MAX_RETRIES": "hledac.universal.fetching.public_fetcher",
+    "FetchResult": "hledac.universal.fetching.public_fetcher",
+}
 
 
 def __getattr__(name: str):
-    if name in _PUBLIC_FETCHER_EXPORTS:
-        from .fetching.public_fetcher import (
-            async_fetch_public_text,
-            process_html_payload,
-            DEFAULT_UA,
-            MAX_BYTES_DEFAULT,
-            MAX_BYTES_HARD,
-            MAX_RETRIES,
-            FetchResult,
-        )
-        globals().update({
-            "async_fetch_public_text": async_fetch_public_text,
-            "process_html_payload": process_html_payload,
-            "DEFAULT_UA": DEFAULT_UA,
-            "MAX_BYTES_DEFAULT": MAX_BYTES_DEFAULT,
-            "MAX_BYTES_HARD": MAX_BYTES_HARD,
-            "MAX_RETRIES": MAX_RETRIES,
-            "FetchResult": FetchResult,
-        })
-        return globals()[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module = import_module(module_name)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
 
 
 def load_optional(name: str):
@@ -131,10 +119,11 @@ __all__ = [
     "ReplayResult",
     "CanonicalFinding",
     "create_owned_store",
-    # Resource allocator
+    # Concurrency
     "FETCH_SEMAPHORE",
-    "AdaptiveSemaphore",
     "adjust_fetch_workers",
+    # Resource allocator
+    "AdaptiveSemaphore",
     # Loader
     "load_optional",
 ]

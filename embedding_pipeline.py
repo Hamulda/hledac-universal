@@ -973,3 +973,91 @@ async def generate_embeddings_streaming(
 def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
     """Sync helper for a single chunk — runs in thread executor."""
     return generate_embeddings(texts, batch_size=batch_size)
+
+
+# ---------------------------------------------------------------------------
+# F218A: Embedding Ownership — Canonical entry point helpers
+# ---------------------------------------------------------------------------
+
+def get_canonical_embedder() -> "EmbeddingRouter":
+    """
+    Return the canonical EmbeddingRouter singleton.
+
+    This is the single canonical owner for all embedding operations.
+    Prefer generate_embeddings() / embed_query() / embed_document() for
+    most callers; this function is for diagnostic and routing use.
+
+    Returns:
+        EmbeddingRouter instance (never None after module load).
+    """
+    global _embedding_router
+    if _embedding_router is None:
+        _embedding_router = EmbeddingRouter()
+    return _embedding_router
+
+
+def embed_texts_canonical(texts: list[str], batch_size: int = _BATCH_SIZE) -> np.ndarray:
+    """
+    F218A: Canonical batch text embedding entrypoint.
+
+    Thin wrapper around generate_embeddings() that routes through
+    EmbeddingRouter (ANE → MLX ModernBERT → CPU fallback).
+
+    Args:
+        texts: List of text strings to embed.
+        batch_size: Batch size (default 16, capped at 512).
+
+    Returns:
+        np.ndarray float32 shape (len(texts), 256) — MRL truncated embeddings.
+        Returns zeros array on memory pressure or error (fail-open).
+    """
+    return generate_embeddings(texts, batch_size=batch_size, keep_loaded=False)
+
+
+def get_embedding_backend() -> str:
+    """
+    F218A: Return which embedding backend is currently active.
+
+    Inspects the EmbeddingRouter state to determine the active path:
+      - "ane"        — ANEEmbedder (CoreML MiniLM-L6-v2)
+      - "mlx"        — MLX ModernBERT (ModernBERTEmbedder via mlx-embeddings)
+      - "mlx_manager" — MLXEmbeddingManager fallback
+      - "hash_fallback" — deterministic hash fallback (zero RAM)
+      - "not_loaded" — router initialized but no model loaded yet
+      - "unknown"    — cannot determine (error state)
+
+    This is a read-only diagnostic — does not trigger model loading.
+    """
+    global _embedding_router
+    if _embedding_router is None:
+        return "not_loaded"
+
+    try:
+        router = _embedding_router
+
+        # Check ANE first
+        if router._ane_available and router._ane is not None and router._ane.is_loaded:
+            return "ane"
+
+        # Check MLX ModernBERT via ModelManager
+        if router._check_mlx_loaded():
+            if router._modernbert is not None and router._modernbert.is_loaded:
+                return "mlx"
+
+        # Check if ModernBERT was loaded via _load_modernbert (even if not in ModelManager yet)
+        if router._modernbert is not None and router._modernbert.is_loaded:
+            return "mlx"
+
+        # Not loaded yet
+        if not router._initialized:
+            return "not_loaded"
+
+        # Check what fallback path EmbeddingRouter would use
+        # If ANE not available, router uses ModernBERT; if that fails, MLXEmbeddingManager
+        if not router._ane_available:
+            return "mlx"  # Would fall through to ModernBERT path
+
+        return "not_loaded"
+
+    except Exception:
+        return "unknown"

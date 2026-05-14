@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
-import time
 from unittest import mock
 from unittest.mock import AsyncMock
 
@@ -646,6 +646,9 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
     monkeypatch.setenv("HLEDAC_ENABLE_HEAVY_BROWSER", "1")
     monkeypatch.setenv("HLEDAC_ENABLE_NODRIVER", "1")
 
+    # Mock at the source module (rendering.macos_webkit_renderer) — the import
+    # inside public_fetcher does: from ...macos_webkit_renderer import fetch_with_macos_webkit
+    # so patching at the source intercepts the binding that public_fetcher uses.
     import hledac.universal.rendering.macos_webkit_renderer as renderer_module
 
     from hledac.universal.rendering.macos_webkit_renderer import (
@@ -702,7 +705,9 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
             url = f"http://127.0.0.1:{server_port}/"
             result = await async_fetch_public_text(url, timeout_s=30)
 
-            assert result.transport_counters.macos_webkit_count == 1
+            assert result.transport_counters.macos_webkit_count == 1, (
+                f"Expected macos_webkit_count=1, got {result.transport_counters.macos_webkit_count}"
+            )
             mock_camoufox.assert_not_called()
             mock_nodriver.assert_not_called()
 
@@ -713,17 +718,22 @@ async def test_heavy_browser_not_called_when_wkwebview_succeeds(monkeypatch):
 
 # --------------------------------------------------------------------------
 # Test 16: Real macOS WKWebView smoke — standalone, macOS+PyObjC only
+# Gated by HLEDAC_RUN_REAL_WEBKIT_SMOKE=1 — not part of normal CI/dev suite.
 # --------------------------------------------------------------------------
 @pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS + PyObjC only")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or os.environ.get("HLEDAC_RUN_REAL_WEBKIT_SMOKE") != "1",
+    reason="macOS + PyObjC + HLEDAC_RUN_REAL_WEBKIT_SMOKE=1 required"
+)
 async def test_public_fetcher_real_wkwebview_smoke(monkeypatch):
-    """Real WKWebView smoke test — requires macOS + PyObjC.
+    """Real WKWebView smoke test — requires macOS + PyObjC + explicit env flag.
 
     This is a standalone smoke test that spawns the actual WKWebView worker
     subprocess. It is NOT part of the canonical wiring suite (which uses mocks).
     Only run this manually on a macOS machine with PyObjC installed.
 
     This test verifies end-to-end: public_fetcher → real worker → rendered DOM.
+    Gated by HLEDAC_RUN_REAL_WEBKIT_SMOKE=1 to prevent accidental CI failures.
     """
     # Disable heavy browsers — WKWebView must be the JS renderer
     monkeypatch.setenv("HLEDAC_ENABLE_HEAVY_BROWSER", "0")

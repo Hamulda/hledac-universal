@@ -1111,7 +1111,6 @@ dependencies = [
     { name = "lancedb" },
     { name = "lmdb" },
     { name = "msgspec" },
-    { name = "nodriver" },
     { name = "orjson" },
     { name = "psutil" },
     { name = "pyahocorasick" },
@@ -1145,6 +1144,7 @@ all = [
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mlx-embeddings" },
     { name = "mypy" },
+    { name = "nodriver" },
     { name = "numpy" },
     { name = "pluggy" },
     { name = "polars" },
@@ -1169,6 +1169,7 @@ apple-accel = [
 ]
 browser = [
     { name = "camoufox", extra = ["geoip"] },
+    { name = "nodriver" },
 ]
 dev = [
     { name = "iniconfig" },
@@ -1253,7 +1254,7 @@ requires-dist = [
     { name = "mlx-embeddings", marker = "extra == 'apple-accel'", specifier = ">=0.1.0" },
     { name = "msgspec", specifier = ">=0.21.1,<0.22.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.9.0" },
-    { name = "nodriver", specifier = ">=0.1.0" },
+    { name = "nodriver", marker = "extra == 'browser'", specifier = ">=0.1.0" },
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.24.0" },
     { name = "orjson", specifier = ">=3.9.0" },
     { name = "pluggy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
