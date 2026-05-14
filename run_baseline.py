@@ -228,15 +228,32 @@ def collect_inventory(probe_dirs: list[str]) -> dict:
     """
     all_tests: list[str] = []
     all_modules: list[str] = []
+    missing_lanes: list[str] = []
+    error_lanes: list[str] = []
 
     for lane in probe_dirs:
         lane_path = TESTS_ROOT / lane
         if not lane_path.exists():
+            missing_lanes.append(lane)
             continue
+        # Enumerate test files (handle norecursedirs=probe_* blocking dir traversal)
+        test_files = [
+            p for p in lane_path.rglob("test_*.py")
+            if p.is_file() and not p.name.startswith("_")
+        ]
+        if not test_files:
+            error_lanes.append(lane)
+            continue
+        # Pass explicit file paths to avoid norecursedirs blocking directory
         result = run_pytest(
-            [str(lane_path), "--co", "-q"],
+            [str(p) for p in test_files] + ["--co", "-q"],
             timeout=60,
         )
+        # Capture collection errors (import failures, syntax errors, etc.)
+        # --co can return 0 (no tests) or 1 (errors) but stdout may still be empty
+        if result["returncode"] not in (0, 1) or result["stderr"]:
+            error_lanes.append(lane)
+            continue
         # --co output lines look like "test_foo.py::TestBar::test_baz"
         for line in result["stdout"].splitlines():
             line = line.strip()
@@ -250,6 +267,8 @@ def collect_inventory(probe_dirs: list[str]) -> dict:
         "collected_tests": len(all_tests),
         "collected_modules": len(all_modules),
         "probe_lanes": probe_dirs,
+        "missing_lanes": missing_lanes,
+        "error_lanes": error_lanes,
     }
 
 
