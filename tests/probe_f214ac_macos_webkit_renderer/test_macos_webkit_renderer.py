@@ -494,3 +494,170 @@ def test_refresh_macos_webkit_capability_forces_reprobe(monkeypatch):
     assert result == (True, MACOS_WEBKIT_REASONS.SUCCESS)
     # Cache should also be updated
     assert renderer._WEBKIT_CAPABILITY_CACHE == (True, MACOS_WEBKIT_REASONS.SUCCESS)
+
+
+# --------------------------------------------------------------------------
+# Phase 3C: End-to-end public_fetcher smoke
+# Test 14: E2E — public_fetcher → static hydration insufficient → WKWebView
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+async def test_public_fetcher_wkwebview_e2e_html_js_renders(monkeypatch):
+    """WKWebView renders JS-driven DOM when static hydration is insufficient.
+
+    Order under test: normal HTTP → static hydration → WKWebView → FetchResult.text
+    Heavy browser is disabled so WKWebView must be the JS renderer.
+    """
+    import os
+    from unittest import mock
+
+    # Disable heavy browsers — WKWebView must be the JS renderer
+    monkeypatch.setenv("HLEDAC_ENABLE_HEAVY_BROWSER", "0")
+    monkeypatch.setenv("HLEDAC_ENABLE_NODRIVER", "0")
+
+    from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
+    # Mock fetch_with_macos_webkit to return a successful WKWebView render.
+    # We mock at this level (not is_macos_webkit_available) because the real
+    # worker subprocess fails in the test venv (PyObjC not installed there).
+    # Mocking fetch_with_macos_webkit lets us test the public_fetcher pipeline
+    # end-to-end without needing a real WKWebView worker.
+    import hledac.universal.rendering.macos_webkit_renderer as renderer
+
+    original_fetch = renderer.fetch_with_macos_webkit
+
+    fake_html = (
+        "<html><head><title>WKWebView E2E</title></head>"
+        "<body><div id=\"root\">rendered by js</div>"
+        "<script>document.getElementById(\"root\").innerText = \"rendered by js\";</script>"
+        "</body></html>"
+    )
+
+    async def _fake_fetch(url, timeout_s=None, max_bytes=None, user_agent=None):
+        return renderer.WebKitRenderResult(
+            html=fake_html,
+            ok=True,
+            reason="macos_webkit_success",
+            elapsed_ms=50.0,
+            rendered_bytes=len(fake_html),
+        )
+
+    monkeypatch.setattr(renderer, "fetch_with_macos_webkit", _fake_fetch)
+
+    # Local HTTP server that returns HTML requiring JS to be fully rendered.
+    # <noscript> tag causes _needs_js_fetch() to return True (static insufficient).
+    # JS inside sets innerText to "rendered by js" — only reachable via WKWebView.
+    html_content = (
+        "<html><head><title>WKWebView E2E</title></head>"
+        "<body><div id=\"root\">before</div>"
+        "<noscript>enable javascript</noscript>"
+        "<script>document.getElementById(\"root\").innerText = \"rendered by js\";</script>"
+        "</body></html>"
+    )
+
+    # Start local HTTP server on 127.0.0.1
+    import asyncio
+    from aiohttp import web
+
+    async def handler(request):
+        return web.Response(text=html_content, content_type="text/html")
+
+    runner = None
+    server_port = None
+    try:
+        app = web.Application()
+        app.router.add_get("/", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        server_port = site._server.sockets[0].getsockname()[1]
+
+        url = f"http://127.0.0.1:{server_port}/"
+
+        result = await async_fetch_public_text(url, timeout_s=30)
+
+        # Assertions
+        assert result.error is None, f"Expected no error, got: {result.error}"
+        assert result.text is not None, "Expected text to be populated"
+        assert "rendered by js" in result.text, (
+            f"Expected JS-rendered text 'rendered by js' in result.text, got: {result.text!r}"
+        )
+        assert result.transport_counters is not None, "transport_counters should be set"
+
+        # WKWebView was tried and succeeded
+        assert result.transport_counters.macos_webkit_count == 1, (
+            f"Expected macos_webkit_count=1, got {result.transport_counters.macos_webkit_count}"
+        )
+        assert result.transport_counters.js_renderer_count == 1, (
+            f"Expected js_renderer_count=1, got {result.transport_counters.js_renderer_count}"
+        )
+        assert result.transport_counters.static_hydration_attempted >= 1, (
+            f"Expected static_hydration_attempted>=1, got {result.transport_counters.static_hydration_attempted}"
+        )
+        # Static hydration was tried but was insufficient (JS was still needed)
+        assert result.transport_counters.static_hydration_sufficient == 0, (
+            f"Expected static_hydration_sufficient=0 (hydration insufficient), got {result.transport_counters.static_hydration_sufficient}"
+        )
+
+        # js_renderer_skipped_reason should NOT be static_hydration_sufficient
+        # (it should be None or something else since WKWebView succeeded)
+        if result.js_renderer_skipped_reason:
+            assert not result.js_renderer_skipped_reason.startswith("static_hydration_sufficient"), (
+                f"Expected js_renderer_skipped_reason to NOT be static_hydration_sufficient, got: {result.js_renderer_skipped_reason}"
+            )
+
+        # Heavy browser counters should be 0 (disabled)
+        # Camoufox was attempted but should have returned nothing
+        # We just verify the result came from WKWebView (macos_webkit_count == 1)
+        # and not from camoufox/nodriver
+        _tc = result.transport_counters
+        # If camoufox or nodriver were called, js_renderer_count would still be 1
+        # (they also increment it), but macos_webkit_count proves WKWebView was used.
+        # The key is macos_webkit_count == 1 proves WKWebView succeeded.
+        assert _tc.macos_webkit_count == 1, "WKWebView must be the js_renderer source"
+
+    finally:
+        if runner:
+            await runner.cleanup()
+
+
+# --------------------------------------------------------------------------
+# Test 15: WKWebView unavailable → fail-soft, continues to heavy-browser path
+# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_public_fetcher_wkwebview_unavailable_fallback_soft(monkeypatch):
+    """When WKWebView is unavailable, public_fetcher continues without crashing.
+
+    Mocks is_macos_webkit_available → (False, "macos_webkit_pyobjc_missing").
+    Verifies no traceback and flow continues per existing fallback policy.
+    """
+    import os
+    monkeypatch.setenv("HLEDAC_ENABLE_HEAVY_BROWSER", "0")
+    monkeypatch.setenv("HLEDAC_ENABLE_NODRIVER", "0")
+
+    from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+    import hledac.universal.rendering.macos_webkit_renderer as renderer
+
+    # Mock WKWebView unavailable
+    original_is_available = renderer.is_macos_webkit_available
+    renderer._WEBKIT_CAPABILITY_CACHE = None
+
+    def _fake_unavailable():
+        return (False, MACOS_WEBKIT_REASONS.PYOBJC_MISSING)
+
+    monkeypatch.setattr(renderer, "is_macos_webkit_available", _fake_unavailable)
+
+    # Use a real URL but heavy browser disabled — result should fail gracefully
+    # with a clean FetchResult (error set, no traceback)
+    try:
+        result = await async_fetch_public_text("https://example.com", timeout_s=5)
+        # Should not raise — must return FetchResult with error
+        assert hasattr(result, "error"), "Result must be a FetchResult with .error"
+        # Should fail soft (either error set or skipped via reason)
+        assert result.error is not None or result.js_renderer_skipped_reason is not None
+    except Exception as e:
+        pytest.fail(f"public_fetcher raised unexpected exception: {type(e).__name__}: {e}")
+    finally:
+        monkeypatch.setattr(renderer, "is_macos_webkit_available", original_is_available)
+        renderer._WEBKIT_CAPABILITY_CACHE = None
