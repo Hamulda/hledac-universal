@@ -274,24 +274,52 @@ async def search_academic_all(
 
 # =============================================================================
 # SYNC WRAPPERS — for backwards compatibility only
+# F214M: Replaced get_event_loop() with safe pattern for Python 3.14 compatibility.
 # =============================================================================
 
+def _run_sync(async_func, /, *args, **kwargs):
+    """Run an async function synchronously in an isolated event loop.
+
+    Accepts an async function and its arguments — does NOT accept a pre-created
+    coroutine. This ensures the loop check happens BEFORE any coroutine is
+    instantiated, preventing RuntimeWarning: coroutine was never awaited.
+
+    Raises RuntimeError if called from a running event loop — in that case,
+    the async function should be awaited directly.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop — safe to instantiate and run the coroutine
+        return asyncio.run(async_func(*args, **kwargs))
+    raise RuntimeError(
+        "Cannot call sync academic_discovery wrapper from a running event loop. "
+        "Use the async function directly instead."
+    )
+
+
 def search_arxiv_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
-    """Synchronous wrapper for search_arxiv."""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(search_arxiv(query, max_results))
+    """Synchronous wrapper for search_arxiv.
+
+    Deprecated for async callers: use `await search_arxiv(...)` inside an event loop.
+    """
+    return _run_sync(search_arxiv, query, max_results)
 
 
 def search_crossref_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
-    """Synchronous wrapper for search_crossref."""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(search_crossref(query, max_results))
+    """Synchronous wrapper for search_crossref.
+
+    Deprecated for async callers: use `await search_crossref(...)` inside an event loop.
+    """
+    return _run_sync(search_crossref, query, max_results)
 
 
 def search_semantic_scholar_sync(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
-    """Synchronous wrapper for search_semantic_scholar."""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(search_semantic_scholar(query, max_results))
+    """Synchronous wrapper for search_semantic_scholar.
+
+    Deprecated for async callers: use `await search_semantic_scholar(...)` inside an event loop.
+    """
+    return _run_sync(search_semantic_scholar, query, max_results)
 
 
 # =============================================================================

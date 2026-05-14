@@ -23,7 +23,7 @@ import hashlib
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -128,7 +128,7 @@ class ResearchThread:
     current_depth: int = 0
     total_papers: int = 0
     path: List[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass
@@ -969,7 +969,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
 
         # Create thread
         thread_id = hashlib.sha256(
-            f"{seed_paper.id}:{datetime.utcnow().isoformat()}".encode()
+            f"{seed_paper.id}:{datetime.now(timezone.utc).isoformat()}".encode()
         ).hexdigest()[:16]
 
         thread = ResearchThread(

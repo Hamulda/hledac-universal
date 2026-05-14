@@ -381,7 +381,8 @@ class DistillationEngine:
             logger.info(f"Training on {len(examples)} examples for {n_epochs} epochs")
 
             # Prepare data - parallelize embeddings via run_in_executor
-            loop = asyncio.get_event_loop()
+            # F214M: get_running_loop() replaces deprecated get_event_loop() in async context
+            loop = asyncio.get_running_loop()
             with ThreadPoolExecutor() as executor:
                 embedding_tasks = [
                     loop.run_in_executor(executor, self._get_chain_embedding, example.chain)

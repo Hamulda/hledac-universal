@@ -1150,6 +1150,8 @@ all = [
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pygments" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1213,6 +1215,10 @@ transport = [
     { name = "aiohttp-socks" },
     { name = "h2" },
 ]
+webkit = [
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1237,7 +1243,7 @@ requires-dist = [
     { name = "flashrank", marker = "extra == 'rerank'", specifier = ">=0.2.0" },
     { name = "h2", marker = "extra == 'osint-html'", specifier = ">=4.1.0" },
     { name = "h2", marker = "extra == 'transport'", specifier = ">=4.1.0" },
-    { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "security", "transport"], marker = "extra == 'all'" },
+    { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "lancedb", specifier = ">=0.2.5" },
@@ -1257,7 +1263,9 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'graph-storage'", specifier = ">=16.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pygments", marker = "extra == 'dev'", specifier = ">=2.15.0" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'webkit'", specifier = ">=12.0" },
     { name = "pyobjc-framework-coreml", specifier = ">=12.1" },
+    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'webkit'", specifier = ">=12.0" },
     { name = "pyprobables", specifier = ">=0.7.0,<0.8.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -1277,7 +1285,7 @@ requires-dist = [
     { name = "xxhash", specifier = ">=3.6.0,<4.0.0" },
     { name = "xxhash", marker = "extra == 'osint-html'", specifier = ">=3.4.0" },
 ]
-provides-extras = ["light", "nlp", "apple-accel", "osint-html", "graph-storage", "torch", "dev", "acceleration", "rerank", "browser", "security", "transport", "all"]
+provides-extras = ["light", "nlp", "apple-accel", "osint-html", "graph-storage", "torch", "dev", "acceleration", "rerank", "browser", "webkit", "security", "transport", "all"]
 
 [[package]]
 name = "hpack"
@@ -2919,6 +2927,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9c/c8/cf20ea91ae33f05f3b92dec648c6f44a65f86d1a64c1d6375c95b85ccb7c/pyobjc_framework_coreml-12.1-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:71de5b37e6a017e3ed16645c5d6533138f24708da5b56c35c818ae49d0253ee1", size = 11600, upload-time = "2025-11-14T09:45:55.976Z" },
     { url = "https://files.pythonhosted.org/packages/bc/5c/510ae8e3663238d32e653ed6a09ac65611dd045a7241f12633c1ab48bb9b/pyobjc_framework_coreml-12.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:a04a96e512ecf6999aa9e1f60ad5635cb9d1cd839be470341d8d1541797baef6", size = 11418, upload-time = "2025-11-14T09:45:57.75Z" },
     { url = "https://files.pythonhosted.org/packages/d3/1a/b7367819381b07c440fa5797d2b0487e31f09aa72079a693ceab6875fa0a/pyobjc_framework_coreml-12.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:7762b3dd2de01565b7cf3049ce1e4c27341ba179d97016b0b7607448e1c39865", size = 11593, upload-time = "2025-11-14T09:45:59.623Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-webkit"
+version = "12.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/14/10/110a50e8e6670765d25190ca7f7bfeecc47ec4a8c018cb928f4f82c56e04/pyobjc_framework_webkit-12.1.tar.gz", hash = "sha256:97a54dd05ab5266bd4f614e41add517ae62cdd5a30328eabb06792474b37d82a", size = 284531, upload-time = "2025-11-14T10:23:40.287Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7a/3d/80d36280164c69220ce99372f7736a028617c207e42cb587716009eecb88/pyobjc_framework_webkit-12.1-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:1da0c428c9d9891c93e0de51c9f272bfeb96d34356cdf3136cb4ad56ce32ec2d", size = 50096, upload-time = "2025-11-14T10:07:10.027Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/7a/03c29c46866e266b0c705811c55c22625c349b0a80f5cf4776454b13dc4c/pyobjc_framework_webkit-12.1-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:1a29e334d5a7dd4a4f0b5647481b6ccf8a107b92e67b2b3c6b368c899f571965", size = 50572, upload-time = "2025-11-14T10:07:14.232Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/ac/924878f239c167ffe3bfc643aee4d6dd5b357e25f6b28db227e40e9e6df3/pyobjc_framework_webkit-12.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:99d0d28542a266a95ee2585f51765c0331794bca461aaf4d1f5091489d475179", size = 50210, upload-time = "2025-11-14T10:07:18.926Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/86/637cda4983dc0936b73a385f3906256953ac434537b812814cb0b6d231a2/pyobjc_framework_webkit-12.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:1aaa3bf12c7b68e1a36c0b294d2728e06f2cc220775e6dc4541d5046290e4dc8", size = 50680, upload-time = "2025-11-14T10:07:23.331Z" },
 ]
 
 [[package]]
