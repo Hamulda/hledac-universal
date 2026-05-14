@@ -23,6 +23,7 @@ from typing import Any
 _LAZY_EXPORT_MAP: dict[str, str] = {
     # duckdb_store — heavy: duckdb, psutil, msgspec
     "DuckDBShadowStore": "knowledge.duckdb_store",
+    "DuckDBReadStore": "knowledge.duckdb_read_store",
     "ActivationResult": "knowledge.duckdb_store",
     "ReplayResult": "knowledge.duckdb_store",
     "CanonicalFinding": "knowledge.duckdb_store",
@@ -173,9 +174,15 @@ def __getattr__(name: str) -> Any:
         try:
             module = import_module(module_path)
         except ModuleNotFoundError as exc:
-            if exc.name == "hledac" and module_path.startswith("hledac.universal."):
+            name = exc.name or ""
+            if name == "hledac" and module_path.startswith("hledac.universal."):
+                # hledac package not on path — resolve to relative import
                 local_path = module_path[len("hledac.universal."):]
                 module = import_module(local_path)
+            elif name.startswith("knowledge.") or name == "knowledge":
+                # knowledge subpackage on path but module not found —
+                # resolve to hledac.universal.knowledge.* path
+                module = import_module("hledac.universal." + module_path)
             else:
                 raise
         value = getattr(module, name)

@@ -46,17 +46,18 @@ import msgspec
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.patterns.pattern_matcher import match_text
-from hledac.universal.transport.circuit_breaker import (
+# Sprint F214: Centralized transport imports — protocol boundary
+from hledac.universal.transport.base import (
     get_breaker,
     CircuitBreaker,
     CircuitDecision,
-)
-from hledac.universal.transport.httpx_transport import (
     should_use_httpx_h2,
     fetch_via_httpx_h2,
+    should_use_curl_cffi,
+    fetch_via_curl_cffi,
+    route_transport,
+    TransportDecision,
 )
-from hledac.universal.transport.curl_cffi_transport import should_use_curl_cffi
-from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi
 from hledac.universal.utils.concurrency import (
     FETCH_SEMAPHORE,
     get_clearnet_semaphore,
@@ -239,7 +240,7 @@ class TransportCounters:
         self.macos_webkit_count = min(macos_webkit_count, _MAX_COUNT)
 
 
-class FetchResult(msgspec.Struct, frozen=True, gc=False):
+class FetchResult(msgspec.Struct, frozen=True):
     """Frozen msgspec result — no mutations after construction.
 
     Backward-compatible: added fields have defaults so existing callers are unaffected.
@@ -643,11 +644,6 @@ def _try_decode(body: bytes) -> tuple[str, bool, int]:
 
 
 # ---------------------------------------------------------------------------
-# F206AR: Transport router — unified lane selection authority
-# ---------------------------------------------------------------------------
-from hledac.universal.transport.transport_router import route_transport, TransportDecision
-
-# ---------------------------------------------------------------------------
 # P4: Tor session helpers — SOCKS5 proxy via aiohttp_socks
 # ---------------------------------------------------------------------------
 
@@ -805,8 +801,11 @@ def _close_tor_session_sync() -> None:
         # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
             global _tor_session
+            session = _tor_session  # capture local ref to avoid race
+            if session is None:
+                return
             try:
-                _loop.run_until_complete(_tor_session.close())
+                _loop.run_until_complete(session.close())
             except Exception as e:
                 logger.warning("Error closing Tor session in thread: %s", e)
             finally:
@@ -864,8 +863,11 @@ def _close_i2p_session_sync() -> None:
         # FIX F196A: use run_until_complete instead of asyncio.run to avoid M1 crash
         def _run_closer() -> None:
             global _i2p_session
+            session = _i2p_session  # capture local ref to avoid race
+            if session is None:
+                return
             try:
-                _loop.run_until_complete(_i2p_session.close())
+                _loop.run_until_complete(session.close())
             except Exception as e:
                 logger.warning("Error closing I2P session in thread: %s", e)
             finally:
@@ -1292,9 +1294,13 @@ async def async_fetch_public_text(
         Typed result with final_url, status, content_type, text (or None),
         byte counts, elapsed_ms, and optional error.
     """
-    t0 = time.monotonic()
+    # -------------------------------------------------------------------------
+    # PHASE 1: Fast-fail guards (lines 1296-1327)
+    # -------------------------------------------------------------------------
+    # Non-string URL or validation failure → return immediately
+    # No transport setup needed, no side effects.
 
-    # --- F206N: Transport counters (per-fetch, bounded) ---
+    t0 = time.monotonic()
     _tc = TransportCounters()
 
     # --- Type guard: non-string input fails fast, fail-soft ---
@@ -1330,37 +1336,55 @@ async def async_fetch_public_text(
             failure_stage="validation",
         )
 
-    # --- F204B: Domain circuit breaker check (fail-soft) ---
+    # -------------------------------------------------------------------------
+    # PHASE 2: Circuit breaker — domain-level fail-fast (lines 1329-1355)
+    # -------------------------------------------------------------------------
+    # Check if domain has too many failures before any transport is touched.
+    # Fail-open: if breaker lookup fails, proceed normally.
+
     _circuit_breaker_domain: str = ""
-    _circuit_breaker: "CircuitBreaker" | None = None
+    _circuit_breaker: Optional["CircuitBreaker"] = None
     try:
         parsed_url = urllib.parse.urlparse(url)
         _circuit_breaker_domain = parsed_url.netloc
         if _circuit_breaker_domain:
             _circuit_breaker = get_breaker(_circuit_breaker_domain)
-            decision = _circuit_breaker.check_circuit()
-            if not decision.allowed:
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                return FetchResult(
-                    url=url,
-                    final_url=url,
-                    status_code=0,
-                    content_type="",
-                    text=None,
-                    fetched_bytes=0,
-                    declared_length=-1,
-                    elapsed_ms=elapsed_ms,
-                    error=f"circuit_breaker_open:{decision.state}:{decision.reason}",
-                    failure_stage="circuit_breaker",
-                    selected_transport="aiohttp",
-                    transport_policy_reason="clearnet_default",
-                )
+            # Fail-open: no breaker for domain = no throttling, proceed normally
+            if _circuit_breaker is None:
+                _circuit_breaker = None  # explicitly None so later code skips breaker
+            else:
+                decision = _circuit_breaker.check_circuit()
+                if not decision.allowed:
+                    elapsed_ms = (time.monotonic() - t0) * 1000
+                    return FetchResult(
+                        url=url,
+                        final_url=url,
+                        status_code=0,
+                        content_type="",
+                        text=None,
+                        fetched_bytes=0,
+                        declared_length=-1,
+                        elapsed_ms=elapsed_ms,
+                        error=f"circuit_breaker_open:{decision.state}:{decision.reason}",
+                        failure_stage="circuit_breaker",
+                        selected_transport="aiohttp",
+                        transport_policy_reason="clearnet_default",
+                    )
     except Exception as e:
         logger.debug(f"Circuit breaker check failed (non-fatal): {e}")
+
+    # -------------------------------------------------------------------------
+    # PHASE 2: Size cap enforcement (line 1366-1368)
+    # -------------------------------------------------------------------------
 
     # --- Size cap enforcement ---
     if max_bytes > MAX_BYTES_HARD:
         max_bytes = MAX_BYTES_HARD
+
+    # -------------------------------------------------------------------------
+    # PHASE 3: Explicit JS rendering mode (lines 1370-1412)
+    # -------------------------------------------------------------------------
+    # use_js=True bypasses ALL transport selection — goes straight to browser.
 
     # --- P7: Explicit JS rendering mode ---
     if use_js:
@@ -1406,6 +1430,12 @@ async def async_fetch_public_text(
             transport_counters=_tc,
         )
 
+    # -------------------------------------------------------------------------
+    # PHASE 4: Transport routing (lines 1423-1444)
+    # -------------------------------------------------------------------------
+    # route_transport() is a PURE function — no I/O, no side effects.
+    # Derives lane selection from URL characteristics and runtime flags.
+
     # --- F206AR: Route transport via canonical router ---
     _router_decision: TransportDecision = route_transport(
         url,
@@ -1425,9 +1455,19 @@ async def async_fetch_public_text(
     _httpx_fallback_reason: str | None = None
     _curl_fallback_reason: str | None = None
 
+    # Transport telemetry — initialized early so early returns are safe
+    _actual_transport: str = ""
+    _fallback_info: str | None = None
+
     # Derive use_tor/use_i2p from router decision (replaces manual URL parsing)
     use_tor = _router_lane == "tor_socks"
     use_i2p = _router_lane == "i2p_socks"
+
+    # -------------------------------------------------------------------------
+    # PHASE 5: httpx_h2 lane execution (lines 1452-1545)
+    # -------------------------------------------------------------------------
+    # Router selected httpx_h2 when: API-like URL + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available.
+    # Falls back to aiohttp_default on any error (including classification + record).
 
     # --- F206AR: H2 lane — router selected httpx_h2? ---
     _use_httpx_h2: bool = _router_lane == "httpx_h2"
@@ -1531,6 +1571,11 @@ async def async_fetch_public_text(
             # F206AF: Set transport_fallback_reason for this URL
             _httpx_fallback_reason: str | None = "httpx_h2_fallback"
 
+    # -------------------------------------------------------------------------
+    # PHASE 6: DoH + stealth + Tor/I2P session setup (lines 1560-1620)
+    # -------------------------------------------------------------------------
+    # No network I/O yet — setup only. Failures here return early with error.
+
     # Apply longer timeout for anonymized networks (Tor/I2P)
     if use_tor or use_i2p:
         timeout_s = timeout_s * TOR_STEALTH_TIMEOUT_SCALE
@@ -1560,6 +1605,12 @@ async def async_fetch_public_text(
             stealth_session = StealthSession()
         except Exception as e:
             logger.warning(f"Stealth session unavailable, proceeding without: {e}")
+
+    # -------------------------------------------------------------------------
+    # PHASE 7: curl_cffi stealth lane (lines 1595-1650)
+    # -------------------------------------------------------------------------
+    # Router selected curl_cffi_stealth when: use_stealth=True OR retry 403/429.
+    # Falls back to aiohttp_default on failure.
 
     # --- F206AR: curl_cffi stealth lane — router selected curl_cffi_stealth? ---
     # Router already enforced: no darknet/JS/Freenet. Falls back to aiohttp on failure.

@@ -1892,22 +1892,19 @@ async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
 
 
 # P1E-A: Cooperative signal shutdown
-_signal_shutdown_received = False
+_shutdown_signal_event: asyncio.Event = asyncio.Event()
 
 def _install_signal_handler() -> None:
     """Install SIGINT/SIGTERM handlers. Fail-soft on platforms without signal."""
-    global _signal_shutdown_received
+    def _handler(signum: int, frame: Any) -> None:
+        sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+        logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(_shutdown_signal_event.set)
+        except Exception:
+            pass
     try:
-        def _handler(signum: int, frame: Any) -> None:
-            global _signal_shutdown_received
-            sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
-            logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
-            _signal_shutdown_received = True
-            try:
-                loop = asyncio.get_running_loop()
-                loop.stop()
-            except Exception:
-                pass
         signal.signal(signal.SIGINT, _handler)
         signal.signal(signal.SIGTERM, _handler)
         logging.info("[SIGNAL] SIGINT/SIGTERM handlers installed")
@@ -1981,13 +1978,26 @@ def main() -> None:
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
     elif args.sprint:
+        import contextlib
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            asyncio.run(run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile))
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            # Signal handler initiated cooperative teardown via loop.stop()
-            # asyncio.CancelledError: loop.stop() from signal handler
-            # KeyboardInterrupt: fallback for direct SIGINT
-            pass
+            sprint_task = loop.create_task(
+                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile)
+            )
+            sig_task = loop.create_task(_shutdown_signal_event.wait())
+            done, pending = loop.run_until_complete(
+                asyncio.wait(
+                    [sprint_task, sig_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            )
+            if sprint_task not in done:
+                sprint_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    loop.run_until_complete(sprint_task)
+        finally:
+            loop.close()
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))
     else:

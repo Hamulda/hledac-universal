@@ -177,6 +177,44 @@ try:
 except ImportError:
     EMBEDDING_AVAILABLE = False
 
+# ─── Capability Catalog ──────────────────────────────────────────────────────
+# Explicit catalog of brain engine availability. Callers should use
+# is_brain_engine_available("insight") rather than checking _AVAILABLE directly.
+AVAILABLE_BRAIN_ENGINES = {
+    "insight": INSIGHT_AVAILABLE,
+    "inference": INFERENCE_AVAILABLE,
+    "hypothesis": HYPOTHESIS_AVAILABLE,
+    "moe": MOE_AVAILABLE,
+    "distillation": DISTILLATION_AVAILABLE,
+    "modernbert": MODERNBERT_AVAILABLE,
+    "model_manager": MODEL_MANAGER_AVAILABLE,
+    "ner_engine": NER_ENGINE_AVAILABLE,
+    "embedding": EMBEDDING_AVAILABLE,
+}
+
+
+def is_brain_engine_available(name: str) -> bool:
+    """
+    Runtime capability check for brain engines.
+
+    Args:
+        name: Engine name ("insight", "inference", "hypothesis", "moe",
+               "distillation", "modernbert", "model_manager", "ner_engine", "embedding")
+
+    Returns:
+        True if the engine is available and its symbols are importable.
+
+    Example:
+        if is_brain_engine_available("insight"):
+            from brain import InsightEngine
+    """
+    return AVAILABLE_BRAIN_ENGINES.get(name, False)
+
+
+def get_available_brain_engines() -> dict[str, bool]:
+    """Return the full capability catalog as a dict."""
+    return AVAILABLE_BRAIN_ENGINES.copy()
+
 __all__ = [
     "Hermes3Engine",
     "DecisionType",
@@ -245,10 +283,19 @@ __all__ = [
     "reset_model_manager",
     "MODEL_MANAGER_AVAILABLE",
     # NER/IOC (Sprint 8VG)
+    "NEREngine",
+    "Entity",
+    "get_ner_engine",
+    "reset_ner_engine",
     "extract_iocs_from_text",
     "IOCScorer",
+    "NER_ENGINE_AVAILABLE",
     # P13: Embedding Model Lifecycle
     "load_embedding_model",
     "unload_embedding_model",
     "EMBEDDING_AVAILABLE",
+    # Capability Catalog API
+    "AVAILABLE_BRAIN_ENGINES",
+    "is_brain_engine_available",
+    "get_available_brain_engines",
 ]

@@ -1773,6 +1773,7 @@ class SprintScheduler:
         self._sidecar_orchestrator = SidecarOrchestrator(
             result_sink=self._result,
             governor=self._governor,
+            scheduler=self,
         )
 
         # Sprint F193A: CT log client can be injected at run() call time
@@ -2300,8 +2301,8 @@ class SprintScheduler:
         # Sprint F195C: Close multimodal enricher and LMDB at TEARDOWN
         await self._close_multimodal()
 
-        # Sprint F206D: Run all advisory steps via extracted runner (fail-soft, non-blocking)
-        await self._run_advisory_runner()
+        # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
+        await self._sidecar_orchestrator.run_advisory_runner()
 
         # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
         await self._unload_hermes_at_teardown()
@@ -5887,9 +5888,11 @@ class SprintScheduler:
                     query=query,
                 )
 
-                # F204D: Update cross-sprint target memory after findings are accepted
+                # F204D: Update cross-sprint target memory via SidecarOrchestrator
                 if accepted_findings:
-                    await self._run_target_memory_update(accepted_findings, store, query)
+                    await self._sidecar_orchestrator.run_target_memory_update(
+                        accepted_findings, store, query
+                    )
         except Exception as exc:
             self._result.ct_log_error = str(exc)[:200]
             self._result.ct_terminal_stage = "error"
@@ -6602,47 +6605,17 @@ class SprintScheduler:
 
     async def _run_advisory_runner(self) -> None:
         """
-        F206D: Run all 4 advisory steps via SprintAdvisoryRunner.
+        F206D: Delegate all advisory orchestration to SidecarOrchestrator.
 
-        Canonical teardown entry point for all advisory orchestration.
-        Each step is fail-soft; CancelledError propagates to caller.
+        SidecarOrchestrator.run_advisory_runner() owns:
+          1. run_all_advisories (pivot_planner, pivot_executor, resource_governor, analyst_brief)
+          2. run_ct_to_passivedns_pivot_advisory
+          3. run_bgp_advisory_sidecar (non-blocking)
+          4. run_wayback_cdx_deep_sidecar (non-blocking)
 
-        Runner order:
-          1. pivot_planner  → planned_pivots
-          2. pivot_executor → executed_pivots (gated by acquisition strategy)
-          3. resource_governor → governor_recorded
-          4. analyst_brief → brief_generated
+        This method remains for backward compatibility with any direct callers.
         """
-        runner = SprintAdvisoryRunner(
-            scheduler=self,
-            duckdb_store=getattr(self, "_duckdb_store", None),
-            governor=getattr(self, "_governor", None),
-            analyst_workbench=getattr(self, "_analyst_workbench", None),
-        )
-
-        # Sprint F206BK: Gate pivot_executor via acquisition strategy
-        snapshot = getattr(self, "_acquisition_plan", None)
-        if not is_lane_enabled(snapshot, AcquisitionLane.PIVOT_EXECUTOR):
-            reason = lane_skip_reason(snapshot, AcquisitionLane.PIVOT_EXECUTOR) or "unknown"
-            log.debug(
-                f"[F206BK] pivot_executor skipped by acquisition strategy: {reason}"
-            )
-            self._result.acquisition_lanes_skipped += 1
-
-        await runner.run_all_advisories()
-
-        # Sprint R5: CT → PassiveDNS one-hop pivot (after all other advisories)
-        await self._run_ct_to_passivedns_pivot_advisory()
-
-        # Sprint F234: BGP advisory sidecar (fail-soft, non-blocking)
-        _bgp_task = asyncio.create_task(self._run_bgp_advisory_sidecar(), name="sprint:bgp_advisory_sidecar")
-        self._bg_tasks.add(_bgp_task)
-        _bgp_task.add_done_callback(self._bg_tasks.discard)
-
-        # Sprint F234: WaybackCDX deep advisory sidecar (fail-soft, non-blocking)
-        _wayback_task = asyncio.create_task(self._run_wayback_cdx_deep_sidecar(), name="sprint:wayback_cdx_sidecar")
-        self._bg_tasks.add(_wayback_task)
-        _wayback_task.add_done_callback(self._bg_tasks.discard)
+        await self._sidecar_orchestrator.run_advisory_runner()
 
     # ── F202G: Pivot Planner Advisory ───────────────────────────────────────
 # ── F202G: Pivot Planner Advisory ───────────────────────────────────────

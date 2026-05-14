@@ -14,6 +14,7 @@ No numpy, no pandas, no mlx, no model loading. Pure Python. M1 8GB safe.
 """
 from __future__ import annotations
 
+import heapq
 import math
 from collections import deque
 from dataclasses import dataclass, field
@@ -405,12 +406,10 @@ class TemporalSignalLayer:
             ls = s.last_score
             if ls is not None:
                 scored.append((ls.anomaly_score, ls))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [score for _, score in scored[:k]]
+        return [score for _, score in heapq.nlargest(k, scored, key=lambda x: x[0])]
 
     def get_edge_candidates(self, k: int = 50) -> list[TemporalEdgeCandidate]:
-        sorted_candidates = sorted(self._edge_candidates, key=lambda c: c.score, reverse=True)
-        return sorted_candidates[:k]
+        return heapq.nlargest(k, self._edge_candidates, key=lambda c: c.score)
 
     # ─── Snapshot / replay ─────────────────────────────────────────────────
 

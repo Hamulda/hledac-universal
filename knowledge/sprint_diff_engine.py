@@ -18,7 +18,7 @@ Profile logic:
 """
 
 from dataclasses import dataclass, field
-import json
+import orjson
 import logging
 
 logger = logging.getLogger(__name__)
@@ -214,7 +214,7 @@ class SprintDiffEngine:
             pass
 
         try:
-            entity_summary_json = json.dumps(entity_summary)
+            entity_summary_json = orjson.dumps(entity_summary).decode()
         except Exception:
             entity_summary_json = "{}"
 

@@ -5,8 +5,8 @@ TargetMemoryService: bounded cross-sprint target memory with RAM guard.
 
 from __future__ import annotations
 
-import json
 import logging
+import orjson
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -86,8 +86,8 @@ class TargetMemoryService:
         if isinstance(raw, (str, bytes)):
             try:
                 # GHOST_INVARIANT: fail-soft, corrupt JSON → empty facet
-                return json.loads(raw) if isinstance(raw, str) else json.loads(raw.decode())
-            except (json.JSONDecodeError, UnicodeDecodeError, Exception):
+                return orjson.loads(raw)
+            except (orjson.JSONDecodeError, Exception):
                 _logger.warning("corrupt facet JSON, returning empty dict")
                 return {}
         return {}
@@ -318,8 +318,8 @@ class TargetMemoryService:
 
         # JSON size bound enforcement
         try:
-            serialized = json.dumps(memory.confidence_drift)
-            if len(serialized.encode()) > MAX_MEMORY_JSON_BYTES:
+            serialized = orjson.dumps(memory.confidence_drift)
+            if len(serialized) > MAX_MEMORY_JSON_BYTES:
                 _logger.warning(
                     "target_id=%s confidence_drift exceeds %d bytes, truncating",
                     update.target_id,
