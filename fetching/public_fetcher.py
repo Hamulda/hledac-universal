@@ -1891,54 +1891,98 @@ async def async_fetch_public_text(
                             elif xml_recovered:
                                 skip_js_reason = "xml_recovered"
 
-                            if skip_js_reason:
-                                logger.debug(
-                                    f"JS renderer skipped for {url}: reason={skip_js_reason}"
+                            # F214Y: Try static hydration before expensive JS rendering
+                            from hledac.universal.utils.hydration_extractor import extract_static_hydration as _extract_static_hydration
+
+                            hydration = _extract_static_hydration(text)
+                            if hydration.sufficient:
+                                # Use static result — skip JS renderer entirely
+                                logger.info(
+                                    f"Static hydration sufficient for {url}: reason={hydration.reason}"
                                 )
+                                skip_js_reason = f"static_hydration_sufficient:{hydration.reason}"
+                            elif hydration.found:
+                                # Hydration found but not sufficient — proceed to JS rendering
+                                logger.debug(
+                                    f"Static hydration found but insufficient for {url}: {hydration.reason}"
+                                )
+                                skip_js_reason = None
                             else:
-                                logger.info(f"JS need detected, retrying with Camoufox: {url}")
-                                js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
-                                if js_html:
-                                    # Process JS-rendered HTML
-                                    js_text, js_matches = await process_html_payload(js_html, url)
-                                    elapsed_ms = (time.monotonic() - t0) * 1000
-                                    _tc.js_renderer_count += 1
-                                    return FetchResult(
-                                        url=url,
-                                        final_url=url,
-                                        status_code=200,
-                                        content_type="text/html",
-                                        text=js_text,
-                                        fetched_bytes=len(js_html),
-                                        declared_length=-1,
-                                        elapsed_ms=elapsed_ms,
-                                        error=None,
-                                        selected_transport="js",
-                                        transport_policy_reason="js_required",
-                                        transport_counters=_tc,
-                                    )
-                                # Camoufox failed → try nodriver fallback
-                                logger.warning(f"Camoufox failed, trying nodriver: {url}")
-                                js_html = await _fetch_with_nodriver(url)
-                                if js_html:
-                                    js_text, js_matches = await process_html_payload(js_html, url)
-                                    elapsed_ms = (time.monotonic() - t0) * 1000
-                                    _tc.js_renderer_count += 1
-                                    return FetchResult(
-                                        url=url,
-                                        final_url=url,
-                                        status_code=200,
-                                        content_type="text/html",
-                                        text=js_text,
-                                        fetched_bytes=len(js_html),
-                                        declared_length=-1,
-                                        elapsed_ms=elapsed_ms,
-                                        error=None,
-                                        selected_transport="js",
-                                        transport_policy_reason="js_required",
-                                        transport_counters=_tc,
-                                    )
-                                # F207F: Both JS renders failed — update capability tracking
+                                # No hydration found — proceed to JS rendering
+                                skip_js_reason = None
+
+                            if skip_js_reason and skip_js_reason.startswith("static_hydration_sufficient"):
+                                # Return enriched result from static extraction
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                _tc.js_renderer_count += 1
+                                return FetchResult(
+                                    url=url,
+                                    final_url=final_url,
+                                    status_code=last_status_code,
+                                    content_type=content_type,
+                                    text=hydration.text if hydration.text else text,
+                                    fetched_bytes=total_read,
+                                    declared_length=declared_length,
+                                    elapsed_ms=elapsed_ms,
+                                    error=None,
+                                    xml_recovered=xml_recovered,
+                                    xml_source_hint=xml_recovered,
+                                    decode_replaced=decode_replaced,
+                                    decode_replacement_count=decode_replacement_count,
+                                    redirected=redirected,
+                                    redirect_target=redirect_target,
+                                    selected_transport=_actual_transport,
+                                    http_version="http/1.1",
+                                    transport_policy_reason=_router_reason if _use_httpx_h2 else "clearnet_default",
+                                    transport_fallback_reason=_fallback_info,
+                                    transport_counters=_tc,
+                                    js_renderer_skipped_reason=skip_js_reason,
+                                )
+
+                            # Fall through to JS renderer (was already the else case below)
+                            logger.info(f"JS need detected, retrying with Camoufox: {url}")
+                            js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
+                            if js_html:
+                                # Process JS-rendered HTML
+                                js_text, js_matches = await process_html_payload(js_html, url)
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                _tc.js_renderer_count += 1
+                                return FetchResult(
+                                    url=url,
+                                    final_url=url,
+                                    status_code=200,
+                                    content_type="text/html",
+                                    text=js_text,
+                                    fetched_bytes=len(js_html),
+                                    declared_length=-1,
+                                    elapsed_ms=elapsed_ms,
+                                    error=None,
+                                    selected_transport="js",
+                                    transport_policy_reason="js_required",
+                                    transport_counters=_tc,
+                                )
+                            # Camoufox failed → try nodriver fallback
+                            logger.warning(f"Camoufox failed, trying nodriver: {url}")
+                            js_html = await _fetch_with_nodriver(url)
+                            if js_html:
+                                js_text, js_matches = await process_html_payload(js_html, url)
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                _tc.js_renderer_count += 1
+                                return FetchResult(
+                                    url=url,
+                                    final_url=url,
+                                    status_code=200,
+                                    content_type="text/html",
+                                    text=js_text,
+                                    fetched_bytes=len(js_html),
+                                    declared_length=-1,
+                                    elapsed_ms=elapsed_ms,
+                                    error=None,
+                                    selected_transport="js",
+                                    transport_policy_reason="js_required",
+                                    transport_counters=_tc,
+                                )
+                            # F207F: Both JS renders failed — update capability tracking
                                 if not js_html:
                                     # Set all renderers as unavailable with reasons
                                     cap = _get_js_renderer_capability()
