@@ -1929,9 +1929,9 @@ async def async_fetch_public_text(
                                 skip_js_reason = None
 
                             if skip_js_reason and skip_js_reason.startswith("static_hydration_sufficient"):
-                                # Return enriched result from static extraction
+                                # Return enriched result from static extraction — NO js_renderer_count increment
+                                # because static hydration is NOT a JS/browser renderer
                                 elapsed_ms = (time.monotonic() - t0) * 1000
-                                _tc.js_renderer_count += 1
                                 return FetchResult(
                                     url=url,
                                     final_url=final_url,
