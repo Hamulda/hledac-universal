@@ -1094,9 +1094,19 @@ def _get_js_renderer_capability() -> dict[str, str | None]:
 
 
 def _all_js_renderers_unavailable() -> bool:
-    """Return True if all JS renderers are unavailable."""
-    cap = _get_js_renderer_capability()
-    return all(v is not None for v in cap.values())
+    """Return True if all JS renderers are unavailable.
+
+    Checks the cached capability dict directly without triggering re-detection.
+    None = available (renderer has no unavailable reason).
+    str = unavailable reason.
+    """
+    # Read directly from global cache — do NOT call _get_js_renderer_capability()
+    # or the None values will be overwritten by the re-check logic.
+    for reason in _js_renderer_capability.values():
+        if reason is None:
+            # At least one renderer is available → not all unavailable
+            return False
+    return True
 
 
 def reset_js_renderer_capability_cache() -> None:
