@@ -168,6 +168,13 @@ browser = [
     "camoufox[geoip]>=0.4.0",  # JA3 fingerprint + bundled browser binary
 ]
 
+# --- webkit: macOS WKWebView JS renderer (lightweight, no Chrome/Chromium) ---
+# Platform-guarded: PyObjC/WebKit only on Darwin. Worker runs as isolated subprocess.
+webkit = [
+    "pyobjc-framework-WebKit>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=12.0; sys_platform == 'darwin'",
+]
+
 # --- security: strong encryption for vault/evidence ---
 # cryptography is heavy (~15MB). Only needed for vault_manager,
 # key_manager, encryption.py, quantum_safe.py, secure_aggregator.
@@ -184,7 +191,7 @@ transport = [
 
 # --- all: everything except torch (torch is too heavy for routine dev) ---
 all = [
-    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,security,transport]",
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport]",
 ]
 
 [project.scripts]

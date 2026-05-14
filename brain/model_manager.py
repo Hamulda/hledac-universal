@@ -26,6 +26,11 @@ from enum import Enum, auto
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
 from hledac.universal.brain.quantization_selector import QuantizationSelector
+from hledac.universal.brain.model_inference_guard import (
+    check_model_allowed,
+    record_model_failure,
+    record_model_success,
+)
 
 # Sprint F180D: MLX lazy init via mlx_memory — single authority for MLX
 # DO NOT add top-level `import mlx.core as mx` here.
@@ -609,6 +614,13 @@ class ModelManager:
         """Interní async implementace načtení modelu."""
         # FIX 0: Per-model lock to prevent TOCTOU race condition
         model_key = model_name.lower()
+        # P1A: Model-level circuit breaker — block before heavy work
+        decision = check_model_allowed(model_key)
+        if not decision.allowed:
+            raise RuntimeError(
+                f"model inference blocked: {model_key}, "
+                f"retry after {decision.retry_after_s:.1f}s"
+            )
         async with self._model_locks[model_key]:
             model_type = self.MODEL_REGISTRY.get(model_key)
             if model_type is None:
@@ -702,11 +714,29 @@ class ModelManager:
                 self._loaded_models[model_type] = model
                 self._current_model = model_type
                 logger.info(f"[MODEL LOAD] {model_name} done (RSS before={rss_before_load:.2f}GB)")
+                # P1A: Record successful load
+                record_model_success(model_key)
                 # P3: snížit fetch concurrency při načteném LLM
                 await adjust_fetch_workers(3)
                 return model
 
+            except asyncio.CancelledError:
+                # P1A: CancelledError must propagate, not be recorded
+                logger.warning(f"Model load cancelled: {model_name}")
+                raise
+
+            except RuntimeError as e:
+                # P1A: Memory admission gate blocked — record and re-raise
+                if "MEMORY ADMISSION" in str(e) or "memory_admission" in str(e).lower():
+                    record_model_failure(model_key, failure_kind="memory_admission_blocked")
+                else:
+                    record_model_failure(model_key, failure_kind="load_error")
+                logger.error(f"Failed to load model {model_name}: {e}")
+                raise RuntimeError(f"Failed to load model {model_name}: {e}") from e
+
             except Exception as e:
+                # P1A: Other load failures
+                record_model_failure(model_key, failure_kind="load_error")
                 logger.error(f"Failed to load model {model_name}: {e}")
                 raise RuntimeError(f"Failed to load model {model_name}: {e}") from e
 

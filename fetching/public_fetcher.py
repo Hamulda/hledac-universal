@@ -190,6 +190,8 @@ class TransportCounters:
         "static_hydration_attempted",
         "static_hydration_sufficient",
         "static_hydration_insufficient",
+        # F214AC: macOS WebKit renderer counter (backward-compatible, bounded)
+        "macos_webkit_count",
     )
 
     def __init__(
@@ -206,6 +208,8 @@ class TransportCounters:
         static_hydration_attempted: int = 0,
         static_hydration_sufficient: int = 0,
         static_hydration_insufficient: int = 0,
+        # F214AC: macOS WebKit renderer counter
+        macos_webkit_count: int = 0,
     ) -> None:
         self.aiohttp_count = min(aiohttp_count, _MAX_COUNT)
         self.httpx_h2_count = min(httpx_h2_count, _MAX_COUNT)
@@ -219,6 +223,8 @@ class TransportCounters:
         self.static_hydration_attempted = min(static_hydration_attempted, _MAX_COUNT)
         self.static_hydration_sufficient = min(static_hydration_sufficient, _MAX_COUNT)
         self.static_hydration_insufficient = min(static_hydration_insufficient, _MAX_COUNT)
+        # F214AC: macOS WebKit renderer counter
+        self.macos_webkit_count = min(macos_webkit_count, _MAX_COUNT)
 
 
 class FetchResult(msgspec.Struct, frozen=True, gc=False):
@@ -1958,7 +1964,42 @@ async def async_fetch_public_text(
                                     hydration_sources=hydration.sources,
                                 )
 
-                            # Fall through to JS renderer (was already the else case below)
+                            # F214AC: Try macOS WKWebView renderer BEFORE heavy browser (camoufox/nodriver)
+                            # Order: 1. normal HTTP → 2. static hydration → 3. WKWebView → 4. heavy browser
+                            from hledac.universal.rendering.macos_webkit_renderer import fetch_with_macos_webkit
+
+                            wkr = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
+                            if wkr.ok and wkr.html:
+                                js_text, js_matches = await process_html_payload(wkr.html, url)
+                                elapsed_ms = (time.monotonic() - t0) * 1000
+                                _tc.js_renderer_count += 1
+                                _tc.macos_webkit_count += 1
+                                return FetchResult(
+                                    url=url,
+                                    final_url=url,
+                                    status_code=200,
+                                    content_type="text/html",
+                                    text=js_text,
+                                    fetched_bytes=wkr.rendered_bytes,
+                                    declared_length=-1,
+                                    elapsed_ms=elapsed_ms,
+                                    error=None,
+                                    selected_transport="js",
+                                    transport_policy_reason="js_required",
+                                    transport_counters=_tc,
+                                )
+
+                            # WKWebView unavailable or failed — fall through to heavy browser (camoufox → nodriver)
+                            # F214AC: Surface WKWebView failure in telemetry if it was tried but failed
+                            wkr_reason = wkr.reason if wkr else "macos_webkit_unavailable"
+                            if wkr_reason not in (
+                                "macos_webkit_success",
+                                "macos_webkit_non_darwin",
+                                "macos_webkit_unavailable",
+                            ):
+                                # WKWebView was available (darwin) but failed — record it
+                                logger.warning(f"WKWebView render failed ({wkr_reason}), falling back to heavy browser: {url}")
+
                             logger.info(f"JS need detected, retrying with Camoufox: {url}")
                             js_html = await _fetch_with_camoufox(url, timeout=timeout_s)
                             if js_html:

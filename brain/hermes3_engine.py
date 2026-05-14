@@ -45,6 +45,20 @@ try:
 except ImportError:
     is_emergency_unload_requested = None  # type: ignore
 
+# P1A: Model-level inference guard (circuit breaker)
+try:
+    from hledac.universal.brain.model_inference_guard import (
+        check_model_allowed,
+        record_model_failure,
+        record_model_success,
+        classify_failure_kind,
+    )
+except ImportError:
+    check_model_allowed = None  # type: ignore
+    record_model_failure = None  # type: ignore
+    record_model_success = None  # type: ignore
+    classify_failure_kind = None  # type: ignore
+
 # Sprint 33: outlines for grammar-constrained decoding
 try:
     import outlines
@@ -1108,6 +1122,14 @@ class Hermes3Engine:
         if self._model is None:
             raise RuntimeError("Model not initialized")
 
+        # P1A: Model-level inference guard — block if hermes is circuit-broken
+        if check_model_allowed is not None:
+            decision = check_model_allowed("hermes")
+            if not decision.allowed:
+                raise RuntimeError(
+                    f"model inference blocked: hermes, retry after {decision.retry_after_s:.1f}s"
+                )
+
         try:
             temp = temperature or self.config.temperature
             max_tok = max_tokens or self.config.max_tokens
@@ -1167,9 +1189,21 @@ class Hermes3Engine:
                     lambda: self._run_inference(formatted_prompt, temp, max_tok, prefix_cache)
                 )
 
+            # P1A: Record successful inference
+            if record_model_success is not None:
+                record_model_success("hermes")
             return response
 
+        except asyncio.CancelledError:
+            # P1A: CancelledError must propagate, not be swallowed or recorded as failure
+            logger.warning("Hermes inference cancelled")
+            raise
+
         except Exception as e:
+            # P1A: Classify and record failure, then re-raise
+            if record_model_failure is not None and classify_failure_kind is not None:
+                kind = classify_failure_kind(e)
+                record_model_failure("hermes", failure_kind=kind)
             logger.error(f"Generation failed: {e}")
             return f"Error: {str(e)}"
 
