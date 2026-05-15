@@ -19,6 +19,7 @@ import re
 import sys
 import time
 import logging
+import urllib.parse
 
 logger = logging.getLogger(__name__)
 from typing import TYPE_CHECKING, Any
@@ -137,15 +138,12 @@ _BOOTSTRAP_DEFAULT_URLS: list[str] = [
 # Known public CTI/news search URLs — lightweight, no new dependency.
 # Mapped to (name, base_url_format) tuples. Max 10.
 _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
-    # Threat intelligence aggregators
-    ("MISP", "https://www.misp-project.org/search/?search="),
-    ("AlienVault OTX", "https://otx.alienvault.com/browse/references?type=search&q="),
-    ("VirusTotal", "https://www.virustotal.com/gui/search/"),
+    # Threat intelligence aggregators — open-access only (no login/API key required)
     ("ThreatFox", "https://threatfox.abuse.ch/browse.php?search="),
-    # Ransomware-specific trackers
+    # Ransomware-specific trackers — open-access
     ("Ransomware Tracker", "https://ransomwaretracker.xyz/"),
     ("ID Ransomware", "https://id-ransomware.malwarehunterteam.com/"),
-    # General CTI/news
+    # General CTI/news — open-access
     ("BleepingComputer", "https://www.bleepingcomputer.com/search/?search="),
     ("The Hacker News", "https://thehackernews.com/search?q="),
     ("Krebs on Security", "https://krebsonsecurity.com/?s="),
@@ -272,7 +270,7 @@ def generate_rescue_urls(query: str, max_urls: int = 5) -> list[DiscoveryHit]:
 
     hits: list[DiscoveryHit] = []
     for name, base_url in _RESGUE_SOURCE_CANDIDATES[:max_urls]:
-        url = f"{base_url}{query}"
+        url = f"{base_url}{urllib.parse.quote(query.strip())}"
         hits.append(DiscoveryHit(
             query=query,
             title=f"Rescue: {name}",

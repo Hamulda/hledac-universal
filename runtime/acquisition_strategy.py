@@ -488,6 +488,66 @@ class NonfeedPlanDebug:
     feed_lane_eligible_passive_dns: bool = False
 
 
+@dataclass(frozen=True)
+class NonfeedSeedContext:
+    """
+    F222I: Bounded seed context for nonfeed lane query shaping.
+
+    Produced by pivot planner / DuckDB seed extraction from text query.
+    Threaded into build_lane_query so lanes receive deterministic domain/IP
+    seeds instead of the generic text query.
+
+    Bounds:
+      - max_domains=10, max_ips=10, max_urls=10 — hard caps
+      - All fields are tuples (immutable, hashable)
+      - Publisher domains (source URL hostnames) are excluded from seeds
+
+    Lane shaping rules:
+      CT:          domains[0] if available, else empty
+      DOH:         domains[0] if available, else _disabled
+      WAYBACK:     domains[0] or URLs[0] if available
+      PASSIVE_DNS: domains[0] or IPs[0] if available
+      PUBLIC:      unchanged (original text query)
+      FEED:        unchanged
+    """
+
+    domains: tuple[str, ...] = ()
+    ips: tuple[str, ...] = ()
+    urls: tuple[str, ...] = ()
+    hashes: tuple[str, ...] = ()
+    cves: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Enforce hard caps
+        if len(self.domains) > 10:
+            object.__setattr__(self, "domains", self.domains[:10])
+        if len(self.ips) > 10:
+            object.__setattr__(self, "ips", self.ips[:10])
+        if len(self.urls) > 10:
+            object.__setattr__(self, "urls", self.urls[:10])
+
+    @property
+    def has_domain(self) -> bool:
+        return bool(self.domains)
+
+    @property
+    def has_ip(self) -> bool:
+        return bool(self.ips)
+
+    @property
+    def has_url(self) -> bool:
+        return bool(self.urls)
+
+    def kind_counts(self) -> dict[str, int]:
+        """Return counts by non-empty seed kind."""
+        return {
+            k: len(v)
+            for k, v in [("domains", self.domains), ("ips", self.ips),
+                         ("urls", self.urls), ("hashes", self.hashes), ("cves", self.cves)]
+            if v
+        }
+
+
 @dataclass
 class AcquisitionStrategySnapshot:
     """Full acquisition strategy snapshot for one sprint/cycle."""
@@ -1030,7 +1090,7 @@ def _build_nonfeed_lane_eligibility(
 
 
 def build_acquisition_report(
-    query: str,
+    query: str = "",
     plan: AcquisitionStrategySnapshot | None = None,
     terminality: dict | None = None,
     nonfeed_plan_debug: NonfeedPlanDebug | dict | None = None,
@@ -1749,6 +1809,10 @@ class AcquisitionLaneOutcome:
     # Sprint F229: Wayback/PassiveDNS raw count telemetry
     wayback_raw_count: int = 0
     passive_dns_raw_count: int = 0
+    # Sprint F222I: Per-lane seed query telemetry
+    doh_query: str = ""
+    wayback_query: str = ""
+    passive_dns_query: str = ""
     # R10: IPFS CID-only fetch telemetry
     ipfs_cid_count: int = 0
     ipfs_terminal_state: str = "none"
@@ -1773,6 +1837,10 @@ class AcquisitionLaneOutcome:
             # Sprint F229: Wayback/PassiveDNS raw count telemetry
             "wayback_raw_count": self.wayback_raw_count,
             "passive_dns_raw_count": self.passive_dns_raw_count,
+            # Sprint F222I: Per-lane seed query telemetry
+            "doh_query": self.doh_query,
+            "wayback_query": self.wayback_query,
+            "passive_dns_query": self.passive_dns_query,
             # R10: IPFS CID-only fetch telemetry
             "ipfs_cid_count": self.ipfs_cid_count,
             "ipfs_terminal_state": self.ipfs_terminal_state,
@@ -2840,6 +2908,7 @@ async def run_enabled_acquisition_lanes(
     query: str,
     store,  # DuckDBShadowStore | None
     uma_state: str = "ok",
+    seed_context: "NonfeedSeedContext | None" = None,
 ) -> tuple:
     """
     Run all enabled optional acquisition lanes (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN)
@@ -2883,7 +2952,8 @@ async def run_enabled_acquisition_lanes(
         """
         start = time.monotonic()
         # [F207I-B] Shape domain-only query via build_lane_query
-        _raw = build_lane_query(query, AcquisitionLane.CT)
+        # [F222I] If seed_context is provided, use domain seed for targeted query
+        _raw = build_lane_query(query, AcquisitionLane.CT, seed_ctx)
         shaped_query = _raw if isinstance(_raw, str) else ""
         ct_error: str | None = None
         ct_results_raw = 0
@@ -3011,9 +3081,12 @@ async def run_enabled_acquisition_lanes(
             )
         try:
             async with asyncio.timeout(plan.timeout_s):
+                # [F222I] Shape URL/domain-only query via build_lane_query
+                shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_ctx)
+                shaped_query_str = shaped_query if isinstance(shaped_query, str) else query
                 miner = _WDM()
                 try:
-                    result = await miner.mine([query])
+                    result = await miner.mine([shaped_query_str])
                 finally:
                     await miner.close()
 
@@ -3051,6 +3124,7 @@ async def run_enabled_acquisition_lanes(
                     rejected_count=rejected_count,
                     sample_rejections=sample_rejections,
                     wayback_raw_count=len(result.change_events),
+                    wayback_query=shaped_query_str,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -3066,7 +3140,8 @@ async def run_enabled_acquisition_lanes(
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
                 wayback_raw_count=0,
-            )
+                    wayback_query=shaped_query_str,
+                )
         except Exception as exc:
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.WAYBACK,
@@ -3080,7 +3155,8 @@ async def run_enabled_acquisition_lanes(
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
                 wayback_raw_count=0,
-            )
+                    wayback_query=shaped_query_str,
+                )
 
     async def _run_pdns_lane(plan) -> "AcquisitionLaneOutcome":
         """Run passive DNS lookup lane — wired to call_lookup_passive_dns with domain/IP shaping.
@@ -3090,7 +3166,8 @@ async def run_enabled_acquisition_lanes(
         """
         start = time.monotonic()
         # [F207I-B] Shape domain/IP-only query via build_lane_query
-        _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
+        # [F222I] If seed_ctx is provided, use domain/IP seed for targeted query
+        _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_ctx)
         shaped_query = _raw if isinstance(_raw, str) else ""
         pdns_error: str | None = None
         produced = 0
@@ -3147,6 +3224,7 @@ async def run_enabled_acquisition_lanes(
                     rejected_count=rejected_count,
                     sample_rejections=sample_rejections,
                     passive_dns_raw_count=produced,
+                    passive_dns_query=shaped_query,
                 )
         except asyncio.TimeoutError:
             return AcquisitionLaneOutcome(
@@ -3162,7 +3240,8 @@ async def run_enabled_acquisition_lanes(
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
                 passive_dns_raw_count=0,
-            )
+                    passive_dns_query=shaped_query,
+                )
         except asyncio.CancelledError:
             raise  # [I6] propagate CancelledError
         except Exception as exc:
@@ -3178,7 +3257,8 @@ async def run_enabled_acquisition_lanes(
                 rejected_count=rejected_count,
                 sample_rejections=sample_rejections,
                 passive_dns_raw_count=0,
-            )
+                    passive_dns_query=shaped_query,
+                )
 
     async def _run_academic_lane(plan) -> "AcquisitionLaneOutcome":
         """Run academic search lane — R9: bounded, research-profile-only, no query expansion."""
@@ -3462,7 +3542,8 @@ async def run_enabled_acquisition_lanes(
         accepted = 0
 
         # F222B: DOH is domain-scoped — extract domain via build_lane_query
-        shaped_query = build_lane_query(query, AcquisitionLane.DOH)
+        # [F222I] If seed_ctx is provided, use domain seed for targeted query
+        shaped_query = build_lane_query(query, AcquisitionLane.DOH, seed_ctx)
         if shaped_query is None or (isinstance(shaped_query, dict) and shaped_query.get("_disabled")):
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.DOH,
@@ -3470,6 +3551,7 @@ async def run_enabled_acquisition_lanes(
                 attempted=False,
                 source_family="doh",
                 error=shaped_query.get("_disabled_reason", "no_domain_seed") if isinstance(shaped_query, dict) else "build_lane_query_returned_none",
+                doh_query=shaped_query if isinstance(shaped_query, str) else "",
             )
 
         domain = shaped_query if isinstance(shaped_query, str) else str(shaped_query)
@@ -3480,6 +3562,7 @@ async def run_enabled_acquisition_lanes(
                 attempted=False,
                 source_family="doh",
                 error="empty_domain",
+                doh_query=domain,
             )
 
         try:
@@ -3517,6 +3600,7 @@ async def run_enabled_acquisition_lanes(
                     produced_items=doh_raw_count,
                     duration_s=time.monotonic() - start,
                     source_family="doh",
+                    doh_query=domain,
                 )
 
         except asyncio.TimeoutError:
@@ -3529,6 +3613,7 @@ async def run_enabled_acquisition_lanes(
                 error="timeout",
                 source_family="doh",
                 produced_items=doh_raw_count,
+                doh_query=domain,
             )
         except Exception as exc:
             return AcquisitionLaneOutcome(
@@ -3539,6 +3624,7 @@ async def run_enabled_acquisition_lanes(
                 duration_s=time.monotonic() - start,
                 source_family="doh",
                 produced_items=doh_raw_count,
+                doh_query=domain,
             )
 
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
@@ -3795,51 +3881,63 @@ def _extract_crypto_from_query(query: str) -> list[str]:
     return wallets[:20]
 
 
+
+_NONFEED_SEED_EMPTY = NonfeedSeedContext()
 # ── Lane query shaper ──────────────────────────────────────────────────────────
 
 
-def build_lane_query(base_query: str, lane: str) -> str | dict:
+def build_lane_query(base_query: str, lane: str, seed_context: "NonfeedSeedContext | None" = None) -> str | dict:
     """
     Shape a source-specific query for an acquisition lane.
 
+    F222I: When seed_context is provided (pivot/DuckDB domain extraction),
+    lanes receive the extracted domain/IP seed instead of the generic text query.
+    This enables CT/DOH/PassiveDNS/Wayback for "LockBit ransomware" style queries
+    that have no explicit domain/IP in the raw query text.
+
     Rules per lane:
-      CT:          extract domains from query; use domain tokens only
-      WAYBACK:     use domain/URL if present; add path/exposure terms only if domain exists
-      PASSIVE_DNS: domain/IP only
+      CT:          seed.domains[0] if available, else extract domains from base_query
+      WAYBACK:     seed.domains[0] or seed.urls[0] if available, else base_query
+      PASSIVE_DNS: seed.domains[0] or seed.ips[0] if available, else base_query
       BLOCKCHAIN:  wallet/hash only; returns {"_disabled": True} if no crypto indicator
-      PUBLIC:      original query plus 1-2 bounded variants
-      FEED:        original query unchanged
+      PUBLIC:      original query plus 1-2 bounded variants (seed ignored)
+      FEED:        original query unchanged (seed ignored)
 
     No LLM, no network I/O. Deterministic.
 
     Args:
-        base_query: The sprint query string.
-        lane:       One of AcquisitionLane values.
+        base_query:  The sprint query string.
+        lane:        One of AcquisitionLane values.
+        seed_context: Optional NonfeedSeedContext from pivot/DuckDB extraction.
 
     Returns:
         Shaped query string, or a dict with lane guidance (e.g. {"_disabled": True}).
         Returns {"_disabled": True} for BLOCKCHAIN when no crypto indicator present.
     """
     if lane == AcquisitionLane.CT:
-        # Extract domains only — CT cert search is domain-scoped
+        if seed_context and seed_context.domains:
+            return seed_context.domains[0]
         domains = _DOMAIN_OR_IP_RE.findall(base_query)
         if domains:
-            # Deduplicate, take first 5
             unique = list(dict.fromkeys(domains))[:5]
             return " ".join(unique)
         return ""
 
     elif lane == AcquisitionLane.WAYBACK:
-        # Use domain/URL if present; add exposure terms only if domain exists
+        if seed_context and seed_context.domains:
+            return seed_context.domains[0]
+        if seed_context and seed_context.urls:
+            return seed_context.urls[0]
         domains = _DOMAIN_OR_IP_RE.findall(base_query)
         if domains:
-            domain = domains[0]
-            # Return domain plus bounded path/exposure terms
-            return domain
+            return domains[0]
         return ""
 
     elif lane == AcquisitionLane.PASSIVE_DNS:
-        # Domain/IP only — strip everything else
+        if seed_context and seed_context.domains:
+            return seed_context.domains[0]
+        if seed_context and seed_context.ips:
+            return seed_context.ips[0]
         ips = _extract_ips_from_query(base_query)
         domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
         indicators = ips + domains
@@ -3848,33 +3946,26 @@ def build_lane_query(base_query: str, lane: str) -> str | dict:
         return ""
 
     elif lane == AcquisitionLane.BLOCKCHAIN:
-        # Wallet/hash only — disable if none present
         wallets = _extract_crypto_from_query(base_query)
         if wallets:
             return wallets[0]
         return {"_disabled": True, "reason": "no_crypto_indicator"}
 
     elif lane == AcquisitionLane.DOH:
-        # DOH is domain-scoped. Never pass arbitrary text query to resolver.
+        if seed_context and seed_context.domains:
+            return seed_context.domains[0]
         ips = _extract_ips_from_query(base_query)
         domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
-
         if domains:
             return domains[0]
-
-        # IP reverse DOH deferred to future hook / pivot planner.
         if ips:
             return {"_disabled": True, "reason": "ip_seed_reverse_doh_deferred"}
-
         return {"_disabled": True, "reason": "no_domain_seed"}
 
     elif lane == AcquisitionLane.PUBLIC:
-        # Original query plus 1-2 bounded variants
-        # Strip very long queries to avoid over-specific public search
         trimmed = base_query[:200] if len(base_query) > 200 else base_query
         return trimmed
 
-    # FEED and fallback: return unchanged
     return base_query
 
 

@@ -103,6 +103,7 @@ from hledac.universal.runtime.acquisition_strategy import (
     MandatoryLaneTerminality,
     NonfeedPlanDebug,
     NonfeedMissionController,
+    NonfeedSeedContext,
     FeedDominanceBudget,
     normalize_source_family_outcome,
     canonicalize_source_family_outcomes,
@@ -136,6 +137,13 @@ from hledac.universal.runtime.nonfeed_candidate_ledger import (
     FAMILY_PIVOT,
 )
 from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
+# Sprint F220G: Pivot seed extraction and lane planning from feed findings
+from hledac.universal.utils.pivot_seed_extractor import (
+    extract_pivot_seeds_from_texts,
+)
+from hledac.universal.pipeline.pivot_lane_planner import (
+    plan_lanes_for_pivot_seeds,
+)
 from hledac.universal.runtime.source_finding_bridge import (
     ct_results_to_findings,
     record_ct_storage_results,
@@ -1464,6 +1472,20 @@ class SprintResult:
     nonfeed_ct_planner_candidates: list[str] = field(default_factory=list)
     nonfeed_wayback_candidates: list[str] = field(default_factory=list)
     nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
+
+    # Sprint F220G: Feed → pivot integration telemetry
+    pivot_seed_count: int = 0
+    pivot_seed_type_counts: dict[str, int] = field(default_factory=dict)
+    pivot_seed_sample: tuple[str, ...] = ()  # max 10 values, no raw payload text
+    # [F222I] Grouped seeds for nonfeed lane seeding (built from extraction seeds)
+    pivot_seed_domains: tuple[str, ...] = ()
+    pivot_seed_ips: tuple[str, ...] = ()
+    pivot_seed_urls: tuple[str, ...] = ()
+    pivot_seed_hashes: tuple[str, ...] = ()
+    pivot_seed_cves: tuple[str, ...] = ()
+    pivot_lane_plan_count: int = 0
+    planned_pivot_lanes: tuple[str, ...] = ()
+    pivot_integration_reason: str = ""
 
     # Nonfeed prelude
     nonfeed_prelude_enabled: bool = False
@@ -4399,6 +4421,58 @@ class SprintScheduler:
 
             _rescue_findings = 0
 
+            # Sprint F220G: Extract pivot seeds from recent feed findings and plan lanes
+            try:
+                _findings = await duckdb_store.async_get_recent_findings(limit=1000)
+                if not _findings:
+                    self._result.pivot_integration_reason = "pivot_no_findings"
+                else:
+                    _texts = [
+                        f.payload_text
+                        for f in _findings
+                        if getattr(f, "payload_text", None)
+                    ]
+                    if not _texts:
+                        self._result.pivot_integration_reason = "pivot_no_payload_text"
+                    else:
+                        _extraction = extract_pivot_seeds_from_texts(
+                            _texts,
+                            source_family="feed",
+                            max_texts=1000,
+                            max_seeds=256,
+                        )
+                        _seed_count = len(_extraction.seeds)
+                        self._result.pivot_seed_count = _seed_count
+                        # Type counts
+                        _type_counts: dict[str, int] = {}
+                        for _s in _extraction.seeds:
+                            _t = getattr(_s, "seed_type", "") or ""
+                            _type_counts[_t] = _type_counts.get(_t, 0) + 1
+                        self._result.pivot_seed_type_counts = _type_counts
+                        # Sample (max 10, no raw payload text)
+                        _sample = tuple(sorted(set(
+                            getattr(_s, "value", "") or ""
+                            for _s in _extraction.seeds
+                        ))[:10])
+                        self._result.pivot_seed_sample = _sample
+                        if _seed_count == 0:
+                            self._result.pivot_integration_reason = "pivot_no_seeds"
+                        else:
+                            _plan = plan_lanes_for_pivot_seeds(
+                                _extraction.seeds,
+                                max_items=128,
+                            )
+                            self._result.pivot_lane_plan_count = len(_plan.items)
+                            self._result.planned_pivot_lanes = tuple(
+                                sorted(set(item.lane.upper() for item in _plan.items))
+                            )
+                            self._result.pivot_integration_reason = (
+                                "pivot_planned" if _plan.items else "pivot_planner_empty"
+                            )
+            except Exception as _exc:
+                log.debug(f"[F220G] Pivot extraction error: {_exc}")
+                self._result.pivot_integration_reason = "pivot_error"
+
             # Step 1: Attempt PUBLIC lane rescue via _attempt_public_prewindup_barrier
             try:
                 async with asyncio.timeout(15.0):
@@ -5803,11 +5877,23 @@ class SprintScheduler:
         if lanes_timeout > 0:
             try:
                 async with asyncio.timeout(lanes_timeout):
+                    # [F222I] Build NonfeedSeedContext from pivot seeds extracted at plan time
+                    _seed_ctx = None
+                    if (self._result.pivot_seed_domains or self._result.pivot_seed_ips
+                            or self._result.pivot_seed_urls):
+                        _seed_ctx = NonfeedSeedContext(
+                            domains=tuple(self._result.pivot_seed_domains or ()),
+                            ips=tuple(self._result.pivot_seed_ips or ()),
+                            urls=tuple(self._result.pivot_seed_urls or ()),
+                            hashes=tuple(self._result.pivot_seed_hashes or ()),
+                            cves=tuple(self._result.pivot_seed_cves or ()),
+                        )
                     _outcomes = await run_enabled_acquisition_lanes(
                         snapshot=self._acquisition_plan,
                         query=query,
                         store=duckdb_store,
                         uma_state=_uma,
+                        seed_context=_seed_ctx,
                     )
                     if _outcomes:
                         self._lane_outcomes = _outcomes
@@ -6253,6 +6339,7 @@ class SprintScheduler:
                         query=query,
                         store=duckdb_store,
                         uma_state=_uma,
+                        seed_context=None,  # aggressive mode uses plan-level eligibility, not pivot seeds
                     )
                     if _outcomes:
                         self._lane_outcomes = _outcomes

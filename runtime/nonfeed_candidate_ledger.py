@@ -580,7 +580,101 @@ def filter_source_host_only(
 # F214: Domain Candidate Extraction
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# F214: Domain Candidate Extraction Helpers
+# ---------------------------------------------------------------------------
+
+# Defang normalization — order matters (most specific first)
+_DEFANG_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Square-bracket defang: example[.]com → example.com
+    ("[.]", "."),
+    # Parenthesis defang: example(.)com → example.com
+    ("(.)", "."),
+    # hxxp:// scheme defang: hxxp://evil.com → http://evil.com
+    ("hxxp://", "http://"),
+    ("hxxps://", "https://"),
+    ("hXXp://", "http://"),
+    ("hXXPs://", "https://"),
+    # Single-bracket defang variants (less common)
+    ("[dot]", "."),
+    ("(dot)", "."),
+)
+
+
+def _normalize_defanged_text(text: str) -> str:
+    """
+    F214: Normalize defanged text before domain extraction.
+
+    Strips obfuscation markers so regex can match the full domain.
+    Operates on the whole text to handle mixed content.
+    """
+    result = text
+    for pattern, replacement in _DEFANG_PATTERNS:
+        result = result.replace(pattern, replacement)
+    return result
+
+
+def _is_ip_literal(domain: str) -> bool:
+    """F214: Return True if domain is an IP address literal (IPv4 or IPv6)."""
+    if not domain:
+        return False
+    # IPv4: dotted quad
+    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", domain):
+        return True
+    # IPv6: bracket form or plain
+    if ":" in domain:
+        return True
+    return False
+
+
+def _is_valid_domain_candidate(domain: str) -> bool:
+    """
+    F214: Validate domain candidate has a proper FQDN structure.
+
+    Rejects:
+    - Empty strings or too short (< 3 chars)
+    - Single labels without dots
+    - Two-label fragments where first label is short/no-digit AND second is a word
+      (e.g. "c2.bad" from "c2.bad actor[.]com" — "bad" is a word, not a TLD)
+    - Three-label fragments where last label is a word-like fragment
+      (e.g. "leak.lockbit-example" from broken "leak.lockbit-example[.]test")
+    """
+    if not domain or len(domain) < 3:
+        return False
+    parts = domain.split(".")
+    if len(parts) < 2:
+        return False
+
+    _WORD_LIKE_TLDS: frozenset[str] = frozenset({
+        "bad", "actor", "leak", "lockbit", "example", "link",
+        "data", "info", "site", "host",
+    })
+
+    if len(parts) == 2:
+        first, second = parts
+        second_is_word_like = second in _WORD_LIKE_TLDS
+        first_is_short = len(first) <= 4
+        # Reject: short first label (with or without digit) paired with word-like second
+        # "c2.bad" (bad=word), "actor.com" (actor=word) — not real FQDNs
+        if first_is_short and second_is_word_like:
+            return False
+
+    if len(parts) == 3:
+        # Reject "X-Y.Z" patterns where middle has hyphen AND last is a known word fragment
+        # (not a real TLD) — signals broken defang like "leak.lockbit-example[.]test"
+        # We intentionally do NOT reject short TLDs like "test" here since they are real DNS TLDs
+        mid = parts[1]
+        last = parts[-1]
+        mid_has_hyphen = "-" in mid
+        last_is_word_like = last in _WORD_LIKE_TLDS
+        if mid_has_hyphen and last_is_word_like:
+            return False
+
+    return True
+
+
 # Matches domains: example.com, foo.bar.baz.io
+# NOTE: Does NOT handle defanged [.] markers — apply _normalize_defanged_text first
 _DEDUP_DOMAIN_RE = re.compile(
     r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
 )
@@ -626,6 +720,12 @@ def extract_domain_candidates_from_text(
 
     No external dependencies — uses only stdlib urllib.parse and regex.
 
+    Normalization pipeline:
+      1. Normalize defanged markers ([.], (.), hxxp://, etc.) on whole text
+      2. Run domain regex on normalized text
+      3. Validate each candidate with _is_valid_domain_candidate
+      4. Deduplicate by normalized domain + source_field
+
     Args:
         text:           Text to scan (body content, title, etc.)
         source_url:     Optional source URL for hostname extraction
@@ -639,36 +739,49 @@ def extract_domain_candidates_from_text(
     if not text or not isinstance(text, str):
         return []
 
+    # Step 1: normalize defanged markers so regex can match full domains
+    normalized_text = _normalize_defanged_text(text)
+
     seen: dict[str, DomainCandidate] = {}  # key = f"{domain}|{source_field}"
 
-    for match in _DEDUP_DOMAIN_RE.finditer(text):
+    for match in _DEDUP_DOMAIN_RE.finditer(normalized_text):
         raw = match.group(0)
         domain = raw.lower()
 
-        # Skip obvious non-targets
-        if domain.endswith(".onion") or ".gov" in domain or ".edu" in domain:
+        # Step 2: validate FQDN structure (rejects fragments like "c2.bad")
+        if not _is_valid_domain_candidate(domain):
             continue
 
-        # Check for obfuscation patterns (lockbitexample[.]com → lockbitexample.com)
-        # Accept both obfuscated and clean forms
-        clean = domain.replace("[.]", ".").replace("(.)", ".")
-        normalized = clean.lower()
+        # Step 3: reject .onion explicitly (can't CT/DOH-query TOR)
+        if domain.endswith(".onion"):
+            continue
 
-        # Get surrounding context (±50 chars)
-        start = max(0, match.start() - 50)
-        end = min(len(text), match.end() + 50)
+        # Skip government/educational domains
+        if ".gov" in domain or ".edu" in domain:
+            continue
+
+        # Skip IP literals in body (IP candidates handled separately)
+        if _is_ip_literal(domain):
+            continue
+
+        # Get surrounding context from original text (±50 chars)
+        # Map match position back to original text (defanging may shift indices)
+        orig_start = match.start()
+        orig_end = match.end()
+        start = max(0, orig_start - 50)
+        end = min(len(text), orig_end + 50)
         context = text[start:end]
         if len(context) > 200:
             context = context[:200]
 
         reason = "text_domain_match"
-        key = f"{normalized}|body"
+        key = f"{domain}|body"
         if key not in seen:
             seen[key] = DomainCandidate(
-                domain=normalized,
+                domain=domain,
                 source_family=source_family,
                 source_field="body",
-                confidence=0.7 if normalized == domain else 0.5,
+                confidence=0.7,
                 reason=reason,
                 seen_count=1,
                 sample_context=context,
@@ -700,19 +813,21 @@ def extract_domain_candidates_from_text(
 
 
 def _extract_hostname(url: str) -> str:
-    """Extract hostname from URL using stdlib only."""
+    """Extract hostname from URL using stdlib only. Handles defanged hxxp:// variants."""
+    if not url:
+        return ""
     try:
-        # Try urllib first
+        # Normalize defanged scheme markers first (hxxp:// → http://)
+        normalized = _normalize_defanged_text(url)
         from urllib.parse import urlparse
-        if "://" in url:
-            parsed = urlparse(url)
+        if "://" in normalized:
+            parsed = urlparse(normalized)
             hostname = parsed.hostname or ""
-            # Remove leading www. prefix for cleaner domain
             if hostname.startswith("www."):
                 hostname = hostname[4:]
             return hostname
         # Bare domain-like string — clean it
-        clean = url.lstrip("htps:/").lstrip("//")
+        clean = normalized.lstrip("htps:/").lstrip("//")
         slash_idx = clean.find("/")
         if slash_idx > 0:
             clean = clean[:slash_idx]
@@ -813,11 +928,16 @@ def compute_lane_eligibility(
 
     Returns dict:
         ct:           CT lane eligible if any domain candidate exists
+                      (.onion excluded — TOR cannot be queried via CT)
         doh:          DOH lane eligible if any domain candidate exists
+                      (.onion excluded — DOH does not resolve .onion)
         wayback:      WAYBACK lane eligible if any candidates exist
         passive_dns:  PASSIVE_DNS lane eligible if any domain candidates exist
     """
-    has_domain = any(c.domain and not c.domain[0].isdigit() for c in candidates)
+    has_domain = any(
+        c.domain and not c.domain[0].isdigit() and not c.domain.endswith(".onion")
+        for c in candidates
+    )
     has_ip = any(c.domain[0].isdigit() for c in candidates if c.domain)
     has_any = len(candidates) > 0
 
