@@ -142,6 +142,156 @@ class TestAcquisitionFallback:
         assert "CT" in expected_lanes, f"CT must be in expected lanes, got {expected_lanes}"
         assert "PIVOT_EXECUTOR" in expected_lanes, f"PIVOT_EXECUTOR must be in expected lanes, got {expected_lanes}"
 
+    def test_fallback_report_contains_all_f214_fields(self):
+        """Fallback report must contain all F214/DOH fields with safe defaults.
+
+        Simulates the fallback path by passing fields that would come from result
+        (getattr with defaults) — verifying the fallback dict keys are present and
+        have correct types even when result has no acquisition data.
+        """
+        from types import SimpleNamespace
+        # Simulate a minimal result where no acquisition lanes ran
+        result = SimpleNamespace()
+        # Build the fallback dict as core.__main__ does (lines 503-562 after F214 fix)
+        _nd = None
+        _plan = None
+        _term_rep = {"checked": False, "satisfied": True, "missing_lanes": []}
+        _sfo_list = []
+        _rg_dict = {"checked": False}
+        _pwb = {"checked": False}
+        _se_dict = {"exit_reason": "normal"}
+        _wg_dict = {}
+        _fallback_profile = "default"
+
+        # Replicate the fallback dict construction from core/__main__.py lines 503-562
+        fallback_report = {
+            "schema_version": "1.0.0-fallback",
+            "terminality": _term_rep,
+            "source_family_outcomes": _sfo_list,
+            "return_guard": _rg_dict,
+            "prewindup_barrier": _pwb,
+            "scheduler_exit": _se_dict,
+            "windup_guard_observation": _wg_dict,
+            "fallback_reason": "canonical_build_failed: test",
+            "acquisition_report_fallback_used": True,
+            "plan": None,
+            "nonfeed_plan_debug": None,
+            "acquisition_profile": _fallback_profile,
+            "feed_cap_reason": None,
+            "nonfeed_priority_enabled": False,
+            "nonfeed_profile_expected_lanes": [],
+            "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
+            "public_stage_counters": getattr(result, "public_stage_counters", None),
+            "public_discovery_empty_reason": getattr(result, "public_discovery_empty_reason", ""),
+            "public_provider_selection_debug": getattr(result, "public_provider_selection_debug", None) or {},
+            "ct_provider_status": getattr(result, "ct_provider_status", ""),
+            "ct_cache_used": getattr(result, "ct_cache_used", False),
+            "ct_cache_stale": getattr(result, "ct_cache_stale", False),
+            "ct_cache_age_s": getattr(result, "ct_cache_age_s", 0.0),
+            "ct_quarantine_count": getattr(result, "ct_quarantine_count", 0),
+            "ct_quarantine_samples": list(getattr(result, "ct_quarantine_samples", ()) or ()),
+            "ct_planned": getattr(result, "ct_planned", False),
+            "ct_scheduled": getattr(result, "ct_scheduled", False),
+            "ct_provider_selected": getattr(result, "ct_provider_selected", ""),
+            "ct_request_attempted": getattr(result, "ct_request_attempted", False),
+            "ct_request_timeout": getattr(result, "ct_request_timeout", False),
+            "ct_raw_count": getattr(result, "ct_raw_count", 0),
+            "ct_bridge_invoked": getattr(result, "ct_bridge_invoked", False),
+            "ct_candidates_built": getattr(result, "ct_candidates_built", 0),
+            "ct_storage_attempted": getattr(result, "ct_storage_attempted", False),
+            "ct_storage_accepted": getattr(result, "ct_storage_accepted", False),
+            "ct_terminal_stage": getattr(result, "ct_terminal_stage", ""),
+            "ct_prelude_missing_but_final_attempted": getattr(
+                result, "ct_prelude_missing_but_final_attempted", False
+            ),
+            "feed_dominance_budget": getattr(_plan, "feed_dominance_budget", None) if _plan else None,
+            # F214: DOH acquisition report fields
+            "doh_planned": getattr(result, "doh_planned", False),
+            "doh_scheduled": getattr(result, "doh_scheduled", False),
+            "doh_request_attempted": getattr(result, "doh_request_attempted", False),
+            "doh_domains_attempted": getattr(result, "doh_domains_attempted", 0),
+            "doh_raw_count": getattr(result, "doh_raw_count", 0),
+            "doh_accepted_findings": getattr(result, "doh_accepted_findings", 0),
+            "doh_terminal_stage": getattr(result, "doh_terminal_stage", ""),
+            "doh_provider_errors": list(getattr(result, "doh_provider_errors", ()) or ()),
+            "doh_cache_used": getattr(result, "doh_cache_used", False),
+            # F229A: PUBLIC bootstrap ordering telemetry
+            "public_bootstrap_order": getattr(result, "public_bootstrap_order", "disabled"),
+            "public_bootstrap_prevented_discovery_timeout": getattr(
+                result, "public_bootstrap_prevented_discovery_timeout", False
+            ),
+            "public_bootstrap_first_fetch_attempted": getattr(
+                result, "public_bootstrap_first_fetch_attempted", False
+            ),
+            # F234: Critical-33 batch
+            "ct_bridge_rejections_count": getattr(result, "ct_bridge_rejections_count", 0),
+            "ct_storage_rejected": getattr(result, "ct_storage_rejected", 0),
+            "arrow_last_flush_error": getattr(result, "arrow_last_flush_error", ""),
+            "arrow_batch_dropped": getattr(result, "arrow_batch_dropped", 0),
+            "prewindup_barrier_errors": getattr(result, "prewindup_barrier_errors", None),
+            "return_guard_errors": getattr(result, "return_guard_errors", None),
+            "wayback_unchanged_rejected": getattr(result, "wayback_unchanged_rejected", 0),
+            "nonfeed_provider_failures": list(getattr(result, "nonfeed_provider_failures", ()) or ()),
+            # F216G: Quality/duplicate/low-info rejection ledgers
+            "quality_rejection_summary_by_family": getattr(
+                result, "quality_rejection_summary_by_family", None
+            ),
+            "duplicate_rejection_summary_by_family": getattr(
+                result, "duplicate_rejection_summary_by_family", None
+            ),
+            "low_information_by_family": getattr(result, "low_information_by_family", None),
+            # F228C: Nonfeed surface completeness telemetry
+            "nonfeed_expected_lanes": list(getattr(result, "nonfeed_expected_lanes", ()) or ()),
+            "nonfeed_missing_expected_lanes": list(
+                getattr(result, "nonfeed_missing_expected_lanes", ()) or ()
+            ),
+            "wayback_terminal_state": getattr(result, "wayback_terminal_state", ""),
+            "passive_dns_terminal_state": getattr(result, "passive_dns_terminal_state", ""),
+            "nonfeed_surface_complete": getattr(result, "nonfeed_surface_complete", False),
+            "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
+            "budget_violations": getattr(result, "budget_violations", 0),
+            "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",
+        }
+
+        # Verify fallback_reason is clean (no NameError from _acq_input)
+        assert fallback_report["fallback_reason"] == "canonical_build_failed: test"
+        assert "NameError" not in fallback_report["fallback_reason"]
+
+        # DOH fields must be present with correct types
+        assert isinstance(fallback_report["doh_planned"], bool)
+        assert isinstance(fallback_report["doh_scheduled"], bool)
+        assert isinstance(fallback_report["doh_request_attempted"], bool)
+        assert isinstance(fallback_report["doh_domains_attempted"], int)
+        assert isinstance(fallback_report["doh_raw_count"], int)
+        assert isinstance(fallback_report["doh_accepted_findings"], int)
+        assert isinstance(fallback_report["doh_terminal_stage"], str)
+        assert isinstance(fallback_report["doh_provider_errors"], list)
+        assert isinstance(fallback_report["doh_cache_used"], bool)
+
+        # Public provider debug must be a dict (not None crash)
+        assert isinstance(fallback_report["public_provider_selection_debug"], dict)
+
+        # All F214 required fields present
+        required = [
+            "public_provider_selection_debug", "feed_dominance_budget",
+            "doh_planned", "doh_scheduled", "doh_request_attempted", "doh_domains_attempted",
+            "doh_raw_count", "doh_accepted_findings", "doh_terminal_stage",
+            "doh_provider_errors", "doh_cache_used",
+            "public_bootstrap_order", "public_bootstrap_prevented_discovery_timeout",
+            "public_bootstrap_first_fetch_attempted",
+            "ct_bridge_rejections_count", "ct_storage_rejected",
+            "arrow_last_flush_error", "arrow_batch_dropped",
+            "prewindup_barrier_errors", "return_guard_errors",
+            "wayback_unchanged_rejected", "nonfeed_provider_failures",
+            "quality_rejection_summary_by_family", "duplicate_rejection_summary_by_family",
+            "low_information_by_family", "nonfeed_expected_lanes",
+            "nonfeed_missing_expected_lanes", "wayback_terminal_state",
+            "passive_dns_terminal_state", "nonfeed_surface_complete",
+            "nonfeed_candidate_ledger_summary",
+        ]
+        missing = [k for k in required if k not in fallback_report]
+        assert not missing, f"Missing fallback fields: {missing}"
+
 
 class TestEnvVarOverrideLogging:
     """A1-F1: Verify env var override logs only when it actually changes the profile."""

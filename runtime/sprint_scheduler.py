@@ -1003,6 +1003,8 @@ class SprintSchedulerResult:
     doh_terminal_stage: str = ""  # Final stage: no_candidates|attempted_empty|attempted_accepted|timeout|provider_error|dependency_missing|skipped|error
     doh_provider_errors: tuple[str, ...] = ()  # Provider error strings
     doh_cache_used: bool = False  # True when stale cache was used
+    # Sprint F220J: Tracks where DOH domain seed came from
+    doh_seed_source: str = ""  # "pivot_plan" | "raw_query" | "no_domain_seed"
     # Sprint F229: Wayback/PassiveDNS raw and candidate telemetry
     wayback_attempted: bool = False
     wayback_raw_count: int = 0
@@ -1195,6 +1197,12 @@ class SprintSchedulerResult:
     nonfeed_mission_exit_reason: str = ""
     # Sprint F217E: Nonfeed candidate evidence ledger summary (records kept runtime only)
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
+    # F214: Feed/PUBLIC → nonfeed lane bridge telemetry
+    nonfeed_lane_eligibility: dict[str, bool] = field(default_factory=dict)
+    nonfeed_doh_planner_input: list[str] = field(default_factory=list)
+    nonfeed_ct_planner_candidates: list[str] = field(default_factory=list)
+    nonfeed_wayback_candidates: list[str] = field(default_factory=list)
+    nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1378,6 +1386,7 @@ class SprintResult:
     doh_terminal_stage: str = ""
     doh_provider_errors: tuple[str, ...] = ()
     doh_cache_used: bool = False
+    doh_seed_source: str = ""  # Sprint F220J
 
     # Policy quality feedback
     policy_quality_feedback_calls: int = 0
@@ -1449,6 +1458,12 @@ class SprintResult:
     nonfeed_memory_skips: tuple[str, ...] = ()
     nonfeed_mission_exit_reason: str = ""
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
+    # F214: Feed/PUBLIC → nonfeed lane bridge telemetry
+    nonfeed_lane_eligibility: dict[str, bool] = field(default_factory=dict)
+    nonfeed_doh_planner_input: list[str] = field(default_factory=list)
+    nonfeed_ct_planner_candidates: list[str] = field(default_factory=list)
+    nonfeed_wayback_candidates: list[str] = field(default_factory=list)
+    nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
     # Nonfeed prelude
     nonfeed_prelude_enabled: bool = False
@@ -4836,6 +4851,25 @@ class SprintScheduler:
             _prelude_budget_s = max(30.0, _time.monotonic() - _t0) * 0.4  # max 40% of elapsed
             _nonfeed_prelude_expected = _nonfeed_expected
 
+            # F220J: Compute pivot lane plan once for DOH prelude seed routing
+            _pivot_lanes: Any = None
+            if self._pivot_planner is not None:
+                try:
+                    from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
+                    from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query as _gen_pivots
+                    _pivot_seeds = _gen_pivots(query)
+                    if _pivot_seeds:
+                        _seed_dicts = [
+                            {"value": p.ioc_value, "seed_type": p.ioc_type}
+                            for p in _pivot_seeds
+                            if p.ioc_value and p.ioc_type
+                        ]
+                        if _seed_dicts:
+                            _pivot_plan = plan_lanes_for_pivot_seeds(_seed_dicts)
+                            _pivot_lanes = getattr(_pivot_plan, "items", None)
+                except Exception:
+                    _pivot_lanes = None  # fail-soft: pivot planning is advisory
+
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
             await self._run_nonfeed_prelude_gather(
                 query=query,
@@ -4851,6 +4885,7 @@ class SprintScheduler:
                 nonfeed_prelude_skipped=_nonfeed_prelude_skipped,
                 nonfeed_prelude_accepted=_nonfeed_prelude_accepted,
                 nonfeed_prelude_errors=_nonfeed_prelude_errors,
+                pivot_lanes=_pivot_lanes,
             )
 
             # Mark nonfeed prelude complete so it runs exactly once per sprint
@@ -4922,12 +4957,15 @@ class SprintScheduler:
         nonfeed_prelude_skipped: dict[str, str],
         nonfeed_prelude_accepted: dict[str, int],
         nonfeed_prelude_errors: dict[str, str],
+        pivot_lanes: Optional[Sequence[Any]] = None,
     ) -> None:
         """
         Sprint F233D: Run nonfeed prelude lanes concurrently (Semaphore(3) for M1 8GB).
 
-        Dispatches to extracted lane methods: WAYBACK, PASSIVE_DNS, DOH.
-        PIVOT_EXECUTOR is handled inline (already structured).
+        F220J: pivot_lanes provides pre-computed LanePlanItem tuples from
+        plan_lanes_for_pivot_seeds(). If None, pivots are generated inline.
+
+        DOH lane uses pivot domain seed instead of raw query when available.
         """
         _sem = asyncio.Semaphore(3)
 
@@ -4957,6 +4995,7 @@ class SprintScheduler:
                                 query, duckdb_store, time_module,
                                 nonfeed_prelude_attempted, nonfeed_prelude_terminal,
                                 nonfeed_prelude_accepted,
+                                pivot_doh_items=pivot_lanes,
                             )
                         elif _lane_name == "PIVOT_EXECUTOR":
                             # PIVOT_EXECUTOR: inline (already structured)
@@ -5083,8 +5122,19 @@ class SprintScheduler:
         nonfeed_prelude_attempted: list[str],
         nonfeed_prelude_terminal: list[str],
         nonfeed_prelude_accepted: dict[str, int],
+        pivot_doh_items: Optional[Sequence[Any]] = None,
     ) -> tuple[str, int]:
-        """Sprint F234A / F214: DOH prelude lane — DNS-over-HTTPS passive DNS recon."""
+        """Sprint F234A / F214: DOH prelude lane — DNS-over-HTTPS passive DNS recon.
+
+        F220J: If pivot_doh_items contains a domain DOH item, use its seed_value
+        directly instead of parsing the raw query. This ensures DOH prelude uses
+        the domain extracted by the pivot planner, not a domain extracted from
+        raw query text (which may be absent or wrong).
+
+        Args:
+            pivot_doh_items: Sequence of LanePlanItem with lane="DOH" from pivot plan.
+                Each has seed_value, seed_type, priority, reason fields.
+        """
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query, is_lane_enabled
         from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
@@ -5092,13 +5142,33 @@ class SprintScheduler:
         self._result.doh_planned = is_lane_enabled(self._acquisition_plan, AcquisitionLane.DOH)
         self._result.doh_scheduled = True
 
-        _doh_query = build_lane_query(query, AcquisitionLane.DOH)
+        # F220J: Prefer domain seed from pivot plan over raw query extraction.
+        # pivot_doh_items is a Sequence of LanePlanItem(lane="DOH", seed_value=..., seed_type=...)
+        _doh_domain: Optional[str] = None
+        if pivot_doh_items:
+            for _item in pivot_doh_items:
+                _lane = getattr(_item, "lane", None) or ""
+                _seed_type = getattr(_item, "seed_type", None) or ""
+                _seed_val = getattr(_item, "seed_value", None) or ""
+                if _lane == "DOH" and _seed_type == "domain" and _seed_val:
+                    _doh_domain = _seed_val
+                    break
 
-        # no_candidates: build_lane_query returned {} (no domain seed)
-        if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get("_disabled")):
-            self._result.doh_terminal_stage = "no_candidates"
-            nonfeed_prelude_accepted["DOH"] = 0
-            return ("DOH", 0)
+        # F220J: Use pivot domain if found; otherwise fall back to raw query extraction.
+        # Raw query extraction is the legacy path — it may return _disabled or None.
+        if _doh_domain:
+            _doh_query: Any = _doh_domain
+            self._result.doh_seed_source = "pivot_plan"
+        else:
+            _doh_query = build_lane_query(query, AcquisitionLane.DOH)
+            self._result.doh_seed_source = "raw_query"
+            # F220J: raw query never reaches DOH if it has no domain seed.
+            # build_lane_query already returns _disabled dict for non-domain queries.
+            if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get("_disabled")):
+                self._result.doh_terminal_stage = "no_candidates"
+                self._result.doh_seed_source = "no_domain_seed"
+                nonfeed_prelude_accepted["DOH"] = 0
+                return ("DOH", 0)
 
         # dependency_missing: adapter or store unavailable
         if self._doh_adapter is None:
@@ -5771,6 +5841,9 @@ class SprintScheduler:
                                 )
                             except Exception:
                                 pass  # fail-soft
+                        # F214: Bridge feed/PUBLIC findings → nonfeed candidate ledger
+                        # Extract domain candidates from feed/public outcomes → lane eligibility
+                        self._ingest_feed_public_candidates_to_ledger()
             except asyncio.TimeoutError:
                 log.debug("[stable] ADVISORY lanes timed out after %ss", lanes_timeout)
             except asyncio.CancelledError:
@@ -7075,6 +7148,179 @@ class SprintScheduler:
                     if len(self._lane_rejections) > MAX_LANE_REJECTIONS:
                         self._lane_rejections_dropped += len(self._lane_rejections) - MAX_LANE_REJECTIONS
                         self._lane_rejections = self._lane_rejections[-MAX_LANE_REJECTIONS:]
+
+    # ── F214: Feed/PUBLIC → Nonfeed Candidate Ledger Bridge ───────────────────
+
+    def _ingest_feed_public_candidates_to_ledger(self) -> None:
+        """
+        F214: Bridge feed and PUBLIC findings into nonfeed candidate ledger.
+
+        Extracts domain candidates from feed/public lane outcomes and records them
+        in the ledger for downstream nonfeed lane planning (DOH, CT, Wayback, passiveDNS).
+
+        Flow:
+          1. Extract domain candidates from _lane_outcomes (FEED/PUBLIC lanes)
+          2. Apply source_host filtering (deprioritize domains that appear only
+             in source URL hostname, not in content body)
+          3. Rank candidates by confidence and seen_count
+          4. Record via add_feed_candidate() for FEED family
+          5. Compute lane eligibility from candidates
+
+        Bounding:
+          - MAX_DOMAIN_CANDIDATES_FOR_LANES (10) max candidates processed
+          - MAX_FEED_CANDIDATES (10) per source URL
+          - fail-soft throughout — ledger errors never crash sprint
+
+        Lane eligibility telemetry:
+          - Stored in result.nonfeed_lane_eligibility after computation
+        """
+        try:
+            from hledac.universal.runtime.nonfeed_candidate_ledger import (
+                extract_domain_candidates_from_finding,
+                extract_domain_candidates_from_text,
+                compute_lane_eligibility,
+                rank_candidates,
+                filter_source_host_only,
+                MAX_DOMAIN_CANDIDATES_FOR_LANES,
+                MAX_FEED_CANDIDATES,
+                FAMILY_FEED,
+                FAMILY_PUBLIC,
+            )
+        except Exception:
+            return  # fail-soft: missing dependency
+
+        try:
+            outcomes = getattr(self, "_lane_outcomes", None) or ()
+            if not outcomes:
+                return
+
+            all_candidates: list = []
+            source_url_by_family: dict[str, str] = {}
+
+            for outcome in outcomes:
+                if not getattr(outcome, "attempted", False):
+                    continue
+
+                family = getattr(outcome, "source_family", None) or ""
+                source_family = FAMILY_FEED if family == "feed" else FAMILY_PUBLIC
+
+                # Get candidate findings from the lane outcome
+                candidates = getattr(outcome, "candidate_findings", ()) or ()
+                if not candidates:
+                    continue
+
+                # Track source URL per family for source-host filtering
+                source_url = ""
+                for c in candidates:
+                    # Try to get source URL from candidate
+                    prov = getattr(c, "provenance", None) or ()
+                    if isinstance(prov, (list, tuple)) and prov:
+                        source_url = str(prov[0]) if prov else ""
+                        break
+
+                if source_url:
+                    source_url_by_family[source_family] = source_url
+
+                # Extract domain candidates from each candidate finding
+                for c in candidates:
+                    # Build a pseudo-finding object with payload_text and provenance
+                    payload_text = getattr(c, "payload_text", "") or ""
+                    query = getattr(c, "query", "") or ""
+
+                    if payload_text:
+                        text_candidates = extract_domain_candidates_from_text(
+                            payload_text,
+                            source_url=source_url if source_url else None,
+                            source_family=source_family,
+                        )
+                        for tc in text_candidates[:MAX_FEED_CANDIDATES]:
+                            all_candidates.append(tc)
+
+                    if query:
+                        query_candidates = extract_domain_candidates_from_text(
+                            query,
+                            source_url=source_url if source_url else None,
+                            source_family=source_family,
+                        )
+                        for qc in query_candidates[:MAX_FEED_CANDIDATES]:
+                            # Avoid duplicates
+                            if not any(tc.domain == qc.domain for tc in all_candidates):
+                                all_candidates.append(qc)
+
+            if not all_candidates:
+                return
+
+            # Deduplicate by domain+source_field
+            seen: dict[str, object] = {}
+            deduped: list = []
+            for tc in all_candidates:
+                key = f"{tc.domain}|{tc.source_field}"
+                if key not in seen:
+                    seen[key] = tc
+                    deduped.append(tc)
+                else:
+                    # Increment seen_count
+                    existing = seen[key]
+                    from dataclasses import replace
+                    deduped.append(replace(
+                        existing,
+                        seen_count=existing.seen_count + 1,
+                    ))
+
+            all_candidates = deduped
+
+            # Apply source_host filtering if we have source URLs
+            source_host_domains = frozenset()
+            if source_url_by_family:
+                # For each family, filter source-host-only candidates
+                for sf, surl in source_url_by_family.items():
+                    if surl:
+                        filtered, sh_domains = filter_source_host_only(all_candidates, surl)
+                        all_candidates = filtered
+                        source_host_domains = sh_domains
+                        break  # Only do this once with primary source URL
+
+            # Rank and bound candidates
+            ranked = rank_candidates(
+                all_candidates,
+                max_total=MAX_DOMAIN_CANDIDATES_FOR_LANES,
+                source_host_domains=source_host_domains,
+            )
+
+            # Record in ledger
+            for tc in ranked:
+                try:
+                    self._nonfeed_ledger.add_feed_candidate(
+                        domain=tc.domain,
+                        source_field=tc.source_field,
+                        confidence=tc.confidence,
+                        reason=f"{tc.reason} (seen={tc.seen_count})",
+                        sample_context=tc.sample_context[:200] if tc.sample_context else "",
+                    )
+                except Exception:
+                    pass  # fail-soft
+
+            # Compute and store lane eligibility
+            eligibility = compute_lane_eligibility(ranked)
+            self._result.nonfeed_lane_eligibility = eligibility  # type: ignore[attr-defined]
+
+            # Store lane planning inputs
+            if ranked:
+                doh_domains = [tc.domain for tc in ranked if not tc.domain[0].isdigit()][:5]
+                ct_domains = [tc.domain for tc in ranked if not tc.domain[0].isdigit()][:10]
+                wayback_candidates = [tc.domain for tc in ranked][:10]
+                pdns_candidates = [
+                    tc.domain for tc in ranked
+                    if not tc.domain[0].isdigit() or tc.domain[0].isdigit()
+                ][:10]
+
+                self._result.nonfeed_doh_planner_input = doh_domains  # type: ignore[attr-defined]
+                self._result.nonfeed_ct_planner_candidates = ct_domains  # type: ignore[attr-defined]
+                self._result.nonfeed_wayback_candidates = wayback_candidates  # type: ignore[attr-defined]
+                self._result.nonfeed_passive_dns_candidates = pdns_candidates  # type: ignore[attr-defined]
+
+        except Exception:
+            pass  # fail-soft: ledger bridge must never crash sprint
 
     # ── Sprint R1B: CT Lane Canonical Finding Ingest ─────────────────────────
 
@@ -11388,6 +11634,7 @@ class SprintScheduler:
         self._result.doh_terminal_stage = ""
         self._result.doh_provider_errors = ()
         self._result.doh_cache_used = False
+        self._result.doh_seed_source = ""  # Sprint F220J
         # Sprint F216A: Clear event log for new sprint
         self._result.source_family_events.clear()
 

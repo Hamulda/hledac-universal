@@ -548,14 +548,53 @@ def _scheduler_result_acquisition_payload(
                 "ct_prelude_missing_but_final_attempted": getattr(
                     result, "ct_prelude_missing_but_final_attempted", False
                 ),
+                # F216E: Feed dominance budget telemetry
+                "feed_dominance_budget": getattr(_plan, "feed_dominance_budget", None) if _plan else None,
+                # F214: DOH acquisition report fields (mirrored from CT pattern)
+                "doh_planned": getattr(result, "doh_planned", False),
+                "doh_scheduled": getattr(result, "doh_scheduled", False),
+                "doh_request_attempted": getattr(result, "doh_request_attempted", False),
+                "doh_domains_attempted": getattr(result, "doh_domains_attempted", 0),
+                "doh_raw_count": getattr(result, "doh_raw_count", 0),
+                "doh_accepted_findings": getattr(result, "doh_accepted_findings", 0),
+                "doh_terminal_stage": getattr(result, "doh_terminal_stage", ""),
+                "doh_provider_errors": list(getattr(result, "doh_provider_errors", ()) or ()),
+                "doh_cache_used": getattr(result, "doh_cache_used", False),
+                # F229A: PUBLIC bootstrap ordering telemetry
+                "public_bootstrap_order": getattr(result, "public_bootstrap_order", "disabled"),
+                "public_bootstrap_prevented_discovery_timeout": getattr(
+                    result, "public_bootstrap_prevented_discovery_timeout", False
+                ),
+                "public_bootstrap_first_fetch_attempted": getattr(
+                    result, "public_bootstrap_first_fetch_attempted", False
+                ),
+                # F234: Critical-33 batch — runtime error/signal fields
+                "ct_bridge_rejections_count": getattr(result, "ct_bridge_rejections_count", 0),
+                "ct_storage_rejected": getattr(result, "ct_storage_rejected", 0),
+                "arrow_last_flush_error": getattr(result, "arrow_last_flush_error", ""),
+                "arrow_batch_dropped": getattr(result, "arrow_batch_dropped", 0),
+                "prewindup_barrier_errors": getattr(result, "prewindup_barrier_errors", None),
+                "return_guard_errors": getattr(result, "return_guard_errors", None),
+                "wayback_unchanged_rejected": getattr(result, "wayback_unchanged_rejected", 0),
+                "nonfeed_provider_failures": list(getattr(result, "nonfeed_provider_failures", ()) or ()),
                 # F216G: Quality/duplicate/low-info rejection ledgers
-                "quality_rejection_summary_by_family": None,
-                "duplicate_rejection_summary_by_family": None,
-                "low_information_by_family": None,
+                "quality_rejection_summary_by_family": getattr(
+                    result, "quality_rejection_summary_by_family", None
+                ),
+                "duplicate_rejection_summary_by_family": getattr(
+                    result, "duplicate_rejection_summary_by_family", None
+                ),
+                "low_information_by_family": getattr(result, "low_information_by_family", None),
+                # F228C: Nonfeed surface completeness telemetry
+                "nonfeed_expected_lanes": list(getattr(result, "nonfeed_expected_lanes", ()) or ()),
+                "nonfeed_missing_expected_lanes": list(
+                    getattr(result, "nonfeed_missing_expected_lanes", ()) or ()
+                ),
+                "wayback_terminal_state": getattr(result, "wayback_terminal_state", ""),
+                "passive_dns_terminal_state": getattr(result, "passive_dns_terminal_state", ""),
+                "nonfeed_surface_complete": getattr(result, "nonfeed_surface_complete", False),
                 # F217E: Nonfeed candidate ledger summary
                 "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
-                # F216E: Feed dominance budget telemetry
-                "feed_dominance_budget": None,
                 # NOTE R1: surfaced from scheduler runtime
                 "budget_violations": getattr(result, "budget_violations", 0),
                 "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",

@@ -56,7 +56,16 @@ __all__ = [
     "extract_domain_candidates_from_text",
     "extract_domain_candidates_from_finding",
     "compute_lane_eligibility",
+    "rank_candidates",
+    "filter_source_host_only",
     "FAMILY_FEED",
+    # F214 bounds
+    "MAX_DOMAIN_CANDIDATES_FOR_LANES",
+    "MAX_FEED_CANDIDATES",
+    "MAX_DOH_DOMAINS",
+    "MAX_CT_DOMAINS",
+    "MAX_WAYBACK_CANDIDATES",
+    "MAX_PASSIVE_DNS_CANDIDATES",
 ]
 
 # ---------------------------------------------------------------------------
@@ -83,6 +92,25 @@ FAMILY_PASSIVE_DNS: Final[str] = "PASSIVE_DNS"
 FAMILY_PIVOT: Final[str] = "PIVOT"
 # F214: Domain candidates extracted from FEED/PUBLIC findings for non-domain queries
 FAMILY_FEED: Final[str] = "FEED"
+
+# F214: Bounding constants for domain candidate extraction and lane planning
+MAX_DOMAIN_CANDIDATES_FOR_LANES: Final[int] = 10
+"""Max domain candidates extracted from FEED/PUBLIC findings to feed lane planner."""
+
+MAX_FEED_CANDIDATES: Final[int] = 10
+"""Max candidates per FEED source URL to prevent oversized extraction."""
+
+MAX_DOH_DOMAINS: Final[int] = 5
+"""Max domains passed to DOH lane planner."""
+
+MAX_CT_DOMAINS: Final[int] = 10
+"""Max domains passed to CT lane planner."""
+
+MAX_WAYBACK_CANDIDATES: Final[int] = 10
+"""Max candidates passed to Wayback lane planner."""
+
+MAX_PASSIVE_DNS_CANDIDATES: Final[int] = 10
+"""Max candidates passed to PassiveDNS lane planner."""
 
 # Stages
 STAGE_DISCOVERED: Final[str] = "discovered"
@@ -434,6 +462,118 @@ def _source_for_family(family: str) -> str:
         FAMILY_PIVOT: "pivot_planner",
         FAMILY_FEED: "feed_candidate_extractor",
     }.get(family, family.lower())
+
+
+# ---------------------------------------------------------------------------
+# F214: Candidate Ranking and Source-Host Filtering
+# ---------------------------------------------------------------------------
+
+
+def rank_candidates(
+    candidates: list[DomainCandidate],
+    *,
+    max_total: int = MAX_DOMAIN_CANDIDATES_FOR_LANES,
+    source_host_domains: frozenset[str] | None = None,
+) -> list[DomainCandidate]:
+    """
+    F214: Rank and bound domain candidates for lane planner input.
+
+    Ranking priority (highest first):
+      1. body-extracted domains (confidence 0.7, likely target IOCs)
+      2. title-extracted domains
+      3. url-extracted domains (may include source infrastructure)
+      4. source_host_only candidates (deprioritized unless only option)
+
+    Source-host filtering:
+      - Domains that appear ONLY in source_url hostname (not in body/text)
+        are flagged as source_host_only and ranked last.
+      - This prevents krebsonsecurity.com from becoming a target candidate
+        when it appears only as a source URL.
+
+    Args:
+        candidates:       List of DomainCandidate to rank.
+        max_total:        Maximum candidates to return.
+        source_host_domains: Optional frozenset of domains that appear ONLY as
+                          source URL hostnames (will be ranked last).
+
+    Returns:
+        Bounded, ranked list of candidates (top max_total).
+    """
+    if not candidates:
+        return []
+
+    # Separate source_host_only candidates
+    source_host: list[DomainCandidate] = []
+    others: list[DomainCandidate] = []
+
+    source_host_set = source_host_domains or frozenset()
+
+    for c in candidates:
+        if c.domain in source_host_set:
+            source_host.append(c)
+        else:
+            others.append(c)
+
+    # Sort each group by confidence desc, then seen_count desc
+    def _sort_key(c: DomainCandidate) -> tuple:
+        # source_field priority: body=0, title=1, url=2 → negate so body ranks first with reverse=True
+        field_order = {"body": 0, "title": 1, "url": 2}
+        field_prio = field_order.get(c.source_field, 3)
+        return (c.confidence, c.seen_count, -field_prio)
+
+    others.sort(key=_sort_key, reverse=True)
+    source_host.sort(key=_sort_key, reverse=True)
+
+    # Combine: others first, then source_host_only
+    ranked = others[:max_total]
+    remaining = max_total - len(ranked)
+    if remaining > 0:
+        ranked.extend(source_host[:remaining])
+
+    return ranked
+
+
+def filter_source_host_only(
+    candidates: list[DomainCandidate],
+    source_url: str,
+) -> tuple[list[DomainCandidate], frozenset[str]]:
+    """
+    F214: Filter candidates that appear ONLY in source URL hostname.
+
+    Args:
+        candidates:  Candidates extracted from text body + url.
+        source_url:  The source URL whose hostname to check.
+
+    Returns:
+        (filtered_candidates, source_host_domains):
+          - filtered_candidates: candidates with source_host_only removed
+          - source_host_domains: frozenset of domains that appeared ONLY in source URL
+    """
+    if not candidates:
+        return [], frozenset()
+
+    hostname = _extract_hostname(source_url)
+    if not hostname:
+        return list(candidates), frozenset()
+
+    normalized_host = hostname.lower()
+
+    # Separate candidates that appear in body vs only in url
+    body_domains: set[str] = set()
+    url_only_domains: set[str] = set()
+
+    for c in candidates:
+        if c.source_field == "url" and c.domain == normalized_host:
+            url_only_domains.add(c.domain)
+        else:
+            body_domains.add(c.domain)
+
+    # Domains that are ONLY in source URL (not in body/text) are source_host_only
+    source_host_only = url_only_domains - body_domains
+
+    filtered = [c for c in candidates if c.domain not in source_host_only]
+
+    return filtered, frozenset(source_host_only)
 
 
 # ---------------------------------------------------------------------------
