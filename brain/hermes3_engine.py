@@ -46,6 +46,12 @@ try:
 except ImportError:
     is_emergency_unload_requested = None  # type: ignore
 
+# P1G-A: Prompt injection validator (before _sanitize_for_llm callback)
+try:
+    from .prompt_injection_validator import sanitize_prompt_injection_patterns
+except ImportError:
+    sanitize_prompt_injection_patterns = None  # type: ignore
+
 # P1A: Model-level inference guard (circuit breaker)
 try:
     from hledac.universal.brain.model_inference_guard import (
@@ -79,6 +85,29 @@ try:
 except ImportError:
     decide_context_budget = None  # type: ignore
     apply_context_budget = None  # type: ignore
+
+
+# P1F-A: Global Hermes Inference Timeout
+HERMES_TIMEOUT_DEFAULT_S = 60.0
+HERMES_TIMEOUT_MIN_S = 1.0
+HERMES_TIMEOUT_MAX_S = 300.0
+
+
+def _get_hermes_timeout_s() -> float:
+    """
+    Get Hermes inference timeout from environment.
+
+    Returns:
+        Timeout in seconds, clamped to [HERMES_TIMEOUT_MIN_S, HERMES_TIMEOUT_MAX_S].
+        Falls back to HERMES_TIMEOUT_DEFAULT_S on invalid/missing env.
+    """
+    try:
+        raw = float(os.environ.get("HLEDAC_HERMES_TIMEOUT_S", HERMES_TIMEOUT_DEFAULT_S))
+        if raw <= 0:
+            return HERMES_TIMEOUT_DEFAULT_S
+        return max(HERMES_TIMEOUT_MIN_S, min(raw, HERMES_TIMEOUT_MAX_S))
+    except (ValueError, TypeError):
+        return HERMES_TIMEOUT_DEFAULT_S
 
 
 # F219B: Safe MLX eval + clear cache helper
@@ -1172,6 +1201,22 @@ class Hermes3Engine:
 
             # SECURITY: Sanitize prompt before inference (sanitize first, then bound)
             # Priority: injected callback > fallback (failsafe)
+
+            # P1G-A: Prompt injection validation (before custom sanitizer)
+            # Validates scraped content against heuristic injection patterns.
+            # Runs after adaptive context preflight (memory truncation) but before
+            # _sanitize_for_llm/fallback_sanitize. Fail-open: returns original on error.
+            if sanitize_prompt_injection_patterns is not None:
+                validation_result = sanitize_prompt_injection_patterns(prompt)
+                if validation_result.suspicious:
+                    logger.debug(
+                        f"[P1G-A] prompt_injection_guard: suspicious=True, "
+                        f"patterns={len(validation_result.patterns)}, "
+                        f"reason={validation_result.reason}"
+                    )
+                # Use validated text for downstream sanitizers
+                prompt = validation_result.safe_text
+
             if self._sanitize_for_llm is not None:
                 # Use injected sanitizer from orchestrator (preferred path)
                 sanitized_prompt = self._sanitize_for_llm(prompt)[:MAX_LLM_PROMPT_CHARS]
@@ -1217,18 +1262,29 @@ class Hermes3Engine:
                 except Exception:
                     pass
 
+            # P1F-A: Global timeout on inference
+            timeout_s = _get_hermes_timeout_s()
+
             # Use semaphore for serialization + executor for thread offload
             async with self._inference_semaphore:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
+                inference_future = loop.run_in_executor(
                     self._inference_executor,
                     lambda: self._run_inference(formatted_prompt, temp, max_tok, prefix_cache)
                 )
+                response = await asyncio.wait_for(inference_future, timeout=timeout_s)
 
             # P1A: Record successful inference
             if record_model_success is not None:
                 record_model_success("hermes")
             return response
+
+        except asyncio.TimeoutError:
+            # P1F-A: Timeout must propagate and record failure_kind="timeout"
+            logger.warning("Hermes inference timed out")
+            if record_model_failure is not None:
+                record_model_failure("hermes", failure_kind="timeout")
+            raise
 
         except asyncio.CancelledError:
             # P1A: CancelledError must propagate, not be swallowed or recorded as failure

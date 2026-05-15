@@ -14,6 +14,7 @@ import asyncio
 import gc
 import inspect
 import logging
+import os
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -44,6 +45,26 @@ _MODEL_SIZES_GB = {
     "modernbert": 0.5,
     "gliner": 0.3,
 }
+
+# P1E-B: Bounded model unload timeout — prevents shutdown hang if engine.unload() freezes
+# Default 5.0s, overridable via HLEDAC_MODEL_UNLOAD_TIMEOUT_S env var
+_UNLOAD_TIMEOUT_S: float = 5.0
+
+
+def _load_unload_timeout() -> float:
+    """Load unload timeout from env, validated with fallback default."""
+    try:
+        val = float(os.environ.get("HLEDAC_MODEL_UNLOAD_TIMEOUT_S", "5.0"))
+        if val <= 0:
+            raise ValueError("timeout must be positive")
+        return val
+    except (ValueError, TypeError):
+        logger.warning(
+            "[P1E-B] HLEDAC_MODEL_UNLOAD_TIMEOUT_S=%r invalid, using default 5.0s",
+            os.environ.get("HLEDAC_MODEL_UNLOAD_TIMEOUT_S"),
+        )
+        return 5.0
+
 
 logger = logging.getLogger(__name__)
 
@@ -781,20 +802,36 @@ class ModelManager:
         if model is not None and hasattr(model, 'unload'):
             logger.info(f"[MODEL RELEASE] {model_name} start")
             try:
-                if inspect.iscoroutinefunction(model.unload):
-                    await model.unload()
+                loop = asyncio.get_running_loop()
+                unload_coro = (
+                    model.unload()
+                    if inspect.iscoroutinefunction(model.unload)
+                    else loop.run_in_executor(None, model.unload)
+                )
+                # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
+                timeout_s = _load_unload_timeout()
+                try:
+                    await asyncio.wait_for(unload_coro, timeout=timeout_s)
+                except asyncio.CancelledError:
+                    # P1E-B: CancelledError from our wait_for — re-raise per spec
+                    raise
+                except asyncio.TimeoutError:
+                    # P1E-B: Timeout — log warning, fail-soft, teardown continues
+                    logger.warning(
+                        "[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown",
+                        timeout_s,
+                        model_name,
+                    )
+                except Exception as e:
+                    unload_error = e
+                    logger.error(f"Failed to release model {model_name}: {e}")
+                    # F166E: Exception swallowed
                 else:
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, model.unload)
-                logger.info(f"[MODEL RELEASE] {model_name} done")
-            except Exception as e:
-                unload_error = e
-                logger.error(f"Failed to release model {model_name}: {e}")
-                # F166E: Exception swallowed — model already removed from registry
-
-        # F182B: Pass captured model reference — registry already cleared,
-        # _cleanup_memory_async cannot look it up again
-        await self._cleanup_memory_async(model_type, engine=model)
+                    logger.info(f"[MODEL RELEASE] {model_name} done")
+            finally:
+                # Memory cleanup regardless of unload outcome
+                # F182B: Pass captured model reference — registry already cleared
+                await self._cleanup_memory_async(model_type, engine=model)
 
         # P19: Verify RSS dropped after unload
         _verify_rss_after_unload(model_name.lower(), rss_before_unload)
@@ -834,19 +871,35 @@ class ModelManager:
         if model is not None and hasattr(model, 'unload'):
             logger.info(f"[MODEL RELEASE] {model_name} start")
             try:
-                if inspect.iscoroutinefunction(model.unload):
-                    await model.unload()
+                loop = asyncio.get_running_loop()
+                unload_coro = (
+                    model.unload()
+                    if inspect.iscoroutinefunction(model.unload)
+                    else loop.run_in_executor(None, model.unload)
+                )
+                # P1E-B: Bounded timeout — prevents shutdown hang if engine.unload() freezes
+                timeout_s = _load_unload_timeout()
+                try:
+                    await asyncio.wait_for(unload_coro, timeout=timeout_s)
+                except asyncio.CancelledError:
+                    # P1E-B: CancelledError from our wait_for — re-raise per spec
+                    raise
+                except asyncio.TimeoutError:
+                    # P1E-B: Timeout — log warning, fail-soft, teardown continues
+                    logger.warning(
+                        "[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown",
+                        timeout_s,
+                        model_name,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to release model {model_name}: {e}")
+                    # F168E: Exception swallowed — model already removed from registry
                 else:
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, model.unload)
-                logger.info(f"[MODEL RELEASE] {model_name} done")
-            except Exception as e:
-                logger.error(f"Failed to release model {model_name}: {e}")
-                # F168E: Exception swallowed — model already removed from registry
-
-        # Memory cleanup regardless of unload outcome
-        # F182B: Pass captured model reference — registry already cleared
-        await self._cleanup_memory_async(model_type, engine=model)
+                    logger.info(f"[MODEL RELEASE] {model_name} done")
+            finally:
+                # Memory cleanup regardless of unload outcome
+                # F182B: Pass captured model reference — registry already cleared
+                await self._cleanup_memory_async(model_type, engine=model)
 
         # P19: Verify RSS dropped after unload
         _verify_rss_after_unload(model_name.lower(), rss_before_unload)

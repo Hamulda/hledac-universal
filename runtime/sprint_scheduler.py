@@ -1085,6 +1085,393 @@ class SprintSchedulerResult:
 
 
 # ---------------------------------------------------------------------------
+# Sprint F240A: Type-safe result variants
+# ---------------------------------------------------------------------------
+# Problem: SprintSchedulerResult is a 270+ field monolithic dataclass where
+# which fields are populated depends on sprint mode (FEED vs PUBLIC vs CT).
+# Callers must know the mode to interpret results — leaky abstraction.
+#
+# Solution: Result variants with type-safe fields guaranteed to be populated
+# per mode. Base SprintResult holds universally-present fields only.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class SprintResult:
+    """
+    Universal fields — always populated regardless of sprint mode.
+
+    This is the base class for all result variants. Subclasses add
+    mode-specific fields that are guaranteed to be populated when
+    that mode's pipeline ran.
+
+    Use factory methods on SprintScheduler to construct variants from
+    internal _result state when needed. The types are a foundation for
+    gradual migration away from the monolithic SprintSchedulerResult.
+    """
+
+    # Core cycle metrics (always populated)
+    cycles_started: int = 0
+    cycles_completed: int = 0
+    unique_entry_hashes_seen: int = 0
+    duplicate_entry_hashes_skipped: int = 0
+    total_pattern_hits: int = 0
+    accepted_findings: int = 0
+    entries_per_source: dict[str, int] = field(default_factory=dict)
+    hits_per_source: dict[str, int] = field(default_factory=dict)
+    final_phase: str = "BOOT"
+    export_paths: list[str] = field(default_factory=list)
+    aborted: bool = False
+    abort_reason: str = ""
+    stop_requested: bool = False
+
+    # Timing fields
+    entered_active_at_monotonic: float | None = None
+    pre_loop_elapsed_s: float | None = None
+    first_cycle_started_at_monotonic: float | None = None
+    pre_active_starved: bool = False
+    pre_loop_blocker_reason: str = ""
+
+    # Sidecar findings (populated when corresponding sidecar ran)
+    forensics_enriched_ct_findings: int = 0
+    multimodal_enriched_findings: int = 0
+    identity_candidates_found: int = 0
+    identity_findings_produced: int = 0
+    exposure_findings_produced: int = 0
+    correlated_assets_count: int = 0
+    leak_findings_produced: int = 0
+    timeline_findings_produced: int = 0
+    evidence_triage_findings_count: int = 0
+    sprint_diff_findings_produced: int = 0
+    kill_chain_tags_produced: int = 0
+    wayback_diff_findings_produced: int = 0
+    chain_steps_recorded: int = 0
+    rir_correlation_produced: int = 0
+
+    # General telemetry
+    sidecars_skipped: tuple[str, ...] = ()
+    acquisition_lanes_skipped: int = 0
+    peak_rss_gib: float = 0.0
+    budget_violations: int = 0
+
+    # Branch timeout tracking
+    branch_timeout_count: int = 0
+    public_branch_timed_out: bool = False
+    ct_branch_timed_out: bool = False
+
+    # CommonCrawl + academic
+    cc_archive_injected: int = 0
+    academic_findings_count: int = 0
+
+    # Exit path telemetry
+    scheduler_exit_path: str | None = None
+    scheduler_exit_reason: str | None = None
+    scheduler_exit_phase: str | None = None
+    scheduler_exit_cycle: int | None = None
+    scheduler_exit_elapsed_s: float | None = None
+    scheduler_exit_guard_checked: bool = False
+    scheduler_exit_guard_required: tuple[str, ...] = ()
+    scheduler_exit_guard_satisfied: bool | None = None
+
+    # Hard deadline
+    hard_deadline_monotonic: float | None = None
+    hard_deadline_checked_count: int = 0
+    hard_deadline_exceeded: bool = False
+    hard_deadline_exceeded_at_cycle: int | None = None
+    hard_deadline_remaining_s_at_exit: float | None = None
+
+    # Acquisition terminality
+    acquisition_terminality_checked: bool = False
+    acquisition_terminality_satisfied: bool = False
+    acquisition_terminality_missing_lanes: tuple[str, ...] = ()
+    acquisition_terminality_report: dict = field(default_factory=dict)
+
+    # Nonfeed predispatch telemetry
+    nonfeed_predispatch_checked: bool = False
+    nonfeed_predispatch_ran: bool = False
+    nonfeed_predispatch_reason: str | None = None
+    nonfeed_predispatch_outcomes_count: int = 0
+
+    # Acquisition prelude telemetry
+    acquisition_prelude_checked: bool = False
+    acquisition_prelude_ran: bool = False
+    acquisition_prelude_required_lanes: tuple[str, ...] = ()
+    acquisition_prelude_terminal_lanes: tuple[str, ...] = ()
+    acquisition_prelude_missing_lanes: tuple[str, ...] = ()
+    acquisition_prelude_skipped_lanes: dict[str, str] = field(default_factory=dict)
+    acquisition_prelude_errors: dict[str, str] = field(default_factory=dict)
+    acquisition_prelude_duration_s: float = 0.0
+    acquisition_prelude_reason: str = ""
+    acquisition_prelude_domain_detected: bool = False
+    acquisition_prelude_plan_present: bool = False
+    acquisition_prelude_plan_built_for_prelude: bool = False
+    acquisition_prelude_domain_detection_error: str = ""
+
+    # Pre-windup barrier telemetry
+    windup_delayed_for_nonfeed: bool = False
+    prewindup_barrier_checked: bool = False
+    prewindup_barrier_required_lanes: tuple[str, ...] = ()
+    prewindup_barrier_satisfied: bool = False
+    prewindup_barrier_attempted_lanes: tuple[str, ...] = ()
+    prewindup_barrier_skipped_lanes: dict[str, str] = field(default_factory=dict)
+    prewindup_barrier_errors: dict[str, str] = field(default_factory=dict)
+    prewindup_barrier_duration_s: float = 0.0
+    prewindup_barrier_delayed_cycle: bool = False
+
+    # Windup guard telemetry
+    windup_guard_call_count: int = 0
+    windup_guard_callback_supplied_count: int = 0
+    windup_guard_callback_executed_count: int = 0
+    windup_guard_last_reason: str = ""
+    windup_guard_last_phase: str = ""
+    windup_guard_last_allowed: bool | None = None
+    windup_guard_last_callback_not_executed_reason: str = ""
+    prewindup_guard_async_bridge_used: bool = False
+    prewindup_guard_async_error: str = ""
+    prewindup_guard_fail_closed: bool = False
+
+    # Return guard telemetry
+    return_guard_checked: bool = False
+    return_guard_required_lanes: tuple[str, ...] = ()
+    return_guard_satisfied: bool = False
+    return_guard_delayed_for_nonfeed: bool = False
+    return_guard_block_reason: str = ""
+    return_guard_attempted_lanes: tuple[str, ...] = ()
+    return_guard_skipped_lanes: dict[str, str] = field(default_factory=dict)
+    return_guard_errors: dict[str, str] = field(default_factory=dict)
+
+    # Nonfeed predispatch
+    nonfeed_predispatch_attempted: bool = False
+    nonfeed_predispatch_skipped: dict[str, str] = field(default_factory=dict)
+    nonfeed_predispatch_lanes: tuple[str, ...] = ()
+    nonfeed_predispatch_duration_s: float = 0.0
+    windup_blocked_until_nonfeed_attempted: bool = False
+
+    # Lane verdict accumulators
+    acquisition_lane_outcomes: tuple = ()
+    lane_ct_accepted_findings: int = 0
+    lane_wayback_accepted_findings: int = 0
+    lane_pdns_accepted_findings: int = 0
+    lane_blockchain_accepted_findings: int = 0
+    lane_ipfs_accepted_findings: int = 0
+    lane_doh_accepted_findings: int = 0
+
+    # Policy quality feedback
+    policy_quality_feedback_calls: int = 0
+    policy_quality_feedback_decisions: int = 0
+    policy_quality_feedback_sources: int = 0
+    policy_quality_feedback_errors: int = 0
+
+    # Feed dominance budget
+    feed_budget_active: bool = False
+    feed_budget_reason: str = ""
+    feed_accepted_before_cap: int = 0
+    feed_suppressed_by_budget: int = 0
+    feed_budget_per_source: dict[str, int] = field(default_factory=dict)
+    top_feed_source_counts: tuple[tuple[str, int], ...] = ()
+    max_per_source_applied: str = ""
+
+    # Nonfeed budget
+    nonfeed_budget_active: bool = False
+    nonfeed_budget_expected_lanes: tuple[str, ...] = ()
+    nonfeed_budget_terminal_lanes: tuple[str, ...] = ()
+    nonfeed_budget_unresolved_lanes: tuple[str, ...] = ()
+    feed_suppressed_by_nonfeed_budget: int = 0
+    feed_suppression_count: int = 0
+    feed_suppression_reason: str = ""
+
+    # Branch blockers
+    dominant_feed_blocker: str = ""
+    dominant_branch_blocker: str = ""
+    branch_degradation_summary: str = ""
+
+    # Dedup preload
+    dedup_preload_count: int | None = None
+    dedup_preload_elapsed_s: float | None = None
+
+    # Feed blockers
+    feed_zero_yield_detected: bool = False
+    feed_inaccessible_detected: bool = False
+    feed_content_empty_detected: bool = False
+    feed_no_pattern_with_content: bool = False
+    findings_build_loss_detected: bool = False
+    feed_no_signal_sources: list[str] = field(default_factory=list)
+
+    # Arrow batch telemetry
+    arrow_batch_hard_cap: int = 0
+    arrow_batch_dropped_after_flush_failure: int = 0
+    arrow_last_flush_error: str = ""
+
+    # Early exit
+    requested_duration_s: float = 0.0
+    actual_duration_s: float = 0.0
+    elapsed_pct: float = 0.0
+    active_window_budget_s: float = 0.0
+    active_window_elapsed_s: float = 0.0
+    early_exit_class: str = ""
+    early_exit_reason: str = ""
+
+    # Source family events
+    source_family_events: list[dict] = field(default_factory=list)
+    MAX_SOURCE_FAMILY_EVENTS: int = 200
+
+    # Nonfeed mission controller
+    nonfeed_mission_active: bool = False
+    nonfeed_required_families: tuple[str, ...] = ()
+    nonfeed_optional_families: tuple[str, ...] = ()
+    nonfeed_family_status: dict[str, str] = field(default_factory=dict)
+    nonfeed_all_required_terminal: bool = False
+    nonfeed_any_accepted: bool = False
+    nonfeed_provider_failures: tuple[str, ...] = ()
+    nonfeed_memory_skips: tuple[str, ...] = ()
+    nonfeed_mission_exit_reason: str = ""
+    nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
+
+    # Nonfeed prelude
+    nonfeed_prelude_enabled: bool = False
+    nonfeed_prelude_expected_lanes: tuple[str, ...] = ()
+    nonfeed_prelude_attempted_lanes: tuple[str, ...] = ()
+    nonfeed_prelude_terminal_lanes: tuple[str, ...] = ()
+    nonfeed_prelude_missing_lanes: tuple[str, ...] = ()
+    nonfeed_prelude_accepted_by_lane: dict[str, int] = field(default_factory=dict)
+    nonfeed_prelude_error_by_lane: dict[str, str] = field(default_factory=dict)
+    nonfeed_prelude_duration_s: float = 0.0
+    nonfeed_prelude_feed_blocked_until_complete: bool = False
+
+
+@dataclass(slots=True)
+class FeedSprintResult(SprintResult):
+    """
+    FEED mode result — feed-specific telemetry fields guaranteed populated.
+
+    Populated when FEED acquisition lane runs (structured TI feeds).
+    """
+
+    pass  # All feed-specific fields are in base SprintResult for now
+
+
+@dataclass(slots=True)
+class PublicSprintResult(SprintResult):
+    """
+    PUBLIC mode result — public discovery pipeline fields guaranteed populated.
+
+    Populated when PUBLIC acquisition lane runs (discovery→fetch→parse→quality→storage).
+    """
+
+    public_discovered: int = 0
+    public_fetched: int = 0
+    public_matched_patterns: int = 0
+    public_accepted_findings: int = 0
+    public_stored_findings: int = 0
+    public_error: str = ""
+    public_backend_degraded: bool = False
+    dominant_public_blocker: str = ""
+    public_terminal_stage: str = ""
+    public_stage_counters: dict = field(default_factory=dict)
+    public_discovery_empty_reason: str = ""
+
+    # Wayback telemetry
+    wayback_attempted: bool = False
+    wayback_raw_count: int = 0
+    wayback_candidates_built: int = 0
+    wayback_accepted_count: int = 0
+    wayback_advisory_clues_count: int = 0
+    wayback_changed_url_count: int = 0
+    wayback_added_url_count: int = 0
+    wayback_digest_changed_count: int = 0
+    wayback_unchanged_rejected: int = 0
+
+    # PassiveDNS telemetry
+    passive_dns_attempted: bool = False
+    passive_dns_raw_count: int = 0
+    passive_dns_candidates_built: int = 0
+    passive_dns_accepted_count: int = 0
+    passive_dns_advisory_clues_count: int = 0
+    passive_dns_private_ip_rejected: int = 0
+    passive_dns_empty_ip_rejected: int = 0
+
+
+@dataclass(slots=True)
+class CtSprintResult(SprintResult):
+    """
+    CT mode result — certificate transparency log pipeline fields guaranteed populated.
+
+    Populated when CT acquisition lane runs (CT log discovery + bridge).
+    """
+
+    ct_log_discovered: int = 0
+    ct_log_stored: int = 0
+    ct_log_accepted_findings: int = 0
+    ct_log_error: str = ""
+
+    # CT bridge telemetry
+    ct_bridge_invoked: bool = False
+    ct_raw_count: int = 0
+    ct_candidates_built: int = 0
+    ct_storage_rejected: int = 0
+    ct_storage_rejection_reasons: tuple[str, ...] = ()
+    ct_quarantine_count: int = 0
+    ct_quarantine_samples: tuple[str, ...] = ()
+    ct_provider_status: str = ""
+    ct_cache_used: bool = False
+    ct_cache_stale: bool = False
+    ct_cache_age_s: float = 0.0
+
+    # CT loss stage telemetry
+    ct_planned: bool = False
+    ct_scheduled: bool = False
+    ct_provider_selected: str = ""
+    ct_request_attempted: bool = False
+    ct_request_timeout: bool = False
+    ct_storage_attempted: bool = False
+    ct_storage_accepted: bool = False
+    ct_terminal_stage: str = ""
+    ct_prelude_missing_but_final_attempted: bool = False
+
+    # CT expansion telemetry
+    ct_raw_domains_seen: int = 0
+    ct_unique_domains_seen: int = 0
+    ct_valid_public_domains: int = 0
+    ct_wildcard_domains: int = 0
+    ct_private_reserved_domains: int = 0
+    ct_duplicate_candidates: int = 0
+    ct_expansion_clues_count: int = 0
+    ct_candidate_examples: tuple[str, ...] = ()
+
+    # CT bridge diagnostics
+    ct_candidate_count: int = 0
+    ct_valid_domain_count: int = 0
+    ct_bridge_build_success_count: int = 0
+    ct_bridge_quality_rejected_count: int = 0
+    ct_loss_stage: str = "no_loss"
+    ct_raw_sample_keys: tuple[str, ...] = ()
+    ct_raw_sample_count: int = 0
+    ct_bridge_rejections_count: int = 0
+    ct_bridge_rejection_reasons: tuple[str, ...] = ()
+    ct_candidates_accumulated: int = 0
+    ct_candidates_stored: int = 0
+
+    # Quality rejection ledger
+    quality_rejection_ledger: tuple = ()
+    quality_rejection_summary_by_family: dict = field(default_factory=dict)
+    duplicate_rejection_summary_by_family: dict = field(default_factory=dict)
+    low_information_by_family: dict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class NonfeedSprintResult(SprintResult):
+    """
+    Nonfeed mode result — nonfeed lane fields (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN, PIVOT).
+
+    Populated when any nonfeed acquisition lane runs. Contains lane-specific
+    telemetry for all nonfeed lanes combined.
+    """
+
+    # NonfeedPlanDebug is a large object; type as Any to avoid circular imports
+    nonfeed_plan_debug: Any = None
+
+
+# ---------------------------------------------------------------------------
 # Sprint F207Q-A: Pre-windup barrier result dataclass
 # ---------------------------------------------------------------------------
 

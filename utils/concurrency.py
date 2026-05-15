@@ -62,19 +62,12 @@ FETCH_SEMAPHORE = _FetchSemaphoreProxy()
 
 async def adjust_fetch_workers(new_limit: int) -> None:
     """
-    Dynamically adjust FETCH_SEMAPHORE limit.
+    Backward-compatible alias for production clearnet fetch concurrency.
 
-    Usage:
-    - After LLM load: await adjust_fetch_workers(3)  # reduce concurrency
-    - After LLM release: await adjust_fetch_workers(25)  # restore full concurrency
-
-    Args:
-        new_limit: New number of allowed parallel fetches
+    Historically this mutated _FETCH_SEMAPHORE, but production public fetch
+    uses _clearnet_semaphore via get_clearnet_semaphore().
     """
-    global _FETCH_SEMAPHORE
-    old_limit = _FETCH_SEMAPHORE._value if _FETCH_SEMAPHORE else 0
-    _FETCH_SEMAPHORE = asyncio.Semaphore(max(1, new_limit))
-    logger.info(f"[FETCH_WORKERS] Adjusted from {old_limit} to {new_limit}")
+    await adjust_clearnet_workers(new_limit)
 
 
 # =============================================================================
