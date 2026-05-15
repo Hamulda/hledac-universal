@@ -6,32 +6,24 @@ Provides autonomous transport selection via TransportResolver.
 from .inmemory_transport import InMemoryTransport
 from .transport_resolver import TransportResolver, TransportContext
 from .gopher_transport import GopherTransport, get_gopher_transport
-from .adapters import (
+from .base import (
+    Transport,
     TransportAdapter,
-    TransportRouterAdapter,
-    CurlCffiAdapter,
-    Http2Adapter,
-    TorAdapter,
-    I2PAdapter,
-    AioHttpAdapter,
+    TransportConfig,
+    TransportResult,
 )
-from .base import TransportConfig, TransportResult
 
 __all__ = [
+    # Transport ABC and adapters
+    'Transport',
+    'TransportAdapter',
     # Legacy exports
     'InMemoryTransport',
     'TransportResolver',
     'TransportContext',
     'GopherTransport',
     'get_gopher_transport',
-    # F214: TransportSeam — adapters and DTOs
-    'TransportAdapter',
-    'TransportRouterAdapter',
-    'CurlCffiAdapter',
-    'Http2Adapter',
-    'TorAdapter',
-    'I2PAdapter',
-    'AioHttpAdapter',
+    # DTOs
     'TransportConfig',
     'TransportResult',
 ]

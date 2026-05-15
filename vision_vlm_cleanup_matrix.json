@@ -1,0 +1,112 @@
+[
+  {
+    "component": "VisionEncoder",
+    "file": "multimodal/vision_encoder.py",
+    "current_status": "dummy_mode_active",
+    "risk": "high",
+    "action": "gate_or_remove",
+    "reason": "mx.random.normal() embeddings returned when _model is None — must not enter production scoring. VisionOCR is canonical for document images.",
+    "priority": 1,
+    "call_sites": ["multimodal/analyzer.py:361 (MultimodalEnricher._run_evidence_triage_sidecar)"],
+    "verdict": "Remove from production call path — VisionOCR sufficient. Re-wire only when real CoreML model confirmed with explicit model_path.",
+    "blocking": true,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  },
+  {
+    "component": "VLMAnalyzer",
+    "file": "tools/vlm_analyzer.py",
+    "current_status": "*(removed — M1 8GB unsafe)*_7b_default_active",
+    "risk": "high",
+    "action": "demote_to_manual_heavy",
+    "reason": "*(removed — M1 8GB unsafe)* hardcoded at line 65 — not M1 8GB safe as default. Auto-load on first analyze() call is blocking.",
+    "priority": 1,
+    "call_sites": [
+      "intelligence/document_intelligence.py:1110 (analyze_image)",
+      "tests/test_sprint48_49.py:160"
+    ],
+    "verdict": "Demote *(removed — M1 8GB unsafe)* to manual_heavy mode. Add configurable model_id. Add concurrent Hermes memory guard. Benchmark SmolVLM2-500M before replacement.",
+    "blocking": true,
+    "*(removed — M1 8GB unsafe)*_default_detected": true
+  },
+  {
+    "component": "VisionOCR",
+    "file": "tools/ocr_engine.py",
+    "current_status": "production_active_canonical",
+    "risk": "none",
+    "action": "keep_as_is",
+    "reason": "Apple Vision via ocrmac, fail-safe, production-wired. Canonical OCR for all document/screenshot/image inputs. No changes needed.",
+    "priority": 0,
+    "call_sites": [
+      "multimodal/evidence_triage.py:175 (_run_ocr)",
+      "multimodal/analyzer.py (via evidence_triage)"
+    ],
+    "verdict": "ACTIVE — keep as canonical OCR path. OCR-first routing documented in VISION_VLM_CLEANUP_PLAN.md.",
+    "blocking": false,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  },
+  {
+    "component": "VisionCaptchaSolver",
+    "file": "tools/vision_analyzer.py",
+    "current_status": "stub_no_production_callers",
+    "risk": "low",
+    "action": "keep_as_test_stub",
+    "reason": "CoreML path exists but no production call sites. Do not activate as default.",
+    "priority": 3,
+    "call_sites": [],
+    "verdict": "Keep as test stub only. No production activation.",
+    "blocking": false,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  },
+  {
+    "component": "VisionAnalyzer (VNGenerateImageFeaturePrintRequest)",
+    "file": "tools/vision_analyzer.py",
+    "current_status": "legacy_different_path",
+    "risk": "low",
+    "action": "no_action",
+    "reason": "Legacy Vision framework API — different from VisionOCR and VLMAnalyzer. Not OCR, not VLM. No changes.",
+    "priority": 0,
+    "call_sites": [],
+    "verdict": "Separate legacy path. No changes needed.",
+    "blocking": false,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  },
+  {
+    "component": "MultimodalEnricher (VisionEncoder caller)",
+    "file": "multimodal/analyzer.py",
+    "current_status": "vision_encoder_dummy_in_path",
+    "risk": "high",
+    "action": "gate_or_remove_vision_encoder",
+    "reason": "MultimodalEnricher initializes VisionEncoder in load(). Dummy embeddings enter fused embedding pipeline and LMDB storage. Blocking production scoring.",
+    "priority": 1,
+    "call_sites": ["MultimodalEnricher.load() line 267 — calls VisionEncoder(...)"],
+    "verdict": "Fail-closed: if no model_path, set _vision_encoder = None. Never allow dummy embeddings into canonical write path.",
+    "blocking": true,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  },
+  {
+    "component": "EvidenceTriageCoordinator (OCR-first routing)",
+    "file": "multimodal/evidence_triage.py",
+    "current_status": "ocr_first_correct",
+    "risk": "none",
+    "action": "keep_as_is",
+    "reason": "EvidenceTriageCoordinator uses VisionOCR first, then optional VisionEncoder. OCR-first is correct. No changes.",
+    "priority": 0,
+    "call_sites": ["sprint_scheduler._run_evidence_triage_sidecar()"],
+    "verdict": "OCR-first routing is correct. VisionOCR is canonical.",
+    "blocking": false,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  },
+  {
+    "component": "SmolVLM2-500M candidate",
+    "file": "tools/vlm_analyzer.py (future)",
+    "current_status": "candidate_not_benchmarked",
+    "risk": "medium",
+    "action": "benchmark_before_replace",
+    "reason": "mlx-community/SmolVLM2-500M-4bit is M1-safe candidate to replace *(removed — M1 8GB unsafe)*. Must benchmark quality before replacement.",
+    "priority": 2,
+    "call_sites": [],
+    "verdict": "Add as configurable model_id after benchmark. Do not replace *(removed — M1 8GB unsafe)* until quality benchmark confirms parity.",
+    "blocking": false,
+    "*(removed — M1 8GB unsafe)*_default_detected": false
+  }
+]

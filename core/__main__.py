@@ -1891,25 +1891,48 @@ async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
         await store.close()
 
 
-# P1E-A: Cooperative signal shutdown
-_shutdown_signal_event: asyncio.Event = asyncio.Event()
+def _install_signal_handler_for_loop(
+    loop: asyncio.AbstractEventLoop,
+    shutdown_event: asyncio.Event,
+) -> Callable[[], None]:
+    """
+    Install SIGINT/SIGTERM handlers bound to a specific loop and event.
 
-def _install_signal_handler() -> None:
-    """Install SIGINT/SIGTERM handlers. Fail-soft on platforms without signal."""
+    Returns a cleanup function that restores previous signal handlers.
+    Handler is idempotent, fail-soft, never calls loop.stop().
+    """
+    _prev_int: Callable[[int, Any], Any] | None = None
+    _prev_term: Callable[[int, Any], Any] | None = None
+
     def _handler(signum: int, frame: Any) -> None:
-        sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+        sig_name = getattr(signal.Signals, 'SIGINT', None) and signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
         logging.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
-            loop = asyncio.get_running_loop()
-            loop.call_soon_threadsafe(_shutdown_signal_event.set)
+            if loop.is_running() and not loop.is_closed():
+                loop.call_soon_threadsafe(shutdown_event.set)
+            else:
+                # Loop not running — set event directly
+                shutdown_event.set()
         except Exception:
             pass
+
     try:
-        signal.signal(signal.SIGINT, _handler)
-        signal.signal(signal.SIGTERM, _handler)
+        _prev_int = signal.signal(signal.SIGINT, _handler)
+        _prev_term = signal.signal(signal.SIGTERM, _handler)
         logging.info("[SIGNAL] SIGINT/SIGTERM handlers installed")
     except (ImportError, AttributeError, OSError, TypeError) as e:
         logging.warning(f"[SIGNAL] Signal handlers not available: {e}")
+
+    def _restore() -> None:
+        try:
+            if _prev_int is not None:
+                signal.signal(signal.SIGINT, _prev_int)
+            if _prev_term is not None:
+                signal.signal(signal.SIGTERM, _prev_term)
+        except Exception:
+            pass
+
+    return _restore
 
 
 def main() -> None:
@@ -1969,11 +1992,8 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # F216B: Set acquisition profile env var so build_acquisition_plan picks it up
+    # P1E-A: Set acquisition profile env var so build_acquisition_plan picks it up
     os.environ["HLEDAC_ACQUISITION_PROFILE"] = args.acquisition_profile
-
-    # P1E-A: Install signal handlers before asyncio.run() creates the event loop
-    _install_signal_handler()
 
     if args.ct_pivot:
         asyncio.run(run_ct_pivot(args.ct_pivot))
@@ -1981,11 +2001,13 @@ def main() -> None:
         import contextlib
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        shutdown_event = asyncio.Event()
+        restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
         try:
             sprint_task = loop.create_task(
                 run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile)
             )
-            sig_task = loop.create_task(_shutdown_signal_event.wait())
+            sig_task = loop.create_task(shutdown_event.wait())
             done, pending = loop.run_until_complete(
                 asyncio.wait(
                     [sprint_task, sig_task],
@@ -1997,6 +2019,9 @@ def main() -> None:
                 with contextlib.suppress(asyncio.CancelledError):
                     loop.run_until_complete(sprint_task)
         finally:
+            restore_signals()
+            for task in pending:
+                task.cancel()
             loop.close()
     elif args.pivot:
         asyncio.run(run_semantic_pivot(args.pivot, top_k=args.pivot_k))

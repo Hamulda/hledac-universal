@@ -1,0 +1,171 @@
+{
+  "metadata": {
+    "sprint": "F216A",
+    "date": "2026-05-14",
+    "runtime": "MacBook Air M1 8GB (UMA)",
+    "purpose": "CoreML/ANE audit + benchmark readiness",
+    "plan_doc": "COREML_ANE_INTEGRATION_PLAN.md"
+  },
+  "paths": {
+    "ane_embedder": {
+      "file": "brain/ane_embedder.py",
+      "lines": 600,
+      "status": "active_production",
+      "runtime": "CoreML (ANE primary) → MLX ModernBERT fallback → hash fallback",
+      "model_file": "~/.hledac/models/AllMiniLML6V2.mlmodelc",
+      "model_file_required": true,
+      "model_bundled": false,
+      "uses_ane": true,
+      "production_path": true,
+      "call_sites": ["semantic_dedup_findings() in ane_embedder.py"],
+      "telemetry": {
+        "keys": ["ane_embed_attempted", "ane_embed_fallback_used", "ane_warmup_executed", "ane_warmup_error"],
+        "reset_fn": "reset_ane_telemetry()"
+      },
+      "status_result_fn": "get_ane_status() → ANEStatusResult",
+      "fallback_chain_complete": true,
+      "m1_8gb_safe": true,
+      "issues": [
+        "model_name='minilm_ane' parameter misleading — actual file is AllMiniLML6V2.mlmodelc",
+        "convert_to_ane() checks AllMiniLML6V2.mlmodelc (not {model_name}.mlmodelc)"
+      ],
+      "recommendation": "Keep as-is. Working, deployed, telemetry-instrumented."
+    },
+    "vision_encoder": {
+      "file": "multimodal/vision_encoder.py",
+      "lines": 88,
+      "status": "dummy_mode_active",
+      "runtime": "CoreML (ANE attempt) → mx.random.normal() dummy",
+      "model_file": "user-provided via model_path= parameter",
+      "model_file_required": true,
+      "model_bundled": false,
+      "uses_ane": "attempts to (compute_units=ALL), but model_path=None by default",
+      "production_path": "partial — wired but no bundled model",
+      "call_sites": ["multimodal/analyzer.py:_run_evidence_triage_sidecar()"],
+      "telemetry": null,
+      "fallback_chain_complete": false,
+      "m1_8gb_safe": true,
+      "issues": [
+        "model_path=None by default → always dummy mode in production",
+        "VisionOCR already handles document encoding (canonical path)",
+        "VisionEncoder may be dead code on the document path"
+      ],
+      "recommendation": "Audit call sites in multimodal/analyzer.py — confirm dummy mode vs broken integration. Either wire a real model or remove from call path."
+    },
+    "vision_captcha_solver": {
+      "file": "captcha_solver.py",
+      "lines": 421,
+      "status": "lazy_placeholder_experimental",
+      "runtime": "YOLO CoreML + VNCoreMLModel → 2captcha API fallback",
+      "model_file": "user-provided YOLO CoreML path only",
+      "model_file_required": false,
+      "model_bundled": false,
+      "uses_ane": "only if model_path provided and use_ane=True",
+      "production_path": false,
+      "call_sites": [],
+      "telemetry": null,
+      "fallback_chain_complete": true,
+      "m1_8gb_safe": true,
+      "issues": [
+        "No production call site found — CAPTCHA solving goes through 2captcha API",
+        "VNCoreMLModel.modelForMLModel() path is experimental and untested",
+        "_result_cache uses OrderedDict (bounded), CACHE_TTL=3600s — correct pattern"
+      ],
+      "recommendation": "Audit call site absence. Gate CoreML path behind feature flag or remove dead code if never called in production."
+    },
+    "vision_ocr": {
+      "file": "tools/ocr_engine.py",
+      "lines": 117,
+      "status": "active_canonical",
+      "runtime": "Apple Vision via ocrmac (ANE-assisted on M1)",
+      "model_file": null,
+      "model_file_required": false,
+      "model_bundled": false,
+      "uses_ane": true (Vision framework uses ANE automatically on M1),
+      "production_path": true,
+      "call_sites": ["multimodal/analyzer.py", "forensics/metadata_extractor.py"],
+      "telemetry": null,
+      "fallback_chain_complete": true,
+      "m1_8gb_safe": true,
+      "issues": [],
+      "recommendation": "Keep as-is. Canonical OCR path, Apple-native, production-wired."
+    },
+    "ner_ane_path": {
+      "file": "brain/ner_engine.py",
+      "lines": 1634,
+      "status": "fallback_unused_production_path_pytorch",
+      "runtime": "PyTorch GLiNER (production) + NaturalLanguage NLTagger ANE (untested) + CoreML ner.mlmodel (untested)",
+      "model_file": "~/.hledac/models/ner.mlmodel (optional, not bundled)",
+      "model_file_required": false,
+      "model_bundled": false,
+      "uses_ane": true (NLTagger uses ANE on M1), but production path does not use it,
+      "production_path": false,
+      "call_sites": ["extract_entities_from_texts() in brain/ner_engine.py"],
+      "telemetry": null,
+      "fallback_chain_complete": false,
+      "m1_8gb_safe": true,
+      "issues": [
+        "_nl_process_sync() uses NLTagger which DOES use ANE — real path but unverified quality",
+        "_load_coreml_model() looks for ner.mlmodel — never called in observed production",
+        "_ane_predictions counter never incremented — path not exercised in production",
+        "ner.mlmodel does not ship with the project"
+      ],
+      "recommendation": "Keep PyTorch GLiNER as production path. Add quality benchmark: NLTagger vs GLiNER entity F1 on held-out set before activating ANE path."
+    },
+    "vlm_analyzer": {
+      "file": "tools/vlm_analyzer.py",
+      "lines": 164,
+      "status": "active_heavy",
+      "runtime": "MLX-VLM (*(removed — M1 8GB unsafe)* via mlx_vlm)",
+      "model_file": "*(removed — M1 8GB unsafe)* (downloaded at runtime)",
+      "model_file_required": false,
+      "model_bundled": false,
+      "uses_ane": false,
+      "production_path": true,
+      "call_sites": ["multimodal/analyzer.py"],
+      "telemetry": null,
+      "fallback_chain_complete": true,
+      "m1_8gb_safe": false,
+      "issues": [
+        "Heavy model — OOM risk on M1 8GB when loaded concurrently with Hermes",
+        "Memory guard at 5GB RSS skip — correct but not solving the problem",
+        "Should be replaced with SmolVLM2-500M-4bit (M1-safe) per MODEL_INTEGRATION_PLAN"
+      ],
+      "recommendation": "Replace *(removed — M1 8GB unsafe)* with mlx-community/SmolVLM2-500M-4bit after benchmark confirms quality parity."
+    }
+  },
+  "duplication_matrix": {
+    "vision_ocr_vs_vision_encoder": {
+      "roles": ["document OCR", "document image encoding"],
+      "active": "VisionOCR (canonical, production-wired)",
+      "stub": "VisionEncoder (dummy mode, no bundled model)",
+      "verdict": "VisionOCR is correct canonical path. VisionEncoder provides no value in dummy mode.",
+      "action": "Audit VisionEncoder call sites, wire real model or remove"
+    },
+    "ner_gliner_vs_ner_ane": {
+      "roles": ["entity extraction (production)", "entity extraction (ANE fallback)"],
+      "active": "PyTorch GLiNER (production path)",
+      "stub": "NLTagger + CoreML ner.mlmodel (untested, never called)",
+      "verdict": "GLiNER is correct production path. ANE path exists but entity quality is unverified.",
+      "action": "Benchmark NLTagger vs GLiNER F1 before activating ANE path"
+    },
+    "captcha_2captcha_vs_coreml": {
+      "roles": ["CAPTCHA solving (production)", "CAPTCHA solving (local CoreML)"],
+      "active": "2captcha API (real production path)",
+      "stub": "VNCoreMLModel + YOLO CoreML (experimental, no production call site)",
+      "verdict": "2captcha is the real path. CoreML YOLO path has no production call site.",
+      "action": "Gate CoreML path behind HLEDAC_ENABLE_CAPTCHA_COREML or remove"
+    }
+  },
+  "recommendations": {
+    "keep_as_is": ["vision_ocr", "ane_embedder"],
+    "benchmark_before_change": ["vision_encoder", "vision_captcha_solver", "ner_ane_path"],
+    "change_later_no_implementation_yet": [
+      {"file": "brain/ane_embedder.py:255", "change": "Fix misleading model_name='minilm_ane' → document actual AllMiniLML6V2.mlmodelc path", "trigger": "Cosmetic fix, no urgency"},
+      {"file": "tools/vlm_analyzer.py:65", "change": "Replace *(removed — M1 8GB unsafe)* with SmolVLM2-500M-4bit", "trigger": "After benchmark confirms quality"},
+      {"file": "multimodal/vision_encoder.py", "change": "Either wire real model or remove from multimodal/analyzer.py call path", "trigger": "After call site audit confirms dummy-only"},
+      {"file": "brain/ner_engine.py", "change": "Add NLTagger vs GLiNER F1 benchmark before activating ANE path", "trigger": "Before any ANE NER production use"},
+      {"file": "captcha_solver.py", "change": "Gate CoreML YOLO path behind feature flag or remove dead code", "trigger": "After call site audit confirms no production usage"}
+    ]
+  }
+}

@@ -1,0 +1,335 @@
+{
+  "metadata": {
+    "sprint": "F217A",
+    "timestamp": "2026-05-14T16:11:31.838167Z",
+    "hermetic": true,
+    "mock": false,
+    "mlx_lm_available": true,
+    "prompt_count": 12,
+    "model_count": 7
+  },
+  "missing_local_models": [
+    "deephermes3",
+    "hermes_baseline",
+    "nanbeige4",
+    "phi4mini",
+    "qwen3_0b6",
+    "qwen3_1b7",
+    "smollm3"
+  ],
+  "run_environment": {
+    "date": "2026-05-14T16:11:31Z",
+    "machine": "MacBook Air M1 8GB",
+    "python_version": "3.14.4",
+    "mlx_lm_available": true,
+    "mlx_lm_version": "0.31.3",
+    "psutil_available": true,
+    "rss_metrics_available": true,
+    "command": "benchmarks/llm_reasoner_benchmark.py --hermetic --json /tmp/llm_reasoner_benchmark_real.json",
+    "prompt_count": 12,
+    "model_count": 7
+  },
+  "raw_benchmark_summary": {
+    "model_count": 7,
+    "prompt_count": 12,
+    "status_counts": {
+      "success": 0,
+      "error": 0,
+      "missing_local_model": 84,
+      "guard_blocked": 0
+    },
+    "model_summaries": {
+      "deephermes3": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      },
+      "hermes_baseline": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      },
+      "nanbeige4": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      },
+      "phi4mini": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      },
+      "qwen3_0b6": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      },
+      "qwen3_1b7": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      },
+      "smollm3": {
+        "total_prompts": 12,
+        "success_count": 0,
+        "missing_count": 12,
+        "error_count": 0,
+        "guard_blocked_count": 0,
+        "avg_decode_tokens_per_sec": 0.0,
+        "avg_total_latency_ms": 0.0,
+        "fact_match_rate": 0.0,
+        "json_valid_rate": 0.0
+      }
+    },
+    "task_types": [
+      "contradiction_detection",
+      "entity_extraction",
+      "evidence_grounding",
+      "relation_extraction",
+      "summarization",
+      "timeline_reconstruction"
+    ]
+  },
+  "by_model": {
+    "deephermes3": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    },
+    "hermes_baseline": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    },
+    "nanbeige4": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    },
+    "phi4mini": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    },
+    "qwen3_0b6": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    },
+    "qwen3_1b7": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    },
+    "smollm3": {
+      "total_prompts": 12,
+      "success_count": 0,
+      "missing_count": 12,
+      "error_count": 0,
+      "guard_blocked_count": 0,
+      "avg_decode_tokens_per_sec": 0.0,
+      "avg_total_latency_ms": 0.0,
+      "fact_match_rate": 0.0,
+      "json_valid_rate": 0.0,
+      "status": "missing_local_model",
+      "quality_data": null,
+      "runtime_data": null
+    }
+  },
+  "rankings": {
+    "primary_reasoner": [
+      {
+        "model_key": "hermes_baseline",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      },
+      {
+        "model_key": "deephermes3",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      },
+      {
+        "model_key": "nanbeige4",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      },
+      {
+        "model_key": "smollm3",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      },
+      {
+        "model_key": "phi4mini",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      }
+    ],
+    "fast_router": [
+      {
+        "model_key": "qwen3_0b6",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      },
+      {
+        "model_key": "qwen3_1b7",
+        "category": "missing_local_model",
+        "notes": "No benchmark data"
+      }
+    ]
+  },
+  "swap_readiness": {
+    "deephermes3": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    },
+    "hermes_baseline": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    },
+    "nanbeige4": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    },
+    "phi4mini": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    },
+    "qwen3_0b6": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    },
+    "qwen3_1b7": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    },
+    "smollm3": {
+      "ready_for_F217C": false,
+      "why": "missing_local_model - model not found in local MLX cache",
+      "required_follow_up": "Download model to ~/.cache/mlx/ and re-run benchmark",
+      "fallback_model": "hermes_baseline",
+      "rollback_plan": "Hermes remains production - no swap performed"
+    }
+  },
+  "all_models_missing": true,
+  "errors": [],
+  "recommendation": "NO_SWAP_YET",
+  "recommendation_rationale": "All 7 candidates missing from local MLX model cache. No quality, latency, or throughput data collected. Cannot make swap decision without benchmark data.",
+  "final_flags": {
+    "LLM_REASONER_REAL_BENCHMARK_ATTEMPTED": true,
+    "LLM_REASONER_RESULTS_REPORT_CREATED": true,
+    "PRIMARY_REASONER_SWAP_STILL_DEFERRED": true,
+    "HERMES_FALLBACK_REQUIRED": true,
+    "NO_PRODUCTION_MODEL_CHANGE": true,
+    "NO_NEW_REQUIRED_DEPENDENCIES": true,
+    "ONE_HEAVY_MODEL_AT_A_TIME_VERIFIED": true,
+    "ALL_CANDIDATES_MISSING_LOCAL_MODEL": true
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "metadata": {
+    "created": "2026-05-14",
+    "sprint": "F218B",
+    "purpose": "Reranker ownership cleanup — identify canonical owner, remove duplicates, document future candidates",
+    "canonical_reranker_owner": "tools/reranker.py",
+    "default_backend": "FlashRank / ms-marco-MiniLM-L-12-v2",
+    "status": "CLEANUP_COMPLETE"
+  },
+  "canonical_reranker": {
+    "file": "tools/reranker.py",
+    "class": "LightweightReranker",
+    "factory_function": "create_reranker()",
+    "model": "ms-marco-MiniLM-L-12-v2",
+    "model_size_mb": 4,
+    "backend": "FlashRank / ONNX",
+    "status": "ACTIVE",
+    "loads_model": true,
+    "exports": [
+      "LightweightReranker",
+      "RerankResult",
+      "RerankRequest",
+      "RerankerFactory",
+      "RerankerConfig",
+      "create_reranker"
+    ],
+    "callers": [
+      "legacy/autonomous_orchestrator.py",
+      "tools/__init__.py (re-export)"
+    ]
+  },
+  "reranker_instances": [
+    {
+      "file": "tools/reranker.py",
+      "class": "LightweightReranker",
+      "model": "ms-marco-MiniLM-L-12-v2",
+      "status": "ACTIVE",
+      "loads_model": true,
+      "purpose": "Primary reranker for legacy orchestrator path",
+      "note": "Canonical owner"
+    },
+    {
+      "file": "brain/synthesis_runner.py",
+      "function": "_get_flashrank_ranker()",
+      "model": "ms-marco-MiniLM-L-12-v2",
+      "status": "ACTIVE",
+      "loads_model": true,
+      "purpose": "Synthesis rerank path",
+      "note": "Compatibility wrapper — own instance for synthesis context"
+    },
+    {
+      "file": "knowledge/lancedb_store.py",
+      "function": "_get_flashrank_ranker()",
+      "model": "ms-marco-MiniLM-L-12-v2",
+      "status": "ACTIVE",
+      "loads_model": true,
+      "purpose": "Retrieval rerank path",
+      "note": "Compatibility wrapper — own instance for retrieval context"
+    },
+    {
+      "file": "knowledge/lancedb_store.py",
+      "function": "_mlx_rerank()",
+      "model": "MLX cosine similarity",
+      "status": "FALLBACK",
+      "loads_model": true,
+      "purpose": "Fallback rerank when FlashRank unavailable",
+      "note": "MLX-based, no external model"
+    },
+    {
+      "file": "knowledge/lancedb_store.py",
+      "class": "_colbert_reranker",
+      "model": "ColBERT",
+      "status": "FUTURE",
+      "loads_model": true,
+      "purpose": "Future reranker candidate",
+      "note": "NOT ACTIVATED — benchmark evidence required first"
+    },
+    {
+      "file": "prefetch/ssm_reranker.py",
+      "class": "SSMReranker",
+      "model": "Custom SSM",
+      "status": "EXPERIMENTAL",
+      "loads_model": true,
+      "purpose": "Experimental SSM-based reranker",
+      "note": "NOT ACTIVATED — no active callers"
+    }
+  ],
+  "scoring_paths": [
+    {
+      "file": "knowledge/semantic_store.py",
+      "function": "semantic_pivot() ANN score",
+      "model": "L2 distance → cosine score",
+      "status": "ACTIVE",
+      "loads_model": false,
+      "purpose": "ANN search scoring for semantic pivot"
+    },
+    {
+      "file": "knowledge/graph_rag.py",
+      "function": "score_path()",
+      "model": "heuristic (length + relevance + credibility)",
+      "status": "ACTIVE",
+      "loads_model": false,
+      "purpose": "Path scoring for graph traversal"
+    },
+    {
+      "file": "knowledge/graph_rag.py",
+      "function": "_rank_facts()",
+      "model": "novelty + similarity",
+      "status": "ACTIVE",
+      "loads_model": false,
+      "purpose": "Fact ranking for graph RAG"
+    }
+  ],
+  "future_candidates": {
+    "bge_reranker": {
+      "model": "BAAI/bge-reranker-v2-m3",
+      "purpose": "Multilingual semantic reranking",
+      "status": "DEFERRED",
+      "activation_criteria": "Real benchmark evidence required — not matrix speculation",
+      "m1_8gb_risk": "high",
+      "size_gb": 1.0
+    },
+    "jina_reranker": {
+      "model": "jinaai/jina-reranker-v2-base",
+      "purpose": "Multilingual, jina ecosystem integration",
+      "status": "DEFERRED",
+      "activation_criteria": "Real benchmark evidence required",
+      "m1_8gb_risk": "high",
+      "size_gb": 1.0
+    },
+    "mem_reranker": {
+      "model": "MemGPT/MemReranker-0.6B",
+      "purpose": "Temporal/causal/agent-memory hard retrieval",
+      "status": "DEFERRED",
+      "activation_criteria": "Explicit benchmark + memory budget proof",
+      "m1_8gb_risk": "medium",
+      "size_gb": 0.6
+    }
+  },
+  "policy": {
+    "default_reranker": "ms-marco-MiniLM-L-12-v2",
+    "no_heavy_reranker_with_heavy_llm": true,
+    "no_multiple_rerankers_by_default": true,
+    "benchmark_before_activation": true
+  },
+  "verification": {
+    "canonical_reranker_owner_identified": true,
+    "current_default_preserved": true,
+    "no_new_reranker_model_added": true,
+    "bge_jina_memreranker_deferred": true,
+    "no_llm_config_change": true,
+    "no_vlm_change": true,
+    "no_coreml_change": true,
+    "no_new_required_dependencies": true
+  }
+}

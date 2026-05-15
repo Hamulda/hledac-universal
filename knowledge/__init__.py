@@ -174,15 +174,22 @@ def __getattr__(name: str) -> Any:
         try:
             module = import_module(module_path)
         except ModuleNotFoundError as exc:
-            name = exc.name or ""
-            if name == "hledac" and module_path.startswith("hledac.universal."):
+            missing_name = exc.name or ""
+            if missing_name == "hledac" and module_path.startswith("hledac.universal."):
                 # hledac package not on path — resolve to relative import
                 local_path = module_path[len("hledac.universal."):]
                 module = import_module(local_path)
-            elif name.startswith("knowledge.") or name == "knowledge":
+            elif missing_name.startswith("knowledge.") or missing_name == "knowledge":
                 # knowledge subpackage on path but module not found —
                 # resolve to hledac.universal.knowledge.* path
                 module = import_module("hledac.universal." + module_path)
+                # If attribute not in this module, the DuckDBReadStore case:
+                # DuckDBReadStore lives in duckdb_read_store.py, not duckdb_store.py
+                # Try the sibling module before giving up
+                if not hasattr(module, name):
+                    sibling = module_path.replace("duckdb_store", "duckdb_read_store")
+                    if sibling != module_path:
+                        module = import_module("hledac.universal." + sibling)
             else:
                 raise
         value = getattr(module, name)

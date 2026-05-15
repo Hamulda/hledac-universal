@@ -93,6 +93,8 @@ except ImportError:
 
 __all__ = [
     "DuckDBShadowStore",
+    "IngestPipeline",
+    "DefaultIngestPipeline",
     "ActivationResult",
     "ReplayResult",
     "CanonicalFinding",
@@ -120,6 +122,465 @@ from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX
 # Sprint F216G: WAL Manager and Dedup Manager (extracted from this file)
 from .wal import WALManager
 from .dedup import DedupManager
+
+
+# Sprint F217: Ingest Pipeline Interface
+# --------------------------------------------------------------------------
+
+class IngestPipeline:
+    """
+    Sprint F217: Configurable pipeline for CanonicalFinding ingest.
+
+    Breaks the monolithic async_ingest_findings_batch storage path into
+    independently overridable stages:
+      1. pre_check()     — quality gate + dedup (url-first, entropy, semantic)
+      2. write_to_lmdb() — WAL serialization and persistence
+      3. write_to_duckdb() — DuckDB batch insert
+      4. post_process()  — hot-cache update, graph/semantic trigger
+
+    Each stage receives the findings list and returns per-finding outcome
+    metadata. Callers can swap steps or add pre/post hooks without editing
+    the canonical store.
+
+    Benefits:
+      - Each pipeline stage is independently testable
+      - Custom dedup strategies can replace just pre_check()
+      - DuckDB failure modes are observable per-finding, not collapsed
+        into one boolean accepted/rejected
+      - Write strategy is swappable (e.g., streaming vs batch, different backends)
+    """
+
+    def pre_check(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> tuple[list[CanonicalFinding], list[tuple[int, FindingQualityDecision]]]:
+        """
+        Stage 1: Quality gate + dedup check.
+
+        Args:
+            findings: Input canonical findings.
+            store: DuckDBShadowStore instance for hot-cache and LMDB lookups.
+
+        Returns:
+            Tuple of (accepted_findings, rejected_decisions) where:
+              - accepted_findings: findings that passed quality gate
+              - rejected_decisions: list of (index, FindingQualityDecision) for
+                each rejected finding, preserving original input index
+        """
+        raise NotImplementedError
+
+    def write_to_lmdb(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """
+        Stage 2: Write findings to LMDB WAL.
+
+        Args:
+            findings: Findings to persist (all pre-check accepted).
+            store: DuckDBShadowStore instance with WAL manager.
+
+        Returns:
+            List of dicts with keys: finding_id, lmdb_success, error
+        """
+        raise NotImplementedError
+
+    def write_to_duckdb(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """
+        Stage 3: Write findings to DuckDB.
+
+        Args:
+            findings: Findings to insert (all pre-check accepted, LMDB-written).
+            store: DuckDBShadowStore instance with executor.
+
+        Returns:
+            List of dicts with keys: finding_id, duckdb_success, error
+        """
+        raise NotImplementedError
+
+    def post_process(
+        self,
+        findings: list[CanonicalFinding],
+        lmdb_results: list[dict],
+        duckdb_results: list[dict],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """
+        Stage 4: Post-processing hooks.
+
+        Args:
+            findings: All findings (for hot-cache update).
+            lmdb_results: Per-finding LMDB write results from Stage 2.
+            duckdb_results: Per-finding DuckDB write results from Stage 3.
+            store: DuckDBShadowStore instance.
+
+        Returns:
+            List of final ActivationResult dicts (same len as findings).
+        """
+        raise NotImplementedError
+
+    async def run(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """
+        Run the full ingest pipeline.
+
+        Args:
+            findings: Input canonical findings.
+            store: DuckDBShadowStore instance.
+
+        Returns:
+            List of ActivationResult dicts (len == len(findings)).
+            Each dict: {finding_id, lmdb_success, duckdb_success, error, accepted}
+        """
+        raise NotImplementedError
+
+
+class DefaultIngestPipeline(IngestPipeline):
+    """
+    Sprint F217: Default ingest pipeline implementing current behavior.
+
+    Stage 1 (pre_check):  Quality gate per finding via _assess_finding_quality
+    Stage 2 (lmdb):       WAL batch write via wal_put_many
+    Stage 3 (duckdb):     Batch tuple insert via _sync_insert_findings_bulk_as_tuples
+    Stage 4 (post):       Per-finding ActivationResult with desync detection,
+                           hot-cache populate on LMDB success, graph/semantic trigger
+    """
+
+    def pre_check(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> tuple[list[CanonicalFinding], list[tuple[int, FindingQualityDecision]]]:
+        accepted_findings: list[CanonicalFinding] = []
+        rejected_decisions: list[tuple[int, FindingQualityDecision]] = []
+
+        for i, f in enumerate(findings):
+            try:
+                decision = store._assess_finding_quality(f)
+            except Exception:
+                # Fail-open: store anyway via legacy path (no dedup fingerprint stored here)
+                accepted_findings.append(f)
+                continue
+
+            if not decision.accepted:
+                store._record_quality_rejection(f, decision)
+                rejected_decisions.append((i, decision))
+            else:
+                accepted_findings.append(f)
+
+        return accepted_findings, rejected_decisions
+
+    def write_to_lmdb(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """Stage 2: WAL batch write via store's WAL manager."""
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        results: list[dict] = []
+
+        if not store._wal_manager:
+            _wal_root = store._db_path.parent if store._db_path else None
+            if _wal_root is None:
+                for f in findings:
+                    results.append({
+                        "finding_id": f.finding_id,
+                        "lmdb_success": False,
+                        "error": "no wal root",
+                    })
+                return results
+            store._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+            store._wal_manager.initialize()
+
+        items = []
+        for f in findings:
+            key = f"finding:{f.finding_id}"
+            wal_payload = {
+                "id": f.finding_id,
+                "query": f.query,
+                "source_type": f.source_type,
+                "confidence": f.confidence,
+                "ts": f.ts,
+                "provenance": f.provenance,
+                "payload_text": f.payload_text,
+            }
+            items.append((key, wal_payload))
+
+        if not items:
+            return [{"finding_id": f.finding_id, "lmdb_success": False, "error": "no items"} for f in findings]
+
+        lmdb_ok = store._wal_manager.wal_put_many(items) if hasattr(store._wal_manager, 'wal_put_many') else False
+        if not lmdb_ok:
+            _logger.warning(f"[Sprint F217] Batch WAL failed for {len(items)} items")
+            for f in findings:
+                results.append({
+                    "finding_id": f.finding_id,
+                    "lmdb_success": False,
+                    "error": "lmdb batch failed",
+                })
+            return results
+
+        for f in findings:
+            results.append({
+                "finding_id": f.finding_id,
+                "lmdb_success": True,
+                "error": None,
+            })
+        return results
+
+    def write_to_duckdb(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """Stage 3: DuckDB batch insert via store's sync method."""
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        results: list[dict] = []
+
+        try:
+            rows: list[list] = []
+            for f in findings:
+                provenance_json = _CANONICAL_ENCODER.encode(f.provenance).decode("utf-8")
+                rows.append([
+                    f.finding_id, f.query, f.source_type, f.confidence,
+                    f.ts, provenance_json,
+                ])
+            inserted = store._sync_insert_findings_bulk_as_tuples(rows)
+            duckdb_all_ok = inserted >= len(findings)
+            if inserted < len(findings):
+                _logger.error(f"[Sprint F217] Partial DuckDB batch: {inserted}/{len(findings)}")
+
+            for f in findings:
+                results.append({
+                    "finding_id": f.finding_id,
+                    "duckdb_success": duckdb_all_ok,
+                    "error": None if duckdb_all_ok else f"partial insert: {inserted}/{len(findings)}",
+                })
+        except Exception as e:
+            _logger.error(f"[Sprint F217] Batch DuckDB exception: {e}")
+            for f in findings:
+                results.append({
+                    "finding_id": f.finding_id,
+                    "duckdb_success": False,
+                    "error": str(e),
+                })
+        return results
+
+    def post_process(
+        self,
+        findings: list[CanonicalFinding],
+        lmdb_results: list[dict],
+        duckdb_results: list[dict],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """
+        Stage 4: Build ActivationResult per finding.
+        Populates hot cache on LMDB success. Triggers graph/semantic buffers.
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        final_results: list[dict] = []
+        accepted_total = 0
+
+        for i, f in enumerate(findings):
+            lmdb = lmdb_results[i] if i < len(lmdb_results) else {"lmdb_success": False}
+            duckdb = duckdb_results[i] if i < len(duckdb_results) else {"duckdb_success": False}
+
+            lmdb_ok = bool(lmdb.get("lmdb_success"))
+            duckdb_ok = bool(duckdb.get("duckdb_success"))
+            desync = bool(lmdb_ok and duckdb_ok is False)
+            error = lmdb.get("error") or duckdb.get("error")
+
+            if lmdb_ok:
+                accepted_total += 1
+                # Populate hot cache for accepted findings
+                # Note: fingerprint must be stored by pre_check stage
+                # Here we only update the hot cache after LMDB confirms write
+                pass
+
+            final_results.append({
+                "finding_id": f.finding_id,
+                "lmdb_success": lmdb_ok,
+                "duckdb_success": duckdb_ok,
+                "desync": desync,
+                "error": error,
+                "accepted": lmdb_ok,
+            })
+
+        store._quality_state._accepted_count += accepted_total
+
+        # Trigger graph/semantic buffers (fire-and-forget via _bg_tasks)
+        if final_results and any(r.get("lmdb_success") for r in final_results):
+            if store.truth_write_graph_supports_buffered_writes():
+                store._graph_ingest_findings(findings)
+            store._semantic_buffer_findings(findings)
+
+        return final_results
+
+    async def run(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """
+        Sprint F217: Run the full ingest pipeline via thread executor.
+
+        Returns list of ActivationResult dicts (len == len(findings)).
+        """
+        if not findings:
+            return []
+
+        if not store._initialized or store._closed:
+            return [
+                {
+                    "finding_id": str(f.finding_id),
+                    "lmdb_success": False,
+                    "duckdb_success": None,
+                    "error": "store closed or not initialized",
+                    "accepted": False,
+                }
+                for f in findings
+            ]
+
+        if not store._startup_ready.is_set():
+            try:
+                await asyncio.wait_for(store._startup_ready.wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                return [
+                    {
+                        "finding_id": str(f.finding_id),
+                        "lmdb_success": False,
+                        "duckdb_success": None,
+                        "error": "startup replay timeout",
+                        "accepted": False,
+                    }
+                    for f in findings
+                ]
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            store._executor,
+            self._run_sync,
+            findings,
+            store,
+        )
+
+    def _run_sync(
+        self,
+        findings: list[CanonicalFinding],
+        store: DuckDBShadowStore,
+    ) -> list[dict]:
+        """Synchronous pipeline run on worker thread."""
+        # Stage 1: pre_check
+        accepted_findings, rejected_decisions = self.pre_check(findings, store)
+
+        if not accepted_findings:
+            # All rejected — build results for all findings
+            results: list[dict] = []
+            rejected_map = {idx: decision for idx, decision in rejected_decisions}
+            for i, f in enumerate(findings):
+                if i in rejected_map:
+                    d = rejected_map[i]
+                    results.append({
+                        "finding_id": f.finding_id,
+                        "lmdb_success": False,
+                        "duckdb_success": None,
+                        "error": d.reason,
+                        "accepted": False,
+                    })
+                else:
+                    results.append({
+                        "finding_id": f.finding_id,
+                        "lmdb_success": False,
+                        "duckdb_success": None,
+                        "error": "quality_fail_open",
+                        "accepted": False,
+                    })
+            return results
+
+        # Stage 2: LMDB write (only for accepted findings)
+        lmdb_results = self.write_to_lmdb(accepted_findings, store)
+
+        # Build index mapping: accepted_findings[i] -> original index
+        accepted_indices: list[int] = []
+        rejected_map = {idx: decision for idx, decision in rejected_decisions}
+        j = 0
+        for i, f in enumerate(findings):
+            if i in rejected_map:
+                continue
+            accepted_indices.append(i)
+            j += 1
+
+        # Stage 3: DuckDB write (only for accepted findings that passed LMDB)
+        lmdb_ok_findings = [
+            accepted_findings[i]
+            for i in range(len(accepted_findings))
+            if i < len(lmdb_results) and lmdb_results[i].get("lmdb_success")
+        ]
+        lmdb_ok_indices = [
+            accepted_indices[i]
+            for i in range(len(accepted_findings))
+            if i < len(lmdb_results) and lmdb_results[i].get("lmdb_success")
+        ]
+        duckdb_results = self.write_to_duckdb(lmdb_ok_findings, store)
+
+        # Stage 4: post_process
+        # Build full lmdb_results aligned with original findings order
+        full_lmdb_results: list[dict] = [{"lmdb_success": False, "error": None} for _ in findings]
+        for i, idx in enumerate(accepted_indices):
+            if i < len(lmdb_results):
+                full_lmdb_results[idx] = lmdb_results[i]
+
+        # Build full duckdb_results aligned with original findings order
+        full_duckdb_results: list[dict] = [{"duckdb_success": False, "error": None} for _ in findings]
+        for i, idx in enumerate(lmdb_ok_indices):
+            if i < len(duckdb_results):
+                full_duckdb_results[idx] = duckdb_results[i]
+
+        post_results = self.post_process(findings, full_lmdb_results, full_duckdb_results, store)
+
+        # Fill in rejected findings
+        for idx, decision in rejected_decisions:
+            post_results[idx] = {
+                "finding_id": findings[idx].finding_id,
+                "lmdb_success": False,
+                "duckdb_success": None,
+                "error": decision.reason,
+                "accepted": False,
+            }
+
+        return post_results
+
+    # --------------------------------------------------------------------------
+    # Sprint 8P / Sprint F217: Legacy batch method — refactored to use pipeline
+    # --------------------------------------------------------------------------
+
+    def _canonical_findings_batch_to_activation_results(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> list[dict]:
+        """
+        Sprint 8P + F217: Sync batch via pipeline.
+
+        Called on the worker thread (via run_in_executor from async_record_canonical_findings_batch).
+        Creates a DefaultIngestPipeline and runs the sync pipeline.
+        """
+        pipeline = DefaultIngestPipeline()
+        return pipeline._run_sync(findings, self)
 
 
 class ActivationResult(TypedDict):

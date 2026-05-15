@@ -46,7 +46,14 @@ INVARIANTS:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
+    from .httpx_transport import fetch_via_httpx_h2, should_use_httpx_h2
+    from .curl_cffi_transport import should_use_curl_cffi
+    from .curl_cffi_fetch import fetch_via_curl_cffi
+    from .transport_router import Lane, route_transport, TransportDecision
 
 
 @dataclass(frozen=True)
@@ -174,14 +181,72 @@ class TransportAdapter(ABC):
 
 
 # ---------------------------------------------------------------------------
+# Transport ABC — Abstract base for node-transport overlays
+# Implemented by: InMemoryTransport, TorTransport, NymTransport, I2PTransport
+# ---------------------------------------------------------------------------
+
+
+class Transport(ABC):
+    """
+    Abstract base class for node-transport overlays.
+
+    All node transports (InMemory, Tor, Nym, I2P) inherit from this ABC.
+    Provides the async lifecycle methods and message handler registration
+    that node transports need.
+
+    Contract:
+      - start(), stop(), wait_ready() are async
+      - register_handler() is sync (or raise NotImplementedError)
+      - is_running() is a concrete method using self.available
+    """
+
+    available: bool = True
+
+    @abstractmethod
+    async def start(self) -> bool:
+        """Start the transport and return True if successful."""
+        ...
+
+    @abstractmethod
+    async def stop(self) -> None:
+        """Stop the transport gracefully."""
+        ...
+
+    @abstractmethod
+    async def wait_ready(self) -> None:
+        """Wait until the transport is ready to handle requests."""
+        ...
+
+    @abstractmethod
+    def register_handler(self, msg_type: str, handler) -> None:
+        """
+        Register a message handler for the given message type.
+
+        Args:
+            msg_type: Message type identifier
+            handler: Callable to handle the message
+
+        Raises:
+            NotImplementedError: if the transport does not support handlers
+        """
+        ...
+
+    async def is_running(self) -> bool:
+        """Check if the transport is operational."""
+        return self.available
+
+
+# ---------------------------------------------------------------------------
 # Re-exports from transport_router (TransportDecision, Lane)
 # These provide the lane-selection abstraction without requiring
 # public_fetcher to import from transport_router directly.
+# Kept as lazy __getattr__ to avoid import chain failures when transport.base
+# is imported as top-level (no hledac.universal parent in sys.modules).
 # ---------------------------------------------------------------------------
 
-from .transport_router import TransportDecision, Lane  # noqa: E402
-
 __all__ = [
+    # Transport ABC (node-transport overlay base)
+    'Transport',
     # DTOs
     'TransportConfig',
     'TransportResult',
@@ -205,34 +270,20 @@ __all__ = [
 ]
 
 
-# -----------------------------------------------------------------------------
-# Circuit breaker re-exports
-# -----------------------------------------------------------------------------
-
-from .circuit_breaker import (
-    get_breaker,
-    CircuitBreaker,
-    CircuitDecision,
-)
-
-# -----------------------------------------------------------------------------
-# HTTPX transport re-exports
-# -----------------------------------------------------------------------------
-
-from .httpx_transport import (
-    should_use_httpx_h2,
-    fetch_via_httpx_h2,
-)
-
-# -----------------------------------------------------------------------------
-# curl_cffi transport re-exports
-# -----------------------------------------------------------------------------
-
-from .curl_cffi_transport import should_use_curl_cffi
-from .curl_cffi_fetch import fetch_via_curl_cffi
-
-# -----------------------------------------------------------------------------
-# Router re-export
-# -----------------------------------------------------------------------------
-
-from .transport_router import route_transport
+def __getattr__(name: str):
+    if name in ('TransportDecision', 'Lane', 'route_transport'):
+        from . import transport_router
+        return getattr(transport_router, name)
+    if name in ('get_breaker', 'CircuitBreaker', 'CircuitDecision'):
+        from . import circuit_breaker
+        return getattr(circuit_breaker, name)
+    if name in ('should_use_httpx_h2', 'fetch_via_httpx_h2'):
+        from . import httpx_transport
+        return getattr(httpx_transport, name)
+    if name in ('should_use_curl_cffi', 'fetch_via_curl_cffi'):
+        from . import curl_cffi_transport
+        if name == 'should_use_curl_cffi':
+            return curl_cffi_transport.should_use_curl_cffi
+        from . import curl_cffi_fetch
+        return curl_cffi_fetch.fetch_via_curl_cffi
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

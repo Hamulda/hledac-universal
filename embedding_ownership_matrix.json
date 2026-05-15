@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "created": "2026-05-14",
+    "project": "hledac/universal",
+    "sprint": "F218A",
+    "schema_version": "1.0",
+    "purpose": "Embedding ownership cleanup — document roles, classify wrappers, define canonical owner"
+  },
+  "canonical_owner": {
+    "file": "embedding_pipeline.py",
+    "entrypoints": [
+      "generate_embeddings(texts, batch_size, keep_loaded)",
+      "generate_embeddings_async(texts, batch_size, keep_loaded)",
+      "embed_query(text)",
+      "embed_query_async(text)",
+      "embed_document(text)"
+    ],
+    "backend_priority": ["ANEEmbedder", "ModernBERTEmbedder", "MLXEmbeddingManager", "hash_fallback"],
+    "memory_rule": "ANE and MLX ModernBERT never loaded simultaneously on M1 8GB"
+  },
+  "components": [
+    {
+      "id": "embedding_pipeline",
+      "file": "embedding_pipeline.py",
+      "class_module": "EmbeddingRouter + module-level functions",
+      "model": "nomic-ai/modernbert-embed-base (via mlx-embeddings)",
+      "output_dim": 256,
+      "model_loaded": true,
+      "can_duplicate_another_loader": false,
+      "active_status": "active",
+      "is_canonical": true,
+      "input_contract": "List[str] (batch) or str (single) → np.ndarray float32",
+      "output_contract": "shape (N, 256) or (256,)",
+      "current_callers": [
+        "knowledge/semantic_store.py",
+        "knowledge/rag_engine.py",
+        "knowledge/lancedb_store.py",
+        "knowledge/graph_rag.py",
+        "forensics/enrichment_service.py",
+        "brain/distillation_engine.py (via generate_embeddings_async)"
+      ],
+      "recommendation": "KEEP — canonical embedding owner"
+    },
+    {
+      "id": "ane_embedder",
+      "file": "brain/ane_embedder.py",
+      "class_module": "ANEEmbedder + semantic_dedup_findings",
+      "model": "CoreML MiniLM-L6-v2 (ane) + MLX ModernBERT fallback",
+      "output_dim": 384,
+      "model_loaded": true,
+      "can_duplicate_another_loader": false,
+      "active_status": "active",
+      "is_canonical": false,
+      "input_contract": "List[dict] findings → List[dict] deduplicated",
+      "output_contract": "Filtered findings list",
+      "current_callers": [
+        "brain/distillation_engine.py",
+        "runtime/windup_engine.py",
+        "export/sprint_exporter.py",
+        "knowledge/sprint_diff_engine.py",
+        "__main__.py (status label)"
+      ],
+      "recommendation": "KEEP — standalone semantic dedup path with separate use case from document/query embedding",
+      "telemetry": ["ane_embed_attempted", "ane_embed_fallback_used", "ane_warmup_executed", "ane_warmup_error"]
+    },
+    {
+      "id": "modernbert_embedder",
+      "file": "embeddings/modernbert_embedder.py",
+      "class_module": "ModernBERTEmbedder",
+      "model": "nomic-ai/modernbert-embed-base (via mlx-embeddings)",
+      "output_dim": 768,
+      "model_loaded": true,
+      "can_duplicate_another_loader": false,
+      "active_status": "active_wrapper",
+      "is_canonical": false,
+      "input_contract": "str or List[str] + task type → np.ndarray",
+      "output_contract": "np.ndarray float32 (768d or truncated)",
+      "current_callers": [
+        "embedding_pipeline.py (via EmbeddingRouter._load_modernbert)"
+      ],
+      "recommendation": "KEEP — active wrapper used by EmbeddingRouter, don't refactor"
+    },
+    {
+      "id": "mlx_embedding_manager",
+      "file": "core/mlx_embeddings.py",
+      "class_module": "MLXEmbeddingManager",
+      "model": "nomic-ai/modernbert-embed-base (via mlx-embeddings)",
+      "output_dim": 768,
+      "model_loaded": true,
+      "can_duplicate_another_loader": false,
+      "active_status": "active_wrapper",
+      "is_canonical": false,
+      "input_contract": "str/List[str] → np.ndarray float32",
+      "output_contract": "np.ndarray float32 (768d)",
+      "current_callers": [
+        "embedding_pipeline.py (EmbeddingRouter final fallback)",
+        "context_optimization/dynamic_context_manager.py",
+        "context_optimization/context_cache.py",
+        "context_optimization/context_compressor.py",
+        "utils/deduplication.py (SemanticDeduplicator)"
+      ],
+      "recommendation": "KEEP — fallback in EmbeddingRouter + context module direct usage is acceptable (separate use cases)"
+    }
+  ],
+  "duplicate_wrapper_classification": {
+    "ModernBERTEmbedder": {
+      "role": "wrapper",
+      "loaded_by": "EmbeddingRouter._load_modernbert()",
+      "routes_to_canonical": true,
+      "status": "active_wrapper"
+    },
+    "MLXEmbeddingManager": {
+      "role": "wrapper",
+      "loaded_by": "EmbeddingRouter final fallback + context modules directly",
+      "routes_to_canonical": "partially (EmbeddingRouter path) + standalone (context modules)",
+      "status": "active_wrapper"
+    },
+    "ANEEmbedder": {
+      "role": "standalone_dedup",
+      "loaded_by": "semantic_dedup_findings() + EmbeddingRouter.get_embedder()",
+      "routes_to_canonical": false,
+      "status": "active_standalone"
+    }
+  },
+  "memory_isolation": {
+    "m1_8gb_rule": "ANE and MLX ModernBERT never loaded simultaneously",
+    "ane_cost_mb": 300,
+    "modernbert_cost_mb": 500,
+    "guard_implemented_in": "embedding_pipeline.py (_uma_guard_before_batch, EmbeddingRouter._check_mlx_loaded)"
+  },
+  "no_change_flags": {
+    "EMBEDDING_OWNERSHIP_PLAN_CREATED": true,
+    "CANONICAL_EMBEDDING_OWNER_IDENTIFIED": true,
+    "ANE_EMBEDDER_PREFERRED_BACKEND_PRESERVED": true,
+    "MODERNBERT_FALLBACK_PRESERVED": true,
+    "NO_NEW_EMBEDDING_MODEL_ADDED": true,
+    "NO_LLM_CONFIG_CHANGE": true,
+    "NO_VLM_CHANGE": true,
+    "NO_NEW_REQUIRED_DEPENDENCIES": true,
+    "F218A_EMBEDDING_OWNERSHIP_VERIFIED": true
+  }
+}
