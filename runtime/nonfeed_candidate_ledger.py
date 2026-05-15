@@ -40,17 +40,23 @@ Owned files (Sprint F217E):
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 __all__ = [
     "NonfeedCandidateLedger",
     "LedgerRecord",
     "LEDGER_FAMILY",
     "LEDGER_STAGE",
+    "DomainCandidate",
+    "extract_domain_candidates_from_text",
+    "extract_domain_candidates_from_finding",
+    "compute_lane_eligibility",
+    "FAMILY_FEED",
 ]
 
 # ---------------------------------------------------------------------------
@@ -75,6 +81,8 @@ FAMILY_CT: Final[str] = "CT"
 FAMILY_WAYBACK: Final[str] = "WAYBACK"
 FAMILY_PASSIVE_DNS: Final[str] = "PASSIVE_DNS"
 FAMILY_PIVOT: Final[str] = "PIVOT"
+# F214: Domain candidates extracted from FEED/PUBLIC findings for non-domain queries
+FAMILY_FEED: Final[str] = "FEED"
 
 # Stages
 STAGE_DISCOVERED: Final[str] = "discovered"
@@ -307,6 +315,35 @@ class NonfeedCandidateLedger:
             ts_monotonic=ts_monotonic,
         )
 
+    def add_feed_candidate(
+        self,
+        *,
+        domain: str,
+        source_field: str,
+        confidence: float,
+        reason: str,
+        sample_context: str = "",
+        ts_monotonic: float | None = None,
+    ) -> None:
+        """
+        F214: Record a FEED-sourced domain candidate for non-domain queries.
+
+        Adds to FEED family with stage=discovered.
+        """
+        self.add(
+            family=FAMILY_FEED,
+            stage=STAGE_DISCOVERED,
+            candidate_id=_hash_candidate(domain),
+            source="feed_candidate_extractor",
+            reason=reason,
+            accepted=False,
+            quarantine=False,
+            stale=False,
+            sample_url=source_field,
+            sample_value=domain[:MAX_SAMPLE_CHARS],
+            ts_monotonic=ts_monotonic,
+        )
+
     def records(self) -> tuple[LedgerRecord, ...]:
         """Return immutable snapshot of all records (oldest first)."""
         with self._lock:
@@ -395,4 +432,258 @@ def _source_for_family(family: str) -> str:
         FAMILY_WAYBACK: "wayback_bridge",
         FAMILY_PASSIVE_DNS: "pdns_bridge",
         FAMILY_PIVOT: "pivot_planner",
+        FAMILY_FEED: "feed_candidate_extractor",
     }.get(family, family.lower())
+
+
+# ---------------------------------------------------------------------------
+# F214: Domain Candidate Extraction
+# ---------------------------------------------------------------------------
+
+# Matches domains: example.com, foo.bar.baz.io
+_DEDUP_DOMAIN_RE = re.compile(
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
+)
+
+# Matches URLs: http://..., https://..., www.example.com/path
+_URL_PREFIX_RE = re.compile(
+    r"https?://|[a-zA-Z][a-zA-Z0-9+.-]*://|www\."
+)
+
+
+@dataclass(frozen=True)
+class DomainCandidate:
+    """
+    F214: Domain candidate extracted from feed/public findings text.
+
+    Fields:
+        domain:        Normalized lower-case domain (or IP address)
+        source_family: "PUBLIC" | "FEED"
+        source_field:  "body" | "title" | "url"
+        confidence:    Extraction confidence [0.0, 1.0]
+        reason:        Why this was extracted
+        seen_count:    How many findings mentioned this domain
+        sample_context: Bounded text snippet where domain appeared (max 200 chars)
+    """
+
+    domain: str
+    source_family: str  # PUBLIC | FEED
+    source_field: str  # body | title | url
+    confidence: float
+    reason: str
+    seen_count: int = 1
+    sample_context: str = ""
+
+
+def extract_domain_candidates_from_text(
+    text: str,
+    source_url: str | None = None,
+    source_family: str = FAMILY_PUBLIC,
+    min_confidence: float = 0.3,
+) -> list[DomainCandidate]:
+    """
+    F214: Extract domain and URL hostname candidates from arbitrary text.
+
+    No external dependencies — uses only stdlib urllib.parse and regex.
+
+    Args:
+        text:           Text to scan (body content, title, etc.)
+        source_url:     Optional source URL for hostname extraction
+        source_family:  "PUBLIC" or "FEED" for ledger attribution
+        min_confidence: Minimum confidence threshold (0.0–1.0)
+
+    Returns:
+        List of DomainCandidate (may be empty).
+        Deduplicated by normalized domain (first-seen per field wins).
+    """
+    if not text or not isinstance(text, str):
+        return []
+
+    seen: dict[str, DomainCandidate] = {}  # key = f"{domain}|{source_field}"
+
+    for match in _DEDUP_DOMAIN_RE.finditer(text):
+        raw = match.group(0)
+        domain = raw.lower()
+
+        # Skip obvious non-targets
+        if domain.endswith(".onion") or ".gov" in domain or ".edu" in domain:
+            continue
+
+        # Check for obfuscation patterns (lockbitexample[.]com → lockbitexample.com)
+        # Accept both obfuscated and clean forms
+        clean = domain.replace("[.]", ".").replace("(.)", ".")
+        normalized = clean.lower()
+
+        # Get surrounding context (±50 chars)
+        start = max(0, match.start() - 50)
+        end = min(len(text), match.end() + 50)
+        context = text[start:end]
+        if len(context) > 200:
+            context = context[:200]
+
+        reason = "text_domain_match"
+        key = f"{normalized}|body"
+        if key not in seen:
+            seen[key] = DomainCandidate(
+                domain=normalized,
+                source_family=source_family,
+                source_field="body",
+                confidence=0.7 if normalized == domain else 0.5,
+                reason=reason,
+                seen_count=1,
+                sample_context=context,
+            )
+
+    # ── 2. Extract from source URL if provided ──────────────────────────────
+    if source_url:
+        hostname = _extract_hostname(source_url)
+        if hostname:
+            normalized = hostname.lower()
+            key = f"{normalized}|url"
+            if key not in seen and normalized:
+                seen[key] = DomainCandidate(
+                    domain=normalized,
+                    source_family=source_family,
+                    source_field="url",
+                    confidence=0.9,
+                    reason="source_url_hostname",
+                    seen_count=1,
+                    sample_context=source_url[:200],
+                )
+
+    # Build result list
+    result: list[DomainCandidate] = list(seen.values())
+
+    # Filter by confidence
+    result = [c for c in result if c.confidence >= min_confidence]
+    return result
+
+
+def _extract_hostname(url: str) -> str:
+    """Extract hostname from URL using stdlib only."""
+    try:
+        # Try urllib first
+        from urllib.parse import urlparse
+        if "://" in url:
+            parsed = urlparse(url)
+            hostname = parsed.hostname or ""
+            # Remove leading www. prefix for cleaner domain
+            if hostname.startswith("www."):
+                hostname = hostname[4:]
+            return hostname
+        # Bare domain-like string — clean it
+        clean = url.lstrip("htps:/").lstrip("//")
+        slash_idx = clean.find("/")
+        if slash_idx > 0:
+            clean = clean[:slash_idx]
+        return clean
+    except Exception:
+        return ""
+
+
+def extract_domain_candidates_from_finding(
+    finding: Any,
+    source_family: str = FAMILY_PUBLIC,
+) -> list[DomainCandidate]:
+    """
+    F214: Extract domain candidates from a CanonicalFinding-like object.
+
+    Scans: finding.payload_text, finding.query (as URL), source_url from provenance.
+
+    Args:
+        finding:  CanonicalFinding or dict with payload_text / query fields
+        source_family: "PUBLIC" or "FEED"
+
+    Returns:
+        List of DomainCandidate, deduplicated.
+    """
+    if not finding:
+        return []
+
+    seen: dict[str, DomainCandidate] = {}
+
+    # ── 1. payload_text ──────────────────────────────────────────────────────
+    payload = getattr(finding, "payload_text", None) or ""
+    if isinstance(payload, str) and payload:
+        for c in extract_domain_candidates_from_text(payload, source_family=source_family):
+            key = f"{c.domain}|{c.source_field}"
+            if key not in seen:
+                seen[key] = c
+            else:
+                # Increment seen_count
+                existing = seen[key]
+                seen[key] = DomainCandidate(
+                    domain=existing.domain,
+                    source_family=existing.source_family,
+                    source_field=existing.source_field,
+                    confidence=existing.confidence,
+                    reason=existing.reason,
+                    seen_count=existing.seen_count + 1,
+                    sample_context=existing.sample_context,
+                )
+
+    # ── 2. query field as URL / domain ───────────────────────────────────────
+    query = getattr(finding, "query", None) or ""
+    if isinstance(query, str) and query:
+        # Check if query is itself a URL or domain
+        if _URL_PREFIX_RE.search(query) or _DEDUP_DOMAIN_RE.search(query):
+            hostname = _extract_hostname(query)
+            if hostname:
+                normalized = hostname.lower()
+                key = f"{normalized}|url"
+                if key not in seen:
+                    seen[key] = DomainCandidate(
+                        domain=normalized,
+                        source_family=source_family,
+                        source_field="url",
+                        confidence=0.9,
+                        reason="query_as_url",
+                        seen_count=1,
+                        sample_context=query[:200],
+                    )
+
+    # ── 3. provenance tuple for source URL ────────────────────────────────────
+    prov = getattr(finding, "provenance", None) or ()
+    if isinstance(prov, (list, tuple)) and len(prov) > 0:
+        source_url = str(prov[0]) if prov else ""
+        if source_url and ("://" in source_url or _DEDUP_DOMAIN_RE.search(source_url)):
+            hostname = _extract_hostname(source_url)
+            if hostname:
+                normalized = hostname.lower()
+                key = f"{normalized}|url"
+                if key not in seen:
+                    seen[key] = DomainCandidate(
+                        domain=normalized,
+                        source_family=source_family,
+                        source_field="url",
+                        confidence=0.8,
+                        reason="provenance_url",
+                        seen_count=1,
+                        sample_context=source_url[:200],
+                    )
+
+    return list(seen.values())
+
+
+def compute_lane_eligibility(
+    candidates: list[DomainCandidate],
+) -> dict[str, bool]:
+    """
+    F214: Compute lane eligibility from domain candidates.
+
+    Returns dict:
+        ct:           CT lane eligible if any domain candidate exists
+        doh:          DOH lane eligible if any domain candidate exists
+        wayback:      WAYBACK lane eligible if any candidates exist
+        passive_dns:  PASSIVE_DNS lane eligible if any domain candidates exist
+    """
+    has_domain = any(c.domain and not c.domain[0].isdigit() for c in candidates)
+    has_ip = any(c.domain[0].isdigit() for c in candidates if c.domain)
+    has_any = len(candidates) > 0
+
+    return {
+        "ct": bool(has_domain),
+        "doh": bool(has_domain),
+        "wayback": bool(has_any),
+        "passive_dns": bool(has_domain or has_ip),
+    }

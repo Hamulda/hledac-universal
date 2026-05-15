@@ -928,6 +928,23 @@ def _build_product_value_summary(
         scorecard.get("synthesis_engine_used", "unknown") or "unknown"
     )
 
+    # F214-ACQ: Feed dominance ratio and nonfeed diagnostic recommendation
+    # Computed from source_family_outcomes for full fidelity (all lanes, not just branch_mix).
+    # source_family_outcomes lives in eh.scorecard (spread there via _scheduler_result_acquisition_payload
+    # in __main__.py run_sprint).
+    _sfo_list = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
+    _feed_entry = next((e for e in _sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
+    _nonfeed_entries = [e for e in _sfo_list if isinstance(e, dict) and e.get("family") != "feed" and e.get("attempted")]
+    _feed_accepted = (_feed_entry.get("accepted_count") or 0) if _feed_entry else 0
+    _nonfeed_accepted = sum((e.get("accepted_count") or 0) for e in _nonfeed_entries)
+    _total_accepted = _feed_accepted + _nonfeed_accepted
+    feed_dominance_ratio = (_feed_accepted / _total_accepted) if _total_accepted > 0 else None
+    should_recommend_nonfeed_diagnostic = (
+        feed_dominance_ratio is not None
+        and feed_dominance_ratio > 0.95
+        and _nonfeed_accepted < 5
+    )
+
     # Sprint F178C: signal_quality renamed to _signal_quality_classification
     # PRECISE SEPARATION of FACTS vs DERIVED:
     # - FACTS (raw data from scorecard/store): accepted, reject_breakdown, total_rejected,
@@ -984,6 +1001,9 @@ def _build_product_value_summary(
         "embedding": eh.canonical_run_summary.get("embedding") if eh.canonical_run_summary else None,
         "hypothesis_feedback": eh.canonical_run_summary.get("hypothesis_feedback") if eh.canonical_run_summary else None,
         "circuit_state": eh.canonical_run_summary.get("circuit_state") if eh.canonical_run_summary else scorecard.get("circuit_state"),
+        # F214-ACQ: Feed dominance and nonfeed diagnostic signals
+        "feed_dominance_ratio": round(feed_dominance_ratio, 4) if feed_dominance_ratio is not None else None,
+        "should_recommend_nonfeed_diagnostic": should_recommend_nonfeed_diagnostic,
         # DERIVED — computed from facts (prefix _ = classification, not raw fact)
         "_signal_quality_classification": _signal_quality,
     }

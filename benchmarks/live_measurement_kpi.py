@@ -299,8 +299,8 @@ def _derive_live_kpi_from_input(inp: LiveKpiInput) -> dict:
     accepted_findings = rt.get("accepted_findings") or 0
     cycles_completed = rt.get("cycles_completed") or 0
     findings_per_min: float | None = None
-    if inp.actual_duration_s and inp.actual_duration_s > 0:
-        findings_per_min = round(total_findings / inp.actual_duration_s * 60, 2)
+    if inp.actual_duration_s and inp.actual_duration_s > 0 and accepted_findings > 0:
+        findings_per_min = round(accepted_findings / inp.actual_duration_s * 60, 2)
 
     branch_accepted_counts: dict[str, int] = {}
     if feed_findings > 0:

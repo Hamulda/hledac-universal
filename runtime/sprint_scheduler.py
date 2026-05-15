@@ -396,7 +396,7 @@ def _derive_terminal_stage(
             return _PublicStage.QUALITY_REJECTED
         return _PublicStage.PARSE_ZERO_TEXT
 
-    # Some findings accepted
+    # Some findings accepted — correct terminal state regardless of public_stage_failure
     if accepted_count > 0:
         return _PublicStage.ACCEPTED
 
@@ -651,6 +651,9 @@ class SprintSchedulerConfig:
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
     # F223A: Explicit acquisition profile — overrides env var / profile-name inference
     acquisition_profile: str | None = None
+    # Sprint F214: Optional strict feed dominance guard — blocks feed-only early exit
+    # when True and guard is triggered (ratio > 0.95, nonfeed < 5)
+    require_nonfeed_corrob_for_early_exit: bool = False
 
     def tier_of(self, source: str) -> SourceTier:
         return self.source_tier_map.get(source, SourceTier.OTHER)
@@ -676,6 +679,7 @@ class EarlyExitClass:
         early_complete_no_work_remaining    -- work loop exited because no feed work remained
         early_complete_return_guard_satisfied -- return_guard passed, windup entered legitimately early
         early_complete_feed_only            -- feed-only run with zero nonfeed accepted findings
+        feed_dominant_nonfeed_rescue_attempted -- feed dominant, nonfeed rescue window was attempted (F220D)
         aborted_by_memory                   -- aborted due to memory pressure / governor emergency
         aborted_by_deadline                 -- hard deadline exceeded before completion
         aborted_by_error                    -- exception in run() loop caused abort
@@ -685,9 +689,103 @@ class EarlyExitClass:
     EARLY_COMPLETE_NO_WORK_REMAINING = "early_complete_no_work_remaining"
     EARLY_COMPLETE_RETURN_GUARD_SATISFIED = "early_complete_return_guard_satisfied"
     EARLY_COMPLETE_FEED_ONLY = "early_complete_feed_only"
+    # Sprint F220D: Feed dominant + nonfeed rescue window was attempted
+    FEED_DOMINANT_NONFEED_RESCUE_ATTEMPTED = "feed_dominant_nonfeed_rescue_attempted"
     ABORTED_BY_MEMORY = "aborted_by_memory"
     ABORTED_BY_DEADLINE = "aborted_by_deadline"
     ABORTED_BY_ERROR = "aborted_by_error"
+
+
+# ---------------------------------------------------------------------------
+# F214: Feed Dominance Guard — reporting + optional strict policy
+# ---------------------------------------------------------------------------
+
+@dataclass(slots=True)
+class FeedDominanceGuardResult:
+    """F214: Result of FeedDominanceGuard.compute()."""
+    feed_dominance_ratio: float
+    nonfeed_accepted_findings: int
+    feed_dominance_class: str          # "balanced" | "feed_dominant" | "feed_only_like"
+    should_recommend_nonfeed_diagnostic: bool
+    guard_triggered: bool
+    block_early_exit: bool
+    reason: str
+
+
+@dataclass(slots=True)
+class FeedDominanceGuard:
+    """
+    F214: Canonical feed dominance guard policy.
+
+    Computed at early exit classification time. Does NOT change scheduler
+    behavior in default (strict=False) mode — only adds reporting fields
+    to SprintSchedulerResult and enriches early_exit_reason.
+
+    With strict=True (default False):
+      - Blocks feed-only early exit if nonfeed candidates exist but are unresolved
+      - Allows early exit if nonfeed accepted >= min_nonfeed_findings
+      - Allows early exit if all eligible nonfeed lanes reached terminal state
+      - Allows early exit if nonfeed diagnostic timed out
+    """
+    dominance_ratio_threshold: float = 0.95
+    min_nonfeed_findings: int = 5
+    strict: bool = False
+
+    def compute(
+        self,
+        total_accepted: int,
+        feed_accepted: int,
+        nonfeed_accepted: int,
+        eligible_nonfeed_lanes_terminal: bool = False,
+        nonfeed_diagnostic_timed_out: bool = False,
+    ) -> FeedDominanceGuardResult:
+        if total_accepted == 0:
+            return FeedDominanceGuardResult(
+                feed_dominance_ratio=0.0,
+                nonfeed_accepted_findings=0,
+                feed_dominance_class="balanced",
+                should_recommend_nonfeed_diagnostic=False,
+                guard_triggered=False,
+                block_early_exit=False,
+                reason="no findings",
+            )
+
+        ratio = feed_accepted / total_accepted
+        nonfeed = nonfeed_accepted
+
+        if ratio >= 0.999:
+            dom_class = "feed_only_like"
+        elif ratio > self.dominance_ratio_threshold:
+            dom_class = "feed_dominant"
+        else:
+            dom_class = "balanced"
+
+        should_recommend = ratio > self.dominance_ratio_threshold and nonfeed < 5
+        guard_triggered = ratio > self.dominance_ratio_threshold
+
+        block_early_exit = False
+        if self.strict and guard_triggered:
+            if nonfeed >= self.min_nonfeed_findings:
+                block_early_exit = False
+            elif eligible_nonfeed_lanes_terminal:
+                block_early_exit = False
+            elif nonfeed_diagnostic_timed_out:
+                block_early_exit = False
+            else:
+                block_early_exit = True
+
+        return FeedDominanceGuardResult(
+            feed_dominance_ratio=ratio,
+            nonfeed_accepted_findings=nonfeed,
+            feed_dominance_class=dom_class,
+            should_recommend_nonfeed_diagnostic=should_recommend,
+            guard_triggered=guard_triggered,
+            block_early_exit=block_early_exit,
+            reason=(
+                f"feed_dominance={dom_class}:{ratio:.3f}:"
+                f"feed={feed_accepted}:nonfeed={nonfeed}"
+            ),
+        )
 
 
 @dataclass(slots=True)
@@ -895,6 +993,16 @@ class SprintSchedulerResult:
     lane_ipfs_accepted_findings: int = 0
     # Sprint F234A: DOH lane telemetry
     lane_doh_accepted_findings: int = 0
+    # Sprint F214: DOH acquisition report fields (mirrored from CT pattern)
+    doh_planned: bool = False  # True when DOH was in the acquisition plan
+    doh_scheduled: bool = False  # True when DOH lane was actually scheduled
+    doh_request_attempted: bool = False  # True when DOH HTTP request was made
+    doh_domains_attempted: int = 0  # Number of domains passed to DOH adapter
+    doh_raw_count: int = 0  # Raw DOHFinding records from adapter
+    doh_accepted_findings: int = 0  # CanonicalFinding candidates accepted (== lane_doh_accepted_findings)
+    doh_terminal_stage: str = ""  # Final stage: no_candidates|attempted_empty|attempted_accepted|timeout|provider_error|dependency_missing|skipped|error
+    doh_provider_errors: tuple[str, ...] = ()  # Provider error strings
+    doh_cache_used: bool = False  # True when stale cache was used
     # Sprint F229: Wayback/PassiveDNS raw and candidate telemetry
     wayback_attempted: bool = False
     wayback_raw_count: int = 0
@@ -1055,6 +1163,11 @@ class SprintSchedulerResult:
     # Max 200 events, oldest dropped when cap reached
     source_family_events: list[dict] = field(default_factory=list)
     MAX_SOURCE_FAMILY_EVENTS: int = 200   # class-level cap constant
+    # Sprint F214: Feed dominance guard — populated by _compute_early_exit_class()
+    feed_dominance_ratio: float = 0.0
+    feed_dominance_class: str = ""       # "balanced" | "feed_dominant" | "feed_only_like"
+    feed_dominance_guard_triggered: bool = False
+    should_recommend_nonfeed_diagnostic: bool = False
     # Sprint F216C: PUBLIC stage machine — explicit terminal stage + bounded counters
     # terminal_stage: one of NOT_SCHEDULED | DISCOVERY_ZERO_RESULTS | DISCOVERY_TIMEOUT |
     #                 DISCOVERY_ERROR | FETCH_ZERO_SUCCESS | FETCH_TIMEOUT | FETCH_ERROR |
@@ -1255,6 +1368,16 @@ class SprintResult:
     lane_blockchain_accepted_findings: int = 0
     lane_ipfs_accepted_findings: int = 0
     lane_doh_accepted_findings: int = 0
+    # Sprint F214: DOH acquisition report fields
+    doh_planned: bool = False
+    doh_scheduled: bool = False
+    doh_request_attempted: bool = False
+    doh_domains_attempted: int = 0
+    doh_raw_count: int = 0
+    doh_accepted_findings: int = 0
+    doh_terminal_stage: str = ""
+    doh_provider_errors: tuple[str, ...] = ()
+    doh_cache_used: bool = False
 
     # Policy quality feedback
     policy_quality_feedback_calls: int = 0
@@ -1369,6 +1492,10 @@ class PublicSprintResult(SprintResult):
     public_terminal_stage: str = ""
     public_stage_counters: dict = field(default_factory=dict)
     public_discovery_empty_reason: str = ""
+    # Sprint F214-ACQ: Public provider selection debug — captures candidate providers,
+    # selected provider, rejected providers and reasons, bootstrap state, and policy flags.
+    # Reporting-only: does not affect acquisition behavior.
+    public_provider_selection_debug: dict = field(default_factory=dict)
 
     # Wayback telemetry
     wayback_attempted: bool = False
@@ -2304,6 +2431,8 @@ class SprintScheduler:
             # F232: ct_planned — CT was in the acquisition plan (enabled)
             from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
             self._result.ct_planned = is_lane_enabled(self._acquisition_plan, "CT")
+            # F214: doh_planned — DOH was in the acquisition plan (enabled)
+            self._result.doh_planned = is_lane_enabled(self._acquisition_plan, "DOH")
             # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
             # F216F: Generate pivot candidates from query and fill telemetry
@@ -2614,11 +2743,48 @@ class SprintScheduler:
                         await self._ensure_nonfeed_predispatch_before_finalization(
                             query, "post_sleep_windup_break"
                         )
-                        self._capture_timing_fields()
-                        await self._finalize_result_truth("post_sleep_windup_break", "post_sleep gate windup, guard passed", "WINDUP", query)
+                        # Sprint F220D: Feed dominance nonfeed rescue window
+                    # If feed is dominant and nonfeed is near-zero, attempt bounded rescue
+                    # before declaring feed-only early exit.
+                    _rescue_triggered = False
+                    if (
+                        self._result.accepted_findings >= 1000
+                        and self._result.lane_ct_accepted_findings == 0
+                        and self._result.lane_wayback_accepted_findings == 0
+                        and self._result.lane_pdns_accepted_findings == 0
+                        and self._result.lane_blockchain_accepted_findings == 0
+                        and self._result.lane_ipfs_accepted_findings == 0
+                        and self._result.lane_doh_accepted_findings == 0
+                        and self._result.requested_duration_s >= 180
+                    ):
+                        _rescue_elapsed = await self._run_feed_dominance_nonfeed_rescue_window(query, duckdb_store)
+                        if _rescue_elapsed is not None and _rescue_elapsed > 0:
+                            _rescue_triggered = True
+                            log.info(
+                                f"[F220D] Feed dominance rescue window completed in {_rescue_elapsed:.1f}s, "
+                                f"nonfeed findings: ct={self._result.lane_ct_accepted_findings} "
+                                f"public={self._result.public_accepted_findings}"
+                            )
+                        else:
+                            log.debug("[F220D] Feed dominance rescue window returned no candidates")
+
+                    self._capture_timing_fields()
+                    if _rescue_triggered:
+                        await self._finalize_result_truth(
+                            "post_sleep_windup_break",
+                            "feed dominant nonfeed rescue attempted",
+                            "WINDUP",
+                            query,
+                        )
                         break
-                    # Guard blocked — continue loop once to satisfy nonfeed lanes
-                    continue
+                    else:
+                        await self._finalize_result_truth(
+                            "post_sleep_windup_break",
+                            "post_sleep gate windup, guard passed",
+                            "WINDUP",
+                            query,
+                        )
+                        break
 
                 # Sprint 8UC B.4: Speculative prefetch every 15s
                 now_mono = _time.monotonic()
@@ -2957,10 +3123,29 @@ class SprintScheduler:
                 + r.lane_ipfs_accepted_findings
                 + r.lane_doh_accepted_findings
             )
+            # F214: Compute feed dominance guard — enriches early_exit_reason
+            feed_accepted = r.accepted_findings - nonfeed_accepted
+            _guard = FeedDominanceGuard(
+                strict=self._config.require_nonfeed_corrob_for_early_exit,
+            ).compute(
+                total_accepted=r.accepted_findings,
+                feed_accepted=feed_accepted,
+                nonfeed_accepted=nonfeed_accepted,
+            )
+            r.feed_dominance_ratio = _guard.feed_dominance_ratio
+            r.feed_dominance_class = _guard.feed_dominance_class
+            r.feed_dominance_guard_triggered = _guard.guard_triggered
+            r.should_recommend_nonfeed_diagnostic = _guard.should_recommend_nonfeed_diagnostic
             if r.accepted_findings > 0 and nonfeed_accepted == 0:
+                _base_reason = f"feed-only early exit ({r.accepted_findings} accepted findings, no nonfeed)"
+                if _guard.guard_triggered:
+                    _base_reason += (
+                        f" | feed-dominant:ratio={_guard.feed_dominance_ratio:.3f}"
+                        f":recommend nonfeed_diagnostic"
+                    )
                 return (
                     EarlyExitClass.EARLY_COMPLETE_FEED_ONLY,
-                    f"feed-only early exit ({r.accepted_findings} accepted findings, no nonfeed)",
+                    _base_reason,
                 )
 
             if r.return_guard_satisfied and exit_path in (
@@ -4157,6 +4342,85 @@ class SprintScheduler:
         except Exception as exc:
             return {"attempted": False, "error": f"{type(exc).__name__}:{exc}"}
 
+    # ── Sprint F220D: Feed Dominance Nonfeed Rescue Window ─────────────────
+
+    async def _run_feed_dominance_nonfeed_rescue_window(
+        self,
+        query: str,
+        duckdb_store: Any,
+    ) -> float | None:
+        """
+        Sprint F220D: Feed Dominance Nonfeed Rescue Window.
+
+        When feed has been dominant (>=1000 accepted) and nonfeed lanes are all
+        at zero, this rescue window attempts a final bounded nonfeed rescue before
+        declaring feed-only early exit.
+
+        Bounded:
+          - Max 60s wall-clock duration
+          - Fail-soft: returns None on any error, 0.0 if no candidates found
+          - No new network providers — uses existing seams (_attempt_public_prewindup_barrier)
+          - No MLX / browser / stealth
+
+        Returns:
+            Elapsed seconds if rescue ran (even with 0 findings), None if skipped.
+        """
+        import time as _time
+
+        _t0 = _time.monotonic()
+        _hard_deadline = _t0 + 60.0  # 60s max rescue window
+
+        try:
+            # Guard: check hard deadline before starting
+            if self._hard_deadline_monotonic is not None:
+                _remaining = self._hard_deadline_monotonic - _time.monotonic()
+                if _remaining <= 0:
+                    log.debug("[F220D] Rescue window skipped: hard deadline already exceeded")
+                    return None
+                # If less than 15s remain, skip rescue (not enough time)
+                if _remaining < 15.0:
+                    log.debug(f"[F220D] Rescue window skipped: only {_remaining:.1f}s remaining")
+                    return None
+
+            _rescue_findings = 0
+
+            # Step 1: Attempt PUBLIC lane rescue via _attempt_public_prewindup_barrier
+            try:
+                async with asyncio.timeout(15.0):
+                    _pub_result = await self._attempt_public_prewindup_barrier(query)
+                    if _pub_result and _pub_result.get("accepted", 0) > 0:
+                        _rescue_findings += _pub_result["accepted"]
+                        log.debug(f"[F220D] PUBLIC rescue: {_pub_result['accepted']} accepted")
+            except asyncio.TimeoutError:
+                log.debug("[F220D] PUBLIC rescue timed out (15s)")
+            except Exception as _exc:
+                log.debug(f"[F220D] PUBLIC rescue error: {_exc}")
+
+            # Check hard deadline before CT
+            if _time.monotonic() >= _hard_deadline:
+                _elapsed = _time.monotonic() - _t0
+                log.debug(f"[F220D] Rescue window hit hard deadline after PUBLIC step, elapsed={_elapsed:.1f}s")
+                return _elapsed
+
+            # Step 2: Attempt CT lane rescue via _attempt_ct_prewindup_barrier
+            try:
+                async with asyncio.timeout(15.0):
+                    _ct_result = await self._attempt_ct_prewindup_barrier(query)
+                    if _ct_result and _ct_result.get("raw_count", 0) > 0:
+                        log.debug(f"[F220D] CT rescue: {_ct_result['raw_count']} raw results")
+            except asyncio.TimeoutError:
+                log.debug("[F220D] CT rescue timed out (15s)")
+            except Exception as _exc:
+                log.debug(f"[F220D] CT rescue error: {_exc}")
+
+            _elapsed = _time.monotonic() - _t0
+            log.debug(f"[F220D] Rescue window completed in {_elapsed:.1f}s, findings={_rescue_findings}")
+            return _elapsed
+
+        except Exception as _exc:
+            log.debug(f"[F220D] Rescue window exception: {_exc}")
+            return None
+
     # ── Sprint F209A: Mandatory Acquisition Prelude ───────────────────────────
 
     async def _run_mandatory_acquisition_prelude(
@@ -4820,50 +5084,100 @@ class SprintScheduler:
         nonfeed_prelude_terminal: list[str],
         nonfeed_prelude_accepted: dict[str, int],
     ) -> tuple[str, int]:
-        """Sprint F234A: DOH prelude lane — DNS-over-HTTPS passive DNS recon."""
-        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
+        """Sprint F234A / F214: DOH prelude lane — DNS-over-HTTPS passive DNS recon."""
+        from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query, is_lane_enabled
         from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
 
+        # F214: Mark DOH as planned and scheduled
+        self._result.doh_planned = is_lane_enabled(self._acquisition_plan, AcquisitionLane.DOH)
+        self._result.doh_scheduled = True
+
         _doh_query = build_lane_query(query, AcquisitionLane.DOH)
-        if _doh_query and not isinstance(_doh_query, dict):
-            if self._doh_adapter is None:
-                self._doh_adapter = DOHAdapter()
-            _doh_session = None
-            try:
-                import aiohttp
-                _doh_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
-                _doh_findings = await self._doh_adapter.run(
-                    domain=str(_doh_query),
-                    session=_doh_session,
-                )
-                if _doh_findings:
-                    _doh_cands, _doh_rejs, _doh_tel = doh_results_to_findings(
-                        _doh_findings,
-                        None,
-                        query,
-                        f"prelude-doh-{int(time_module.time())}",
-                    )
-                    nonfeed_prelude_attempted.append("DOH")
-                    nonfeed_prelude_terminal.append("DOH")
-                    _doh_acc = 0
-                    if _doh_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
-                        try:
-                            _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
-                            _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
-                        except Exception:
-                            pass
-                    self._result.lane_doh_accepted_findings = _doh_acc
-                    nonfeed_prelude_accepted["DOH"] = _doh_acc
-                    return ("DOH", _doh_acc)
-                else:
-                    nonfeed_prelude_accepted["DOH"] = 0
-                    return ("DOH", 0)
-            finally:
-                if _doh_session:
-                    await _doh_session.close()
-        else:
+
+        # no_candidates: build_lane_query returned {} (no domain seed)
+        if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get("_disabled")):
+            self._result.doh_terminal_stage = "no_candidates"
             nonfeed_prelude_accepted["DOH"] = 0
             return ("DOH", 0)
+
+        # dependency_missing: adapter or store unavailable
+        if self._doh_adapter is None:
+            self._result.doh_terminal_stage = "dependency_missing"
+            self._result.doh_provider_errors = ("doh_adapter_not_initialized",)
+            nonfeed_prelude_accepted["DOH"] = 0
+            return ("DOH", 0)
+
+        _doh_session = None
+        try:
+            import aiohttp
+            _doh_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+
+            # F214: Track domain being attempted
+            self._result.doh_domains_attempted = 1
+
+            _doh_findings = await self._doh_adapter.run(
+                domain=str(_doh_query),
+                session=_doh_session,
+            )
+            # F214: Mark request as attempted (adapter.run() was called)
+            self._result.doh_request_attempted = True
+
+            # Check adapter cache usage (via _cache access on adapter)
+            _cache_used = getattr(self._doh_adapter, "_cache", None) and str(_doh_query) in self._doh_adapter._cache
+            self._result.doh_cache_used = bool(_cache_used)
+
+            if _doh_findings:
+                _doh_cands, _doh_rejs, _doh_tel = doh_results_to_findings(
+                    _doh_findings,
+                    None,
+                    query,
+                    f"prelude-doh-{int(time_module.time())}",
+                )
+                nonfeed_prelude_attempted.append("DOH")
+                nonfeed_prelude_terminal.append("DOH")
+
+                # F214: Populate raw count from bridge telemetry
+                self._result.doh_raw_count = _doh_tel.get("doh_total", len(_doh_findings))
+
+                _doh_acc = 0
+                if _doh_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
+                    try:
+                        _ing = await duckdb_store.async_ingest_findings_batch(list(_doh_cands))
+                        _doh_acc = sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
+                    except Exception:
+                        pass
+
+                self._result.lane_doh_accepted_findings = _doh_acc
+                self._result.doh_accepted_findings = _doh_acc
+
+                # F214: Terminal stage
+                if _doh_acc > 0:
+                    self._result.doh_terminal_stage = "attempted_accepted"
+                else:
+                    self._result.doh_terminal_stage = "attempted_empty"
+
+                nonfeed_prelude_accepted["DOH"] = _doh_acc
+                return ("DOH", _doh_acc)
+            else:
+                # F214: No findings returned — empty but attempted
+                self._result.doh_raw_count = 0
+                self._result.doh_terminal_stage = "attempted_empty"
+                nonfeed_prelude_accepted["DOH"] = 0
+                return ("DOH", 0)
+
+        except asyncio.TimeoutError:
+            self._result.doh_terminal_stage = "timeout"
+            self._result.doh_provider_errors = ("doh_timeout",)
+            nonfeed_prelude_accepted["DOH"] = 0
+            return ("DOH", 0)
+        except Exception as _exc:
+            self._result.doh_terminal_stage = "provider_error"
+            self._result.doh_provider_errors = (f"{type(_exc).__name__}:{_exc}",)
+            nonfeed_prelude_accepted["DOH"] = 0
+            return ("DOH", 0)
+        finally:
+            if _doh_session:
+                await _doh_session.close()
 
     # ── Sprint F207T-A: Return Guard for Mandatory Nonfeed Terminal State ────
     # ---------------------------------------------------------------------------
@@ -6123,6 +6437,40 @@ class SprintScheduler:
             "public_rejected_url_samples": _pub_rejected_url_sample,
             "public_accepted_url_sample": _pub_accepted_url_sample,
         }
+
+        # F214-ACQ: Build public_provider_selection_debug — reporting-only struct
+        # capturing why the public discovery provider was/wasn't selected.
+        # Does NOT change acquisition behavior.
+        _psd = {
+            "candidate_providers": list(getattr(public_result, 'public_provider_selected', []) or []),
+            "selected_provider": (
+                list(getattr(public_result, 'public_provider_selected', []) or [])[0]
+                if getattr(public_result, 'public_provider_selected', None) else None
+            ),
+            "rejected_providers": [
+                p.get("provider", "?") for p in getattr(public_result, 'public_provider_skipped', []) or []
+            ],
+            "rejection_reasons": {
+                p.get("provider", "?"): p.get("reason", "")
+                for p in getattr(public_result, 'public_provider_skipped', []) or []
+            },
+            "provider_errors": list(getattr(public_result, 'public_provider_errors', []) or []),
+            "missing_dependencies": [],
+            "policy_flags": {
+                "bootstrap_enabled": _pub_bootstrap_en,
+                "bootstrap_order": _pub_bootstrap_ord,
+                "bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented,
+                "bootstrap_first_fetch_attempted": _pub_bootstrap_fetch_att,
+                "public_bootstrap_enabled_at_result": _pub_bootstrap_en,
+            },
+            "bootstrap_enabled": _pub_bootstrap_en,
+            "bootstrap_disabled_reason": (
+                "nonfeed_diagnostic_profile_required"
+                if not _pub_bootstrap_en and _pub_bootstrap_ord == "disabled"
+                else ""
+            ),
+        }
+        self._result.public_provider_selection_debug = _psd
 
         log.debug(
             f"[8XE] Public discovery: discovered={public_result.discovered} "
@@ -8920,6 +9268,7 @@ class SprintScheduler:
             ("blockchain", AcquisitionLane.BLOCKCHAIN),
             ("feed", "FEED"),
             ("public", AcquisitionLane.PUBLIC),
+            ("doh", AcquisitionLane.DOH),
         ]:
             _raw: dict | None = None
             if _lane == "FEED":
@@ -9149,6 +9498,7 @@ class SprintScheduler:
             _pub_bootstrap_fetch_att = _surf_public.get("public_bootstrap_first_fetch_attempted", False)
 
             report["acquisition_report"] = build_acquisition_report(
+                query=self._query,
                 plan=self._acquisition_plan,
                 terminality=_at_report,
                 nonfeed_plan_debug=_nd,
@@ -11028,6 +11378,16 @@ class SprintScheduler:
         self._result.passive_dns_raw_count = 0
         self._result.passive_dns_candidates_built = 0
         self._result.passive_dns_accepted_count = 0
+        # Sprint F214: Clear DOH telemetry
+        self._result.doh_planned = False
+        self._result.doh_scheduled = False
+        self._result.doh_request_attempted = False
+        self._result.doh_domains_attempted = 0
+        self._result.doh_raw_count = 0
+        self._result.doh_accepted_findings = 0
+        self._result.doh_terminal_stage = ""
+        self._result.doh_provider_errors = ()
+        self._result.doh_cache_used = False
         # Sprint F216A: Clear event log for new sprint
         self._result.source_family_events.clear()
 

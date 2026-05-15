@@ -417,6 +417,8 @@ def _scheduler_result_acquisition_payload(
             public_stage_counters=getattr(result, "public_stage_counters", None),
             # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
             public_discovery_empty_reason=getattr(result, "public_discovery_empty_reason", ""),
+            # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
+            public_provider_selection_debug=getattr(result, "public_provider_selection_debug", None) or {},
             # F217D: CT provider resilience telemetry
             ct_provider_status=getattr(result, "ct_provider_status", ""),
             ct_cache_used=getattr(result, "ct_cache_used", False),
@@ -522,6 +524,8 @@ def _scheduler_result_acquisition_payload(
                 "public_stage_counters": getattr(result, "public_stage_counters", None),
                 # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
                 "public_discovery_empty_reason": getattr(result, "public_discovery_empty_reason", ""),
+                # F214-ACQ: Public provider selection debug
+                "public_provider_selection_debug": getattr(result, "public_provider_selection_debug", None) or {},
                 # F217D: CT provider resilience telemetry
                 "ct_provider_status": getattr(result, "ct_provider_status", ""),
                 "ct_cache_used": getattr(result, "ct_cache_used", False),
@@ -662,7 +666,14 @@ def _runtime_truth(
     elif public_accepted_findings > 0 and feed_findings == 0 and ct_findings == 0:
         primary = "public"
     elif feed_findings > 0 and public_accepted_findings > 0 and ct_findings == 0:
-        primary = "mixed"
+        # F214-ACQ: When feed dominates (>95%) and non-feed is minimal, label as feed
+        # not mixed — the signal is overwhelmingly from the feed lane.
+        total_nonfeed = public_accepted_findings + ct_findings
+        feed_dominance_ratio = feed_findings / (feed_findings + total_nonfeed) if (feed_findings + total_nonfeed) > 0 else 1.0
+        if feed_dominance_ratio > 0.95:
+            primary = "feed"
+        else:
+            primary = "mixed"
     elif ct_findings > 0 and (feed_findings > 0 or public_accepted_findings > 0):
         primary = "mixed_ct"
     else:
@@ -1683,6 +1694,11 @@ async def run_sprint(
                     # in source_family_outcomes reflects per-lane breakdown; this field provides
                     # the ground-truth total so PVS is never contradictory with runtime_truth.
                     "runtime_accepted_findings": result.accepted_findings,
+                    # F220F: findings_per_minute — computed from all-lanes total / active window.
+                    # PVS uses scorecard.findings_per_minute directly; adding here ensures PVS
+                    # never shows 0.0 for a productive sprint where phase_timings.WINDUP is 0.0.
+                    "findings_per_minute": round(result.accepted_findings / (actual_duration / 60.0), 2)
+                    if actual_duration > 0 else 0.0,
                     # Sprint F202B: Identity stitching sidecar counters
                     "identity_candidates_found": result.identity_candidates_found,
                     "identity_findings_produced": result.identity_findings_produced,

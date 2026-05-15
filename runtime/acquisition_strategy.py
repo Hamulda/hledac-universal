@@ -479,6 +479,13 @@ class NonfeedPlanDebug:
     # F227D: Mission-aware feed cap telemetry — annotated by scheduler during execution
     feed_cap_applied_by_mission: bool = False
     feed_cap_mission_intent: str | None = None
+    # F214: Domain candidates extracted from feed/PUBLIC findings for non-domain queries
+    feed_domain_candidates_count: int = 0
+    feed_domain_candidates_top: tuple[str, ...] = ()
+    feed_lane_eligible_ct: bool = False
+    feed_lane_eligible_doh: bool = False
+    feed_lane_eligible_wayback: bool = False
+    feed_lane_eligible_passive_dns: bool = False
 
 
 @dataclass
@@ -499,6 +506,8 @@ class AcquisitionStrategySnapshot:
     nonfeed_plan_debug: NonfeedPlanDebug | None = None
     # F216E: Feed dominance budget — active when non-default profile and nonfeed unresolved
     feed_dominance_budget: FeedDominanceBudget = FeedDominanceBudget()
+    # F214: Domain candidate ledger summary (from feed/PUBLIC findings extraction)
+    nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -896,7 +905,132 @@ def terminality_report(
 # ── F208C: Canonical acquisition report builder ──────────────────────────────
 
 
+def _build_nonfeed_lane_eligibility(
+    query: str,
+    acquisition_profile: str,
+    plan: AcquisitionStrategySnapshot | None,
+) -> dict:
+    """
+    F214: Build the nonfeed lane eligibility matrix for acquisition reporting.
+
+    Computed from query indicators (not plan.enabled) so the matrix explains WHY
+    each lane was or was not planned — using the same indicator logic as the
+    planner, independent of runtime state (hardware, transport, etc.).
+
+    Schema::
+
+        {
+            "public":  {"eligible": true, "reason": "...", "required_inputs": [], "available_inputs": {...}},
+            "ct":      {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
+            "doh":     {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
+            "wayback": {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
+            "passive_dns": {"eligible": true|false, "reason": "...", "required_inputs": [...], "available_inputs": {...}},
+        }
+
+    Profile rules (active300/default):
+      - public:   always eligible if provider available (advisory, not gated by candidates)
+      - CT:       eligible if domain (not IP-only) candidates present
+      - DOH:      eligible if domain (not IP-only) candidates present
+      - WAYBACK:  eligible if URL or domain candidates present
+      - passive_dns: eligible if domain or IP candidates present
+
+    Profile rules (nonfeed_diagnostic):
+      - public:   expected if provider available
+      - DOH:      expected if domains exist
+      - CT:       expected if domains exist
+      - WAYBACK:  expected if URLs/domains exist
+      - passive_dns: expected if domains/IPs exist
+    """
+    import re as _re
+
+    has_domain = _has_domain_or_ip(query)
+    has_url = _has_url(query)
+    has_ip = bool(_re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
+    has_fqdn = has_domain and not has_ip
+    is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
+
+    available = {
+        "domain": has_fqdn,
+        "url": has_url,
+        "ip": has_ip,
+    }
+
+    # PUBLIC — always eligible at the indicator level
+    public_eligible = True
+    public_reason = "always_eligible_advisory" if not is_nonfeed_diagnostic else "nonfeed_diagnostic_expected"
+
+    # CT — requires FQDN, not IP-only
+    ct_eligible = has_fqdn
+    if ct_eligible:
+        ct_reason = "domain_candidates_present"
+    elif is_nonfeed_diagnostic:
+        ct_reason = "nonfeed_diagnostic_no_domain_candidates"
+    else:
+        ct_reason = "no_domain_candidates"
+
+    # DOH — requires FQDN, not IP-only
+    doh_eligible = has_fqdn
+    if doh_eligible:
+        doh_reason = "domain_candidates_present"
+    elif is_nonfeed_diagnostic:
+        doh_reason = "nonfeed_diagnostic_no_domain_candidates"
+    else:
+        doh_reason = "no_domain_candidates"
+
+    # WAYBACK — URL or domain
+    wayback_eligible = has_url or has_fqdn
+    if wayback_eligible:
+        wayback_reason = "url_or_domain_candidates_present"
+    elif is_nonfeed_diagnostic:
+        wayback_reason = "nonfeed_diagnostic_no_url_or_domain_candidates"
+    else:
+        wayback_reason = "no_url_or_domain_candidates"
+
+    # PASSIVE_DNS — domain or IP
+    pdns_eligible = has_domain
+    if pdns_eligible:
+        pdns_reason = "domain_or_ip_candidates_present"
+    elif is_nonfeed_diagnostic:
+        pdns_reason = "nonfeed_diagnostic_no_domain_or_ip_candidates"
+    else:
+        pdns_reason = "no_domain_or_ip_candidates"
+
+    return {
+        "public": {
+            "eligible": public_eligible,
+            "reason": public_reason,
+            "required_inputs": [],
+            "available_inputs": available,
+        },
+        "ct": {
+            "eligible": ct_eligible,
+            "reason": ct_reason,
+            "required_inputs": ["domain"],
+            "available_inputs": available,
+        },
+        "doh": {
+            "eligible": doh_eligible,
+            "reason": doh_reason,
+            "required_inputs": ["domain"],
+            "available_inputs": available,
+        },
+        "wayback": {
+            "eligible": wayback_eligible,
+            "reason": wayback_reason,
+            "required_inputs": ["url", "domain"],
+            "available_inputs": available,
+        },
+        "passive_dns": {
+            "eligible": pdns_eligible,
+            "reason": pdns_reason,
+            "required_inputs": ["domain", "ip"],
+            "available_inputs": available,
+        },
+    }
+
+
 def build_acquisition_report(
+    query: str,
     plan: AcquisitionStrategySnapshot | None = None,
     terminality: dict | None = None,
     nonfeed_plan_debug: NonfeedPlanDebug | dict | None = None,
@@ -916,6 +1050,8 @@ def build_acquisition_report(
     public_stage_counters: dict | None = None,
     # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
     public_discovery_empty_reason: str = "",
+    # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
+    public_provider_selection_debug: dict | None = None,
     # Sprint F229A: Bootstrap ordering telemetry
     public_bootstrap_order: str = "disabled",
     public_bootstrap_prevented_discovery_timeout: bool = False,
@@ -940,6 +1076,16 @@ def build_acquisition_report(
     ct_storage_accepted: bool = False,
     ct_terminal_stage: str = "",
     ct_prelude_missing_but_final_attempted: bool = False,
+    # F214: DOH acquisition report fields (mirrored from CT pattern)
+    doh_planned: bool = False,
+    doh_scheduled: bool = False,
+    doh_request_attempted: bool = False,
+    doh_domains_attempted: int = 0,
+    doh_raw_count: int = 0,
+    doh_accepted_findings: int = 0,
+    doh_terminal_stage: str = "",
+    doh_provider_errors: tuple[str, ...] = (),
+    doh_cache_used: bool = False,
     # F234: Critical 33 batch — runtime error/signal fields
     ct_bridge_rejections_count: int = 0,
     ct_storage_rejected: int = 0,
@@ -1012,6 +1158,7 @@ def build_acquisition_report(
         }
 
     Args:
+        query:                      F214: Sprint query string (used for lane eligibility matrix).
         plan:                          AcquisitionStrategySnapshot from build_acquisition_plan().
         terminality:                    Result of terminality_report().
         nonfeed_plan_debug:             NonfeedPlanDebug snapshot.
@@ -1150,6 +1297,8 @@ def build_acquisition_report(
         "public_stage_counters": public_stage_counters or {},
         # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
         "public_discovery_empty_reason": public_discovery_empty_reason,
+        # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
+        "public_provider_selection_debug": public_provider_selection_debug or {},
         # Sprint F229A: Bootstrap ordering telemetry
         "public_bootstrap_order": public_bootstrap_order,
         "public_bootstrap_prevented_discovery_timeout": public_bootstrap_prevented_discovery_timeout,
@@ -1201,6 +1350,22 @@ def build_acquisition_report(
         "wayback_terminal_state": wayback_terminal_state,
         "passive_dns_terminal_state": passive_dns_terminal_state,
         "nonfeed_surface_complete": nonfeed_surface_complete,
+        # F214: DOH acquisition report fields
+        "doh_planned": doh_planned,
+        "doh_scheduled": doh_scheduled,
+        "doh_request_attempted": doh_request_attempted,
+        "doh_domains_attempted": doh_domains_attempted,
+        "doh_raw_count": doh_raw_count,
+        "doh_accepted_findings": doh_accepted_findings,
+        "doh_terminal_stage": doh_terminal_stage,
+        "doh_provider_errors": list(doh_provider_errors) if doh_provider_errors else [],
+        "doh_cache_used": doh_cache_used,
+        # F214: Nonfeed lane eligibility matrix
+        "nonfeed_lane_eligibility": _build_nonfeed_lane_eligibility(
+            query=query,
+            acquisition_profile=_effective_profile,
+            plan=plan,
+        ),
     }
 
 
@@ -2402,6 +2567,24 @@ def _build_plan_impl(
         )
     )
 
+    # ── DOH ─────────────────────────────────────────────────────────────────
+    # F222B: DOH lane enabled for domain/IP queries; nonfeed_diagnostic adds domain candidates
+    # Note: has_domain = _has_domain_or_ip() covers both domain and IP cases
+    doh_enabled = has_domain or (is_nonfeed_diagnostic and has_domain)
+    plans.append(
+        AcquisitionLanePlan(
+            lane=AcquisitionLane.DOH,
+            enabled=doh_enabled and not hardware_critical,
+            reason="domain_or_ip_or_nonfeed_diagnostic"
+            if doh_enabled
+            else "query_without_domain_or_ip",
+            max_items=20,
+            timeout_s=30,
+            concurrency=_lane_concurrency(AcquisitionLane.DOH, base_conc, uma_state),
+            risk_level=RiskLevel.MEDIUM,
+        )
+    )
+
     # ── WAYBACK ────────────────────────────────────────────────────────────
     # F216B: nonfeed_diagnostic enables WAYBACK for domain/URL even under hardware_critical
     wayback_enabled = has_url or has_long_duration or (is_nonfeed_diagnostic and has_domain)
@@ -2538,10 +2721,12 @@ def _build_plan_impl(
     # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
     # F216B: Updated to include nonfeed_diagnostic telemetry
     # R10: IPFS is included in nonfeed lanes (CID-only, bounded)
+    # F222B: DOH is a nonfeed lane for DNS-over-HTTPS acquisition
     _NONFEED_LANES = (
         AcquisitionLane.CT,
         AcquisitionLane.WAYBACK,
         AcquisitionLane.PASSIVE_DNS,
+        AcquisitionLane.DOH,
         AcquisitionLane.BLOCKCHAIN,
         AcquisitionLane.IPFS,
         AcquisitionLane.OPEN_SOURCE,
@@ -3263,6 +3448,99 @@ async def run_enabled_acquisition_lanes(
                 source_family="public",
             )
 
+    async def _run_doh_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run DOH lane — DNS-over-HTTPS passive DNS recon via DOHAdapter.
+
+        F222B: First-class nonfeed lane. No model load, no browser, no stealth.
+        Bounds: max_items=20, timeout_s=30, concurrency=2.
+        Fail-soft: provider errors never break other lanes.
+        """
+        start = time.monotonic()
+        doh_error: str | None = None
+        doh_raw_count = 0
+        candidate_findings: tuple = ()
+        accepted = 0
+
+        # F222B: DOH is domain-scoped — extract domain via build_lane_query
+        shaped_query = build_lane_query(query, AcquisitionLane.DOH)
+        if shaped_query is None or (isinstance(shaped_query, dict) and shaped_query.get("_disabled")):
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=False,
+                source_family="doh",
+                error=shaped_query.get("_disabled_reason", "no_domain_seed") if isinstance(shaped_query, dict) else "build_lane_query_returned_none",
+            )
+
+        domain = shaped_query if isinstance(shaped_query, str) else str(shaped_query)
+        if not domain:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=False,
+                source_family="doh",
+                error="empty_domain",
+            )
+
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.doh_lane import DOHAdapter
+                from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
+
+                adapter = DOHAdapter()
+                import aiohttp
+                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+                    findings = await adapter.run(domain=domain, session=session)
+
+                doh_raw_count = len(findings)
+
+                if findings:
+                    candidates, _rejections, _tel = doh_results_to_findings(
+                        findings,
+                        None,  # DOHOutcome — not used by bridge
+                        query,
+                        sprint_id=f"doh-{int(time.time())}",
+                    )
+                    candidate_findings = tuple(candidates)
+                    if candidate_findings and store is not None and hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
+                        except Exception:
+                            pass  # fail-soft
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.DOH,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=doh_raw_count,
+                    duration_s=time.monotonic() - start,
+                    source_family="doh",
+                )
+
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="doh",
+                produced_items=doh_raw_count,
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="doh",
+                produced_items=doh_raw_count,
+            )
+
     async def _run_blockchain_lane(plan) -> "AcquisitionLaneOutcome":
         """Run blockchain forensics lane."""
         start = time.monotonic()
@@ -3347,6 +3625,7 @@ async def run_enabled_acquisition_lanes(
         AcquisitionLane.ACADEMIC: _run_academic_lane,
         AcquisitionLane.IPFS: _run_ipfs_lane,
         AcquisitionLane.OPEN_SOURCE: _run_open_source_lane,
+        AcquisitionLane.DOH: _run_doh_lane,
     }
 
     for plan in snapshot.plans:
@@ -3419,6 +3698,7 @@ _LANE_TO_FAMILY: dict[str, str] = {
     AcquisitionLane.PIVOT_EXECUTOR: "pivot",
     AcquisitionLane.ACADEMIC: "academic",
     AcquisitionLane.OPEN_SOURCE: "public",
+    AcquisitionLane.DOH: "doh",
 }
 
 
@@ -3573,6 +3853,20 @@ def build_lane_query(base_query: str, lane: str) -> str | dict:
         if wallets:
             return wallets[0]
         return {"_disabled": True, "reason": "no_crypto_indicator"}
+
+    elif lane == AcquisitionLane.DOH:
+        # DOH is domain-scoped. Never pass arbitrary text query to resolver.
+        ips = _extract_ips_from_query(base_query)
+        domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
+
+        if domains:
+            return domains[0]
+
+        # IP reverse DOH deferred to future hook / pivot planner.
+        if ips:
+            return {"_disabled": True, "reason": "ip_seed_reverse_doh_deferred"}
+
+        return {"_disabled": True, "reason": "no_domain_seed"}
 
     elif lane == AcquisitionLane.PUBLIC:
         # Original query plus 1-2 bounded variants

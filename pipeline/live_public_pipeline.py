@@ -133,6 +133,159 @@ _BOOTSTRAP_DEFAULT_URLS: list[str] = [
 ]
 """Ordered list of URL path templates for deterministic bootstrap."""
 
+# Sprint F220C: Public Provider Rescue for non-domain threat queries
+# Known public CTI/news search URLs — lightweight, no new dependency.
+# Mapped to (name, base_url_format) tuples. Max 10.
+_RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
+    # Threat intelligence aggregators
+    ("MISP", "https://www.misp-project.org/search/?search="),
+    ("AlienVault OTX", "https://otx.alienvault.com/browse/references?type=search&q="),
+    ("VirusTotal", "https://www.virustotal.com/gui/search/"),
+    ("ThreatFox", "https://threatfox.abuse.ch/browse.php?search="),
+    # Ransomware-specific trackers
+    ("Ransomware Tracker", "https://ransomwaretracker.xyz/"),
+    ("ID Ransomware", "https://id-ransomware.malwarehunterteam.com/"),
+    # General CTI/news
+    ("BleepingComputer", "https://www.bleepingcomputer.com/search/?search="),
+    ("The Hacker News", "https://thehackernews.com/search?q="),
+    ("Krebs on Security", "https://krebsonsecurity.com/?s="),
+    ("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search="),
+]
+"""Static rescue source list for non-domain threat/malware/ransomware queries."""
+
+
+def _is_threat_query(query: str) -> bool:
+    """
+    Detect if query is a non-domain threat/malware/ransomware/entity query.
+
+    Returns True for queries that look like OSINT entity searches where
+    bootstrap would return no URLs but a rescue search URL may help.
+
+    Covers: ransomware names, malware family names, threat actor names,
+    CVE-like patterns, IP addresses (which domain bootstrap can't handle).
+    """
+    if not query or not query.strip():
+        return False
+
+    q = query.strip()
+
+    # Strip prefix operators
+    for prefix in ("site:", "domain:", "url:", "asn:", "ip:", "vpn:", "tor:"):
+        if q.lower().startswith(prefix):
+            q = q[len(prefix):].strip()
+            break
+
+    # IP address check — domain bootstrap can't help
+    import re as _re
+    IP_PAT = _re.compile(
+        r"^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$|^"
+        r"[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}(?::\d{1,3})?(?:\/\d{1,2})?$"
+    )
+    if IP_PAT.match(q):
+        return True
+
+    # CVE pattern
+    CVE_PAT = _re.compile(r"^CVE-\d{4}-\d{4,}$", _re.IGNORECASE)
+    if CVE_PAT.match(q):
+        return True
+
+    # Ransomware/malware/threat actor name patterns
+    THREAT_PAT = _re.compile(
+        r"^(?:"
+        r"lockbit|conti|revil|clop|darkside|blackcat|alphv|ransomware|"
+        r"apt[_\s]?\d+|apt[_-]\w+|sidecopy|callback|triangle|temp"
+        r"|wanna[_\s]?cry|wannacry|petya|notpetya|badrabbit|"
+        r"emotet|trickbot|cobalt[_\s]?strike|koadic|metasploit|"
+        r"fin7|carbanak|finacrypt|prodaft|labyrinth|zCrypt|"
+        r"poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic"
+        r")$",
+        _re.IGNORECASE,
+    )
+    if THREAT_PAT.match(q):
+        return True
+
+    # Also check first token (for multi-word queries like "LockBit ransomware")
+    first_token = q.split()[0] if q else ""
+    if first_token and THREAT_PAT.match(first_token):
+        return True
+
+    # Check any token in the query (for multi-word threat references, split on -, _, space)
+    for token in re.split(r"[\s\-_]+", q):
+        if len(token) >= 4 and THREAT_PAT.match(token):
+            return True
+
+    # Extended patterns: check bare tokens that are known threat names
+    _EXTENDED_PAT = _re.compile(
+        r"^(?:"
+        r"meterpreter|sandworm|lazarus|log4shell|finacrypt|prodaft|labyrinth|"
+        r"zcrypt|poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic|"
+        r"sidecopy|callback|triangle|temp|sofacy|平原"
+        r")$",
+        _re.IGNORECASE,
+    )
+    for token in re.split(r"[\s\-_]+", q):
+        if len(token) >= 3 and _EXTENDED_PAT.match(token):
+            return True
+
+    # Generic keywords (must be stand-alone, not part of a sentence)
+    THREAT_KW_PAT = _re.compile(
+        r"^(?:"
+        r"ransomware|malware|threat[_-]?actor|cobalt[_\s]?strike|"
+        r"breach|exploit|0day|zero[_\s]?day|vulnerability|"
+        r"phishing|spam|botnet|trojan|rootkit|keylogger|"
+        r"Ransomware|Malware|ThreatActor|CVE|APT"
+        r")$",
+        _re.IGNORECASE,
+    )
+    if THREAT_KW_PAT.match(q):
+        return True
+
+    return False
+
+
+def generate_rescue_urls(query: str, max_urls: int = 5) -> list[DiscoveryHit]:
+    """
+    Generate lightweight rescue DiscoveryHits for non-domain threat queries.
+
+    Sprint F220C: When bootstrap generates zero URLs (non-domain query),
+    and the query appears to be a threat/malware/ransomware/entity search,
+    generate rescue candidate hits from static CTI/news search URLs.
+
+    Behavior:
+      - Returns up to max_urls DiscoveryHit from static source list
+      - Each hit has source="rescue", score=0.7, reason="rescue_candidate"
+      - Does NOT perform network I/O — pure synchronous URL construction
+      - Fail-safe: returns empty list for domain-like queries
+
+    Args:
+        query: The original OSINT query string.
+        max_urls: Maximum number of rescue hits to return (default 5).
+
+    Returns:
+        List of DiscoveryHit objects from rescue sources. Empty if
+        query looks like a domain or rescue sources exhausted.
+    """
+    if not query or max_urls < 1:
+        return []
+    if not _is_threat_query(query):
+        return []
+
+    hits: list[DiscoveryHit] = []
+    for name, base_url in _RESGUE_SOURCE_CANDIDATES[:max_urls]:
+        url = f"{base_url}{query}"
+        hits.append(DiscoveryHit(
+            query=query,
+            title=f"Rescue: {name}",
+            url=url,
+            snippet=f"Rescue search via {name}: {query}",
+            score=0.70,
+            reason="rescue_candidate",
+            rank=-1,
+            source="rescue",
+            retrieved_ts=0.0,
+        ))
+    return hits
+
 
 def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> list[str]:
     """
@@ -585,6 +738,13 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     public_bootstrap_order: str = "disabled"  # "before_discovery" | "after_discovery" | "disabled"
     public_bootstrap_prevented_discovery_timeout: bool = False  # True when bootstrap produced candidates but discovery would have returned zero
     public_bootstrap_first_fetch_attempted: bool = False  # True when bootstrap hits were added to hits before fetch
+    # Sprint F220C: Public Provider Rescue telemetry
+    public_rescue_candidates_count: int = 0  # rescue URLs generated from threat query
+    public_rescue_fetch_attempted: int = 0  # rescue URLs sent to fetch
+    public_rescue_fetch_success: int = 0  # rescue URLs that fetched successfully
+    public_rescue_accepted_findings: int = 0  # findings accepted from rescue hits
+    public_rescue_errors: int = 0  # rescue-specific errors
+    public_rescue_order: str = "disabled"  # "rescue_fallback" | "disabled"
     # zero_hit_quality_reason_counts: breakdown of WHY zero-hit pages failed
     # keys are the specific quality_reason values from PipelinePageResult
     zero_hit_quality_reason_counts: dict = {}
@@ -2791,6 +2951,13 @@ async def async_run_live_public_pipeline(
 
             # Sprint F217C: Deterministic bootstrap — generate before discovery attempt
             bootstrap_hits: list[DiscoveryHit] = []
+            rescue_hits: list[DiscoveryHit] = []
+            _pub_rescue_candidates_count: int = 0
+            _pub_rescue_fetch_attempted: int = 0
+            _pub_rescue_fetch_success: int = 0
+            _pub_rescue_accepted_findings: int = 0
+            _pub_rescue_errors: int = 0
+            _pub_rescue_order: str = "disabled"
             if self.public_bootstrap_enabled:
                 try:
                     bootstrap_urls = generate_bootstrap_urls(self.query, max_urls=_MAX_BOOTSTRAP_URLS)
@@ -2809,6 +2976,18 @@ async def async_run_live_public_pipeline(
                         ))
                 except Exception:
                     _pub_bootstrap_candidates_count = 0
+
+                # Sprint F220C: Rescue for non-domain threat queries
+                # When bootstrap generated zero candidates (non-domain query),
+                # generate rescue hits from static CTI/news search URLs.
+                if _pub_bootstrap_candidates_count == 0 and self.public_bootstrap_enabled:
+                    try:
+                        rescue_hits = generate_rescue_urls(self.query, max_urls=5)
+                        _pub_rescue_candidates_count = len(rescue_hits)
+                        if rescue_hits:
+                            _pub_rescue_order = "rescue_fallback"
+                    except Exception:
+                        _pub_rescue_candidates_count = 0
 
             try:
                 _discovery_start = time.monotonic()
@@ -2838,6 +3017,11 @@ async def async_run_live_public_pipeline(
                     _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else ()
                     if len(_disc_hits) == 0:
                         _pub_bootstrap_prevented_discovery_timeout = True
+
+                # Sprint F220C: Append rescue hits if no bootstrap candidates
+                if rescue_hits:
+                    hits = tuple(rescue_hits) + tuple(hits)
+                    _pub_rescue_fetch_attempted = len(rescue_hits)
 
                 err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
                 if err_val:
@@ -2882,6 +3066,12 @@ async def async_run_live_public_pipeline(
                     'public_bootstrap_order': 'disabled',
                     'public_bootstrap_prevented_discovery_timeout': False,
                     'public_bootstrap_first_fetch_attempted': False,
+                    'public_bootstrap_candidates_count': _pub_bootstrap_candidates_count,
+                    'public_bootstrap_fetch_attempted': _pub_bootstrap_fetch_attempted,
+                    # Sprint F220C: Rescue telemetry
+                    'public_rescue_candidates_count': _pub_rescue_candidates_count,
+                    'public_rescue_fetch_attempted': _pub_rescue_fetch_attempted,
+                    'public_rescue_order': _pub_rescue_order,
                     'public_build_success_count': 0,
                     'public_build_failure_count': 0,
                     'public_duplicate_count': 0,
@@ -3057,6 +3247,13 @@ async def async_run_live_public_pipeline(
                 'public_bootstrap_fetch_success': _pub_bootstrap_fetch_success,
                 'public_bootstrap_accepted_findings': _pub_bootstrap_accepted_findings,
                 'public_bootstrap_errors': _pub_bootstrap_errors,
+                # Sprint F220C: Rescue telemetry
+                'public_rescue_candidates_count': _pub_rescue_candidates_count,
+                'public_rescue_fetch_attempted': _pub_rescue_fetch_attempted,
+                'public_rescue_fetch_success': _pub_rescue_fetch_success,
+                'public_rescue_accepted_findings': _pub_rescue_accepted_findings,
+                'public_rescue_errors': _pub_rescue_errors,
+                'public_rescue_order': _pub_rescue_order,
                 'public_build_success_count': _pub_build_success_count,
                 'public_build_failure_count': _pub_build_failure_count,
                 'public_duplicate_count': _pub_duplicate_count,
@@ -3173,6 +3370,13 @@ async def async_run_live_public_pipeline(
             public_candidates_stored=0,
             public_candidates_rejected=0,
             public_rejection_summary={},
+            # Sprint F220C: Rescue telemetry (UMA emergency abort)
+            public_rescue_candidates_count=0,
+            public_rescue_fetch_attempted=0,
+            public_rescue_fetch_success=0,
+            public_rescue_accepted_findings=0,
+            public_rescue_errors=0,
+            public_rescue_order="disabled",
             public_terminal_stage="uma_emergency",
         )
 
@@ -3239,6 +3443,13 @@ async def async_run_live_public_pipeline(
     _public_candidates_store_attempted = discovery_telemetry.get('public_candidates_store_attempted', 0)
     _public_candidates_stored = discovery_telemetry.get('public_candidates_stored', 0)
     _public_candidates_rejected = discovery_telemetry.get('public_candidates_rejected', 0)
+    # Sprint F220C: Rescue telemetry unpacking
+    _pub_rescue_candidates_count = discovery_telemetry.get('public_rescue_candidates_count', 0)
+    _pub_rescue_fetch_attempted = discovery_telemetry.get('public_rescue_fetch_attempted', 0)
+    _pub_rescue_fetch_success = discovery_telemetry.get('public_rescue_fetch_success', 0)
+    _pub_rescue_accepted_findings = discovery_telemetry.get('public_rescue_accepted_findings', 0)
+    _pub_rescue_errors = discovery_telemetry.get('public_rescue_errors', 0)
+    _pub_rescue_order = discovery_telemetry.get('public_rescue_order', 'disabled')
 
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout
@@ -3496,6 +3707,15 @@ async def async_run_live_public_pipeline(
     _pub_bootstrap_fetch_success = sum(
         1 for p in all_page_results
         if p.fetched and p.url in _bootstrap_candidate_urls
+    )
+    # Sprint F220C: Rescue fetch success from rescue source hits
+    _rescue_candidate_urls = {
+        p.url for p in all_page_results
+        if getattr(p, "url", "").startswith("http")
+    }
+    _pub_rescue_fetch_success = sum(
+        1 for p in all_page_results
+        if p.fetched and p.url in _rescue_candidate_urls
     )
     # public_build_failure_count already accumulated during page processing for zero-match pages
     # that passed quality gate but produced no actionable finding
@@ -4283,6 +4503,13 @@ async def async_run_live_public_pipeline(
         public_bootstrap_order=_pub_bootstrap_order,
         public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented_discovery_timeout,
         public_bootstrap_first_fetch_attempted=_pub_bootstrap_first_fetch_attempted,
+        # Sprint F220C: Public Provider Rescue telemetry
+        public_rescue_candidates_count=_pub_rescue_candidates_count,
+        public_rescue_fetch_attempted=_pub_rescue_fetch_attempted,
+        public_rescue_fetch_success=_pub_rescue_fetch_success,
+        public_rescue_accepted_findings=_pub_rescue_accepted_findings,
+        public_rescue_errors=_pub_rescue_errors,
+        public_rescue_order=_pub_rescue_order,
         # F207F: PUBLIC Yield telemetry
         public_discovered=public_discovered,
         public_fetch_attempted=public_fetch_attempted,
