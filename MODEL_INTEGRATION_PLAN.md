@@ -29,7 +29,7 @@
 **File**: `brain/model_manager.py:246`
 ```
 PHASE_MODEL_MAP:
-  PLAN/SYNTHESIZE/DECIDE → hermes  (Hermes-3-3B-4bit)
+  PLAN/GENERATE/DECIDE → hermes  (Hermes-3-3B-4bit)
   EMBED/DEDUP/ROUTING    → modernbert
   NER/ENTITY             → gliner
 ```

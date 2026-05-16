@@ -31,15 +31,28 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
-import html
 import hashlib
 import logging
-import re
 import time
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+
+from hledac.universal.pipeline.scoring import (
+    ASSEMBLY_TIER_NO_CONTENT,
+    ASSEMBLY_TIER_RICH_CONTENT,
+    ASSEMBLY_TIER_SUMMARY_ONLY,
+    ASSEMBLY_TIER_TITLE_ONLY,
+    EntryQualitySignal,
+    _assemble_clean_feed_text,
+    _assemble_enriched_feed_text,
+    _classify_assembly_substance,
+    _compute_entry_quality_signal,
+    _convert_rich_html_to_text,
+    _entry_payload_text,
+    _strip_html_tags_from_text,
+)
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import (
@@ -56,143 +69,6 @@ FEED_PAYLOAD_CONTEXT_CHARS: int = 200
 MAX_FEED_PATTERN_TASKS: int = 4
 
 # ---------------------------------------------------------------------------
-# Sprint F150H: Entry quality signal — lightweight metadata-aware routing
-# No LLM, no new model, no new dependency
-# ---------------------------------------------------------------------------
-
-# Minimum content length that qualifies as "substantive" for quality scoring
-_MIN_SUBSTANTIVE_CHARS: int = 80
-
-# Char-length thresholds for entry quality bands
-_QUALITY_TITLE_ONLY_CHARS: int = 60
-_QUALITY_SUMMARY_MIN_CHARS: int = 120
-
-# Language mismatch bonus — feed language vs common OSINT target languages
-# English (en), Czech (cs), Slovak (sk) — most relevant for this tool's use case
-_OSINT_RELEVANT_LANGUAGES: frozenset[str] = frozenset({"en", "cs", "sk", "de", "pl"})
-
-# Feed language codes that indicate high-value technical/security feeds
-_HIGH_VALUE_FEED_LANGS: frozenset[str] = frozenset({"en"})
-
-
-class EntryQualitySignal(msgspec.Struct, frozen=True, gc=False):
-    """
-    Lightweight quality signal for a single entry.
-    Used for routing decisions and observability — NOT for filtering findings.
-    """
-    quality_band: str = "unknown"      # "low" | "medium" | "high" | "unknown"
-    quality_score: int = 0             # 0-100
-    quality_reason_tag: str = ""       # short reason: "author_present" | "feed_title_context" | "language_match" | "rich_content" | "title_only" | etc.
-    metadata_boost: bool = False        # True if author/title/lang added signal beyond raw text
-    language_mismatch: bool = False    # True if feed_language known but not in OSINT_RELEVANT
-
-
-def _compute_entry_quality_signal(
-    title: str,
-    summary: str,
-    rich_content: str,
-    entry_author: str,
-    feed_title: str,
-    feed_language: str,
-    adapter_quality_score: float | None = None,
-) -> EntryQualitySignal:
-    """
-    Compute lightweight quality signal from entry metadata.
-
-    No LLM. No new model. Pure heuristic.
-    """
-    # Measure raw text substance
-    title_len = len(title.strip()) if title else 0
-    summary_len = len(summary.strip()) if summary else 0
-    rich_len = len(rich_content.strip()) if rich_content else 0
-
-    # Determine content substance
-    has_rich = rich_len >= _MIN_SUBSTANTIVE_CHARS
-    has_summary = summary_len >= _MIN_SUBSTANTIVE_CHARS
-    has_author = bool(entry_author and len(entry_author.strip()) >= 2)
-    has_feed_title = bool(feed_title and len(feed_title.strip()) >= 2)
-
-    # Language assessment
-    lang_mismatch = False
-    if feed_language:
-        lang_lower = feed_language.strip().lower()[:2]  # ISO 639-1 prefix
-        lang_mismatch = lang_lower not in _OSINT_RELEVANT_LANGUAGES
-
-    # Compute quality score (0-100)
-    score = 0
-
-    # Base: text substance
-    if has_rich:
-        score += 40
-    elif has_summary:
-        score += 20
-
-    if title_len > _QUALITY_TITLE_ONLY_CHARS:
-        score += 10
-
-    # Metadata boosts
-    metadata_boost = False
-    reason_tags: list[str] = []
-
-    if has_author:
-        score += 15
-        metadata_boost = True
-        reason_tags.append("author_present")
-
-    if has_feed_title:
-        score += 10
-        metadata_boost = True
-        reason_tags.append("feed_title_context")
-
-    if not lang_mismatch and feed_language:
-        score += 10
-        reason_tags.append("language_match")
-
-    # Clamp score
-    score = min(score, 100)
-
-    # Quality band
-    if has_rich or (has_summary and score >= 50):
-        band = "high"
-    elif score >= 30:
-        band = "medium"
-    elif score >= 10:
-        band = "low"
-    else:
-        band = "unknown"
-
-    if not reason_tags:
-        if title_len > 0:
-            reason_tags.append("title_only")
-        else:
-            reason_tags.append("no_content")
-
-    # F192D DF-2 FIX (cascading bug): original_band preserves the initial band
-    # for all adapter downgrade checks. Without this, reassigning `band` between
-    # if/elif branches causes cascading downgrade (high→medium→low→unknown
-    # instead of just high→medium).
-    original_band = band
-    final_band = band
-    if adapter_quality_score is not None and adapter_quality_score < 0.3:
-        # Adapter detected spam/low-quality content — downgrade band
-        # Use original_band to avoid cascading reassignment bug
-        if original_band == "high":
-            final_band = "medium"
-        elif original_band == "medium":
-            final_band = "low"
-        elif original_band == "low":
-            final_band = "unknown"
-        reason_tags.append("adapter_low_quality")
-
-    return EntryQualitySignal(
-        quality_band=final_band,
-        quality_score=score,
-        quality_reason_tag=",".join(reason_tags),
-        metadata_boost=metadata_boost,
-        language_mismatch=lang_mismatch,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Patchable symbol for pattern offload (tests patch this, not asyncio.to_thread)
 # ---------------------------------------------------------------------------
@@ -878,211 +754,9 @@ class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
 
 
 # ---------------------------------------------------------------------------
-# HTML stripping — word-boundary safe, entity-safe, M1-safe
-# Invariant B.8: strip script/style FIRST, then tag→space, THEN unescape
-# ---------------------------------------------------------------------------
-
-# Match entire <script>...</script> or <style>...</style> blocks (DOTALL)
-_SCRIPT_STYLE_RE = re.compile(
-    r"<script[^>]*>.*?</script>|"
-    r"<style[^>]*>.*?</style>",
-    re.DOTALL | re.IGNORECASE,
-)
-# Replace any HTML tag with a single space
-_STRIP_TAGS_RE = re.compile(r"<[^>]+>")
-_MULTI_WHITESPACE_RE = re.compile(r"[ \t\r\n]+")
+# --- HTML text processing (imported from pipeline.scoring) ---
 
 
-def _strip_html_tags_from_text(text: str) -> str:
-    """
-    Strip HTML tags word-boundary safe, OSINT-safe.
-
-    Steps (strict order per invariant B.9):
-    1. Remove entire <script> and <style> blocks
-    2. Replace remaining HTML tags with a single space
-    3. Normalize whitespace
-    4. html.unescape AFTER tag removal
-    """
-    if not text:
-        return ""
-    if not isinstance(text, str):
-        return ""
-    # Step 1: Remove script/style blocks completely
-    cleaned = _SCRIPT_STYLE_RE.sub("", text)
-    # Step 2: Replace tags with space
-    cleaned = _STRIP_TAGS_RE.sub(" ", cleaned)
-    # Step 3: Normalize whitespace
-    cleaned = _MULTI_WHITESPACE_RE.sub(" ", cleaned).strip()
-    # Step 4: Unescape HTML entities AFTER tag removal
-    cleaned = html.unescape(cleaned)
-    return cleaned
-
-
-# Sprint 8BE: markdownify lazy import (optional dependency)
-_markdownify_available: bool = False
-try:
-    import markdownify
-    _markdownify_available = True
-except ImportError:
-    markdownify = None  # type: ignore[assignment]
-
-
-def _convert_rich_html_to_text(rich_html: str) -> str:
-    """
-    Convert rich HTML content to clean text.
-
-    Priority (per Sprint 8BE Phase 1):
-    1. markdownify (if available) — preserves structure
-    2. strip fallback — same as summary path
-
-    Returns empty string if input is empty/whitespace.
-    """
-    if not rich_html or not rich_html.strip():
-        return ""
-    if _markdownify_available:
-        try:
-            converted = markdownify.markdownify(rich_html, strip=["script", "style"])
-            converted = _MULTI_WHITESPACE_RE.sub(" ", converted).strip()
-            if converted:
-                return converted
-        except Exception:
-            pass
-    return _strip_html_tags_from_text(rich_html)
-
-
-# Minimum converted text length from rich HTML to be considered "substantive"
-# Used to decide whether rich_content qualifies as primary signal vs noise
-_RICH_CONTENT_MIN_CHARS: int = 40
-
-# Assembly substance tiers — used to diagnose WHERE signal is lost
-# in the feed-native assembly phase
-_ASSEMBLY_TIER_NO_CONTENT: int = 0
-_ASSEMBLY_TIER_TITLE_ONLY: int = 1
-_ASSEMBLY_TIER_SUMMARY_ONLY: int = 2
-_ASSEMBLY_TIER_RICH_CONTENT: int = 3
-
-
-def _classify_assembly_substance(
-    title: str,
-    summary: str,
-    rich_content: str,
-) -> tuple[str, int]:
-    """
-    Classify how much substantive content was assembled from feed-native sources.
-
-    Returns (tier_name, tier_level):
-      "no_content"       — nothing assembled (sentinel only)
-      "title_only"       — title only, no meaningful body
-      "summary_only"     — summary assembled but no rich_content
-      "rich_content"     — rich HTML content was available and used
-
-    This replaces the implicit "[no content]" sentinel check.
-    Tier level is used for ordering (higher = more substantive).
-    """
-    has_title = bool(title and title.strip())
-    has_summary = bool(summary and summary.strip())
-    has_rich = bool(rich_content)
-
-    if has_rich:
-        converted = _convert_rich_html_to_text(rich_content)
-        if converted and len(converted) >= _RICH_CONTENT_MIN_CHARS:
-            return ("rich_content", _ASSEMBLY_TIER_RICH_CONTENT)
-
-    if has_summary:
-        stripped = _strip_html_tags_from_text(summary)
-        if stripped and len(stripped.strip()) >= _MIN_SUBSTANTIVE_CHARS:
-            return ("summary_only", _ASSEMBLY_TIER_SUMMARY_ONLY)
-
-    if has_title:
-        title_len = len(title.strip())
-        if title_len >= _QUALITY_TITLE_ONLY_CHARS:
-            return ("title_only", _ASSEMBLY_TIER_TITLE_ONLY)
-        elif title_len > 0:
-            return ("title_only", _ASSEMBLY_TIER_TITLE_ONLY)
-
-    return ("no_content", _ASSEMBLY_TIER_NO_CONTENT)
-
-
-def _assemble_enriched_feed_text(
-    title: str,
-    summary: str,
-    rich_content: str,
-    feed_title: str = "",
-    entry_author: str = "",
-) -> tuple[str, str]:
-    """
-    Assemble deterministic clean text from title + summary + rich_content + metadata.
-
-    Sprint 8BE PHASE 1 + F150H: source-specific text enrichment with
-    corrected priority so rich HTML content is used as primary surface.
-    Metadata (feed_title, entry_author) are prepended as lightweight context anchors.
-
-    Priority hierarchy:
-    1. feed_title + author as metadata context header (if available)
-    2. rich_content (converted, if substantive — HTML articles etc.)
-    3. summary (stripped and cleaned, if non-empty)
-    4. title (as final anchor when nothing else available)
-    5. sentinel "[no content]" if all empty
-
-    Returns (clean_text, enrichment_phase).
-    """
-    parts: list[str] = []
-    enrichment_phase = "none"
-
-    # Type guards: ensure we have real strings, not MagicMock or other objects
-    if not isinstance(feed_title, str):
-        feed_title = ""
-    if not isinstance(entry_author, str):
-        entry_author = ""
-
-    # Priority 0: metadata context header — feed_title and author as lightweight anchors
-    # These are prepended at the top so PatternMatcher sees them first
-    # Bounded: only add if they provide genuine context beyond the title
-    meta_parts: list[str] = []
-    if feed_title and feed_title.strip():
-        ft = feed_title.strip()
-        if not isinstance(ft, str):
-            ft = ""
-        if ft and ft != title.strip():  # avoid duplicating title
-            meta_parts.append(ft)
-    if entry_author and entry_author.strip() and len(entry_author.strip()) >= 2:
-        ea = entry_author.strip()
-        if not isinstance(ea, str):
-            ea = ""
-        # Only add author if not already embedded in title
-        if ea and ea.lower() not in title.lower():
-            meta_parts.append(f"by {ea}")
-    if meta_parts:
-        parts.append(" | ".join(meta_parts))
-
-    # Priority 1: rich_content first — full HTML articles from content:encoded / Atom content
-    # Only use converted text if it's substantive (avoids noise from tiny HTML fragments)
-    if rich_content:
-        converted = _convert_rich_html_to_text(rich_content)
-        if converted and len(converted) >= _RICH_CONTENT_MIN_CHARS:
-            parts.append(converted)
-            enrichment_phase = "feed_rich_content"
-
-    # Priority 2: title + summary — title as anchor, summary as secondary context
-    # Only include title if we have something richer below; title alone is not enough
-    # for substantive pattern matching, so it stays as anchor until we confirm
-    # we have rich_content/summary that covers the signal
-    if title:
-        parts.append(title.strip())
-
-    if summary:
-        stripped = _strip_html_tags_from_text(summary)
-        if stripped:
-            parts.append(stripped)
-
-    if not parts:
-        return ("[no content]", "none")
-    return ("\n\n".join(parts), enrichment_phase)
-
-
-# ---------------------------------------------------------------------------
-# Deterministic clean text assembly
-# ---------------------------------------------------------------------------
 
 def _assemble_clean_feed_text(title: str, summary: str) -> str:
     """
@@ -1107,9 +781,10 @@ def _assemble_clean_feed_text(title: str, summary: str) -> str:
     return "\n\n".join(parts)
 
 
+# --- Feed text assembly (imported from pipeline.scoring) ---
+
 # Backwards-compatible alias (used by probe_8ah tests)
 _entry_payload_text = _assemble_clean_feed_text
-
 
 # ---------------------------------------------------------------------------
 # Backwards-compatible entry-to-candidate-findings (used by probe_8ah tests)

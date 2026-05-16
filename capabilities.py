@@ -640,14 +640,14 @@ class ModelLifecycleManager:
 
     F6.5 LAYER MAPPING — MUST NOT BE CONFLATED:
       Layer 1 (workflow-level, ModelManager.PHASE_MODEL_MAP):
-        PLAN/DECIDE/SYNTHESIZE → hermes
+        PLAN/DECIDE/GENERATE → hermes
         EMBED/DEDUP/ROUTING → modernbert
         NER/ENTITY → gliner
-        Strings: PLAN, DECIDE, SYNTHESIZE, EMBED, DEDUP, ROUTING, NER, ENTITY
+        Strings: PLAN, DECIDE, GENERATE, EMBED, DEDUP, ROUTING, NER, ENTITY
       Layer 2 (coarse-grained, THIS class):
         BRAIN → hermes loaded, others released
         TOOLS → hermes released, on-demand
-        SYNTHESIS → hermes loaded, others released  ← NOTE: ≠ SYNTHESIZE
+        GENERATE → hermes loaded, others released  ← NOTE: ≠ SYNTHESIS
         CLEANUP → all released
         Strings: BRAIN, TOOLS, SYNTHESIS, CLEANUP
       Layer 3 (windup-local, windup_engine.SynthesisRunner):
@@ -658,7 +658,7 @@ class ModelLifecycleManager:
       - unload ≠ phase policy
       - Layer 1 phases NEVER directly passed to ModelLifecycleManager
       - Layer 2 phases NEVER directly passed to ModelManager.PHASE_MODEL_MAP
-      - SYNTHESIZE (Layer 1) ≠ SYNTHESIS (Layer 2) — false equivalence
+      - GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2) — false equivalence
       - capability layer MUST NOT become third model truth
 
     DRIFT GUARD: Use brain.model_phase_facts.is_same_layer() to validate

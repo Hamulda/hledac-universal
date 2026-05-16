@@ -71,18 +71,14 @@ class SidecarDispatcher:
         self,
         bus: Any,
         governor: Any = None,
-        result_sink: Any = None,
     ) -> None:
         """
         Args:
             bus: FindingSidecarBus instance (may be None for testing)
             governor: Optional M1 resource governor for RAM guard decisions
-            result_sink: Optional object with .sidecars_skipped attribute (e.g. SprintResult).
-                         When provided, skipped sidecars are also added here.
         """
         self._bus = bus
         self._governor = governor
-        self._result_sink = result_sink
         # In-memory tracking mirror — cleared by caller on sprint reset
         self._sidecars_skipped: set[str] = set()
 
@@ -150,12 +146,6 @@ class SidecarDispatcher:
                     or "rss_exceeds" in sr.skipped_reason
                 ):
                     self._sidecars_skipped.add(sr.sidecar_name)
-                    # Also propagate to result sink if provided
-                    if self._result_sink is not None:
-                        try:
-                            self._result_sink.sidecars_skipped.add(sr.sidecar_name)
-                        except Exception:
-                            pass  # Fail-soft on sink write
 
         except asyncio.CancelledError:
             raise  # [I6] propagate CancelledError — never swallowed

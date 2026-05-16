@@ -2324,7 +2324,6 @@ class SprintScheduler:
         # FindingSidecarBus is created inside SidecarOrchestrator.__init__
         from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
         self._sidecar_orchestrator = SidecarOrchestrator(
-            result_sink=self._result,
             governor=self._governor,
             scheduler=self,
         )
@@ -6240,6 +6239,9 @@ class SprintScheduler:
             except Exception as exc:
                 log.debug("[aggressive] CT branch error: %s", exc)
                 self._result.ct_log_error = f"{type(exc).__name__}:{exc}"
+                # F223D: ct_terminal_stage must reflect attempted error, not be left empty
+                # The error was an attempted request that failed, not "no candidates"
+                self._result.ct_terminal_stage = "error"
 
         # Launch all branches concurrently
         feed_branch = _asyncio.create_task(_run_feed_branch(), name="sprint:feed_branch")
@@ -10124,6 +10126,65 @@ class SprintScheduler:
         """
         self._analyst_workbench = workbench
 
+    def inject_forensics_enricher(
+        self,
+        enricher: Any,
+        lmdb_env: Any = None,
+    ) -> None:
+        """
+        F195C: Inject ForensicsEnricher + LMDB env (external wiring).
+
+        OWNERSHIP: caller owns enricher lifecycle. Scheduler invokes
+        enricher.enrich() during finding sidecar processing. LMDB env
+        is owned by caller and passed here for reference only.
+        All calls are fail-soft — exception or None → no-op.
+        """
+        self._forensics_enricher = enricher
+        self._forensics_lmdb_env = lmdb_env
+
+    def inject_multimodal_enricher(
+        self,
+        enricher: Any,
+        lmdb_env: Any = None,
+    ) -> None:
+        """
+        F195C: Inject MultimodalEnricher + LMDB env (external wiring).
+
+        OWNERSHIP: caller owns enricher lifecycle. Scheduler invokes
+        enricher.enrich() during finding sidecar processing. LMDB env
+        is owned by caller and passed here for reference only.
+        All calls are fail-soft — exception or None → no-op.
+        """
+        self._multimodal_enricher = enricher
+        self._multimodal_lmdb_env = lmdb_env
+
+    def inject_source_economics(
+        self,
+        economics: dict[str, SourceEconomics],
+    ) -> None:
+        """
+        F160C: Inject pre-built source economics map (external wiring).
+
+        OWNERSHIP: caller owns the economics map. Scheduler updates it
+        via _update_source_economics() during sprint execution.
+        Pass None or empty dict to use scheduler's internal dict (default).
+        """
+        if economics is not None:
+            self._source_economics = economics
+
+    def inject_duckdb_store(self, store: Any) -> None:
+        """
+        F195: Inject DuckDB store reference (canonical write seam).
+
+        OWNERSHIP: caller owns the store. Scheduler uses it for
+        async_ingest_findings_batch() on accepted findings.
+        All calls are fail-soft — exception or None → no-op.
+        """
+        self._duckdb_store = store
+        self._duckdb_can_ingest = store is not None and hasattr(
+            store, "async_ingest_findings_batch"
+        )
+
     def get_analyst_brief(self) -> Any:
         """
         F204E: Return the last generated analyst brief.
@@ -11762,12 +11823,6 @@ class SprintScheduler:
         # Sprint F205F: Reset sidecar orchestrator tracking
         if hasattr(self, "_sidecar_orchestrator") and self._sidecar_orchestrator is not None:
             self._sidecar_orchestrator.reset()
-        # Sprint F204J: Mission budget tracking
-        # F205F: sidecars_skipped written by SidecarDispatcher via result_sink.
-        # Fallback if dispatcher was never called.
-        _existing_skipped = getattr(self._result, "sidecars_skipped", None)
-        if _existing_skipped is not None:
-            self._result.sidecars_skipped = _existing_skipped
         # Sprint F207K-A: Reset lane rejection tracking
         self._lane_rejections = []
         self._lane_rejections_total_seen = 0

@@ -412,7 +412,12 @@ class SprintAdvisoryRunner:
             pass  # Fail-soft: RSS tracking never crashes runner
 
         # F204J: Record sidecars skipped during this sprint
-        sidecars_skipped = getattr(self._scheduler, "_sidecars_skipped", set())
+        # F222: Read from SidecarOrchestrator's dispatcher (canonical owner of skipped tracking)
+        orchestrator = getattr(self._scheduler, "_sidecar_orchestrator", None)
+        if orchestrator is not None:
+            sidecars_skipped = getattr(orchestrator._dispatcher, "_sidecars_skipped", set())
+        else:
+            sidecars_skipped = set()
         peak_rss_gib = getattr(self._scheduler, "_peak_rss_gib", 0.0)
         result = getattr(self._scheduler, "_result", None)
         if result is not None:

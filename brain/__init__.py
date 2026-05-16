@@ -140,6 +140,14 @@ try:
 except ImportError:
     MODERNBERT_AVAILABLE = False
 
+# Sprint F222: ModelEngine Protocol + ModernBertModelAdapter
+try:
+    from .model_engine import ModelEngine
+    from .modernbert_adapter import ModernBertModelAdapter
+    MODEL_ENGINE_AVAILABLE = True
+except ImportError:
+    MODEL_ENGINE_AVAILABLE = False
+
 # Model Manager (lifecycle management for M1 8GB)
 try:
     from .model_manager import (
@@ -276,6 +284,10 @@ __all__ = [
     # ModernBertEngine
     "ModernBertEngine",
     "MODERNBERT_AVAILABLE",
+    # Sprint F222: ModelEngine Protocol + adapter
+    "ModelEngine",
+    "ModernBertModelAdapter",
+    "MODEL_ENGINE_AVAILABLE",
     # Model Manager
     "ModelManager",
     "ModelType",

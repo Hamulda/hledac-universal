@@ -252,7 +252,7 @@ class ModelManager:
     #
     # LAYER MAPPING (F6.5) — MUST NOT BE CONFLATED:
     #   Layer 1 (workflow-level, this map):
-    #     PLAN/DECIDE/SYNTHESIZE → hermes
+    #     PLAN/DECIDE/GENERATE → hermes
     #     EMBED/DEDUP/ROUTING → modernbert
     #     NER/ENTITY → gliner
     #   Layer 2 (coarse-grained, ModelLifecycleManager):
@@ -264,7 +264,7 @@ class ModelManager:
     #   - acquire != phase enforcement
     #   - unload != phase policy
     #   - workflow phases (Layer 1) != coarse phases (Layer 2)
-    #   - SYNTHESIZE (Layer 1) ≠ SYNTHESIS (Layer 2)
+    #   - GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2)
     #   - capability layer MUST NOT become third model truth
     #
     # Use brain.model_phase_facts.is_same_layer() to validate before comparison.
@@ -272,7 +272,7 @@ class ModelManager:
     PHASE_MODEL_MAP: Dict[str, ModelName] = {
         "PLAN": "hermes",
         "DECIDE": "hermes",
-        "SYNTHESIZE": "hermes",
+        "GENERATE": "hermes",
         "EMBED": "modernbert",
         "DEDUP": "modernbert",
         "ROUTING": "modernbert",
@@ -310,9 +310,9 @@ class ModelManager:
         return Hermes3Engine()
 
     def _create_modernbert_engine(self) -> Any:
-        """Factory pro ModernBERTEmbedder."""
-        from ...embeddings.modernbert_embedder import ModernBERTEmbedder
-        return ModernBERTEmbedder()
+        """Factory pro ModernBertModelAdapter (bridges ModernBertEngine → ModelEngine)."""
+        from .modernbert_adapter import ModernBertModelAdapter
+        return ModernBertModelAdapter()
 
     def _create_gliner_engine(self) -> Any:
         """Factory pro NEREngine s gliner-relex (NER + relation extraction)."""
@@ -1201,7 +1201,7 @@ Piš v češtině, buď konkrétní a stručný."""
         Context manager pro fázové workflow.
 
         Automaticky vybere správný model podle fáze:
-        - PLAN/DECIDE/SYNTHESIZE → Hermes
+        - PLAN/DECIDE/GENERATE → Hermes
         - EMBED/DEDUP/ROUTING → ModernBERT
         - NER/ENTITY → GLiNER
 

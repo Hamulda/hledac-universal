@@ -17,7 +17,7 @@ Invariant mapping:
   F205F-9  | dispatch() is fail-soft: non-CancelledError exceptions are swallowed
   F205F-10 | Skipped heavy sidecars (uma_/high_water/rss_exceeds) added to _sidecars_skipped
   F205F-11 | Skipped non-heavy sidecars NOT added to _sidecars_skipped
-  F205F-12 | result_sink.sidecars_skipped receives skipped heavy sidecar names
+  F205F-12 | Skipped heavy sidecars returned in DispatchOutcome (canonical path)
   F205F-13 | reset() clears _sidecars_skipped
   F205F-14 | DispatchOutcome returned with correct sprint_id and source_branch
 """
@@ -61,7 +61,7 @@ class TestSidecarDispatcher:
     async def test_dispatch_returns_early_on_empty_findings(self):
         """F205F-1: Empty list returns DispatchOutcome with empty skips."""
         bus = AsyncMock()
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",
@@ -81,7 +81,7 @@ class TestSidecarDispatcher:
     async def test_dispatch_returns_early_on_none_findings(self):
         """F205F-2: Falsy findings (None) returns without calling bus."""
         bus = AsyncMock()
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",
@@ -100,7 +100,7 @@ class TestSidecarDispatcher:
     async def test_dispatch_returns_early_on_none_store(self):
         """F205F-3: None store returns without calling bus."""
         bus = AsyncMock()
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",
@@ -118,7 +118,7 @@ class TestSidecarDispatcher:
     @pytest.mark.asyncio
     async def test_dispatch_returns_early_when_no_bus(self):
         """F205F-4: No bus returns without calling anything."""
-        dispatcher = SidecarDispatcher(bus=None, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=None)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",
@@ -137,7 +137,7 @@ class TestSidecarDispatcher:
         """F205F-5: CT branch creates SidecarBatch with source_branch='ct'."""
         bus = AsyncMock()
         bus.run_all_sidecars.return_value = []
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         await dispatcher.dispatch(
             source_branch="ct",
@@ -160,7 +160,7 @@ class TestSidecarDispatcher:
         """F205F-6: Feed branch creates SidecarBatch with source_branch='feed'."""
         bus = AsyncMock()
         bus.run_all_sidecars.return_value = []
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         await dispatcher.dispatch(
             source_branch="feed",
@@ -179,7 +179,7 @@ class TestSidecarDispatcher:
         """F205F-7: Public branch creates SidecarBatch with source_branch='public'."""
         bus = AsyncMock()
         bus.run_all_sidecars.return_value = []
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         await dispatcher.dispatch(
             source_branch="public",
@@ -200,7 +200,7 @@ class TestSidecarDispatcher:
         """F205F-8: asyncio.CancelledError from bus is re-raised."""
         bus = AsyncMock()
         bus.run_all_sidecars.side_effect = asyncio.CancelledError
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         with pytest.raises(asyncio.CancelledError):
             await dispatcher.dispatch(
@@ -218,7 +218,7 @@ class TestSidecarDispatcher:
         """F205F-9: Non-CancelledError exceptions are swallowed."""
         bus = AsyncMock()
         bus.run_all_sidecars.side_effect = RuntimeError("sidecar exploded")
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         # Should not raise
         outcome = await dispatcher.dispatch(
@@ -255,7 +255,7 @@ class TestSidecarDispatcher:
                 elapsed_ms=2.0,
             ),
         ]
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",
@@ -286,7 +286,7 @@ class TestSidecarDispatcher:
                 elapsed_ms=0.5,
             ),
         ]
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",
@@ -299,11 +299,11 @@ class TestSidecarDispatcher:
         assert "leak_sentinel" not in dispatcher._sidecars_skipped
         assert "leak_sentinel" not in outcome.sidecars_skipped
 
-    # ── F205F-12: result_sink receives skipped sidecars ───────────────────
+    # ── F205F-12: skipped sidecars only in DispatchOutcome (not result_sink) ───
 
     @pytest.mark.asyncio
-    async def test_dispatch_writes_skipped_to_result_sink(self):
-        """F205F-12: Skipped heavy sidecars added to result_sink.sidecars_skipped."""
+    async def test_dispatch_returns_skipped_in_outcome(self):
+        """F205F-12: Skipped heavy sidecars returned in DispatchOutcome (canonical path)."""
         bus = AsyncMock()
         bus.run_all_sidecars.return_value = [
             SidecarRunResult(
@@ -315,11 +315,9 @@ class TestSidecarDispatcher:
                 elapsed_ms=1.0,
             ),
         ]
-        result_sink = MagicMock()
-        result_sink.sidecars_skipped = set()
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=result_sink)
+        dispatcher = SidecarDispatcher(bus=bus)
 
-        await dispatcher.dispatch(
+        outcome = await dispatcher.dispatch(
             source_branch="ct",
             findings=[self._mock_finding()],
             store=MagicMock(),
@@ -327,7 +325,7 @@ class TestSidecarDispatcher:
             sprint_id="sprint-1",
         )
 
-        assert "sprint_diff" in result_sink.sidecars_skipped
+        assert "sprint_diff" in outcome.sidecars_skipped
 
     # ── F205F-13: reset clears tracking ───────────────────────────────────
 
@@ -345,9 +343,7 @@ class TestSidecarDispatcher:
                 elapsed_ms=1.0,
             ),
         ]
-        result_sink = MagicMock()
-        result_sink.sidecars_skipped = set()
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=result_sink)
+        dispatcher = SidecarDispatcher(bus=bus)
 
         await dispatcher.dispatch(
             source_branch="ct",
@@ -370,7 +366,7 @@ class TestSidecarDispatcher:
         """F205F-14: DispatchOutcome has correct sprint_id and source_branch."""
         bus = AsyncMock()
         bus.run_all_sidecars.return_value = []
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="public",
@@ -401,7 +397,7 @@ class TestSidecarDispatcher:
                 elapsed_ms=5.0,
             ),
         ]
-        dispatcher = SidecarDispatcher(bus=bus, result_sink=MagicMock())
+        dispatcher = SidecarDispatcher(bus=bus)
 
         outcome = await dispatcher.dispatch(
             source_branch="ct",

@@ -26,7 +26,7 @@ PHASE LAYERS:
   Layer 1 — Workflow-level (ModelManager.PHASE_MODEL_MAP):
     PLAN      → hermes
     DECIDE    → hermes
-    SYNTHESIZE → hermes
+    GENERATE → hermes
     EMBED     → modernbert
     DEDUP     → modernbert
     ROUTING   → modernbert
@@ -67,7 +67,7 @@ from __future__ import annotations
 WORKFLOW_PHASES: frozenset[str] = frozenset({
     "PLAN",
     "DECIDE",
-    "SYNTHESIZE",
+    "GENERATE",
     "EMBED",
     "DEDUP",
     "ROUTING",
@@ -124,7 +124,7 @@ def is_same_layer(phase_a: str, phase_b: str) -> bool:
     Return True if both phases belong to the same layer.
 
     This is the canonical check BEFORE comparing or mapping phases —
-    comparing a Layer 1 phase (e.g., "SYNTHESIZE") with a Layer 2 phase
+    comparing a Layer 1 phase (e.g., "GENERATE") with a Layer 2 phase
     (e.g., "SYNTHESIS") would be a category error.
     """
     return get_phase_layer(phase_a) == get_phase_layer(phase_b) != 0
@@ -178,7 +178,7 @@ def get_phase_layer_strict(phase: str) -> int:
     Unlike get_phase_layer(), this returns 0 for ANY phase string that
     appears in BOTH Layer 1 and Layer 2 (e.g., if a future phase name
     is reused across layers). Currently no overlap exists since
-    SYNTHESIZE ≠ SYNTHESIS, but this function future-proofs the guard.
+    GENERATE ≠ SYNTHESIS, but this function future-proofs the guard.
 
     Returns:
         1 = workflow-level (ModelManager.PHASE_MODEL_MAP)
@@ -191,7 +191,7 @@ def get_phase_layer_strict(phase: str) -> int:
     normalized = phase.upper()
 
     # Check for ambiguous phase names (same string in both layers)
-    # Currently none exist: SYNTHESIZE ≠ SYNTHESIS
+    # Currently none exist: GENERATE ≠ SYNTHESIS
     # This check future-proofs against accidental reuse
     in_layer1 = normalized in WORKFLOW_PHASES
     in_layer2 = normalized in COARSE_GRAINED_PHASES

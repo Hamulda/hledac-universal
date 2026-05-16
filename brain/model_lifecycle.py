@@ -25,10 +25,10 @@ F6.5 THIS MODULE IS NOT THE RUNTIME-WIDE LOAD OWNER:
 
 F6.5 LAYER MAPPING — MUST NOT BE CONFLATED:
   Layer 1 (workflow-level, ModelManager.PHASE_MODEL_MAP):
-    PLAN/DECIDE/SYNTHESIZE → hermes
+    PLAN/DECIDE/GENERATE → hermes
     EMBED/DEDUP/ROUTING → modernbert
     NER/ENTITY → gliner
-    Strings: PLAN, DECIDE, SYNTHESIZE, EMBED, DEDUP, ROUTING, NER, ENTITY
+    Strings: PLAN, DECIDE, GENERATE, EMBED, DEDUP, ROUTING, NER, ENTITY
   Layer 2 (coarse-grained, ModelLifecycleManager):
     BRAIN/TOOLS/SYNTHESIS/CLEANUP — entirely different strings
   Layer 3 (windup-local, windup_engine.SynthesisRunner):
@@ -38,7 +38,7 @@ F6.5 HARD INVARIANTS:
   - acquire ≠ phase enforcement
   - unload ≠ phase policy
   - workflow phases (Layer 1) ≠ coarse phases (Layer 2)
-  - SYNTHESIZE (Layer 1) ≠ SYNTHESIS (Layer 2)
+  - GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2)
   - capability layer MUST NOT become third model truth
   - windup-local model world ≠ runtime-wide model plane
 

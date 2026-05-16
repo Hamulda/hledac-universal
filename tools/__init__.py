@@ -27,6 +27,8 @@ from .zstd_compressor import ZstdCompressor
 from .lightpanda_manager import LightpandaManager
 from .lightpanda_pool import LightpandaPool
 from .file_cache import apply_fcntl_nocache, NOCACHE_THRESHOLD_BYTES, F_NOCACHE
+# Sprint F214AD: URL deduplication — both adapters exported for Protocol testing
+from .url_dedup import RotatingBloomFilterAdapter, PersistentSetAdapter, DeduplicationStrategy
 
 __all__ = [
     # Reranker
@@ -51,4 +53,8 @@ __all__ = [
     'apply_fcntl_nocache',
     'NOCACHE_THRESHOLD_BYTES',
     'F_NOCACHE',
+    # Sprint F214AD: URL deduplication
+    'RotatingBloomFilterAdapter',
+    'PersistentSetAdapter',
+    'DeduplicationStrategy',
 ]

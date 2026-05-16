@@ -1067,37 +1067,20 @@ class DuckDBShadowStore:
         self._dedup_lmdb_last_error: Optional[str] = None
         self._dedup_lmdb_boot_error: Optional[str] = None
 
-        # Sprint 8W: In-memory dedup set (key = BLAKE2b fingerprint, val = finding_id)
-        # Hot cache only — LMDB is the authority for persistence across restarts
-        self._dedup_fingerprints: dict[str, str] = {}
+        # Sprint 8W: In-memory dedup set — REMOVED (Sprint F222)
+        # Now delegated to DedupManager._dedup_hot_cache (owned there since F216G)
 
         # Sprint 8QA: Background task tracking for graph ingest
         self._bg_tasks: set[asyncio.Task] = set()
-        # Sprint 8QA: Injectable IOCGraph instance
-        # NON-AUTHORITATIVE: store is NOT graph truth owner. The injected graph
-        # may be IOCGraph (Kuzu, truth) or DuckPGQGraph (donor/alternate).
-        # Capability must be checked, never assumed. Set by inject_graph().
-        self._ioc_graph: Any = None
-        self._graph_attachment_kind: Optional[str] = None  # class name of attached backend
-
-        # Sprint 8VQ: Dedicated STIX-only graph slot.
-        # TRUTH-STORE ONLY: only IOCGraph (Kuzu) has export_stix_bundle().
-        # DuckPGQGraph is analytics/donor — never inject into _stix_graph.
-        # _stix_graph is independent of _ioc_graph (analytics) and _graph_attachment_kind.
-        self._stix_graph: Any = None
-
-        # Sprint 8WA: Dedicated truth-write graph slot for ACTIVE buffered writes.
-        # TRUTH-WRITE ONLY: only IOCGraph (Kuzu) supports buffer_ioc/flush_buffers.
-        # This slot is INDEPENDENT of _ioc_graph (analytics/donor) and _stix_graph (STIX).
-        # _truth_write_graph is used exclusively for ACTIVE-phase buffered IOC ingest.
-        self._truth_write_graph: Any = None
 
         # Sprint 8SB: Semantic store (FastEmbed + LanceDB)
         self._semantic_store: Optional[Any] = None
 
-        # Sprint F195: Semantic dedup cache (embedding-based near-duplicate detection)
-        # Lazy init — created on first async_initialize() call
-        self._semantic_dedup_cache: Optional[Any] = None
+        # Sprint F222: Graph slots moved to dedicated adapter
+        self.__graph_store = None  # GraphAttachmentStore instance (lazy init, name-mangled)
+
+        # Sprint F195: Semantic dedup cache — REMOVED (Sprint F222)
+        # Now delegated to DedupManager._semantic_dedup_cache (initialized there since F216G)
 
         # Sprint F233A: WAL LMDB — now managed by WALManager
         # Backward-compat alias: _wal_lmdb = None (see __init__ section above for new managers)
@@ -1121,345 +1104,63 @@ class DuckDBShadowStore:
         """Return currently configured UMA state."""
         return self._uma_state
     # ---------------------------------------------------------------------------
-    # Sprint 8QA: IOC Graph integration
+    # Sprint F222: Graph slots — DEPRECATED, delegated to GraphAttachmentStore
     # ---------------------------------------------------------------------------
 
+    def _graph_store(self) -> Any:
+        """Lazy-init GraphAttachmentStore."""
+        if self.__graph_store is None:
+            from hledac.universal.knowledge.graph_attachment import GraphAttachmentStore
+            self.__graph_store = GraphAttachmentStore()
+        return self.__graph_store
+
     def inject_graph(self, graph: Any) -> None:
-        """
-        Inject a graph instance for IOC ingest on canonical findings.
-
-        STORE IS NOT GRAPH TRUTH OWNER — the injected graph may be:
-          - IOCGraph (Kuzu): truth backend, full capability
-          - DuckPGQGraph (DuckDB): donor/alternate backend, limited capability
-
-        Capability requirements for buffered writes (ACTIVE phase):
-          - Requires: buffer_ioc(), buffer_observation(), flush_buffers()
-          - IOCGraph has these. DuckPGQGraph does NOT.
-
-        After inject, use get_graph_attachment_kind() to determine
-        which backend was attached and check capabilities explicitly.
-        """
-        self._ioc_graph = graph
-        self._graph_attachment_kind = graph.__class__.__name__ if graph is not None else None
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_graph()."""
+        self._graph_store().inject_graph(graph)
 
     def get_graph_attachment_kind(self) -> Optional[str]:
-        """
-        NON-AUTHORITATIVE DIAGNOSTIC: returns the class name of the attached graph.
-
-        Returns None if no graph attached.
-        Use this to determine which backend is attached, then call
-        hasattr/hasattr for specific capability checks before use.
-
-        This is a COMPAT SEAM, not a canonical graph API.
-        """
-        return self._graph_attachment_kind
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_attachment_kind()."""
+        return self._graph_store().get_graph_attachment_kind()
 
     def graph_supports_buffered_writes(self) -> bool:
-        """
-        NON-AUTHORITATIVE COMPAT CHECK: does attached graph support ACTIVE-phase
-        buffered writes?
-
-        Returns True only if attached graph has both:
-          - buffer_ioc()
-          - flush_buffers()
-
-        IOCGraph (Kuzu): True — has full buffered write capability.
-        DuckPGQGraph (DuckDB): False — has checkpoint() and add_ioc() only.
-
-        Always check this before triggering background graph ingest,
-        do not assume all injected graphs support buffered writes.
-        """
-        if self._ioc_graph is None:
-            return False
-        return (
-            callable(getattr(self._ioc_graph, "buffer_ioc", None))
-            and callable(getattr(self._ioc_graph, "flush_buffers", None))
-        )
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.graph_supports_buffered_writes()."""
+        return self._graph_store().graph_supports_buffered_writes()
 
     def inject_stix_graph(self, graph: Any) -> None:
-        """
-        Sprint 8VQ: Inject truth-store STIX graph for synthesis consumption.
-
-        TRUTH-STORE ONLY: only IOCGraph (Kuzu) has export_stix_bundle().
-        DuckPGQGraph must NEVER be injected here — it lacks STIX capability.
-
-        This slot is INDEPENDENT of _ioc_graph (analytics/donor graph).
-        _stix_graph is used exclusively by synthesis runners for STIX context.
-
-        Args:
-            graph: IOCGraph (Kuzu) instance or None to clear.
-
-        Raises:
-            TypeError: if graph is not None and lacks export_stix_bundle().
-        """
-        if graph is not None and not callable(getattr(graph, "export_stix_bundle", None)):
-            raise TypeError(
-                f"inject_stix_graph: graph must implement export_stix_bundle(). "
-                f"Got {graph.__class__.__name__} which lacks STIX export capability. "
-                f"Use IOCGraph (Kuzu) for STIX slots."
-            )
-        self._stix_graph = graph
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_stix_graph()."""
+        self._graph_store().inject_stix_graph(graph)
 
     def get_stix_graph(self) -> Any:
-        """
-        Sprint 8VQ: Get injected STIX graph for synthesis consumers.
-
-        Returns the injected truth-store graph (IOCGraph/Kuzu) if available,
-        else None. DuckPGQGraph is never returned — it lacks export_stix_bundle().
-
-        This is a CONSUMER-SPECIFIC seam, not a generic graph accessor.
-        """
-        return self._stix_graph
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_stix_graph()."""
+        return self._graph_store().get_stix_graph()
 
     def inject_truth_write_graph(self, graph: Any) -> None:
-        """
-        Sprint 8WA: Inject dedicated truth-write graph for ACTIVE buffered writes.
-
-        TRUTH-WRITE ONLY: only IOCGraph (Kuzu) supports buffer_ioc/flush_buffers.
-        DuckPGQGraph must NEVER be injected here — it lacks buffered write capability.
-
-        This slot is INDEPENDENT of:
-          - _ioc_graph (analytics/donor graph — DuckPGQGraph in windup)
-          - _stix_graph (STIX synthesis graph)
-
-        _truth_write_graph is used exclusively for ACTIVE-phase buffered IOC ingest
-        via _graph_ingest_findings().
-
-        Args:
-            graph: IOCGraph (Kuzu) instance or None to clear.
-
-        Raises:
-            TypeError: if graph is not None and lacks buffer_ioc/flush_buffers.
-        """
-        if graph is not None:
-            _check_graph_capability(graph, "inject_truth_write_graph")
-        self._truth_write_graph = graph
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_truth_write_graph()."""
+        self._graph_store().inject_truth_write_graph(graph)
 
     def get_truth_write_graph(self) -> Any:
-        """
-        Sprint 8WA: Get injected truth-write graph for ACTIVE-phase consumers.
-
-        Returns the injected truth-write graph (IOCGraph/Kuzu) if available,
-        else None. DuckPGQGraph is never returned — it lacks buffer_ioc/flush_buffers.
-
-        This is a CONSUMER-SPECIFIC seam for ACTIVE-phase buffered writes only.
-        """
-        return self._truth_write_graph
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_truth_write_graph()."""
+        return self._graph_store().get_truth_write_graph()
 
     def truth_write_graph_supports_buffered_writes(self) -> bool:
-        """
-        Sprint 8WA: Does _truth_write_graph support ACTIVE-phase buffered writes?
-
-        Returns True only if _truth_write_graph is IOCGraph (Kuzu) with both:
-          - buffer_ioc()
-          - flush_buffers()
-
-        This is a dedicated check for the truth-write slot, independent of
-        the analytics _ioc_graph slot.
-        """
-        if self._truth_write_graph is None:
-            return False
-        return (
-            callable(getattr(self._truth_write_graph, "buffer_ioc", None))
-            and callable(getattr(self._truth_write_graph, "flush_buffers", None))
-        )
-
-    # ------------------------------------------------------------------
-    # Sprint 8TF: Export/Store Seed Seam
-    # ------------------------------------------------------------------
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.truth_write_graph_supports_buffered_writes()."""
+        return self._graph_store().truth_write_graph_supports_buffered_writes()
 
     def get_top_seed_nodes(self, n: int = 5) -> list[dict]:
-        """
-        Sprint 8TF §1: Export-facing read-only seam for top seed nodes.
-
-        PURPOSE
-        -------
-        Provides a store-facing surface for the export handoff's seed-node use case.
-        export_sprint() currently falls back to store._ioc_graph.get_top_nodes_by_degree(n=5)
-        directly; this method wraps that call so export consumers don't need to spelunk
-        _ioc_graph internals.
-
-        STORE IS NOT GRAPH TRUTH OWNER
-        --------------------------------
-        The injected graph may be IOCGraph (Kuzu, truth) or DuckPGQGraph (donor/alternate).
-        This seam does NOT make DuckDBShadowStore a graph authority.
-        It is a thin, fail-open adapter for one specific export-facing read-only operation.
-
-        FUTURE OWNER / REMOVAL CONDITION
-        ---------------------------------
-        - Future graph truth owner: IOCGraph (Kuzu) or its successor
-        - Removal condition: export_sprint() replaces its store._ioc_graph fallback
-          entirely with this method, AND no other consumer accesses _ioc_graph directly
-          for seed node queries
-
-        CAPABILITY REQUIREMENTS
-        -----------------------
-        Requires the attached graph to implement get_top_nodes_by_degree(n).
-        IOCGraph (Kuzu): has this method.
-        DuckPGQGraph (DuckDB): has this method.
-        If the method is absent or call fails, returns [] (fail-open).
-
-        Args:
-            n: Number of top nodes to return (default 5).
-
-        Returns:
-            list[dict]: Each dict has at least "value" and "ioc_type" keys.
-            Returns [] if no graph attached or call fails.
-        """
-        if self._ioc_graph is None:
-            return []
-        try:
-            method = getattr(self._ioc_graph, "get_top_nodes_by_degree", None)
-            if not callable(method):
-                return []
-            result = method(n=n)
-            # Validate return shape — expect list of dicts with value/ioc_type
-            if not isinstance(result, list):
-                return []
-            for item in result:
-                if not isinstance(item, dict) or "value" not in item:
-                    return []
-            return result
-        except Exception:
-            return []
-
-    # ------------------------------------------------------------------
-    # Sprint 8VY: Analytics graph read-only seams — REMOVED shell-private access
-    # ------------------------------------------------------------------
-    # __main__._run_sprint_mode() previously used:
-    #   getattr(store_instance, "_ioc_graph", None).stats()
-    #   getattr(store_instance, "_ioc_graph", None).find_connected()
-    # _windup_synthesis() previously used:
-    #   elif hasattr(store, "_ioc_graph") and store._ioc_graph: runner.inject_graph(store._ioc_graph)
-    #
-    # These private-slot accesses are replaced by narrow, fail-open seam methods below.
-    # STORE IS NOT GRAPH TRUTH OWNER — these are diagnostic/analytics read-only seams.
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_seed_nodes()."""
+        return self._graph_store().get_top_seed_nodes(n=n)
 
     def get_graph_stats(self) -> dict:
-        """
-        Sprint 8VY: Read-only seam for analytics graph stats (DuckPGQGraph.stats()).
-
-        PURPOSE
-        -------
-        Replaces direct shell access to store._ioc_graph.stats() in __main__._run_sprint_mode().
-        DuckDBShadowStore is NOT a graph authority — this is a thin fail-open adapter
-        for the diagnostics use case only.
-
-        CONSUMER
-        --------
-        __main__._run_sprint_mode(): logging [GRAPH] nodes/edges/pgq stats.
-
-        STORE IS NOT GRAPH TRUTH OWNER
-        -------------------------------
-        The analytics _ioc_graph (DuckPGQGraph) is the donor backend.
-        Returns {} (fail-open) if no graph attached or call fails.
-
-        CAPABILITY REQUIREMENTS
-        -----------------------
-        Requires attached graph to implement stats() → {nodes, edges, pgq_active}.
-        DuckPGQGraph: has this method.
-        IOCGraph: has this method.
-
-        Returns:
-            dict: {nodes, edges, pgq_active} or {} if unavailable.
-        """
-        if self._ioc_graph is None:
-            return {}
-        try:
-            method = getattr(self._ioc_graph, "stats", None)
-            if not callable(method):
-                return {}
-            result = method()
-            if not isinstance(result, dict):
-                return {}
-            # Validate minimal shape
-            if not all(k in result for k in ("nodes", "edges")):
-                return {}
-            return result
-        except Exception:
-            return {}
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_stats()."""
+        return self._graph_store().get_graph_stats()
 
     def get_connected_iocs(self, ioc_value: str, max_hops: int = 2) -> list:
-        """
-        Sprint 8VY: Read-only seam for analytics graph find_connected() (DuckPGQGraph).
-
-        PURPOSE
-        -------
-        Replaces direct shell access to store._ioc_graph.find_connected() in
-        __main__._run_sprint_mode(). Diagnostic use case: log connected nodes for top IOC.
-        DuckDBShadowStore is NOT a graph authority — thin fail-open adapter.
-
-        CONSUMER
-        --------
-        __main__._run_sprint_mode(): logging {first_ioc} → {len(connected)} connected nodes.
-
-        STORE IS NOT GRAPH TRUTH OWNER
-        -------------------------------
-        The analytics _ioc_graph (DuckPGQGraph) is the donor backend.
-        Returns [] (fail-open) if no graph attached or call fails.
-
-        CAPABILITY REQUIREMENTS
-        -----------------------
-        Requires attached graph to implement find_connected(value, max_hops) → list.
-        DuckPGQGraph: has this method.
-        IOCGraph: does NOT have this method → returns [] (fail-open).
-
-        Args:
-            ioc_value: The IOC value to find connections for.
-            max_hops: Maximum traversal depth (default 2).
-
-        Returns:
-            list: Connected IOC nodes or [] if unavailable.
-        """
-        if self._ioc_graph is None:
-            return []
-        try:
-            method = getattr(self._ioc_graph, "find_connected", None)
-            if not callable(method):
-                return []
-            result = method(ioc_value, max_hops=max_hops)
-            if not isinstance(result, list):
-                return []
-            return result
-        except Exception:
-            return []
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_connected_iocs()."""
+        return self._graph_store().get_connected_iocs(ioc_value, max_hops=max_hops)
 
     def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list]:
-        """
-        P1-1 fix: Batch version of get_connected_iocs for N+1 query optimization.
-        Returns dict mapping each value to its connected IOC list.
-
-        CAPABILITY REQUIREMENTS
-        -----------------------
-        Requires attached graph to implement find_connected_batch(values, max_hops) → dict.
-        DuckPGQGraph: has this method (P1-1 fix).
-        IOCGraph: does NOT have this method → returns {} (fail-open).
-        """
-        if not values or self._ioc_graph is None:
-            return {}
-        try:
-            method = getattr(self._ioc_graph, "find_connected_batch", None)
-            if not callable(method):
-                # Fallback: individual calls
-                result = {}
-                for v in values:
-                    result[v] = self.get_connected_iocs(v, max_hops=max_hops)
-                return result
-            batch_result = method(values, max_hops=max_hops)
-            if not isinstance(batch_result, dict):
-                return {}
-            # Ensure all keys present
-            return {v: batch_result.get(v, []) for v in values}
-        except Exception:
-            return {}
-
-    # --------------------------------------------------------------------------
-    # Sprint F193A: Graph enrichment annotation layer
-    # --------------------------------------------------------------------------
-    # STORE IS NOT GRAPH TRUTH OWNER — duckdb_store is the CANONICAL FINDINGS store.
-    # graph/quantum_pathfinder.DuckPGQGraph is the DONOR/BACKEND for graph reads.
-    # This method annotates findings with graph context from the donor backend.
-    # NO new graph write path. NO graph truth ownership transferred.
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_connected_iocs_batch()."""
+        return self._graph_store().get_connected_iocs_batch(values, max_hops=max_hops)
 
     def annotate_findings_with_graph_context(
         self,
@@ -1467,210 +1168,21 @@ class DuckDBShadowStore:
         max_hops: int = 2,
         max_annotations: int = 50,
     ) -> list[dict]:
-        """
-        Sprint F193A §1: Read-only enrichment pass — attaches graph context to findings.
-
-        PURPOSE
-        -------
-        Minimal annotation layer that reads persisted findings, queries connected IOCs
-        from the graph donor backend, and attaches lightweight annotations for
-        export/report use. Does NOT make DuckDBShadowStore a graph authority.
-
-        READ-ONLY SEAM — STORE IS NOT GRAPH TRUTH OWNER
-        -------------------------------------------------
-        This method is a thin pass-through to graph donor backend seams:
-          - get_connected_iocs() for IOC linkage
-          - get_top_seed_nodes() for degree context
-        It never writes to the graph. The graph (DuckPGQGraph) remains the analytics
-        donor backend, not the truth owner.
-
-        BEHAVIOR
-        --------
-        - Iterates through findings and extracts IOC values
-        - For each unique IOC, queries get_connected_iocs() from donor graph
-        - Attaches annotations as lightweight dict (no heavy objects)
-        - Fail-open: returns original findings unchanged on any error
-        - Bounded: max_annotations limits work to prevent unbounded work
-
-        Args:
-            findings: List of finding dicts (must have 'id' field).
-            max_hops: Max traversal depth for find_connected (default 2).
-            max_annotations: Max number of findings to annotate (default 50).
-
-        Returns:
-            list[dict]: Findings with optional 'graph_annotation' key attached.
-            Unannotated fields are returned unchanged on failure.
-        """
-        if not findings or self._ioc_graph is None:
-            return findings
-
-        try:
-            # Extract unique IOC values from findings
-            ioc_seen: set[str] = set()
-            ioc_to_finding_ids: dict[str, list[str]] = {}
-
-            for f in findings[:max_annotations]:
-                finding_id = f.get("id", "")
-                # Try common IOC field names
-                ioc_value = (
-                    f.get("value")
-                    or f.get("ioc_value")
-                    or f.get("indicator")
-                    or f.get("entity")
-                    or ""
-                )
-                if ioc_value and isinstance(ioc_value, str) and len(ioc_value) >= 3:
-                    if ioc_value not in ioc_seen:
-                        ioc_seen.add(ioc_value)
-                        ioc_to_finding_ids[ioc_value] = []
-                    ioc_to_finding_ids[ioc_value].append(finding_id)
-
-            if not ioc_seen:
-                return findings
-
-            # P1-1: N+1 query pattern — batch optimization needed
-            # Current: N queries for N unique IOCs
-            # P1-1 fix: Batch query — single SQL call for all IOCs instead of N calls
-            connected_cache: dict[str, list[dict]] = self.get_connected_iocs_batch(
-                list(ioc_seen), max_hops=max_hops
-            )
-
-            # Build annotation map
-            annotation_map: dict[str, dict] = {}
-            for ioc_value, connected in connected_cache.items():
-                if connected:
-                    annotation_map[ioc_value] = {
-                        "connected_count": len(connected),
-                        "connected_types": list(
-                            {c.get("ioc_type", "unknown") for c in connected if c.get("ioc_type")}
-                        ),
-                        "max_hops": max_hops,
-                        "connected_sample": connected[:5],  # lightweight sample
-                    }
-
-            # Attach annotations to findings
-            enriched = []
-            for f in findings[:max_annotations]:
-                enriched_f = dict(f)  # shallow copy
-                ioc_value = (
-                    f.get("value")
-                    or f.get("ioc_value")
-                    or f.get("indicator")
-                    or f.get("entity")
-                    or ""
-                )
-                if ioc_value in annotation_map:
-                    enriched_f["graph_annotation"] = annotation_map[ioc_value]
-                enriched.append(enriched_f)
-
-            # Append remaining findings (beyond max_annotations) unchanged
-            enriched.extend(findings[max_annotations:])
-            return enriched
-
-        except Exception:
-            # Fail-open: return original findings unchanged
-            return findings
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.annotate_findings_with_graph_context()."""
+        return self._graph_store().annotate_findings_with_graph_context(
+            findings, max_hops=max_hops, max_annotations=max_annotations
+        )
 
     def get_analytics_graph_for_synthesis(self) -> Any:
-        """
-        Sprint 8VY: Read-only seam replacing store._ioc_graph fallback in _windup_synthesis().
-
-        PURPOSE
-        -------
-        Replaces the elif hasattr(store, "_ioc_graph") and store._ioc_graph fallback in
-        _windup_synthesis(). This is the Priority 2 / analytics-donor path for synthesis.
-
-        CONSUMER
-        --------
-        _windup_synthesis(): runner.inject_graph(store.get_analytics_graph_for_synthesis())
-
-        STORE IS NOT GRAPH TRUTH OWNER
-        -------------------------------
-        DuckDBShadowStore is NOT graph authority. This seam explicitly labels the
-        analytics donor backend. Callers must handle None.
-
-        CAPABILITY REQUIREMENTS
-        -----------------------
-        DuckPGQGraph (analytics donor) has: stats, get_top_nodes_by_degree, export_edge_list.
-        DuckPGQGraph does NOT have: export_stix_bundle, buffer_ioc, flush_buffers.
-        For STIX, use store.get_stix_graph() (Priority 1).
-
-        Returns:
-            Any: The attached analytics graph (DuckPGQGraph) or None.
-        """
-        return self._ioc_graph
-
-    # ------------------------------------------------------------------
-    # Sprint 8TF §2: ghost_global seam — top-100 IOC entities for cross-sprint accumulation
-    # ------------------------------------------------------------------
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_analytics_graph_for_synthesis()."""
+        return self._graph_store().get_analytics_graph_for_synthesis()
 
     def get_top_entities_for_ghost_global(
         self,
         n: int = 100,
     ) -> list[tuple[str, str, float]]:
-        """
-        Sprint 8TF §2: Bounded read-only seam for ghost_global cross-sprint entity accumulation.
-
-        PURPOSE
-        -------
-        Provides a store-facing surface for the ghost_global upsert use case.
-        __main__.py previously spelunked graph attachment internals directly:
-            graph.get_nodes()[:100]  ← method does not exist on any graph backend
-        This method wraps the correct capability query so __main__.py never accesses
-        _ioc_graph internals for this use case.
-
-        STORE IS NOT GRAPH TRUTH OWNER
-        --------------------------------
-        The injected graph is the authoritative store (IOCGraph=Kuzu or DuckPGQGraph=DuckDB).
-        This seam is a thin, fail-open adapter for one specific consumer: ghost_global upsert.
-        It does NOT make DuckDBShadowStore a graph authority.
-
-        PAYLOAD SHAPE
-        -------------
-        Returns list[tuple[str, str, float]] — exactly the shape required by
-        upsert_global_entities(entities: list[tuple[str, str, float]]).
-        Each tuple: (entity_value, entity_type, confidence_cumulative)
-
-        FUTURE OWNER / REMOVAL CONDITION
-        ---------------------------------
-        - Future graph truth owner: IOCGraph (Kuzu) — should expose this directly
-        - Removal condition: IOCGraph.get_top_entities_for_ghost_global(n=100)
-          covers this use case with no remaining __main__.py consumer
-
-        CAPABILITY REQUIREMENTS
-        ------------------------
-        Requires the attached graph to implement get_top_nodes_by_degree(n).
-        DuckPGQGraph (DuckDB): has this method, returns dicts with value/ioc_type/confidence.
-        IOCGraph (Kuzu): does NOT have this method — returns [] (fail-open).
-        Fail-open: returns [] if graph is None or method is absent.
-
-        Args:
-            n: Number of top entities to return (default 100).
-
-        Returns:
-            list[tuple[str, str, float]]: Bounded entity payload for ghost_global upsert.
-            Returns [] if no graph attached or call fails.
-        """
-        if self._ioc_graph is None:
-            return []
-        try:
-            method = getattr(self._ioc_graph, "get_top_nodes_by_degree", None)
-            if not callable(method):
-                return []
-            result = method(n=n)
-            if not isinstance(result, list):
-                return []
-            entities: list[tuple[str, str, float]] = []
-            for item in result:
-                if isinstance(item, dict):
-                    val = item.get("value", "")
-                    ioc_type = item.get("ioc_type", "unknown")
-                    conf = float(item.get("confidence", 0.5))
-                    if val:
-                        entities.append((val, ioc_type, conf))
-            return entities
-        except Exception:
-            return []
+        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_entities_for_ghost_global()."""
+        return self._graph_store().get_top_entities_for_ghost_global(n=n)
 
     def inject_semantic_store(self, store: Any) -> None:
         """
@@ -1728,7 +1240,9 @@ class DuckDBShadowStore:
         Fail-open: any exception is caught and logged.
         """
         # Sprint 8WA: Use dedicated truth-write graph, not analytics _ioc_graph.
-        if self._truth_write_graph is None:
+        # Sprint F222: Now routed through GraphAttachmentStore
+        truth_graph = self._graph_store().get_truth_write_graph()
+        if truth_graph is None:
             return
 
         loop = asyncio.get_running_loop()
@@ -1738,6 +1252,7 @@ class DuckDBShadowStore:
                 from hledac.universal.knowledge.ioc_graph import (
                     extract_iocs_from_text,
                 )
+                import xxhash
 
                 for finding in findings:
                     text = finding.payload_text or ""
@@ -1765,7 +1280,7 @@ class DuckDBShadowStore:
 
                     id_map: dict[str, str] = {}  # value → ioc_id (computed from value)
                     for value, ioc_type in iocs:
-                        await self._truth_write_graph.buffer_ioc(ioc_type, value, 1.0)
+                        await truth_graph.buffer_ioc(ioc_type, value, 1.0)
                         ioc_id = f"{ioc_type}:{xxhash.xxh64(value.encode()).hexdigest()}"
                         id_map[value] = ioc_id
 
@@ -1775,11 +1290,13 @@ class DuckDBShadowStore:
                         id_a = id_map[v_a]
                         for v_b in values[i + 1:]:
                             id_b = id_map[v_b]
-                            await self._truth_write_graph.buffer_observation(
+                            await truth_graph.buffer_observation(
                                 id_a, id_b, fid, ts, src
                             )
             except Exception as e:
-                logger.warning(f"[F206AC] truth_write_graph buffer failed: {e}")
+                import logging
+                _logger2 = logging.getLogger(__name__)
+                _logger2.warning(f"[F206AC] truth_write_graph buffer failed: {e}")
 
         t = asyncio.create_task(_run())
         self._bg_tasks.add(t)
@@ -5553,9 +5070,10 @@ class DuckDBShadowStore:
         # _accepted_count is incremented by async_record_canonical_findings_batch — NOT here
         if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
             # Sprint F197B: Check semantic dedup before storing short strings too
-            if self._semantic_dedup_cache is not None:
+            # Sprint F222: Now uses DedupManager's semantic dedup cache
+            dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+            if dedup_cache is not None:
                 try:
-                    dedup_cache = self._semantic_dedup_cache
                     text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                     if text_for_embed and len(text_for_embed) >= 16:
                         is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
@@ -5594,14 +5112,16 @@ class DuckDBShadowStore:
             )
 
         # Sprint F197B: Semantic dedup BEFORE storing — check before committing LMDB write
+        # Sprint F222: Now uses DedupManager's semantic dedup cache
         # Skip if no semantic dedup cache (memory pressure or init failed)
         # Fail-soft: returns duplicate=False on any error (finding accepted even on error)
-        if self._semantic_dedup_cache is not None:
+        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+        if dedup_cache is not None:
             try:
-                dedup_cache = self._semantic_dedup_cache
+                dedup_cache_ref = dedup_cache
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
-                    is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=0.90)
+                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=0.90)
                     if is_dup:
                         self._quality_state._quality_duplicate_count += 1
                         return FindingQualityDecision(
@@ -5961,28 +5481,30 @@ class DuckDBShadowStore:
 
         # Sprint 8WA: close truth-write graph (IOCGraph with buffer_ioc/flush_buffers)
         # GUARD: flush_buffers is IOCGraph-only. DuckPGQGraph has no flush_buffers.
-        if self._truth_write_graph is not None:
+        # Sprint F222: delegated to GraphAttachmentStore
+        gs = self._graph_store() if self.__graph_store is not None else None
+        truth_graph = gs.get_truth_write_graph() if gs else None
+        if truth_graph is not None:
             try:
-                if callable(getattr(self._truth_write_graph, "flush_buffers", None)):
-                    await self._truth_write_graph.flush_buffers()
+                if callable(getattr(truth_graph, "flush_buffers", None)):
+                    await truth_graph.flush_buffers()
             except Exception:
                 pass
             try:
-                if callable(getattr(self._truth_write_graph, "close", None)):
-                    await self._truth_write_graph.close()
+                if callable(getattr(truth_graph, "close", None)):
+                    await truth_graph.close()
             except Exception:
                 pass
-            self._truth_write_graph = None
 
         # Sprint 8QA/8TF: close analytics/donor IOC graph (DuckPGQGraph)
         # DuckPGQGraph has checkpoint() and close() but no flush_buffers.
-        if self._ioc_graph is not None:
+        ioc_graph = gs.get_analytics_graph_for_synthesis() if gs else None
+        if ioc_graph is not None:
             try:
-                if callable(getattr(self._ioc_graph, "close", None)):
-                    await self._ioc_graph.close()
+                if callable(getattr(ioc_graph, "close", None)):
+                    await ioc_graph.close()
             except Exception:
                 pass
-            self._ioc_graph = None
 
         # Sprint 8SB: close semantic store
         if self._semantic_store is not None:
@@ -5993,13 +5515,13 @@ class DuckDBShadowStore:
             self._semantic_store = None
 
         # Sprint 8VQ: close STIX-only graph slot
-        if self._stix_graph is not None:
+        stix_graph = gs.get_stix_graph() if gs else None
+        if stix_graph is not None:
             try:
-                if callable(getattr(self._stix_graph, "close", None)):
-                    await self._stix_graph.close()
+                if callable(getattr(stix_graph, "close", None)):
+                    await stix_graph.close()
             except Exception:
                 pass
-            self._stix_graph = None
 
         # Sprint 8L: Do NOT shutdown the executor — keep it alive for re-initialization.
         # A new ThreadPoolExecutor cannot reuse the same thread, so we keep the
@@ -7169,132 +6691,88 @@ class DuckDBShadowStore:
 
     def _init_semantic_dedup_cache(self) -> None:
         """
-        Initialize semantic dedup cache (Sprint F195).
+        Initialize semantic dedup cache.
 
-        Memory-aware: skips init if RSS > 6GB threshold.
-        Fail-soft: any exception stored in _semantic_dedup_boot_error, dedup proceeds.
+        DEPRECATED (Sprint F222): Semantic dedup is now initialized by DedupManager.initialize().
+        This stub exists only for backward compat — calls are no longer emitted.
         """
-        try:
-            rss = psutil.Process().memory_info().rss
-            if rss > 6.0 * 1024**3:
-                self._semantic_dedup_cache = None
-                self._semantic_dedup_boot_error = "memory pressure — skipped"
-                return
-        except Exception:
-            pass
-
-        try:
-            from hledac.universal.paths import LMDB_ROOT
-
-            lmdb_path = str((LMDB_ROOT / "semantic_dedup.lmdb"))
-            from hledac.universal.semantic_deduplicator import SemanticDedupCache
-
-            self._semantic_dedup_cache = SemanticDedupCache(lmdb_path=lmdb_path)
-            self._semantic_dedup_boot_error = None
-        except Exception as e:
-            self._semantic_dedup_cache = None
-            self._semantic_dedup_boot_error = str(e)
+        # Sprint F222: DedupManager.initialize() now handles semantic dedup init.
+        # This method is never called in the F222 canonical path.
+        pass
 
     def _lookup_persistent_dedup(self, fp: str) -> Optional[str]:
         """
         Lookup a fingerprint in the persistent dedup LMDB.
 
-        Args:
-            fp: 32-char BLAKE2b fingerprint hex string
-
-        Returns:
-            finding_id string if found, None otherwise (miss or LMDB unavailable)
+        DEPRECATED (Sprint F222): Delegates to DedupManager.lookup_persistent_dedup().
+        Kept for backward compat during migration — remove when all callers migrated.
         """
-        if self._dedup_lmdb is None:
+        if self._dedup_manager is None:
             return None
-        try:
-            key = self._dedup_key_from_fingerprint(fp)
-            with self._dedup_lmdb._env.begin(write=False, buffers=True) as txn:
-                raw = txn.get(key)
-                if raw is None:
-                    return None
-                # buffers=True returns memoryview; convert to bytes for decode
-                return bytes(raw).decode("utf-8")
-        except Exception:
-            self._dedup_lmdb_last_error = f"lookup failed for fp={fp[:8]}"
-            return None
+        return self._dedup_manager.lookup_persistent_dedup(fp)
 
     def _store_persistent_dedup(self, fp: str, finding_id: str) -> None:
         """
         Store a fingerprint → finding_id mapping in persistent dedup LMDB.
 
-        Args:
-            fp: 32-char BLAKE2b fingerprint hex string
-            finding_id: canonical finding ID
+        DEPRECATED (Sprint F222): Delegates to DedupManager.store_persistent_dedup().
+        Kept for backward compat during migration — remove when all callers migrated.
         """
-        if self._dedup_lmdb is None:
+        if self._dedup_manager is None:
             return
-        try:
-            key = self._dedup_key_from_fingerprint(fp)
-            value_bytes = finding_id.encode("utf-8")
-            with self._dedup_lmdb._env.begin(write=True) as txn:
-                txn.put(key, value_bytes)
-        except Exception as e:
-            self._dedup_lmdb_last_error = f"store failed for fp={fp[:8]}: {e}"
+        self._dedup_manager.store_persistent_dedup(fp, finding_id)
 
     def _add_to_hot_cache(self, fp: str, finding_id: str) -> None:
         """
         Add entry to bounded hot cache with FIFO eviction.
 
-        Hard cap: _DEDUP_HOT_CACHE_MAX entries.
-        O(1) operations using OrderedDict: move_to_end() for MRU, popitem(last=False) for FIFO.
+        DEPRECATED (Sprint F222): Delegates to DedupManager.add_to_hot_cache().
+        Kept for backward compat during migration — remove when all callers migrated.
         """
-        if fp in self._dedup_hot_cache:
-            # Existing entry — bump access order to recent (MRU semantics)
-            # O(1) with OrderedDict
-            self._dedup_hot_cache_order.move_to_end(fp)
+        if self._dedup_manager is None:
             return
-        if len(self._dedup_hot_cache) >= _DEDUP_HOT_CACHE_MAX:
-            # FIFO eviction — O(1) with OrderedDict
-            oldest, _ = self._dedup_hot_cache_order.popitem(last=False)
-            self._dedup_hot_cache.pop(oldest, None)
-        self._dedup_hot_cache[fp] = finding_id
-        self._dedup_hot_cache_order[fp] = None  # value unused, order is all we need
+        self._dedup_manager.add_to_hot_cache(fp, finding_id)
 
     def _hot_cache_lookup(self, fp: str) -> Optional[str]:
-        """Bounded hot cache lookup."""
-        return self._dedup_hot_cache.get(fp)
+        """
+        Bounded hot cache lookup.
+
+        DEPRECATED (Sprint F222): Delegates to DedupManager.hot_cache_lookup().
+        Kept for backward compat during migration — remove when all callers migrated.
+        """
+        if self._dedup_manager is None:
+            return None
+        return self._dedup_manager.hot_cache_lookup(fp)
 
     def get_dedup_runtime_status(self) -> dict:
         """
-        Sprint 8AG §6.17 + 8AK + 8AV: Typed/cheap status surface for dedup subsystem.
+        Sprint 8AG §6.17 + 8AK + 8AV + F222: Typed/cheap status surface for dedup subsystem.
 
-        Sprint 8AK: Explicitly distinguishes in_memory vs persistent duplicate counts.
-
-        Sprint 8AV: Extended with ingest outcome counters to answer:
-          - Kolik findings bylo přijato vs odmítnuto?
-          - Z jakého důvodu byly odmítnuty?
-
-        Returns:
-            dict with:
-              - persistent_dedup_enabled: bool
-              - last_boot_cleanup_error: str | None
-              - last_dedup_error: str | None
-              - dedup_lmdb_path: str
-              - dedup_namespace: "dedup:"
-              - hot_cache_size: int
-              - hot_cache_capacity: int
-              - in_memory_duplicate_count: int  (hot-cache hits, same process)
-              - persistent_duplicate_count: int  (LMDB hits, cross-source)
-              - accepted_count: int  (findings that passed quality gate and were stored)
-              - low_information_rejected_count: int  (entropy below threshold)
-              - in_memory_duplicate_rejected_count: int  (hot-cache duplicate)
-              - persistent_duplicate_rejected_count: int  (LMDB cross-source duplicate)
-              - other_rejected_count: int  (fail-open exceptions during quality gate)
+        Sprint F222: Now delegates to DedupManager.get_runtime_status() for dedup-specific
+        fields. QualityAssessmentState fields still pulled from _quality_state.
         """
+        if self._dedup_manager is not None:
+            dedup_status = self._dedup_manager.get_runtime_status(self._quality_state)
+            # Merge dedup status with quality state counters (which live in store)
+            return {
+                **dedup_status,
+                "in_memory_duplicate_count": self._quality_state._quality_duplicate_count,
+                "persistent_duplicate_count": self._quality_state._persistent_duplicate_count,
+                "accepted_count": self._quality_state._accepted_count,
+                "low_information_rejected_count": self._quality_state._quality_rejected_count,
+                "in_memory_duplicate_rejected_count": self._quality_state._quality_duplicate_count,
+                "persistent_duplicate_rejected_count": self._quality_state._persistent_duplicate_count,
+                "other_rejected_count": self._quality_state._quality_fail_open_count,
+            }
+        # Fallback for pre-F222 stores without dedup_manager
         return {
-            "persistent_dedup_enabled": self._dedup_lmdb is not None,
-            "last_boot_cleanup_error": self._dedup_lmdb_boot_error,
-            "last_dedup_error": self._dedup_lmdb_last_error,
-            "dedup_lmdb_path": str(self._dedup_lmdb_path) if self._dedup_lmdb_path else "",
-            "dedup_namespace": self.DEDUP_NAMESPACE,
-            "hot_cache_size": len(self._dedup_hot_cache),
-            "hot_cache_capacity": _DEDUP_HOT_CACHE_MAX,
+            "persistent_dedup_enabled": False,
+            "last_boot_cleanup_error": None,
+            "last_dedup_error": None,
+            "dedup_lmdb_path": "",
+            "dedup_namespace": "dedup:",
+            "hot_cache_size": 0,
+            "hot_cache_capacity": 0,
             "in_memory_duplicate_count": self._quality_state._quality_duplicate_count,
             "persistent_duplicate_count": self._quality_state._persistent_duplicate_count,
             "accepted_count": self._quality_state._accepted_count,

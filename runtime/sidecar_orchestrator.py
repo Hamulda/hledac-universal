@@ -77,11 +77,9 @@ class SidecarDispatcher:
         self,
         bus: Any,
         governor: Any,
-        result_sink: Any,
     ) -> None:
         self._bus = bus
         self._governor = governor
-        self._result_sink = result_sink
         self._sidecars_skipped: set[str] = set()
 
     async def dispatch(
@@ -139,11 +137,6 @@ class SidecarDispatcher:
                     or "rss_exceeds" in sr.skipped_reason
                 ):
                     self._sidecars_skipped.add(sr.sidecar_name)
-                    if self._result_sink is not None:
-                        try:
-                            self._result_sink.sidecars_skipped.add(sr.sidecar_name)
-                        except Exception:
-                            pass
 
         except asyncio.CancelledError:
             raise
@@ -183,6 +176,7 @@ class SidecarOrchestrator:
     Attributes:
         result_sink: SprintSchedulerResult — all sidecar telemetry is written here.
         governor: M1 resource governor or None — used for RAM guard checks.
+        scheduler: SprintScheduler reference for deferred advisories.
         _dispatcher: SidecarDispatcher — handles batch dispatch bookkeeping.
     """
 
@@ -199,7 +193,6 @@ class SidecarOrchestrator:
         self._dispatcher = SidecarDispatcher(
             bus=self._bus,
             governor=governor,
-            result_sink=result_sink,
         )
         # Lazy adapters — created on first use
         self._leak_sentinel_adapter: Any | None = None

@@ -67,11 +67,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from .base import UniversalCoordinator
-from ..tools.url_dedup import RotatingBloomFilterAdapter
+from ..tools.url_dedup import RotatingBloomFilterAdapter, DeduplicationStrategy
 
 
 def _create_dedup_strategy():
-    # type: () -> RotatingBloomFilterAdapter
+    # type: () -> DeduplicationStrategy
     """Create the dedup strategy used by FetchCoordinator.
 
     Sprint F214AD: Factory shields callers from concrete RotatingBloomFilter type.
@@ -227,7 +227,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         # State
         self._frontier: deque = deque(maxlen=1000)
-        self._processed_urls = _create_dedup_strategy()
+        self._processed_urls: DeduplicationStrategy = _create_dedup_strategy()
         self._evidence_ids: deque = deque(maxlen=500)
         self._urls_fetched_count: int = 0
         self._stop_reason: Optional[str] = None

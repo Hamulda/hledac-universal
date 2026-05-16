@@ -815,14 +815,14 @@ class TestF65OwnershipInvariants:
     Verifies:
     1. acquire != phase enforcement
     2. unload != phase policy
-    3. SYNTHESIZE (Layer 1) ≠ SYNTHESIS (Layer 2)
+    3. GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2)
     4. capabilities.py is NOT load owner
     5. no third model truth emerges
     6. no new model framework created
     """
 
     def test_synthesize_vs_synthesis_are_different_strings(self):
-        """SYNTHESIZE (Layer 1) ≠ SYNTHESIS (Layer 2) — they must not be conflated."""
+        """GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2) — they must not be conflated."""
         # Direct import bypasses brain/__init__.py circular import
         import sys
         from pathlib import Path
@@ -840,15 +840,15 @@ class TestF65OwnershipInvariants:
         is_same_layer = mpf.is_same_layer
 
         # SYNTHESIZE is Layer 1 only
-        assert is_workflow_phase("SYNTHESIZE") is True
-        assert is_coarse_grained_phase("SYNTHESIZE") is False
+        assert is_workflow_phase("GENERATE") is True
+        assert is_coarse_grained_phase("GENERATE") is False
 
         # SYNTHESIS is Layer 2 only
         assert is_coarse_grained_phase("SYNTHESIS") is True
         assert is_workflow_phase("SYNTHESIS") is False
 
         # They are NOT the same layer
-        assert is_same_layer("SYNTHESIZE", "SYNTHESIS") is False
+        assert is_same_layer("GENERATE", "SYNTHESIS") is False
 
     def test_workflow_phases_not_in_coarse_grained(self):
         """No Layer 1 workflow phase string exists in Layer 2 coarse-grained set."""
@@ -894,7 +894,7 @@ class TestF65OwnershipInvariants:
 
         # Layer 1 — workflow-level
         assert get_phase_layer("PLAN") == 1
-        assert get_phase_layer("SYNTHESIZE") == 1
+        assert get_phase_layer("GENERATE") == 1
         assert get_phase_layer("EMBED") == 1
         assert get_phase_layer("NER") == 1
 

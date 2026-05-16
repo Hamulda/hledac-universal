@@ -1630,7 +1630,7 @@ Report piš v češtině, buď konkrétní a stručný."""
             }
 
         except Exception as e:
-            logger.warning(f"[SYNTHESIZE] Failed: {e}")
+            logger.warning(f"[GENERATE] Failed: {e}")
             return {
                 "report": f"Synthesis failed: {str(e)[:500]}",
                 "confidence": 0.0,

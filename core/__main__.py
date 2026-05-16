@@ -429,11 +429,14 @@ def _scheduler_result_acquisition_payload(
             prewindup_barrier=_pwb,
             scheduler_exit=_se_dict,
             windup_guard_observation=_wg_dict,
+            # F222L: Sprint query for lane eligibility matrix in acquisition report
+            query=query,
             # F216B: Nonfeed diagnostic profile telemetry (from _nd already built above)
-            acquisition_profile=_nd.get("acquisition_profile", "default") if _nd else "default",
+            # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
+            acquisition_profile=_nd.get("acquisition_profile", "default") if _nd else (_acq_effective or "default"),
             feed_cap_reason=_nd.get("feed_cap_reason") if _nd else None,
-            nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else False,
-            nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
+            nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic"),
+            nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else []),
             # F217C: PUBLIC bootstrap telemetry
             public_terminal_stage=getattr(result, "public_terminal_stage", ""),
             public_stage_counters=getattr(result, "public_stage_counters", None),
@@ -473,6 +476,31 @@ def _scheduler_result_acquisition_payload(
             nonfeed_candidate_ledger_summary=getattr(result, "nonfeed_candidate_ledger_summary", None),
             # F216E: Feed dominance budget telemetry (from _plan if available)
             feed_dominance_budget=getattr(_plan, "feed_dominance_budget", None) if _plan else None,
+            # F214: DOH acquisition report fields
+            doh_planned=getattr(result, "doh_planned", False),
+            doh_scheduled=getattr(result, "doh_scheduled", False),
+            doh_request_attempted=getattr(result, "doh_request_attempted", False),
+            doh_domains_attempted=getattr(result, "doh_domains_attempted", 0),
+            doh_raw_count=getattr(result, "doh_raw_count", 0),
+            doh_accepted_findings=getattr(result, "doh_accepted_findings", 0),
+            doh_terminal_stage=getattr(result, "doh_terminal_stage", ""),
+            doh_provider_errors=list(getattr(result, "doh_provider_errors", ()) or ()),
+            doh_cache_used=getattr(result, "doh_cache_used", False),
+            # F228C: Nonfeed surface completeness telemetry
+            nonfeed_expected_lanes=list(getattr(result, "nonfeed_expected_lanes", ()) or ()),
+            nonfeed_missing_expected_lanes=list(getattr(result, "nonfeed_missing_expected_lanes", ()) or ()),
+            wayback_terminal_state=getattr(result, "wayback_terminal_state", ""),
+            passive_dns_terminal_state=getattr(result, "passive_dns_terminal_state", ""),
+            nonfeed_surface_complete=getattr(result, "nonfeed_surface_complete", False),
+            # F222I: Pivot seed telemetry
+            pivot_seed_domains=tuple(getattr(result, "pivot_seed_domains", ()) or ()),
+            pivot_seed_ips=tuple(getattr(result, "pivot_seed_ips", ()) or ()),
+            pivot_seed_urls=tuple(getattr(result, "pivot_seed_urls", ()) or ()),
+            pivot_seed_hashes=tuple(getattr(result, "pivot_seed_hashes", ()) or ()),
+            pivot_seed_cves=tuple(getattr(result, "pivot_seed_cves", ()) or ()),
+            seed_context_available=bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),
+            seed_context_propagated=bool(getattr(result, "seed_context_propagated", False)),
+            lanes_unlocked_by_seed_context=list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
         )
         # F224: Ensure acquisition_prelude is surfaced in acquisition_report
         # build_acquisition_report does not yet have acquisition_prelude params,
@@ -512,6 +540,33 @@ def _scheduler_result_acquisition_payload(
         _acq_report["ct_quarantine_samples"] = list(
             getattr(result, "ct_quarantine_samples", ()) or ()
         )
+        # F222L: Reconcile CT fields from source_family_outcomes when result fields are stale
+        # If source_family_outcomes shows CT was attempted but ct_request_attempted=False (stale),
+        # derive minimal CT telemetry from the outcome so the report is consistent.
+        if _sfo_list:
+            for _sfo in _sfo_list:
+                if _sfo.get("family") == "CT" and _sfo.get("attempted"):
+                    if not getattr(result, "ct_request_attempted", False):
+                        _acq_report["ct_request_attempted"] = True
+                    if not getattr(result, "ct_terminal_stage", ""):
+                        _acq_report["ct_terminal_stage"] = _sfo.get("error") or "attempted_error"
+                    if getattr(result, "ct_raw_count", 0) == 0 and _sfo.get("raw_count"):
+                        _acq_report["ct_raw_count"] = _sfo.get("raw_count", 0)
+                    if getattr(result, "ct_storage_attempted", False) is False and _sfo.get("accepted_count", 0) > 0:
+                        _acq_report["ct_storage_attempted"] = True
+                    break
+        # F222L: Seed context — if pivot seeds exist but seed_context fields are absent,
+        # derive explicit skip reason so the report is not silently blank.
+        if not _acq_report.get("seed_context_available"):
+            _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())
+            if _has_seeds:
+                _acq_report["seed_context_available"] = True
+                _acq_report["seed_context_propagated"] = getattr(result, "seed_context_propagated", False)
+                if not _acq_report.get("seed_context_skip_reason"):
+                    _acq_report["seed_context_skip_reason"] = ""
+            else:
+                if not _acq_report.get("seed_context_skip_reason"):
+                    _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
     except Exception as _exc:
         logger.exception(
             "[F234-FALLBACK] build_acquisition_report raised — "
@@ -553,10 +608,13 @@ def _scheduler_result_acquisition_payload(
                 # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
                 "acquisition_profile": _fallback_profile,
                 "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
+                # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
                 "nonfeed_priority_enabled": (
-                    _nd.get("nonfeed_priority_enabled", False) if _nd else False
+                    _nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic")
                 ),
-                "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else [],
+                "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
+                    ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else []
+                ),
                 # F217C: PUBLIC bootstrap telemetry
                 "public_terminal_stage": getattr(result, "public_terminal_stage", ""),
                 "public_stage_counters": getattr(result, "public_stage_counters", None),
@@ -590,17 +648,7 @@ def _scheduler_result_acquisition_payload(
                 ),
                 # F216E: Feed dominance budget telemetry
                 "feed_dominance_budget": getattr(_plan, "feed_dominance_budget", None) if _plan else None,
-                # F214: DOH acquisition report fields (mirrored from CT pattern)
-                "doh_planned": getattr(result, "doh_planned", False),
-                "doh_scheduled": getattr(result, "doh_scheduled", False),
-                "doh_request_attempted": getattr(result, "doh_request_attempted", False),
-                "doh_domains_attempted": getattr(result, "doh_domains_attempted", 0),
-                "doh_raw_count": getattr(result, "doh_raw_count", 0),
-                "doh_accepted_findings": getattr(result, "doh_accepted_findings", 0),
-                "doh_terminal_stage": getattr(result, "doh_terminal_stage", ""),
-                "doh_provider_errors": list(getattr(result, "doh_provider_errors", ()) or ()),
-                "doh_cache_used": getattr(result, "doh_cache_used", False),
-                # F229A: PUBLIC bootstrap ordering telemetry
+                # F214: DOH acquisition report fields (fallback path)
                 "public_bootstrap_order": getattr(result, "public_bootstrap_order", "disabled"),
                 "public_bootstrap_prevented_discovery_timeout": getattr(
                     result, "public_bootstrap_prevented_discovery_timeout", False
@@ -635,10 +683,52 @@ def _scheduler_result_acquisition_payload(
                 "nonfeed_surface_complete": getattr(result, "nonfeed_surface_complete", False),
                 # F217E: Nonfeed candidate ledger summary
                 "nonfeed_candidate_ledger_summary": getattr(result, "nonfeed_candidate_ledger_summary", None),
+                # F214: DOH acquisition report fields (fallback path)
+                "doh_planned": getattr(result, "doh_planned", False),
+                "doh_scheduled": getattr(result, "doh_scheduled", False),
+                "doh_request_attempted": getattr(result, "doh_request_attempted", False),
+                "doh_domains_attempted": getattr(result, "doh_domains_attempted", 0),
+                "doh_raw_count": getattr(result, "doh_raw_count", 0),
+                "doh_accepted_findings": getattr(result, "doh_accepted_findings", 0),
+                "doh_terminal_stage": getattr(result, "doh_terminal_stage", ""),
+                "doh_provider_errors": list(getattr(result, "doh_provider_errors", ()) or ()),
+                "doh_cache_used": getattr(result, "doh_cache_used", False),
+                # F222I: Pivot seed telemetry (fallback path)
+                "pivot_seed_domains": list(getattr(result, "pivot_seed_domains", ()) or ()),
+                "pivot_seed_ips": list(getattr(result, "pivot_seed_ips", ()) or ()),
+                "pivot_seed_urls": list(getattr(result, "pivot_seed_urls", ()) or ()),
+                "pivot_seed_hashes": list(getattr(result, "pivot_seed_hashes", ()) or ()),
+                "pivot_seed_cves": list(getattr(result, "pivot_seed_cves", ()) or ()),
+                "seed_context_available": bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),
+                "seed_context_propagated": getattr(result, "seed_context_propagated", False),
+                "lanes_unlocked_by_seed_context": list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
                 # NOTE R1: surfaced from scheduler runtime
                 "budget_violations": getattr(result, "budget_violations", 0),
                 "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",
             }
+            # F222L: Reconcile CT fields from source_family_outcomes in fallback path too
+            for _sfo in _sfo_list:
+                if _sfo.get("family") == "CT" and _sfo.get("attempted"):
+                    if not _acq_report.get("ct_request_attempted"):
+                        _acq_report["ct_request_attempted"] = True
+                    if not _acq_report.get("ct_terminal_stage"):
+                        _acq_report["ct_terminal_stage"] = _sfo.get("error") or "attempted_error"
+                    if _acq_report.get("ct_raw_count", 0) == 0 and _sfo.get("raw_count"):
+                        _acq_report["ct_raw_count"] = _sfo.get("raw_count", 0)
+                    if not _acq_report.get("ct_storage_attempted") and _sfo.get("accepted_count", 0) > 0:
+                        _acq_report["ct_storage_attempted"] = True
+                    break
+            # F222L: Seed context skip reason in fallback path
+            if not _acq_report.get("seed_context_available"):
+                _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())
+                if _has_seeds:
+                    _acq_report["seed_context_available"] = True
+                    _acq_report["seed_context_propagated"] = getattr(result, "seed_context_propagated", False)
+                    if not _acq_report.get("seed_context_skip_reason"):
+                        _acq_report["seed_context_skip_reason"] = ""
+                else:
+                    if not _acq_report.get("seed_context_skip_reason"):
+                        _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
         except Exception as _fallback_exc:
             logger.critical(
                 "FALLBACK ALSO FAILED — acquisition report unavailable: %s: %s",

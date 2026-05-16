@@ -3059,7 +3059,7 @@ async def run_enabled_acquisition_lanes(
         start = time.monotonic()
         # [F207I-B] Shape domain-only query via build_lane_query
         # [F222I] If seed_context is provided, use domain seed for targeted query
-        _raw = build_lane_query(query, AcquisitionLane.CT, seed_ctx)
+        _raw = build_lane_query(query, AcquisitionLane.CT, seed_context)
         shaped_query = _raw if isinstance(_raw, str) else ""
         ct_error: str | None = None
         ct_results_raw = 0
@@ -3188,7 +3188,7 @@ async def run_enabled_acquisition_lanes(
         try:
             async with asyncio.timeout(plan.timeout_s):
                 # [F222I] Shape URL/domain-only query via build_lane_query
-                shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_ctx)
+                shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context)
                 shaped_query_str = shaped_query if isinstance(shaped_query, str) else query
                 miner = _WDM()
                 try:
@@ -3273,7 +3273,7 @@ async def run_enabled_acquisition_lanes(
         start = time.monotonic()
         # [F207I-B] Shape domain/IP-only query via build_lane_query
         # [F222I] If seed_ctx is provided, use domain/IP seed for targeted query
-        _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_ctx)
+        _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_context)
         shaped_query = _raw if isinstance(_raw, str) else ""
         pdns_error: str | None = None
         produced = 0
@@ -3649,7 +3649,7 @@ async def run_enabled_acquisition_lanes(
 
         # F222B: DOH is domain-scoped — extract domain via build_lane_query
         # [F222I] If seed_ctx is provided, use domain seed for targeted query
-        shaped_query = build_lane_query(query, AcquisitionLane.DOH, seed_ctx)
+        shaped_query = build_lane_query(query, AcquisitionLane.DOH, seed_context)
         if shaped_query is None or (isinstance(shaped_query, dict) and shaped_query.get("_disabled")):
             return AcquisitionLaneOutcome(
                 lane=AcquisitionLane.DOH,

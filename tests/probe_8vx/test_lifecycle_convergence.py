@@ -265,7 +265,7 @@ class TestWorkflowControlWindupSeparation:
         names = [p.name for p in SprintPhase]
         assert "WINDUP_LOCAL" not in names
         assert "GATHER" not in names
-        assert "SYNTHESIZE" not in names
+        assert "GENERATE" not in names
 
     def test_recommended_tool_mode_not_phase_enum(self):
         """recommended_tool_mode is control surface, not a workflow phase."""

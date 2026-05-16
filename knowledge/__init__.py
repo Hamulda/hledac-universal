@@ -28,6 +28,8 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "ReplayResult": "knowledge.duckdb_store",
     "CanonicalFinding": "knowledge.duckdb_store",
     "create_owned_store": "knowledge.duckdb_store",
+    # graph_attachment — lightweight (no heavy deps)
+    "GraphAttachmentStore": "knowledge.graph_attachment",
     # context_graph — lightweight (no heavy deps), kept eager
     "ContextGraph": "knowledge.context_graph",
     # graph_layer — heavy: kuzu, duckdb

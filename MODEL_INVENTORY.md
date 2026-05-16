@@ -10,7 +10,7 @@
 
 | # | Model / Component | Type | Backend | Files (lines) | Connected To | Purpose | Lifecycle | Memory | Tokenizer | Status |
 |---|-------------------|------|---------|---------------|--------------|---------|-----------|--------|-----------|--------|
-| 1 | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | LLM | mlx-lm | `brain/hermes3_engine.py:128` (config), `brain/hermes3_engine.py:756` (load), `config.py:44`, `project_types.py:191` | Hermes3Engine, ModelManager (PLAN/DECIDE/SYNTHESIZE phases) | Decision making, structured JSON generation, ChatML format | Lazy-loaded via Hermes3Engine.load(), 7K unload sequence | ~2.0GB, KV: max_kv_size=8192, kv_bits=4 at generate time | Own tokenizer via `mlx_lm.load()` | **RUNTIME ACTIVE** |
+| 1 | `mlx-community/Hermes-3-Llama-3.2-3B-4bit` | LLM | mlx-lm | `brain/hermes3_engine.py:128` (config), `brain/hermes3_engine.py:756` (load), `config.py:44`, `project_types.py:191` | Hermes3Engine, ModelManager (PLAN/DECIDE/GENERATE phases) | Decision making, structured JSON generation, ChatML format | Lazy-loaded via Hermes3Engine.load(), 7K unload sequence | ~2.0GB, KV: max_kv_size=8192, kv_bits=4 at generate time | Own tokenizer via `mlx_lm.load()` | **RUNTIME ACTIVE** |
 | 2 | `nomic-ai/modernbert-embed-base` | Embedding | mlx-embeddings | `embeddings/modernbert_embedder.py:62` (default), `core/mlx_embeddings.py:86` (DEFAULT_MODEL), `utils/semantic.py:110` (DEFAULT_MODEL) | ModernBERTEmbedder, MLXEmbeddingManager, SemanticFilter | Text embeddings (768d) for dedup, routing, search | Lazy-loaded (lazy_load=True default) | ~0.5GB | Own via mlx-embeddings processor | **RUNTIME ACTIVE** |
 | 3 | `knowledgator/gliner-x-base` | NER+RE | GLiNER (CPU/PyTorch) | `config.py:46` (config), `brain/model_manager.py:299` (DEFAULT_MODEL for relex) | ModelManager (NER/ENTITY phase) | Entity extraction, relation extraction | Loaded by ModelManager acquire_model_ctx | ~0.3GB | GLiNER owns tokenizer | **RUNTIME ACTIVE** |
 | 4 | `ms-marco-MiniLM-L-12-v2` | Reranker | FlashRank/ONNX | `tools/reranker.py:65` (default), `brain/synthesis_runner.py:309` (singleton) | LightweightReranker, SynthesisRunner._rerank_pass() | Cross-encoder reranking before LLM synthesis | Singleton, loaded once per process | ~4MB | FlashRank internal | **RUNTIME ACTIVE** |
@@ -36,7 +36,7 @@ The **canonical 3-model runtime plane** is governed by `brain/model_manager.py` 
 |-------|----------|-----------|---------------|
 | PLAN | `hermes` | LLM (Hermes-3) | `brain/hermes3_engine.py` |
 | DECIDE | `hermes` | LLM (Hermes-3) | `brain/hermes3_engine.py` |
-| SYNTHESIZE | `hermes` | LLM (Hermes-3) | `brain/hermes3_engine.py` |
+| GENERATE | `hermes` | LLM (Hermes-3) | `brain/hermes3_engine.py` |
 | EMBED | `modernbert` | Embedding (ModernBERT) | `embeddings/modernbert_embedder.py` + `core/mlx_embeddings.py` |
 | DEDUP | `modernbert` | Embedding (ModernBERT) | `embeddings/modernbert_embedder.py` + `utils/deduplication.py` |
 | ROUTING | `modernbert` | Embedding (ModernBERT) | `embeddings/modernbert_embedder.py` |

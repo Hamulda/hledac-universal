@@ -2,15 +2,15 @@
 Universal Memory Coordinator
 ============================
 
-Integrated memory management combining:
-- M1 Master Optimizer: Aggressive GC, MLX cache, zones (BRAIN, TOOLS, SYNTHESIS, SYSTEM)
-- Universal Infrastructure: Zones (CRITICAL, HIGH, MEDIUM, LOW), async cleanup
+Memory management combining:
+- Priority-based zones (CRITICAL, HIGH, MEDIUM, LOW)
+- Aggressive garbage collection with MLX cache clearing via mlx_memory adapter
 - Thread-safe operations with locks
 - Memory pressure callbacks
 
 Features:
-- Dual zone systems (M1 Master + Universal)
-- Aggressive garbage collection with MLX cache clearing
+- Single unified zone system (collapsed dual zones in F214)
+- MLX cache management delegated to utils/mlx_memory.py
 - Allocation tracking with eviction callbacks
 - Memory pressure monitoring with callbacks
 - Thread-safe operations
@@ -272,6 +272,7 @@ class NeuromorphicMemoryManager:
 
         # Random source and target indices (lazy numpy)
         _np = _get_np()
+        assert _np is not None, "numpy required for neuromorphic initialization"
         sources = _np.random.randint(0, self.n_neurons, n_connections)
         targets = _np.random.randint(0, self.n_neurons, n_connections)
 
@@ -284,7 +285,9 @@ class NeuromorphicMemoryManager:
         weights = _np.clip(weights, self.stdp_params.w_min, self.stdp_params.w_max)
 
         # Create sparse matrix in COO format then convert to CSR
-        self.synaptic_weights = _get_sparse().csr_matrix(
+        _sparse = _get_sparse()
+        assert _sparse is not None, "scipy.sparse required for neuromorphic initialization"
+        self.synaptic_weights = _sparse.csr_matrix(
             (weights, (sources, targets)),
             shape=(self.n_neurons, self.n_neurons)
         )
@@ -339,6 +342,7 @@ class NeuromorphicMemoryManager:
             Weight change amount
         """
         _np = _get_np()
+        assert _np is not None, "numpy required for STDP update"
         if delta_t > 0:
             # Long-Term Potentiation (LTP) - pre before post
             delta_w = self.stdp_params.A_plus * _np.exp(-delta_t / self.stdp_params.tau_plus)
@@ -494,7 +498,9 @@ class NeuromorphicMemoryManager:
             # Combine with original (weighted average)
             completed = 0.7 * partial_activations + 0.3 * propagated
             # Apply threshold
-            completed = _get_np().clip(completed, 0, 1)
+            _np = _get_np()
+            assert _np is not None, "numpy required for pattern completion"
+            completed = _np.clip(completed, 0, 1)
 
         return completed
 
@@ -569,7 +575,9 @@ class NeuromorphicMemoryManager:
         n_samples = min(n_replays, len(memories))
 
         for _ in range(n_samples):
-            pattern = memories[_get_np().random.randint(len(memories))]
+            _np = _get_np()
+            assert _np is not None, "numpy required for memory replay"
+            pattern = memories[_np.random.randint(len(memories))]
             # Strengthen memory
             pattern.reinforce(0.1)
             # Re-activate pattern
@@ -663,26 +671,18 @@ class ThermalState(IntEnum):
 
 class MemoryZone(Enum):
     """
-    Memory zones for different components.
-    
-    M1 Master zones:
-    - BRAIN: For models (cannot evict during inference)
-    - TOOLS: For tools (higher priority)
-    - SYNTHESIS: For synthesis (medium priority)
-    - SYSTEM: System memory (low priority)
-    
-    Universal zones:
-    - CRITICAL: Cannot release
-    - HIGH: Important, avoid eviction
-    - MEDIUM: Standard
+    Memory zones for allocation priority.
+
+    Priority tiers (eviction order from most to least evictable):
     - LOW: Easily evictable
+    - MEDIUM: Standard allocations
+    - HIGH: Important, avoid eviction
+    - CRITICAL: Cannot release
+
+    Note: BRAIN/TOOLS/SYNTHESIS/SYSTEM were removed in F214 — dual zone
+    system collapsed to single priority-based system.
     """
-    # M1 Master zones
-    BRAIN = "brain"
-    TOOLS = "tools"
-    SYNTHESIS = "synthesis"
-    SYSTEM = "system"
-    # Universal zones
+    # Universal priority zones (replaces former M1 Master + Universal dual system)
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -861,11 +861,12 @@ class UniversalMemoryCoordinator:
 
     def get_pressure_level(self) -> str:
         """Returns memory pressure level."""
-        if self._current_memory_pressure == MemoryPressureLevel.CRITICAL:
+        current = self._calculate_pressure_level()
+        if current == MemoryPressureLevel.CRITICAL:
             return "critical"
-        elif self._current_memory_pressure == MemoryPressureLevel.HIGH:
+        elif current == MemoryPressureLevel.HIGH:
             return "high"
-        elif self._current_memory_pressure == MemoryPressureLevel.ELEVATED:
+        elif current == MemoryPressureLevel.ELEVATED:
             return "elevated"
         return "normal"
 
@@ -1268,15 +1269,14 @@ class UniversalMemoryCoordinator:
         }
 
         try:
-            # Clear MLX cache (critical for M1)
+            # Clear MLX cache via canonical mlx_memory adapter
             try:
-                import mlx.core as mx
-                mx.eval([])
-                mx.metal.clear_cache()
-                results["mlx_cache_cleared"] = True
-                logger.info("✓ MLX cache cleared")
+                from hledac.utils.mlx_memory import clear_mlx_cache as _clear_mlx_cache
+                results["mlx_cache_cleared"] = _clear_mlx_cache()
+                if results["mlx_cache_cleared"]:
+                    logger.info("✓ MLX cache cleared")
             except ImportError:
-                logger.debug("MLX not available for cache clearing")
+                logger.debug("mlx_memory not available, skipping MLX cache clear")
 
             # Cleanup neuromorphic memory
             if self._neuro_memory:
@@ -1314,7 +1314,7 @@ class UniversalMemoryCoordinator:
 
         return results
 
-    async def cleanup(self, level: MemoryPressureLevel = None) -> bool:
+    async def cleanup(self, level: Optional[MemoryPressureLevel] = None) -> bool:
         """
         Async cleanup with zone-based eviction.
         
@@ -1340,10 +1340,9 @@ class UniversalMemoryCoordinator:
             # Release MEDIUM zone
             released |= self.clear_zone(MemoryZone.MEDIUM) > 0
         
-        # M1 Master zones cleanup (for CRITICAL only)
+        # HIGH zone cleanup (for CRITICAL only)
         if level == MemoryPressureLevel.CRITICAL:
-            released |= self.clear_zone(MemoryZone.SYSTEM) > 0
-            released |= self.clear_zone(MemoryZone.SYNTHESIS) > 0
+            released |= self.clear_zone(MemoryZone.HIGH) > 0
         
         # Aggressive cleanup
         cleanup_result = self.aggressive_cleanup()
@@ -1624,7 +1623,7 @@ class UniversalMemoryCoordinator:
             zone=zone,
             size_bytes=size,
             priority=5,
-            evictable=(zone in [MemoryZone.LOW, MemoryZone.MEDIUM, MemoryZone.SYSTEM])
+            evictable=(zone in [MemoryZone.LOW, MemoryZone.MEDIUM])
         )
 
     # ========================================================================
@@ -1724,8 +1723,8 @@ class UniversalMemoryCoordinator:
         self,
         filter_id: str,
         urls: List[str],
-        domains: List[str] = None,
-        patterns: List[str] = None
+        domains: Optional[List[str]] = None,
+        patterns: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Add blocked URLs, domains, or patterns to filter.
@@ -2049,7 +2048,7 @@ class ContextOptimizationManager:
         self,
         item_id: str,
         content: str,
-        metadata: Dict[str, Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         priority: ContextPriority = ContextPriority.MEDIUM,
         phase: ResearchPhase = ResearchPhase.DATA_COLLECTION
     ) -> bool:
