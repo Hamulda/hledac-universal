@@ -9743,7 +9743,35 @@ class SprintScheduler:
                 "errors": _rg_errors,
             }
             # Build prewindup_barrier dict
-            _pwb = self._get_prewindup_barrier_report() if hasattr(self, "_get_prewindup_barrier_report") else None
+            # F214WINDUP-FIX: ALWAYS call _get_prewindup_barrier_report if available,
+            # even when barrier was already checked. When prewindup_barrier_checked=True
+            # but barrier dict is None (e.g. required=()), _get_prewindup_barrier_report
+            # returns None — but the barrier WAS checked and satisfied. Pass checked=True
+            # explicitly in the dict so live_measurement_parser can read it even when
+            # the barrier dict itself is None.
+            _pwb = None
+            if hasattr(self, "_get_prewindup_barrier_report"):
+                _pwb = self._get_prewindup_barrier_report()
+                # If barrier was checked but dict is None, inject checked=True so the
+                # live_measurement_parser can determine prewindup_barrier_checked=True
+                # even when no barrier telemetry was produced (active300 early exit case)
+                if _pwb is None and getattr(self._result, "prewindup_barrier_checked", False):
+                    _pwb = {
+                        "checked": True,
+                        "satisfied": getattr(self._result, "prewindup_barrier_satisfied", True),
+                        "required_lanes": (),
+                        "attempted_lanes": (),
+                        "skipped_lanes": {},
+                        "errors": {},
+                        "windup_delayed": getattr(self._result, "windup_delayed_for_nonfeed", False),
+                        "nonfeed_scheduler_gap_resolved": getattr(
+                            self._result, "nonfeed_scheduler_gap_resolved", None
+                        ),
+                    }
+                    _logger.debug(
+                        "[F214WINDUP] Synthetic prewindup_barrier injected: barrier checked=True "
+                        "but _get_prewindup_barrier_report() returned None (active300 early exit)"
+                    )
             # Build scheduler_exit dict (same as report["scheduler_exit"])
             _se_dict = {
                 "exit_path": _se_path,
@@ -11452,13 +11480,35 @@ class SprintScheduler:
                 else:
                     branch_mix_health = "balanced_low_yield"
 
+            # F214: Feed-only override — when feed dominates and no nonfeed evidence exists,
+            # signal cannot be "corroborated" (requires multiple source families).
+            # Override dominant_path and is_corroborated to reflect single-source reality.
+            feed_dominance_override = (
+                self._result.feed_dominance_ratio is not None
+                and self._result.feed_dominance_ratio >= 0.95
+                and (self._result.public_accepted_findings or 0) == 0
+                and (
+                    self._result.lane_ct_accepted_findings
+                    + self._result.lane_wayback_accepted_findings
+                    + self._result.lane_pdns_accepted_findings
+                    + self._result.lane_blockchain_accepted_findings
+                    + self._result.lane_ipfs_accepted_findings
+                    + self._result.lane_doh_accepted_findings
+                ) == 0
+            )
+            if feed_dominance_override:
+                dominant_path = "feed"
+                is_corroborated_flag = False
+            else:
+                is_corroborated_flag = cross_conf > 0.4
+
             result["signal_path"] = {
                 "dominant_signal_path": dominant_path,
                 "next_pivot_recommendation": next_pivot,
                 "corroboration_score": corroboration_score,
                 "branch_mix_health": branch_mix_health,
                 "is_noisy": sig_quality == "weak" and cross_conf < 0.2,
-                "is_corroborated": cross_conf > 0.4,
+                "is_corroborated": is_corroborated_flag,
                 "campaign_signal": camp_conf > 0.3,
             }
         except Exception:
@@ -11535,6 +11585,16 @@ class SprintScheduler:
             total_findings = (br_val.get("feed_findings", 0) or 0) + (br_val.get("public_findings", 0) or 0)
             if total_findings == 0:
                 posture = "depleted"
+            # F214: Feed-only override — check before is_corroborated to ensure
+            # feed-only runs with no nonfeed evidence are NOT labeled corroborated
+            elif (
+                self._result.feed_dominance_ratio is not None
+                and self._result.feed_dominance_ratio >= 0.95
+                and (br_val.get("public_findings", 0) or 0) == 0
+                and (br_val.get("feed_findings", 0) or 0) > 0
+            ):
+                # Feed-only run: signal is not corroborated (single source)
+                posture = "noisy"  # feed-only is inherently noisy — one source family
             elif is_noisy and avg_noise > 0.4:
                 posture = "noisy"
             elif is_corroborated and corroboration_score > 0.35:

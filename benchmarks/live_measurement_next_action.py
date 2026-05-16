@@ -92,10 +92,18 @@ def _rule0g_prewindup_barrier(inp: NextActionInput) -> tuple[str, str | None] | 
     prewindup_required_lanes = inp.prewindup_required_lanes or []
     prewindup_attempted_lanes = inp.prewindup_attempted_lanes or []
     has_barrier_telemetry = inp.acquisition_strategy is not None and bool(inp.acquisition_strategy)
+    # F214WINDUP-FIX: barrier callback IS executed (windup_guard_observation.callback_executed_count=1)
+    # but prewindup_barrier_checked=False in acquisition_strategy flat field because the
+    # fallback report was written at prelude time (before loop). Derive barrier state from
+    # windup_guard_observation which is populated by the lifecycle runner's windup_guard() callback.
+    # Barrier is considered "called" when callback was executed (callback_executed_count > 0).
+    wg = inp.windup_guard_observation or {}
+    wg_exec = wg.get("callback_executed_count", 0)
+    barrier_checked = wg_exec > 0
     if has_barrier_telemetry and inp.runtime_truth.get("cycles_started", 0) > 0:
-        if inp.prewindup_barrier_checked is False:
+        if not barrier_checked:
             return ("fix_prewindup_barrier_not_called", None)
-        if inp.prewindup_barrier_checked is True and not inp.prewindup_barrier_satisfied:
+        if barrier_checked and not inp.prewindup_barrier_satisfied:
             missing = [lane for lane in prewindup_required_lanes if lane not in prewindup_attempted_lanes]
             if missing:
                 return (f"fix_prewindup_barrier_missing_lane:{missing[0]}", f"missing:{','.join(missing)}")

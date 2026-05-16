@@ -329,7 +329,10 @@ def _scheduler_result_acquisition_payload(
     }
 
     # ── 5. Pre-windup barrier ───────────────────────────────────────────────
-    _pwb: dict = {
+    # F234-F220: Use canonical key format for prewindup_barrier.
+    # _get_prewindup_barrier_report() returns {checked, satisfied, required_lanes, ...}.
+    # Fallback: project flat SprintSchedulerResult field names onto canonical keys.
+    _pwb_raw: dict = {
         "prewindup_barrier_checked": getattr(result, "prewindup_barrier_checked", False),
         "prewindup_barrier_required_lanes": list(
             getattr(result, "prewindup_barrier_required_lanes", ()) or ()
@@ -343,6 +346,21 @@ def _scheduler_result_acquisition_payload(
         ),
         "prewindup_barrier_errors": dict(getattr(result, "prewindup_barrier_errors", {}) or {}),
         "prewindup_barrier_duration_s": getattr(result, "prewindup_barrier_duration_s", 0.0),
+    }
+    # Canonicalize to {checked, satisfied, required_lanes, ...} for build_acquisition_report
+    # F234-F220: Also include windup_delayed / nonfeed_scheduler_gap_resolved used by parser
+    _pwb: dict = {
+        "checked": _pwb_raw.get("prewindup_barrier_checked", False),
+        "satisfied": _pwb_raw.get("prewindup_barrier_satisfied", False),
+        "required_lanes": _pwb_raw.get("prewindup_barrier_required_lanes", ()),
+        "attempted_lanes": _pwb_raw.get("prewindup_barrier_attempted_lanes", ()),
+        "skipped_lanes": _pwb_raw.get("prewindup_barrier_skipped_lanes", {}),
+        "errors": _pwb_raw.get("prewindup_barrier_errors", {}),
+        "duration_s": _pwb_raw.get("prewindup_barrier_duration_s", 0.0),
+        "windup_delayed": getattr(result, "windup_delayed_for_nonfeed", False),
+        "nonfeed_scheduler_gap_resolved": getattr(
+            result, "nonfeed_scheduler_gap_resolved", None
+        ),
     }
 
     # ── 6. Acquisition terminality ───────────────────────────────────────────

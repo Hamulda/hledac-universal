@@ -876,6 +876,11 @@ def _build_product_value_summary(
     # data, compute from runtime values so PVS doesn't show 0.0 for a productive sprint.
     if findings_per_minute == 0.0 and runtime_findings_per_minute > 0:
         findings_per_minute = runtime_findings_per_minute
+    # [F221C] Fallback: if runtime_findings_per_minute is 0.0 because actual_duration
+    # was unavailable (empty phase_timings) but findings_per_minute is already valid,
+    # propagate it so runtime_findings_per_minute doesn't show 0.0 for a productive sprint.
+    if runtime_findings_per_minute == 0.0 and findings_per_minute > 0:
+        runtime_findings_per_minute = findings_per_minute
 
     # 2. Dedup status — Sprint 8AV extended ingest outcome counters
     dedup_status: dict[str, Any] | None = None

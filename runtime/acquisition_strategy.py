@@ -632,7 +632,10 @@ def required_terminal_lanes(
         )
     )
 
-    # PUBLIC — required for domain queries under ok/warn
+    # [F221A] PUBLIC — required for domain queries under ok/warn
+    # F221A: also required for non-domain threat/malware queries (advisory lane,
+    # does not need domain seeds — can discover infrastructure from text search)
+    _is_threat_query = _has_threat_indicator(query)
     if has_domain and uma_state in ("ok", "warn"):
         lanes.append(
             MandatoryLaneTerminality(
@@ -640,6 +643,27 @@ def required_terminal_lanes(
                 required=True,
                 reason="domain_query_requires_public",
                 allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    # F221A: threat query without domain — PUBLIC required as advisory
+    elif _is_threat_query and uma_state in ("ok", "warn"):
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=True,
+                reason="threat_query_requires_public",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    # F221A: threat query in critical — explicit skip allowed
+    elif _is_threat_query and is_critical:
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="critical_allows_explicit_skip",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
             )
         )
     # critical: explicit skip allowed with memory_critical
@@ -665,7 +689,7 @@ def required_terminal_lanes(
             )
         )
     else:
-        # non-domain or non-critical: not required
+        # non-domain, non-threat: not required
         lanes.append(
             MandatoryLaneTerminality(
                 lane=AcquisitionLane.PUBLIC,
@@ -2401,6 +2425,28 @@ def _has_crypto_hash(query: str) -> bool:
 
 def _has_crypto_indicator(query: str) -> bool:
     return _has_crypto_wallet(query) or _has_crypto_hash(query)
+
+
+# [F221A] Threat indicator detection — non-domain malware/ransomware/C2 queries
+_THREAT_INDICATOR_RE = re.compile(
+    r"(ransomware|malware|c2|command[- ]and[- ]control|botnet|trojan|keylogger"
+    r"|spyware|adware|loader|dropper|payload|c2[._-]?(?:server|panel|callback)"
+    r"|darkweb|tor-hidden|onion[-\s]service|illicit[.]exchange|breach[- ]forum"
+    r"|stolen[- ]?credential|stolen credentials|leaked[- ]data|exploit[- ]kit|packer|obfuscator"
+    r"|infostealer|stealer|keylog|rootkit|backdoor|rat[- ](?:server|client)"
+    r"|apt\d*[- ](?:group|team|campaign|actor)|apt29|nation[- ]state|advanced[- ]persistent)",
+    re.IGNORECASE,
+)
+
+
+def _has_threat_indicator(query: str) -> bool:
+    """Return True if query contains threat/crime indicators suggesting active investigation.
+
+    Used by required_terminal_lanes() to ensure PUBLIC lane is mandatory for threat
+    queries even when no domain/IP is present — PUBLIC can discover infrastructure
+    from text search results alone (no seeds required).
+    """
+    return bool(_THREAT_INDICATOR_RE.search(query))
 
 
 # ── Concurrency presets ──────────────────────────────────────────────────────
