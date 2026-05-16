@@ -439,6 +439,8 @@ def _scheduler_result_acquisition_payload(
             public_stage_counters=getattr(result, "public_stage_counters", None),
             # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
             public_discovery_empty_reason=getattr(result, "public_discovery_empty_reason", ""),
+            # F221G: Preserved diagnostic when empty_reason was cleared due to accepted findings
+            public_discovery_debug_reason=getattr(result, "public_discovery_debug_reason", ""),
             # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
             public_provider_selection_debug=getattr(result, "public_provider_selection_debug", None) or {},
             # F217D: CT provider resilience telemetry
@@ -533,6 +535,20 @@ def _scheduler_result_acquisition_payload(
                 "fallback_reason": f"canonical_build_failed: {_exc}",
                 "acquisition_report_fallback_used": True,  # F232F: fail-loud marker
                 "plan": getattr(_plan, "plans", None) if _plan else None,
+                # F221F: Semantic split fields — populated from runtime data
+                "prelude_plan": getattr(_plan, "plans", []) if _plan else [],
+                "required_lane_plan": _term_rep.get("required_lanes", []) if _term_rep else [],
+                "runtime_attempted_lanes": [
+                    o.get("family", "")
+                    for o in _sfo_list
+                    if o.get("attempted") and o.get("family")
+                ],
+                "effective_acquisition_plan": list(set(
+                    (_term_rep.get("required_lanes", []) if _term_rep else [])
+                ) | {
+                    o.get("family", "") for o in _sfo_list if o.get("attempted") and o.get("family")
+                }),
+                "plan_semantics": "effective_runtime" if any(o.get("attempted") for o in _sfo_list) else "prelude_only",
                 "nonfeed_plan_debug": _nd,  # F232F: preserve _nd when available
                 # F216B: Nonfeed diagnostic profile telemetry — preserve profile from _nd
                 "acquisition_profile": _fallback_profile,
@@ -546,6 +562,8 @@ def _scheduler_result_acquisition_payload(
                 "public_stage_counters": getattr(result, "public_stage_counters", None),
                 # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
                 "public_discovery_empty_reason": getattr(result, "public_discovery_empty_reason", ""),
+                # F221G: Preserved diagnostic when empty_reason was cleared
+                "public_discovery_debug_reason": getattr(result, "public_discovery_debug_reason", ""),
                 # F214-ACQ: Public provider selection debug
                 "public_provider_selection_debug": getattr(result, "public_provider_selection_debug", None) or {},
                 # F217D: CT provider resilience telemetry

@@ -1134,6 +1134,8 @@ def build_acquisition_report(
     public_stage_counters: dict | None = None,
     # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
     public_discovery_empty_reason: str = "",
+    # F221G: Preserved diagnostic reason when empty_reason was cleared due to accepted findings
+    public_discovery_debug_reason: str = "",
     # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
     public_provider_selection_debug: dict | None = None,
     # Sprint F229A: Bootstrap ordering telemetry
@@ -1193,6 +1195,15 @@ def build_acquisition_report(
     wayback_terminal_state: str = "",
     passive_dns_terminal_state: str = "",
     nonfeed_surface_complete: bool = False,
+    # F222I: Pivot seed telemetry (report/telemetry only, no model/lane behavior change)
+    pivot_seed_domains: tuple[str, ...] = (),
+    pivot_seed_ips: tuple[str, ...] = (),
+    pivot_seed_urls: tuple[str, ...] = (),
+    pivot_seed_hashes: tuple[str, ...] = (),
+    pivot_seed_cves: tuple[str, ...] = (),
+    seed_context_available: bool = False,
+    seed_context_propagated: bool = False,
+    lanes_unlocked_by_seed_context: list[str] | None = None,
 ) -> dict:
     """
     [F208C] Build a stable canonical acquisition report dict.
@@ -1357,13 +1368,51 @@ def build_acquisition_report(
             )
         _effective_profile = _env_override
 
+    # ── F221F: Acquisition Plan Semantics Split ────────────────────────────────
+    # Derive plan semantics from runtime data.
+    # runtime_attempted_lanes: lanes where source_family_outcomes shows attempted=True
+    runtime_attempted_lanes: list[str] = []
+    if source_family_outcomes:
+        for outcome in source_family_outcomes:
+            if outcome.get("attempted"):
+                _family = outcome.get("family", "")
+                if _family:
+                    runtime_attempted_lanes.append(_family)
+
+    # required_lane_plan: mandatory lanes from terminality report
+    required_lane_plan: list[str] = []
+    if terminality:
+        required_lane_plan = list(terminality.get("required_lanes", []) or [])
+
+    # effective_acquisition_plan: union of required + actually attempted
+    effective_acquisition_plan: list[str] = list(
+        set(required_lane_plan) | set(runtime_attempted_lanes)
+    )
+
+    # plan_semantics: distinguishes prelude-only from effective_runtime
+    # "prelude_only" = prelude plan was generated but no lane was attempted yet
+    # "effective_runtime" = at least one lane was attempted at runtime
+    if runtime_attempted_lanes:
+        plan_semantics: str = "effective_runtime"
+    else:
+        plan_semantics = "prelude_only"
+
+    # prelude_plan is the original plan dicts (backward compatible alias)
+    prelude_plan: list[dict] = plan_dicts
+
     return {
         "schema_version": ACQUISITION_REPORT_SCHEMA_VERSION,
         # F233B: Explicit marker so downstream tools (exporter, parser, KPI) can
         # distinguish canonical from fallback without inspecting schema_version suffix.
         # Fallback path (in core.__main__._scheduler_result_acquisition_payload) sets this to True.
         "acquisition_report_fallback_used": False,
-        "plan": plan_dicts,
+        "plan": plan_dicts,  # backward compatibility — original prelude plan
+        # F221F: Semantic split fields
+        "prelude_plan": prelude_plan,
+        "required_lane_plan": required_lane_plan,
+        "runtime_attempted_lanes": runtime_attempted_lanes,
+        "effective_acquisition_plan": effective_acquisition_plan,
+        "plan_semantics": plan_semantics,
         "terminality": terminality,
         "nonfeed_plan_debug": nonfeed_debug_dict,
         "source_family_outcomes": source_family_outcomes or [],
@@ -1381,6 +1430,8 @@ def build_acquisition_report(
         "public_stage_counters": public_stage_counters or {},
         # F234: PUBLIC discovery empty reason for DISCOVERY_ERROR diagnosis
         "public_discovery_empty_reason": public_discovery_empty_reason,
+        # F221G: Preserved diagnostic when empty_reason was cleared due to accepted findings
+        "public_discovery_debug_reason": public_discovery_debug_reason or "",
         # F214-ACQ: Public provider selection debug — why provider was/wasn't selected
         "public_provider_selection_debug": public_provider_selection_debug or {},
         # Sprint F229A: Bootstrap ordering telemetry
@@ -1444,6 +1495,15 @@ def build_acquisition_report(
         "doh_terminal_stage": doh_terminal_stage,
         "doh_provider_errors": list(doh_provider_errors) if doh_provider_errors else [],
         "doh_cache_used": doh_cache_used,
+        # F222I: Pivot seed telemetry
+        "pivot_seed_domains": list(pivot_seed_domains) if pivot_seed_domains else [],
+        "pivot_seed_ips": list(pivot_seed_ips) if pivot_seed_ips else [],
+        "pivot_seed_urls": list(pivot_seed_urls) if pivot_seed_urls else [],
+        "pivot_seed_hashes": list(pivot_seed_hashes) if pivot_seed_hashes else [],
+        "pivot_seed_cves": list(pivot_seed_cves) if pivot_seed_cves else [],
+        "seed_context_available": seed_context_available,
+        "seed_context_propagated": seed_context_propagated,
+        "lanes_unlocked_by_seed_context": lanes_unlocked_by_seed_context or [],
         # F214: Nonfeed lane eligibility matrix
         "nonfeed_lane_eligibility": _build_nonfeed_lane_eligibility(
             query=query,

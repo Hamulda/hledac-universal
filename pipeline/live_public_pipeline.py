@@ -152,6 +152,132 @@ _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
 """Static rescue source list for non-domain threat/malware/ransomware queries."""
 
 
+# -----------------------------------------------------------------------------
+# F221H: Public Discovery Relevance / Shopping Noise Filter
+# -----------------------------------------------------------------------------
+
+# Blocked domain patterns for shopping/e-commerce noise
+_SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
+    "trendyol.com",
+    "pazarama.com",
+    "amazon.com.tr",
+    "n11.com",
+    "hepsiburada.com",
+    "gittigidiyor.com",
+    "cimri.com",
+    "akakce.com",
+)
+
+# Blocked URL path patterns for e-commerce/shopping/category pages
+_SHOPPING_NOISE_PATHS: tuple[str, ...] = (
+    "/gp/bestsellers/",
+    "/gp/bestsellers",
+    "/bestsellers/",
+    "/best-seller",
+    "/matkap",
+    "/category/",
+    "/product/",
+    "/products/",
+    "/shop/",
+    "/shopping/",
+    "/cart/",
+    "/checkout/",
+    "/buy/",
+    "/sale/",
+    "/offers/",
+    "/home-improvement",
+    "/home-and-garden",
+)
+
+# CTI/news domains that are always allowed (override noise filter for threat queries)
+_CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
+    "cisa.gov",
+    "krebsonsecurity.com",
+    "bleepingcomputer.com",
+    "thehackernews.com",
+    "abuse.ch",
+    "threatfox.abuse.ch",
+    "ransomwaretracker.xyz",
+    "id-ransomware.malwarehunterteam.com",
+    "malwarehunterteam.com",
+    "cyberscoop.com",
+    "darkreading.com",
+    "threatpost.com",
+    "therecord.media",
+    "securityweek.com",
+)
+
+
+def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
+    """
+    Detect if a URL is shopping/e-commerce noise.
+
+    For threat queries: blocks obvious shopping/ecommerce/category pages.
+    For non-threat queries: less strict, only blocks domain-level matches.
+
+    Returns:
+        Tuple of (is_noise, reason) where reason is one of:
+        - "public_noise_shopping" — blocked shopping domain
+        - "public_noise_unrelated_marketplace" — blocked marketplace
+        - "public_relevance_pass" — URL is relevant
+    """
+    if not url:
+        return False, "public_relevance_pass"
+
+    parsed = urllib.parse.urlparse(url)
+    netloc = parsed.netloc.lower()
+    path = parsed.path.lower()
+
+    # F221H: CTI/news domains always pass (override noise filter)
+    for allowed_domain in _CTI_NEWS_ALLOWED_DOMAINS:
+        if netloc.endswith(allowed_domain) or netloc == allowed_domain:
+            return False, "public_relevance_pass"
+
+    # Check if domain is in blocked shopping domains
+    for blocked_domain in _SHOPPING_NOISE_DOMAINS:
+        if netloc.endswith(blocked_domain) or netloc == blocked_domain:
+            return True, "public_noise_shopping"
+
+    # For threat queries, also check path patterns
+    if is_threat_query:
+        for blocked_path in _SHOPPING_NOISE_PATHS:
+            if blocked_path in path:
+                return True, "public_noise_unrelated_marketplace"
+
+    return False, "public_relevance_pass"
+
+
+def _filter_public_noise(
+    hits: list, is_threat_query: bool
+) -> tuple[list, list[tuple[str, str]]]:
+    """
+    Filter shopping/e-commerce noise from public discovery hits.
+
+    For threat queries: blocks shopping domains AND path patterns.
+    For non-threat queries: only blocks known shopping domains.
+
+    Returns:
+        Tuple of (filtered_hits, rejected_reasons) where rejected_reasons
+        is list of (url, reason) for each rejected hit.
+    """
+    filtered: list = []
+    rejected: list[tuple[str, str]] = []
+
+    for hit in hits:
+        url = getattr(hit, "url", None) or (str(hit[2]) if len(hit) > 2 else "")
+        if not url:
+            filtered.append(hit)
+            continue
+
+        is_noise, reason = _is_shopping_noise_url(url, is_threat_query)
+        if is_noise:
+            rejected.append((url, reason))
+        else:
+            filtered.append(hit)
+
+    return filtered, rejected
+
+
 def _is_threat_query(query: str) -> bool:
     """
     Detect if query is a non-domain threat/malware/ransomware/entity query.
@@ -3453,6 +3579,15 @@ async def async_run_live_public_pipeline(
     # Per-call semaphore, no global batch timeout
     # F208G-A: URL-level dedup — skip duplicate URLs before creating fetch tasks
     # Sprint F213B: track discovery stage counts before dedup
+    # F221H: Public Discovery Relevance / Shopping Noise Filter
+    is_threat = _is_threat_query(query)
+    hits, noise_rejections = _filter_public_noise(hits, is_threat)
+    # Track noise rejections separately (will merge into public_acceptance_reject_reasons later)
+    public_noise_reject_reasons: dict[str, int] = {}
+    for noise_url, noise_reason in noise_rejections:
+        if noise_reason not in public_noise_reject_reasons:
+            public_noise_reject_reasons[noise_reason] = 0
+        public_noise_reject_reasons[noise_reason] += 1
     public_discovery_raw_count = len(hits)  # raw URLs from discovery (includes CT/CC injection)
     public_discovery_attempted = discovery_attempted
     seen_urls: set[str] = set()
@@ -3568,7 +3703,6 @@ async def async_run_live_public_pipeline(
     public_acceptance_attempted = len(_fetched_pages)
     public_acceptance_accepted: int = 0  # pages with accepted_findings > 0
     public_acceptance_rejected: int = 0  # pages with accepted_findings == 0 (post-fetch rejection)
-    public_acceptance_reject_reasons: dict[str, int] = {}
     accepted_urls: list[str] = []
     rejected_urls: list[str] = []
     for p in _fetched_pages:
@@ -3584,6 +3718,9 @@ async def async_run_live_public_pipeline(
             public_acceptance_reject_reasons[rr] = public_acceptance_reject_reasons.get(rr, 0) + 1
             if len(rejected_urls) < 5:
                 rejected_urls.append(p.url)
+    # F221H: Merge pre-fetch noise rejections into acceptance reject reasons
+    for reason, count in public_noise_reject_reasons.items():
+        public_acceptance_reject_reasons[reason] = public_acceptance_reject_reasons.get(reason, 0) + count
     public_accepted_url_sample = tuple(accepted_urls)
     public_rejected_url_sample = tuple(rejected_urls)
 
@@ -3671,6 +3808,20 @@ async def async_run_live_public_pipeline(
         public_terminal_stage = "store_zero"
     else:
         public_terminal_stage = "accepted"
+
+    # F221G: Public discovery empty reason consistency
+    # If public produced accepted findings, empty_reason contradicts the outcome.
+    # Preserve original diagnostic in debug_reason, clear empty_reason.
+    _accepted_findings = sum(p.accepted_findings for p in all_page_results) if all_page_results else 0
+    if (
+        public_terminal_stage == "accepted"
+        or _accepted_findings > 0
+        or public_candidates_stored > 0
+    ) and _pub_discovery_empty_reason and _pub_discovery_empty_reason[0]:
+        _original_empty_reason = _pub_discovery_empty_reason[0]
+        _pub_discovery_empty_reason[0] = ""
+        # Pass debug reason through discovery_telemetry for downstream consumption
+        discovery_telemetry["public_discovery_debug_reason"] = _original_empty_reason
 
     # Skipped breakdown
     # F208G-A: public_skipped_duplicate already computed as len(hits)-len(seen_urls) at line 2575
