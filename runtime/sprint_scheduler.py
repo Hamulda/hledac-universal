@@ -697,6 +697,8 @@ class EarlyExitClass:
     EARLY_COMPLETE_NO_WORK_REMAINING = "early_complete_no_work_remaining"
     EARLY_COMPLETE_RETURN_GUARD_SATISFIED = "early_complete_return_guard_satisfied"
     EARLY_COMPLETE_FEED_ONLY = "early_complete_feed_only"
+    # Sprint F221B: prelude_complete with elapsed_pct < 0.9 is a distinct early-exit
+    EARLY_COMPLETE_PRELUDE_COMPLETE = "early_complete_prelude_complete"
     # Sprint F220D: Feed dominant + nonfeed rescue window was attempted
     FEED_DOMINANT_NONFEED_RESCUE_ATTEMPTED = "feed_dominant_nonfeed_rescue_attempted"
     ABORTED_BY_MEMORY = "aborted_by_memory"
@@ -2495,8 +2497,17 @@ class SprintScheduler:
         await self._run_mandatory_acquisition_prelude(
             self._result, query, duckdb_store, self._ct_log_client
         )
-        # Capture initial terminality after prelude
-        await self._finalize_result_truth("prelude_complete", "acquisition prelude finished", "BOOT", query)
+        # Sprint F214: Only record prelude_complete if prelude actually ran.
+        # Guard: non-domain query with default/nonfeed profile returns early with
+        # acquisition_prelude_ran=False; must NOT emit false prelude_complete telemetry.
+        # Phase=ACTIVE (not BOOT): lifecycle already passed ensure_active() at this point.
+        if getattr(self._result, "acquisition_prelude_ran", False):
+            await self._finalize_result_truth(
+                "prelude_complete",
+                "acquisition prelude finished",
+                "ACTIVE",
+                query,
+            )
 
         try:
             # Sprint 8VD §C: Start memory pressure monitoring loop
@@ -3206,9 +3217,17 @@ class SprintScheduler:
                     f"no work remaining ({exit_path})",
                 )
 
+            # Sprint F221B: prelude_complete at <90% is a distinct early-exit class
+            if exit_path == "prelude_complete" and r.elapsed_pct < 0.9:
+                pct = r.elapsed_pct * 100
+                return (
+                    EarlyExitClass.EARLY_COMPLETE_PRELUDE_COMPLETE,
+                    f"prelude early exit ({pct:.0f}% of planned duration, exit_path={exit_path})",
+                )
+
             pct = r.elapsed_pct * 100
             return (
-                EarlyExitClass.COMPLETED_FULL_DURATION,
+                EarlyExitClass.EARLY_COMPLETE_NO_WORK_REMAINING,
                 f"early exit ({pct:.0f}% of planned duration, exit_path={exit_path})",
             )
         except Exception as _exc:

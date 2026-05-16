@@ -206,14 +206,18 @@ def _scheduler_result_acquisition_payload(
 
     # Public family — DISCOVERY_TIMEOUT/ERROR/ZERO_RESULTS also emit an outcome
     # even when raw_count=0 and accepted_count=0 (F234B)
+    # F214: Exclude NOT_SCHEDULED from triggering outcome when nothing was attempted
+    _pub_pts = getattr(result, "public_terminal_stage", "")
+    _pub_fetch_attempted = (
+        getattr(result, "public_stage_counters", None) is not None
+        and getattr(result, "public_stage_counters", {}).get("fetch_attempted", 0) > 0
+    )
     _pub_has_outcome = (
         getattr(result, "public_discovered", 0) > 0
         or getattr(result, "public_accepted_findings", 0) > 0
-        or bool(getattr(result, "public_terminal_stage", ""))
+        or (bool(_pub_pts) and _pub_pts != "NOT_SCHEDULED")
         or bool(getattr(result, "public_error", ""))
-        or (getattr(result, "public_stage_counters", None) is not None
-            and getattr(result, "public_stage_counters", {}) != {}
-            and getattr(result, "public_stage_counters", {}).get("fetch_attempted", 0) > 0)
+        or _pub_fetch_attempted
     )
     if _pub_has_outcome:
         _pub_raw = {
