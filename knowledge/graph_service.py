@@ -14,9 +14,10 @@ Analytics donor: DuckPGQGraph (DuckDB) owns path queries and graph analytics.
 This service acts as the sprint memory seam between the two.
 
 ARCHITECTURE (F226):
-- GraphService class holds instance-isolated state: _duckpgq_graph, _seen_iocs, _seen_rels.
-- Instance methods call module-level _get_graph() for duckDB graph singleton — this
-  allows tests to patch graph_service._get_graph and affect all instance calls.
+- GraphService instances own only instance-isolated state: _seen_iocs, _seen_rels.
+- DuckPGQGraph backend remains a module-level lazy singleton via _get_graph().
+- Module-level _get_graph() is patchable for tests — both module-level functions and
+  GraphService instance methods call the same module-level _get_graph().
 - Module-level functions delegate to _DEFAULT_GRAPH_SERVICE (default singleton facade).
 - New code should prefer injected GraphService instances for test isolation.
 - Existing module-level API (_SEEN_IOCS, _SEEN_RELS, reset_session) is preserved for
@@ -66,15 +67,16 @@ class GraphService:
     """
     Instance-isolated graph service with DuckPGQGraph backing.
 
-    Each instance has its own:
-    - _duckpgq_graph: lazy DuckPGQGraph singleton (via module-level _get_graph)
-    - _seen_iocs: idempotency set for IOCs
-    - _seen_rels: idempotency set for relations
+    Instance state:
+    - _seen_iocs: idempotency set for IOCs (owned by instance)
+    - _seen_rels: idempotency set for relations (owned by instance)
 
-    Use this directly for test isolation or cross-sprint tenant isolation.
-    Instance methods call module-level _get_graph() for the DB singleton,
-    which allows tests to patch graph_service._get_graph and affect all
-    instance calls uniformly.
+    The DuckPGQGraph backend is NOT stored on the instance — instance methods and
+    module-level functions alike call module-level _get_graph() for the shared
+    module-level singleton. This means patching graph_service._get_graph affects
+    all callers uniformly, which is the intended test isolation mechanism.
+
+    Use this class directly for test isolation or cross-sprint tenant isolation.
     """
 
     __slots__ = ("_seen_iocs", "_seen_rels")  # _duckpgq_graph NOT stored (uses _get_graph)
