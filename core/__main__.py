@@ -377,9 +377,17 @@ def _scheduler_result_acquisition_payload(
     _acq_effective: str | None = None
     _acq_normalized: bool = False
     _acq_report: dict = {}
+    # F222L: _nd_raw must be extracted before _acq_effective derivation
+    # so the profile can be determined before the try block.
+    _plan: Any = getattr(scheduler, "_acquisition_plan", None)
+    _nd_raw: Any = getattr(_plan, "nonfeed_plan_debug", None) if _plan is not None else None
+    # F222L: _acq_effective must be set before the try block so fallback defaults
+    # (nonfeed_priority_enabled, nonfeed_profile_expected_lanes) work when _nd is None.
+    _profile_from_nd: str | None = getattr(_nd_raw, "acquisition_profile", None) if _nd_raw is not None else None
+    _acq_effective = _profile_from_nd or (
+        getattr(scheduler, "_config", None) or {}
+    ).get("acquisition_profile") or "default"
     try:
-        _plan = getattr(scheduler, "_acquisition_plan", None)
-        _nd_raw = getattr(_plan, "nonfeed_plan_debug", None) if _plan is not None else None
         _nd: dict | None = None
         if _nd_raw is not None:
             _nd = {
@@ -609,11 +617,15 @@ def _scheduler_result_acquisition_payload(
                 "acquisition_profile": _fallback_profile,
                 "feed_cap_reason": _nd.get("feed_cap_reason") if _nd else None,
                 # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
+                # F224B: Fall back to sticky result fields from SprintSchedulerResult
                 "nonfeed_priority_enabled": (
-                    _nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic")
+                    _nd.get("nonfeed_priority_enabled", False) if _nd else (
+                        getattr(result, "nonfeed_priority_enabled", False) or (_acq_effective == "nonfeed_diagnostic")
+                    )
                 ),
                 "nonfeed_profile_expected_lanes": _nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
-                    ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else []
+                    list(getattr(result, "nonfeed_profile_expected_lanes", ()) or ()) or
+                    (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else [])
                 ),
                 # F217C: PUBLIC bootstrap telemetry
                 "public_terminal_stage": getattr(result, "public_terminal_stage", ""),

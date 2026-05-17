@@ -852,6 +852,10 @@ class SprintSchedulerResult:
     public_accepted_findings: int = 0
     public_stored_findings: int = 0
     public_error: str = ""
+    # Sprint F214-ACQ / F223E2: Public provider selection debug — populated
+    # in both success and ExceptionGroup paths of _run_public_discovery_in_cycle.
+    # Reporting-only: does not affect acquisition behavior.
+    public_provider_selection_debug: dict = field(default_factory=dict)
     # Sprint F193A: CT log canonical discovery pipeline results
     ct_log_discovered: int = 0
     ct_log_stored: int = 0
@@ -1156,6 +1160,12 @@ class SprintSchedulerResult:
     nonfeed_prelude_error_by_lane: dict[str, str] = field(default_factory=dict)  # error per lane
     nonfeed_prelude_duration_s: float = 0.0
     nonfeed_prelude_feed_blocked_until_complete: bool = False  # True = feed waits for prelude
+    # Sprint F224B: Sticky nonfeed expected lanes — preserved from build_acquisition_plan()
+    # so final report can read them even if nonfeed_plan_debug is None (snapshot lost in some exit paths)
+    nonfeed_priority_enabled: bool = False
+    nonfeed_profile_expected_lanes: tuple[str, ...] = ()
+    nonfeed_expected_lanes: tuple[str, ...] = ()
+    nonfeed_expected_lanes_source: str = ""
     # Sprint F214OPT-D: Arrow batch hard cap telemetry
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
@@ -2488,6 +2498,15 @@ class SprintScheduler:
                     _nd.pivot_errors = ()
                 except Exception:
                     pass  # Fail-soft
+            # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
+            # can read them even if nonfeed_plan_debug is None (snapshot lost in some exit paths)
+            if self._result.nonfeed_plan_debug is not None:
+                _nd = self._result.nonfeed_plan_debug
+                self._result.nonfeed_priority_enabled = getattr(_nd, "nonfeed_priority_enabled", False)
+                self._result.nonfeed_profile_expected_lanes = tuple(getattr(_nd, "nonfeed_profile_expected_lanes", ()) or ())
+                # F224B: nonfeed_expected_lanes = scheduled_nonfeed_lanes (canonical source)
+                self._result.nonfeed_expected_lanes = tuple(getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
+                self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
         except Exception:
             self._acquisition_plan = None
 
@@ -6489,6 +6508,32 @@ class SprintScheduler:
                 "timeout": False,
                 "duration_s": None,
             }
+            # F223E2: Populate public_provider_selection_debug in ExceptionGroup path
+            # so reporting surface is never empty when TaskGroup raises.
+            # Bounds: max 10 provider_errors, max 500 chars summary.
+            try:
+                _psd = {
+                    "candidate_providers": [],
+                    "selected_provider": None,
+                    "rejected_providers": [],
+                    "rejection_reasons": {},
+                    "provider_errors": [
+                        {
+                            "provider": "TaskGroup",
+                            "error": str(eg)[:500],
+                            "error_type": type(eg).__name__,
+                        }
+                    ],
+                    "missing_dependencies": [],
+                    "policy_flags": {},
+                    "bootstrap_enabled": False,
+                    "bootstrap_disabled_reason": "ExceptionGroup",
+                    "exception_group_summary": str(eg)[:500],
+                }
+                self._result.public_provider_selection_debug = _psd
+            except Exception:
+                # Fail-soft: never throw from debug builder
+                pass
             # Sprint F216C: Clear stale PipelineRunResult on early exit
             self._public_pipeline_result = None
             return
