@@ -139,6 +139,19 @@ def _is_meaningful_run(
     )
 
 
+def _safe_config_get(config: object, key: str, default=None):
+    """
+    Safe attribute/dethod access for config objects that may be dict or dataclass-like.
+
+    Fails soft — returns default for None, missing keys, or attribute errors.
+    """
+    if config is None:
+        return default
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
 def _scheduler_result_acquisition_payload(
     result: "SprintSchedulerResult",
     scheduler: "SprintScheduler",
@@ -384,9 +397,9 @@ def _scheduler_result_acquisition_payload(
     # F222L: _acq_effective must be set before the try block so fallback defaults
     # (nonfeed_priority_enabled, nonfeed_profile_expected_lanes) work when _nd is None.
     _profile_from_nd: str | None = getattr(_nd_raw, "acquisition_profile", None) if _nd_raw is not None else None
-    _acq_effective = _profile_from_nd or (
-        getattr(scheduler, "_config", None) or {}
-    ).get("acquisition_profile") or "default"
+    _cfg = getattr(scheduler, "_config", None)
+    _cfg_profile = _safe_config_get(_cfg, "acquisition_profile", None)
+    _acq_effective = _profile_from_nd or _cfg_profile or "default"
     try:
         _nd: dict | None = None
         if _nd_raw is not None:
@@ -441,7 +454,7 @@ def _scheduler_result_acquisition_payload(
             query=query,
             # F216B: Nonfeed diagnostic profile telemetry (from _nd already built above)
             # F222L: Use correct defaults when _nd is None but profile is nonfeed_diagnostic
-            acquisition_profile=_nd.get("acquisition_profile", "default") if _nd else (_acq_effective or "default"),
+            acquisition_profile=_safe_config_get(_nd, "acquisition_profile", "default") if _nd else (_acq_effective or "default"),
             feed_cap_reason=_nd.get("feed_cap_reason") if _nd else None,
             nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic"),
             nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else []),
@@ -585,7 +598,7 @@ def _scheduler_result_acquisition_payload(
         )
         try:
             _fallback_profile = (
-                _nd.get("acquisition_profile", "default") if _nd else "default"
+                _safe_config_get(_nd, "acquisition_profile", "default") if _nd else "default"
             )
             _acq_report = {
                 "schema_version": f"{ACQUISITION_REPORT_SCHEMA_VERSION}-fallback",

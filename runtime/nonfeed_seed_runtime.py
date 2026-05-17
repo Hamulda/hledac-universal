@@ -122,6 +122,7 @@ async def run_runtime_pivot_prelude(
         "seed_context_propagated": False,
         "lanes_unlocked_by_seed_context": [],
         "seed_context_skip_reason": "",
+        "seed_context_source": "",  # F227A: "query" | "duckdb" | "findings" | ""
     }
 
     if not nonfeed_diagnostic_active:
@@ -227,6 +228,24 @@ async def run_runtime_pivot_prelude(
             except Exception:
                 result["seed_context_skip_reason"] = "duckdb_read_error"
                 return result
+
+    # F227A: Track which source contributed the seeds
+    _seed_source = ""
+    if _domains_q or _ips_q or _urls_q or _hashes_q or _cves_q:
+        # Step 1 contributed: query had direct IOC seeds
+        _step1_contributed = bool(
+            extract_nonfeed_seeds_from_text(query, max_seeds=1)
+        )
+        if _step1_contributed:
+            _seed_source = "query"
+        elif existing_findings:
+            _seed_source = "findings"
+        elif duckdb_store is not None:
+            _seed_source = "duckdb"
+        else:
+            _seed_source = "query"  # Default to query since step1 ran
+
+    result["seed_context_source"] = _seed_source
 
     # Apply hard caps
     _dom_list = sorted(_domains_q)[:10]

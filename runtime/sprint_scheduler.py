@@ -162,6 +162,16 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# F223E: Debug text sanitization for public_provider_selection_debug
+# ---------------------------------------------------------------------------
+def _sanitize_debug_text(value: object, *, max_chars: int = 500) -> str:
+    """Strip raw HTML/script from debug strings — never expose page content."""
+    text = str(value or "")
+    text = text.replace("<", "‹").replace(">", "›")
+    return text[:max_chars]
+
+
+# ---------------------------------------------------------------------------
 # Sprint F216C: PUBLIC stage machine helper
 # ---------------------------------------------------------------------------
 # Explicit PUBLIC stage machine for zero-evidence diagnosis.
@@ -1230,6 +1240,12 @@ class SprintSchedulerResult:
     nonfeed_wayback_candidates: list[str] = field(default_factory=list)
     nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
+    # F226A: Seed context telemetry
+    seed_context_available: bool = False
+    seed_context_propagated: bool = False
+    lanes_unlocked_by_seed_context: list[str] = field(default_factory=list)
+    seed_context_skip_reason: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Sprint F240A: Type-safe result variants
@@ -1504,6 +1520,12 @@ class SprintResult:
     pivot_lane_plan_count: int = 0
     planned_pivot_lanes: tuple[str, ...] = ()
     pivot_integration_reason: str = ""
+
+    # F226A: Seed context telemetry
+    seed_context_available: bool = False
+    seed_context_propagated: bool = False
+    lanes_unlocked_by_seed_context: list[str] = field(default_factory=list)
+    seed_context_skip_reason: str = ""
 
     # Nonfeed prelude
     nonfeed_prelude_enabled: bool = False
@@ -2340,6 +2362,7 @@ class SprintScheduler:
         # FindingSidecarBus is created inside SidecarOrchestrator.__init__
         from hledac.universal.runtime.sidecar_orchestrator import SidecarOrchestrator
         self._sidecar_orchestrator = SidecarOrchestrator(
+            self._result,
             governor=self._governor,
             scheduler=self,
         )
@@ -5038,6 +5061,7 @@ class SprintScheduler:
                     "lanes_unlocked_by_seed_context", []
                 )
                 self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
+                self._result.seed_context_source = _pivot_result.get("seed_context_source", "")  # F227A
             except Exception as _exc:
                 log.debug("[F223A] Runtime pivot prelude error: %s", _exc)
                 self._result.seed_context_skip_reason = "prelude_error"
@@ -6586,7 +6610,7 @@ class SprintScheduler:
                     "provider_errors": [
                         {
                             "provider": "TaskGroup",
-                            "error": str(eg)[:500],
+                            "error": _sanitize_debug_text(eg, max_chars=500),
                             "error_type": type(eg).__name__,
                         }
                     ],
@@ -6594,7 +6618,7 @@ class SprintScheduler:
                     "policy_flags": {},
                     "bootstrap_enabled": False,
                     "bootstrap_disabled_reason": "ExceptionGroup",
-                    "exception_group_summary": str(eg)[:500],
+                    "exception_group_summary": _sanitize_debug_text(eg, max_chars=500),
                 }
                 self._result.public_provider_selection_debug = _psd
             except Exception:
@@ -6743,10 +6767,15 @@ class SprintScheduler:
                 p.get("provider", "?") for p in getattr(public_result, 'public_provider_skipped', []) or []
             ],
             "rejection_reasons": {
-                p.get("provider", "?"): p.get("reason", "")
+                p.get("provider", "?"): _sanitize_debug_text(p.get("reason", ""))
                 for p in getattr(public_result, 'public_provider_skipped', []) or []
             },
-            "provider_errors": list(getattr(public_result, 'public_provider_errors', []) or []),
+            "provider_errors": [
+                {"provider": _sanitize_debug_text(e.get("provider", "?") if isinstance(e, dict) else str(e)),
+                 "error": _sanitize_debug_text(e.get("error", "") if isinstance(e, dict) else str(e)),
+                 "error_type": e.get("error_type", "?") if isinstance(e, dict) else "?"}
+                for e in (getattr(public_result, 'public_provider_errors', []) or [])
+            ],
             "missing_dependencies": [],
             "policy_flags": {
                 "bootstrap_enabled": _pub_bootstrap_en,
@@ -9985,6 +10014,11 @@ class SprintScheduler:
             }
             _surf_wayback = _sfo_by_family.get("wayback", {})
             _surf_pdns = _sfo_by_family.get("passive_dns", {})
+            # F227A: If wayback/passive_dns eligible but not surfaced, set explicit terminal state
+            if not _surf_wayback and "WAYBACK" in _missing:
+                _surf_wayback = {"terminal_state": "eligible_not_scheduled"}
+            if not _surf_pdns and "PASSIVE_DNS" in _missing:
+                _surf_pdns = {"terminal_state": "eligible_not_scheduled"}
             _surf_ct = _sfo_by_family.get("ct", {})
             _surf_public = _sfo_by_family.get("public", {})
             # A lane is "surfaced" if it was attempted OR explicitly skipped (not absent)
@@ -9994,6 +10028,12 @@ class SprintScheduler:
                 if entry.get("attempted") or entry.get("skipped")
             }
             _missing = [e for e in _expected if _FAM_MAP.get(e, e.lower()) not in _surfaced_lower]
+            # F227A: Also mark eligible-but-not-surfaced lanes as missing
+            for _lane_el in ("DOH", "WAYBACK", "PASSIVE_DNS"):
+                _fam_key = _FAM_MAP.get(_lane_el, _lane_el.lower())
+                if (_fam_key not in _surfaced_lower and
+                    getattr(self._result, "nonfeed_lane_eligibility", {}).get(_lane_el, False)):
+                    _missing.append(_lane_el)
             _surf_complete = len(_missing) == 0
 
             # Sprint F229A: Extract bootstrap ordering telemetry from public outcome
@@ -10047,6 +10087,12 @@ class SprintScheduler:
                 acquisition_plan_build_failed=getattr(self._result, "acquisition_plan_build_failed", False),
                 acquisition_plan_build_error_type=getattr(self._result, "acquisition_plan_build_error_type", ""),
                 acquisition_plan_build_error=getattr(self._result, "acquisition_plan_build_error", ""),
+                # F227A: Seed context telemetry
+                seed_context_available=getattr(self._result, "seed_context_available", False),
+                seed_context_propagated=getattr(self._result, "seed_context_propagated", False),
+                seed_context_skip_reason=getattr(self._result, "seed_context_skip_reason", ""),
+                seed_context_source=getattr(self._result, "seed_context_source", ""),
+                lanes_unlocked_by_seed_context=getattr(self._result, "lanes_unlocked_by_seed_context", []) or [],
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only

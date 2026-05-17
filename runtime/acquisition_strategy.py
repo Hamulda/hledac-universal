@@ -1203,6 +1203,8 @@ def build_acquisition_report(
     pivot_seed_cves: tuple[str, ...] = (),
     seed_context_available: bool = False,
     seed_context_propagated: bool = False,
+    seed_context_skip_reason: str = "",
+    seed_context_source: str = "",  # F227A: "query" | "duckdb" | "findings"
     lanes_unlocked_by_seed_context: list[str] | None = None,
     # Sprint F225A: Acquisition plan build error surface
     acquisition_plan_build_failed: bool = False,
@@ -1517,6 +1519,8 @@ def build_acquisition_report(
         "pivot_seed_cves": list(pivot_seed_cves) if pivot_seed_cves else [],
         "seed_context_available": seed_context_available,
         "seed_context_propagated": seed_context_propagated,
+        "seed_context_skip_reason": seed_context_skip_reason,
+        "seed_context_source": seed_context_source,
         "lanes_unlocked_by_seed_context": lanes_unlocked_by_seed_context or [],
         # F214: Nonfeed lane eligibility matrix
         "nonfeed_lane_eligibility": _build_nonfeed_lane_eligibility(
@@ -2761,12 +2765,12 @@ def _build_plan_impl(
 
     # ── DOH ─────────────────────────────────────────────────────────────────
     # F222B: DOH lane enabled for domain/IP queries; nonfeed_diagnostic adds domain candidates
-    # Note: has_domain = _has_domain_or_ip() covers both domain and IP cases
+    # F226A: nonfeed_diagnostic bypasses hardware_critical block (same pattern as PASSIVE_DNS)
     doh_enabled = has_domain or (is_nonfeed_diagnostic and has_domain)
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.DOH,
-            enabled=doh_enabled and not hardware_critical,
+            enabled=doh_enabled and (not hardware_critical or is_nonfeed_diagnostic),
             reason="domain_or_ip_or_nonfeed_diagnostic"
             if doh_enabled
             else "query_without_domain_or_ip",
@@ -2779,11 +2783,12 @@ def _build_plan_impl(
 
     # ── WAYBACK ────────────────────────────────────────────────────────────
     # F216B: nonfeed_diagnostic enables WAYBACK for domain/URL even under hardware_critical
+    # F226A: nonfeed_diagnostic bypasses hardware_critical block (same pattern as PASSIVE_DNS)
     wayback_enabled = has_url or has_long_duration or (is_nonfeed_diagnostic and has_domain)
     plans.append(
         AcquisitionLanePlan(
             lane=AcquisitionLane.WAYBACK,
-            enabled=wayback_enabled and not hardware_critical,
+            enabled=wayback_enabled and (not hardware_critical or is_nonfeed_diagnostic),
             reason="has_url_or_long_duration_or_nonfeed_domain"
             if wayback_enabled
             else "query_without_url",
