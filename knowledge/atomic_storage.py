@@ -1,24 +1,54 @@
-"""Stub pro /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/knowledge/__pycache__/atomic_storage.cpython-312.pyc - generováno z bytecode"""
+"""Re-export stub — canonical source is legacy.atomic_storage."""
+from __future__ import annotations
 
+import warnings as _warnings
 
-# import warnings
-# import DeprecationWarning
-# import legacy.atomic_storage
-# import KnowledgeEntry
-# import ShardCache
-# import AtomicJSONKnowledgeGraph
-# import get_atomic_storage
-# import clear_storage_cache
-# import SnapshotEntry
-# import SnapshotStorage
-# import EvidencePacket
-# import Claim
-# import ClaimCluster
-# import ClaimClusterIndex
-# import EvidencePacketStorage
-# import PatternStats
-# import PatternStatsManager
-# import SourceQualityScorer
-# import VeracityPriorCalculator
-# import StanceScorer
+_warnings.warn(
+    "hledac.universal.knowledge.atomic_storage is DEPRECATED. "
+    "Use hledac.universal.knowledge.duckdb_store instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from legacy.atomic_storage import (
+    AtomicJSONKnowledgeGraph,
+    KnowledgeEntry,
+    ShardCache,
+    get_atomic_storage,
+    clear_storage_cache,
+    SnapshotEntry,
+    SnapshotStorage,
+    EvidencePacket,
+    Claim,
+    ClaimCluster,
+    ClaimClusterIndex,
+    EvidencePacketStorage,
+    PatternStats,
+    PatternStatsManager,
+    SourceQualityScorer,
+    VeracityPriorCalculator,
+    StanceScorer,
+    ZSTD_AVAILABLE,
+)
+
+__all__ = [
+    "AtomicJSONKnowledgeGraph",
+    "KnowledgeEntry",
+    "ShardCache",
+    "get_atomic_storage",
+    "clear_storage_cache",
+    "SnapshotEntry",
+    "SnapshotStorage",
+    "EvidencePacket",
+    "Claim",
+    "ClaimCluster",
+    "ClaimClusterIndex",
+    "EvidencePacketStorage",
+    "PatternStats",
+    "PatternStatsManager",
+    "SourceQualityScorer",
+    "VeracityPriorCalculator",
+    "StanceScorer",
+    "ZSTD_AVAILABLE",
+]
 

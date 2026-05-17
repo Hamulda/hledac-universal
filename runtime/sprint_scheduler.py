@@ -1240,6 +1240,12 @@ class SprintSchedulerResult:
     nonfeed_wayback_candidates: list[str] = field(default_factory=list)
     nonfeed_passive_dns_candidates: list[str] = field(default_factory=list)
 
+    # F226C: Canonical acquisition plan telemetry for prelude
+    acquisition_plan_present_for_prelude: bool = False
+    acquisition_plan_lanes_for_prelude: tuple[str, ...] = ()
+    acquisition_plan_enabled_lanes_for_prelude: tuple[str, ...] = ()
+    acquisition_plan_profile_for_prelude: str = ""
+    acquisition_plan_build_error_for_prelude: str = ""
     # F226A: Seed context telemetry
     seed_context_available: bool = False
     seed_context_propagated: bool = False
@@ -4723,12 +4729,19 @@ class SprintScheduler:
                     build_acquisition_plan,
                     required_terminal_lanes as _rtl,
                 )
+                # F226C: Pass acquisition_profile from config so nonfeed lanes are enabled.
+                # F228B: Also pass aggressive_mode so lane enablement mirrors the main path.
                 _minimal = build_acquisition_plan(
                     query=query,
                     duration_s=60.0,
+                    aggressive_mode=self._config.aggressive_mode,
                     uma_state=_uma,
                     swap_detected=False,
-                    memory_budget_mb=512,
+                    acquisition_profile=(
+                        self._config.acquisition_profile
+                        if self._config.acquisition_profile is not None
+                        else "default"
+                    ),
                 )
                 if _minimal is not None:
                     self._acquisition_plan = _minimal
@@ -4747,8 +4760,27 @@ class SprintScheduler:
                     )
                 else:
                     _required = ("PUBLIC", "CT")
-            except Exception:
+            except Exception as _exc:
+                log.debug("Minimal plan build failed, using PUBLIC/CT: %s", _exc)
                 _required = ("PUBLIC", "CT")
+                self._result.acquisition_plan_build_error_for_prelude = str(_exc)[:200]
+
+        # F226C: Record canonical acquisition plan telemetry for prelude
+        self._result.acquisition_plan_present_for_prelude = self._acquisition_plan is not None
+        _all_lanes: list[str] = []
+        _enabled_lanes: list[str] = []
+        if self._acquisition_plan is not None:
+            for _plan in getattr(self._acquisition_plan, "plans", []):
+                _ln = getattr(_plan.lane, "value", str(_plan.lane))
+                _all_lanes.append(_ln)
+                if getattr(_plan, "enabled", False):
+                    _enabled_lanes.append(_ln)
+            _nd = getattr(self._acquisition_plan, "nonfeed_plan_debug", None)
+            self._result.acquisition_plan_profile_for_prelude = (
+                getattr(_nd, "acquisition_profile", "") if _nd else ""
+            )
+        self._result.acquisition_plan_lanes_for_prelude = tuple(_all_lanes)
+        self._result.acquisition_plan_enabled_lanes_for_prelude = tuple(_enabled_lanes)
 
         self._result.acquisition_prelude_plan_built_for_prelude = _plan_built
         _needs_public = "PUBLIC" in _required or "public" in [r.lower() for r in _required]
@@ -5066,6 +5098,34 @@ class SprintScheduler:
                 log.debug("[F223A] Runtime pivot prelude error: %s", _exc)
                 self._result.seed_context_skip_reason = "prelude_error"
 
+            # F226C: Domain seed context fallback — if runtime pivot prelude found no seeds
+            # but query is a direct domain, inject the domain as a seed directly so DOH/WAYBACK/
+            # PASSIVE_DNS can run against it. This fixes the case where nonfeed_diagnostic
+            # query=lockbit3.tw gets seed_context_available=False because run_runtime_pivot_prelude
+            # only finds seeds in existing DuckDB findings, not from the query itself.
+            # Condition: seed_context not available AND (no skip reason OR skip was "no_seeds_extracted")
+            if not self._result.seed_context_available:
+                import re as _re
+                _is_domain_query = bool(
+                    _re.search(
+                        r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b',
+                        query,
+                    )
+                )
+                if _is_domain_query and self._result.seed_context_skip_reason in (
+                    "",
+                    "no_seeds_extracted",
+                ):
+                    _domain = query.strip().lower()
+                    self._result.pivot_seed_domains = (_domain,)
+                    self._result.seed_context_available = True
+                    self._result.seed_context_propagated = True
+                    self._result.lanes_unlocked_by_seed_context = [
+                        "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
+                    ]
+                    self._result.seed_context_skip_reason = ""
+                    self._result.seed_context_source = "domain_query_fallback"
+
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
             await self._run_nonfeed_prelude_gather(
                 query=query,
@@ -5272,6 +5332,10 @@ class SprintScheduler:
                     )
             nonfeed_prelude_accepted["WAYBACK"] = _wb_acc
             return ("WAYBACK", _wb_acc)
+        # F226C: Explicit skip when query shaping returned empty/disabled — never leave blank
+        nonfeed_prelude_skipped["WAYBACK"] = (
+            "empty_shaped_query" if not _wb_query else "lane_disabled"
+        )
         return ("WAYBACK", 0)
 
     async def _run_pdns_prelude_lane(
@@ -5308,6 +5372,10 @@ class SprintScheduler:
                     pass
             nonfeed_prelude_accepted["PASSIVE_DNS"] = _pdns_acc
             return ("PASSIVE_DNS", _pdns_acc)
+        # F226C: Explicit skip when query shaping returned empty/disabled — never leave blank
+        nonfeed_prelude_skipped["PASSIVE_DNS"] = (
+            "empty_shaped_query" if not _pdns_query else "lane_disabled"
+        )
         return ("PASSIVE_DNS", 0)
 
     async def _run_doh_prelude_lane(

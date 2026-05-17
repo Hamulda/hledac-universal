@@ -201,9 +201,6 @@ class NonfeedCandidateLedger:
         sample_value: str = "",
         ts_monotonic: float | None = None,
     ) -> None:
-        """Add a ledger record. FIFO eviction when at capacity."""
-        import threading
-
         record = LedgerRecord(
             family=family,
             stage=stage,
@@ -217,7 +214,7 @@ class NonfeedCandidateLedger:
             sample_value=sample_value[:MAX_SAMPLE_CHARS] if sample_value else "",
             ts_monotonic=ts_monotonic if ts_monotonic is not None else time.monotonic(),
         )
-        with threading.Lock():
+        with self._lock:
             self._records.append(record)
 
     def add_ct_quarantine(
@@ -371,6 +368,111 @@ class NonfeedCandidateLedger:
             sample_value=domain[:MAX_SAMPLE_CHARS],
             ts_monotonic=ts_monotonic,
         )
+
+    # ---------------------------------------------------------------------------
+    # F214: Candidate extraction facade — makes the ledger boundary real
+    # ---------------------------------------------------------------------------
+
+    def ingest_text_for_candidates(
+        self,
+        text: str,
+        source_url: str | None = None,
+        source_family: str = FAMILY_PUBLIC,
+        max_candidates: int = MAX_FEED_CANDIDATES,
+    ) -> list[DomainCandidate]:
+        """
+        F214: Extract domain candidates from text and record as FEED candidates.
+
+        Convenience facade that combines extraction + ledger recording.
+        Returns extracted candidates (for immediate use by caller).
+
+        Args:
+            text:           Text to scan
+            source_url:     Optional source URL for hostname extraction
+            source_family:  "PUBLIC" or "FEED"
+            max_candidates: Max candidates to record per source
+
+        Returns:
+            List of DomainCandidate extracted (may be empty).
+        """
+        candidates = extract_domain_candidates_from_text(
+            text,
+            source_url=source_url,
+            source_family=source_family,
+        )
+        for tc in candidates[:max_candidates]:
+            try:
+                self.add_feed_candidate(
+                    domain=tc.domain,
+                    source_field=tc.source_field,
+                    confidence=tc.confidence,
+                    reason=f"{tc.reason} (seen={tc.seen_count})",
+                    sample_context=tc.sample_context[:200] if tc.sample_context else "",
+                )
+            except Exception:
+                pass  # fail-soft: ledger errors must never crash caller
+        return candidates
+
+    def compute_eligibility_from_candidates(
+        self,
+        candidates: list[DomainCandidate],
+    ) -> dict[str, bool]:
+        """
+        F214: Compute lane eligibility from domain candidates.
+
+        Facade for compute_lane_eligibility — returns the same dict.
+
+        Args:
+            candidates:  List of DomainCandidate
+
+        Returns:
+            Dict with ct, doh, wayback, passive_dns bools.
+        """
+        return compute_lane_eligibility(candidates)
+
+    def record_candidates(
+        self,
+        candidates: list[DomainCandidate],
+        source_url: str | None = None,
+        max_total: int = MAX_DOMAIN_CANDIDATES_FOR_LANES,
+    ) -> list[DomainCandidate]:
+        """
+        F214: Filter, rank, and record candidates in one call.
+
+        Combines filter_source_host_only + rank_candidates + add_feed_candidate.
+        Use this for the final ranking/recording step after deduplication.
+
+        Args:
+            candidates:  Deduplicated list of DomainCandidate
+            source_url:   Optional source URL for hostname filtering
+            max_total:    Maximum candidates to return/record
+
+        Returns:
+            Ranked, bounded list of DomainCandidate.
+        """
+        filtered = candidates
+        source_host_domains: frozenset[str] = frozenset()
+        if source_url:
+            filtered, source_host_domains = filter_source_host_only(
+                candidates, source_url
+            )
+        ranked = rank_candidates(
+            filtered,
+            max_total=max_total,
+            source_host_domains=source_host_domains,
+        )
+        for tc in ranked:
+            try:
+                self.add_feed_candidate(
+                    domain=tc.domain,
+                    source_field=tc.source_field,
+                    confidence=tc.confidence,
+                    reason=f"{tc.reason} (seen={tc.seen_count})",
+                    sample_context=tc.sample_context[:200] if tc.sample_context else "",
+                )
+            except Exception:
+                pass  # fail-soft
+        return ranked
 
     def records(self) -> tuple[LedgerRecord, ...]:
         """Return immutable snapshot of all records (oldest first)."""

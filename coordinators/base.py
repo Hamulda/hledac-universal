@@ -28,7 +28,6 @@ from collections import OrderedDict
 import logging
 
 from .enums import MemoryPressureLevel
-from .mixins import OperationTrackingMixin, LoadFactorMixin, MemoryPressureMixin
 
 logger = logging.getLogger(__name__)
 
@@ -80,21 +79,23 @@ class CoordinatorCapabilities:
     current_operations: int
 
 
-class UniversalCoordinator(ABC, OperationTrackingMixin, LoadFactorMixin, MemoryPressureMixin):
+class UniversalCoordinator(ABC):
     """
     Universal base class for all coordinators.
 
-    Uses focused mixins for separation of concerns:
+    Implements three coherent concerns directly:
     - OperationTrackingMixin: Operation lifecycle management
     - LoadFactorMixin: Capacity and load management
     - MemoryPressureMixin: M1 memory monitoring
 
-    Args:
-        name: Unique coordinator name
-        max_concurrent: Maximum concurrent operations (default 10)
-        memory_aware: Enable M1 memory pressure awareness (default True)
+    Previously used mixin classes as a compositional layer. After analysis,
+    the "seam" they represented was theoretical — there was only ever one
+    implementation of each behaviour, and all 12 coordinators inherit from
+    UniversalCoordinator which already contains the concrete implementation.
+    Introducing an injected support object would add indirection without
+    corresponding testability benefit, given the mixins are stable and the
+    coupling is confined to one class (UniversalCoordinator).
     """
-
     def __init__(
         self,
         name: str,
