@@ -2,13 +2,19 @@
 Coordinator Registry
 ====================
 
-Central registry for managing all Universal Coordinators.
-Provides:
-- Coordinator discovery and registration
-- Load balancing across coordinators
-- Operation routing based on capabilities
-- Health monitoring of coordinators
-- Statistics aggregation
+.. deprecated::
+    This module is DEPRECATED and DORMANT.
+
+Status: LEGACY — Not on the canonical sprint runtime path
+Role: None — dead coordinator routing seam
+Authority: NONE — this module makes no production claims
+
+Canonical Path:
+    ``core.__main__.run_sprint()`` → ``SprintScheduler``
+    Coordinators are created via direct class imports, not via registry.
+
+Preserved For: legacy/autonomous_orchestrator.py, tests/scripts/docs only.
+Do NOT use for new production runtime code.
 
 Based on patterns from:
 - DeepSeek R1: Operation routing and delegation
@@ -48,14 +54,22 @@ class CoordinatorInfo:
 
 class CoordinatorRegistry:
     """
+    .. deprecated::
+        This class is DEPRECATED and DORMANT.
+
     Central registry for managing Universal Coordinators.
-    
+
     Features:
     - Register/unregister coordinators
     - Route operations to appropriate coordinator
     - Load balancing (least loaded, weighted, priority)
     - Health monitoring
     - Statistics aggregation
+
+    Canonical Path: ``core.__main__.run_sprint()`` → ``SprintScheduler``
+    Do NOT use for new production runtime code.
+
+    Preserved For: legacy/autonomous_orchestrator.py, tests/scripts/docs only.
     """
 
     def __init__(self):

@@ -162,8 +162,11 @@ class LayerHealth:
 
 class LayerManager:
     """
-    Centralized manager for all universal layers.
+    .. deprecated::
+        This class is DEPRECATED and DORMANT.
 
+
+    Centralized manager for all universal layers.
     Features:
     - Ordered initialization (dependencies first)
     - Health monitoring
@@ -171,6 +174,11 @@ class LayerManager:
     - Layer dependency resolution
     - M1 memory-aware boot sequence
     - Shared GhostDirector singleton (prevents duplicate initialization)
+
+    Canonical Path: ``core.__main__.run_sprint()`` → ``SprintScheduler``
+    Do NOT use for new production runtime code.
+
+    Preserved For: legacy/autonomous_orchestrator.py, tests/scripts/docs only.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):

@@ -3,16 +3,23 @@ Coordination Layer v2
 ====================
 
 .. deprecated::
-    This module is DEPRECATED and DORMANT. The Universal Coordinators
-    world is not part of the canonical production orchestration path.
+    This module is DEPRECATED and DORMANT.
 
-Status: DORMANT - Not on main execution path
-Role: Legacy coordinator seam only (maps to coordination_layer.py)
-Authority: NONE - This module makes no production claims
+Status: LEGACY — Not on the canonical sprint runtime path
+Role: None — dead coordinator delegation seam
+Authority: NONE — this module makes no production claims
 
 Canonical Path:
-    Use CoordinationLayer from this same file for production work.
-    Universal Coordinators are an alternate experimental world only.
+    ``core.__main__.run_sprint()`` → ``SprintScheduler``
+    Coordinators are created via direct class imports, not via this layer.
+
+
+Broken Artifact:
+    ``_check_universal_coordinators()`` is called but never defined (lines 637, 1150, 1451).
+    Impact: zero on production (chain is dead). Not fixed in quarantine phase.
+
+Preserved For: legacy/autonomous_orchestrator.py, tests/scripts/docs only.
+Do NOT use for new production runtime code.
 """
 
 from __future__ import annotations
