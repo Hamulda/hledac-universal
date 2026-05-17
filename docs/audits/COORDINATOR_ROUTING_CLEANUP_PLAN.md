@@ -238,6 +238,12 @@ Hardest of the two variants. Requires git revert of ~10 files. Only proceed afte
 
 ---
 
+## Related Findings
+
+- **`docs/audits/COORDINATOR_CAPABILITY_PROTOCOL_AUDIT.md`** — `CoordinatorCapabilities` / `CoordinatorProtocol` is **not needed for canonical sprint runtime** (quarantined routing layer bypass). Recommendation: **No action.** The canonical sprint path uses direct instantiation + `start/step/shutdown` spine; capability routing lives only in `CoordinatorRegistry` with zero active production callers.
+
+---
+
 ## Proposed Commit Message
 ```
 docs(runtime): plan legacy coordinator routing cleanup
