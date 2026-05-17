@@ -33,23 +33,23 @@ runtime/resource_governor.py        ← M1ResourceGovernor (runtime admission fa
 
 ## 2. Caller Map
 
-### 2a. Uses `core.resource_governor.sample_uma_status()` directly (raw telemetry)
+### 2a. Uses `core.resource_governor.sample_uma_status()` directly
 
 | File | Lines | Usage | Classification |
 |------|-------|-------|----------------|
-| `pipeline/live_public_pipeline.py` | 1054, 3522 | `_get_uma_state()` → emergency abort + concurrency clamp | **Inline policy (hot path)** |
-| `pipeline/live_public_pipeline.py` | 3611 | `if uma_state == CRITICAL or EMERGENCY` → `effective_concurrency = 1` | **Inline policy (hot path)** |
-| `pipeline/live_public_pipeline.py` | 3793, 3796 | `public_fetch_gate` verdict | **Inline policy (hot path)** |
-| `pipeline/live_feed_pipeline.py` | 1431, 2240 | `_check_uma_emergency()`, `emergency_abort`/`critical_clamp` | **Inline policy (hot path)** |
-| `tools/live_memory_preflight.py` | 39, 161 | Preflight memory gate | RAW — tool-local |
-| `tools/prelive_decision_gate.py` | 64 | Decision gate | RAW — tool-local |
-| `tools/prelive_one_button_gate.py` | 219 | Cockpit gate | RAW — tool-local |
+| `pipeline/live_public_pipeline.py` | 1054, 3522 | `_get_uma_state()` → emergency abort + concurrency clamp | **Inline policy (hot path)** — bypasses governor |
+| `pipeline/live_public_pipeline.py` | 3611 | `if uma_state == CRITICAL or EMERGENCY` → `effective_concurrency = 1` | **Inline policy (hot path)** — bypasses governor |
+| `pipeline/live_public_pipeline.py` | 3793, 3796 | `public_fetch_gate` verdict | **Inline policy (hot path)** — bypasses governor |
+| `pipeline/live_feed_pipeline.py` | 1431, 2240 | `_check_uma_emergency()`, `emergency_abort`/`critical_clamp` | **Inline policy (hot path)** — bypasses governor |
+| `tools/live_memory_preflight.py` | 39, 161 | Preflight memory gate | RAW — one-shot preflight, not runtime policy |
+| `tools/prelive_decision_gate.py` | 64 | Decision gate | RAW — one-shot preflight |
+| `tools/prelive_one_button_gate.py` | 219 | Cockpit gate | RAW — one-shot preflight |
 | `core/__main__.py` | 54, 996, 1121, 1282 | Sprint lifecycle (preflight, peak, swap check) | RAW — CLI entry point |
-| `brain/model_manager.py` | 403, 693 | Fail-fast gate before model load | RAW — hard safety gate |
+| `brain/model_manager.py` | 403, 693 | Fail-fast gate before model load | RAW — hard safety gate, cannot go async |
 | `brain/hermes3_engine.py` | 870 | Draft model selection | RAW — model selection |
 | `brain/synthesis_runner.py` | 1231 | RSS guard before synthesis | RAW — synthesis |
 | `__main__.py` (hledac) | 809, 814, 2705 | Background sampling, alarm dispatch | RAW — CLI |
-| `intelligence/streaming_embedder.py` | 134, 490 | `is_critical/is_emergency` guard | RAW — streaming |
+| `intelligence/streaming_embedder.py` | 134, 490 | `is_critical/is_emergency` guard | RAW — streaming fail-open |
 | `benchmarks/live_sprint_measurement.py` | 150 | Benchmark telemetry | RAW — benchmark |
 | `benchmarks/m1_sustained_sprint.py` | 71, 189, 220 | Benchmark + governor eval | RAW — benchmark |
 | `benchmarks/benchmark_sprint_probe.py` | 57, 436 | Benchmark telemetry | RAW — benchmark |
@@ -197,7 +197,9 @@ These modules legitimately read `sample_uma_status()` directly because they are 
 
 **File:** `tests/test_resource_governor_authority_seal.py` (new)
 
-**Purpose:** Ensure canonical runtime policy decisions go through the governor, not inline computation.
+**Purpose:** Ensure canonical runtime policy decisions go through the governor, not inline computation. This test enforces current invariants and marks pending integration separately.
+
+**Note:** `test_renderer_admission_has_caller`, `test_model_admission_has_caller`, and `test_branch_admission_has_caller` will FAIL until those methods are wired. They are documented as **pending integration markers**, not regression seals. The seal test proper enforces current hot-path behavior.
 
 ```python
 """
@@ -206,17 +208,19 @@ tests/test_resource_governor_authority_seal.py — F226A
 Architecture seal test: canonical runtime policy decisions must not
 duplicate renderer/model/branch/lane admission logic outside M1ResourceGovernor.
 
-INVARIANTS:
+INVARIANTS (regression seals — must pass):
   | Invariant | Test |
   |-----------|------|
-  | pipeline/emergency_abort uses governor, not inline sample_uma_status | test_pipeline_uses_governor_for_emergency_abort |
-  | pipeline/concurrency_clamp uses governor, not inline uma_state | test_pipeline_uses_governor_for_concurrency_clamp |
-  | renderer_admission called from at least one hot path | test_renderer_admission_has_caller |
-  | model_admission called from at least one hot path | test_model_admission_has_caller |
-  | branch_admission called from at least one hot path | test_branch_admission_has_caller |
   | evaluate() and branch_admission() give same branch_concurrency | test_branch_concurrency_consistency |
   | evaluate().allow_renderer and renderer_admission().allowed consistent | test_renderer_consistency |
   | evaluate().allow_model_load and model_admission().allowed consistent | test_model_consistency |
+
+PENDING INTEGRATION MARKERS (expected to fail until wired):
+  | Method | Status |
+  |--------|--------|
+  | renderer_admission() | PENDING — no callers, integration tracked separately |
+  | model_admission() | PENDING — no callers, integration tracked separately |
+  | branch_admission() | PENDING — no callers, integration tracked separately |
 """
 ```
 
@@ -240,9 +244,19 @@ One safe hot-path integration exists that doesn't require passing governor refer
 | Question | Answer |
 |----------|--------|
 | Is M1ResourceGovernor admission API actually used in hot paths? | **Partial** — sidecar_admission (hot), lane_admission (hot), evaluate (hot). renderer/model/branch_admission are unused. |
-| Is there a parallel authority layer? | **Yes** — pipeline layer has inline emergency abort and concurrency clamp |
+| Is there a parallel authority layer? | **Yes** — pipeline layer has inline emergency abort and concurrency clamp that bypasses governor |
 | Are admission methods consistent? | **Yes** — evaluate() and branch_admission() are consistent. renderer_admission and model_admission are consistent with evaluate() but have no callers. |
-| Is there a real duplication risk? | **Yes** — pipeline emergency abort is redundant but not conflicting. No immediate bug. |
+| Is there a real maintenance hazard? | **Yes** — pipeline emergency abort bypasses canonical governor policy engine. On M1 8GB where state transitions can be rapid, the ~50ms gap between pipeline's abort and governor's decision creates divergence risk if thresholds or states change. |
+| Is there an immediate bug? | **No** — both paths compute the same result, pipeline fails closed (emergency abort), governor is advisory. Acceptable short-term. |
+
+### Maintenance Hazard Classification
+
+The pipeline layer inline policy is **not raw telemetry** — it is a runtime policy decision that duplicates the governor. This is a maintenance hazard:
+
+- **Gap A (hard bypass)**: `live_public_pipeline.py` emergency abort fires without consulting governor. If `evaluate_uma_state()` thresholds change in a future sprint, the pipeline silently diverges from governor logic.
+- **Gap B (redundant)**: `live_feed_pipeline.py` concurrency clamp re-computes what `sprint_scheduler` already communicated via `branch_concurrency`. Low risk — scheduler is authoritative.
+
+**Acceptable short-term** given the interface change required to pass governor into pipelines. **Track as technical debt** with governor injection into pipeline initialization as the target fix.
 
 ---
 
