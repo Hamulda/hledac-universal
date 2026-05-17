@@ -33,11 +33,17 @@ from dataclasses import dataclass
 
 __all__ = [
     "NonfeedSeed",
+    "SeedQuality",
+    "classify_seed_quality",
     "extract_nonfeed_seeds_from_text",
     "extract_nonfeed_seeds_from_findings",
     "compute_lane_unlocks",
     "PUBLISHER_DOMAINS",
 ]
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -60,6 +66,188 @@ PUBLISHER_DOMAINS: frozenset[str] = frozenset([
     "journalofcloudsecurity.com",
 ])
 """Publisher/aggregator domains filtered from seed extraction."""
+
+# ---------------------------------------------------------------------------
+# Seed Quality Gate — Sprint F223B
+# ---------------------------------------------------------------------------
+
+_GENERIC_DROP_DOMAINS: frozenset[str] = frozenset([
+    "example.com",
+    "example.org",
+    "example.net",
+    "example.edu",
+    "localhost",
+    "test.com",
+    "testing.com",
+    "invalid.com",
+])
+"""Generic infra / test domains — always drop."""
+
+_WEAK_DOMAINS: frozenset[str] = frozenset([
+    "mozilla.org",
+    "google.com",
+    "cloudflare.com",
+    "github.com",
+    "microsoft.com",
+    "apple.com",
+    "amazon.com",
+    "facebook.com",
+    "twitter.com",
+    "linkedin.com",
+    "instagram.com",
+    "youtube.com",
+    "reddit.com",
+    "dropbox.com",
+    "zoom.us",
+    "office.com",
+    "live.com",
+    "msn.com",
+    "aol.com",
+    "yahoo.com",
+])
+"""Major platform / publisher domains — weak unless explicit IOC context."""
+
+_RANSOMWARE_KEYWORDS: frozenset[str] = frozenset([
+    "ransomware", "lockbit", "conti", "revil", "clop", "alphv",
+    "blackcat", "hive", "darkrace", "vice society", "PLAY",
+    "mount", "babuk", "avaddon", "phobos", "dharma", "cem",
+    "mallox", "stopdoj", "doesp", " Lucifer",
+    "malware", "breach", "leak", "stolen", "exposed",
+    "onion", "darkweb", "panel", "victim", "payment",
+])
+"""Context keywords that boost weak domains to keep."""
+
+
+@dataclass(frozen=True)
+class SeedQuality:
+    """
+    Sprint F223B: Quality gate decision for a NonfeedSeed.
+
+    Fields:
+        decision:  "keep" | "weak" | "drop"
+        reason:    Human-readable reason
+        score:      Quality score [0.0, 1.0]
+    """
+    decision: str
+    reason: str
+    score: float
+
+
+def classify_seed_quality(
+    seed: NonfeedSeed,
+    *,
+    query: str = "",
+    context: str = "",
+) -> SeedQuality:
+    """
+    Sprint F223B: Classify seed quality — drop generic infra, weaken
+    major platforms, keep ransomware-relevant IOCs.
+
+    Args:
+        seed:     NonfeedSeed to classify
+        query:    Optional query string (e.g. "LockBit ransomware")
+        context:  Optional additional context text
+
+    Returns:
+        SeedQuality with decision, reason, score.
+    """
+    combined = f"{query} {context}".lower()
+
+    # ── Drop: generic / test / localhost ───────────────────────────────────
+    if seed.value.lower() in _GENERIC_DROP_DOMAINS:
+        return SeedQuality(
+            decision="drop",
+            reason="generic_or_test_domain",
+            score=0.0,
+        )
+
+    # ── Drop: publisher domains unless explicit IOC context ─────────────
+    if _is_publisher_domain(seed.value):
+        # Only keep if ransomware keywords present in combined context
+        has_ioc_context = any(kw in combined for kw in _RANSOMWARE_KEYWORDS)
+        if not has_ioc_context:
+            return SeedQuality(
+                decision="drop",
+                reason="publisher_domain_no_ioc_context",
+                score=0.1,
+            )
+        return SeedQuality(
+            decision="keep",
+            reason="publisher_domain_explicit_ioc_context",
+            score=0.7,
+        )
+
+    # ── Drop: pure numeric TLDs or bare tlds ─────────────────────────────
+    lower_val = seed.value.lower()
+    # .onion is a valid TLD for Tor — never drop it as "bare tld"
+    if not lower_val.endswith(".onion"):
+        parts = lower_val.split(".")
+        if len(parts) == 2:
+            base = parts[0]
+            if len(base) <= 2 or base in ("www", "ftp", "mail", "ns1", "ns2"):
+                return SeedQuality(
+                    decision="drop",
+                    reason="bare_or_invalid_tld",
+                    score=0.0,
+                )
+
+    # ── Weak: major platforms — exact domain or subdomain ─────────────────
+    # Check if the domain itself or any parent domain is in _WEAK_DOMAINS.
+    # E.g. "github.com" or "actions.githubusercontent.com" → matches github.com
+    parts = lower_val.split(".")
+    is_weak = any(
+        ".".join(parts[i:]) in _WEAK_DOMAINS
+        for i in range(len(parts))
+    )
+    if is_weak:
+        # Boost to keep if explicit IOC context
+        has_ioc_context = any(kw in combined for kw in _RANSOMWARE_KEYWORDS)
+        if has_ioc_context:
+            return SeedQuality(
+                decision="keep",
+                reason="weak_domain_explicit_ransomware_context",
+                score=0.75,
+            )
+        return SeedQuality(
+            decision="weak",
+            reason="major_platform_domain",
+            score=0.3,
+        )
+
+    # ── Keep: hashes, IPs, CVEs (including normalized sha256/sha1) ───────
+    if seed.kind in ("hash", "sha256", "sha1", "md5", "ip", "cve", "email"):
+        return SeedQuality(
+            decision="keep",
+            reason=f"ioc_{seed.kind}_preserved",
+            score=0.9,
+        )
+
+    # ── Keep: URL with interesting path ─────────────────────────────────
+    if seed.kind == "url":
+        lower_url = seed.value.lower()
+        if any(kw in lower_url for kw in ("onion", "panel", "leak", "stolen", "dump")):
+            return SeedQuality(
+                decision="keep",
+                reason="url_contains_onion_or_illegal_path",
+                score=0.9,
+            )
+        # Not a special URL — fall through to domain keyword check
+
+    # ── Keep: domain with ransomware keyword in value ───────────────────
+    lower_value = seed.value.lower()
+    if any(kw in lower_value for kw in _RANSOMWARE_KEYWORDS):
+        return SeedQuality(
+            decision="keep",
+            reason="domain_contains_ransomware_keyword",
+            score=0.85,
+        )
+
+    # ── Default: keep with base score ─────────────────────────────────────
+    return SeedQuality(
+        decision="keep",
+        reason="standard_ioc_preserved",
+        score=0.65,
+    )
 
 # ---------------------------------------------------------------------------
 # Dataclass
@@ -85,7 +273,8 @@ class NonfeedSeed:
 
     def __post_init__(self) -> None:
         if self.kind not in (
-            "domain", "ip", "url", "hash", "cve", "email", "unknown"
+            "domain", "ip", "url", "hash", "sha256", "sha1", "md5",
+            "cve", "email", "unknown"
         ):
             object.__setattr__(self, "kind", "unknown")
 

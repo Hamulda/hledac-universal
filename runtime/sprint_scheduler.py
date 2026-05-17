@@ -1131,6 +1131,12 @@ class SprintSchedulerResult:
     acquisition_prelude_plan_present: bool = False
     acquisition_prelude_plan_built_for_prelude: bool = False
     acquisition_prelude_domain_detection_error: str = ""
+    # Sprint F225A: Acquisition plan build error surface — bounded diagnostic fields
+    # Populated in the except block of build_acquisition_plan() call in run().
+    # Allows final report to distinguish "empty plan" from "build failed".
+    acquisition_plan_build_failed: bool = False
+    acquisition_plan_build_error_type: str = ""
+    acquisition_plan_build_error: str = ""
     # Sprint F216E: Feed dominance budget telemetry
     # Populated by _check_feed_dominance_budget() called per-cycle and at teardown
     feed_budget_active: bool = False                    # True when budget policy is configured
@@ -2507,8 +2513,13 @@ class SprintScheduler:
                 # F224B: nonfeed_expected_lanes = scheduled_nonfeed_lanes (canonical source)
                 self._result.nonfeed_expected_lanes = tuple(getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
                 self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
-        except Exception:
+        except Exception as _exc:
             self._acquisition_plan = None
+            # Sprint F225A: Surface build failure in result so final report
+            # can distinguish "plan empty" from "build failed".
+            self._result.acquisition_plan_build_failed = True
+            self._result.acquisition_plan_build_error_type = type(_exc).__name__
+            self._result.acquisition_plan_build_error = str(_exc)[:500]
 
         # Sprint F209A: Run Mandatory Acquisition Prelude BEFORE main feed cycle loop
         # This establishes early terminal state for PUBLIC/CT before feed cycles dominate runtime
@@ -4495,6 +4506,27 @@ class SprintScheduler:
                         if _seed_count == 0:
                             self._result.pivot_integration_reason = "pivot_no_seeds"
                         else:
+                            # [F226A] Populate seed tuples for NonfeedSeedContext propagation
+                            _domains = tuple(sorted(set(
+                                s.value for s in _extraction.seeds if s.seed_type == "domain"
+                            )))
+                            _ips = tuple(sorted(set(
+                                s.value for s in _extraction.seeds if s.seed_type == "ip"
+                            )))
+                            _urls = tuple(sorted(set(
+                                s.value for s in _extraction.seeds if s.seed_type == "url"
+                            )))
+                            _hashes = tuple(sorted(set(
+                                s.value for s in _extraction.seeds if s.seed_type == "hash"
+                            )))
+                            _cves = tuple(sorted(set(
+                                s.value for s in _extraction.seeds if s.seed_type == "cve"
+                            )))
+                            self._result.pivot_seed_domains = _domains
+                            self._result.pivot_seed_ips = _ips
+                            self._result.pivot_seed_urls = _urls
+                            self._result.pivot_seed_hashes = _hashes
+                            self._result.pivot_seed_cves = _cves
                             _plan = plan_lanes_for_pivot_seeds(
                                 _extraction.seeds,
                                 max_items=128,
@@ -4980,6 +5012,35 @@ class SprintScheduler:
                             _pivot_lanes = getattr(_pivot_plan, "items", None)
                 except Exception:
                     _pivot_lanes = None  # fail-soft: pivot planning is advisory
+
+            # F223A: Runtime pivot prelude — extract seeds from query/DuckDB findings
+            # BEFORE nonfeed lanes run so seed_context is available for build_lane_query.
+            # Safe: no network, no model load, duckdb read capped at 1000 rows, fail-soft.
+            from hledac.universal.runtime.nonfeed_seed_runtime import (
+                run_runtime_pivot_prelude as _run_runtime_pivot_prelude,
+            )
+
+            try:
+                _pivot_result = await _run_runtime_pivot_prelude(
+                    query=query,
+                    duckdb_store=duckdb_store,
+                    nonfeed_diagnostic_active=_is_nonfeed_diagnostic,
+                    existing_findings=None,  # prelude phase: no accepted findings yet
+                )
+                self._result.pivot_seed_domains = _pivot_result.get("pivot_seed_domains", ())
+                self._result.pivot_seed_ips = _pivot_result.get("pivot_seed_ips", ())
+                self._result.pivot_seed_urls = _pivot_result.get("pivot_seed_urls", ())
+                self._result.pivot_seed_hashes = _pivot_result.get("pivot_seed_hashes", ())
+                self._result.pivot_seed_cves = _pivot_result.get("pivot_seed_cves", ())
+                self._result.seed_context_available = _pivot_result.get("seed_context_available", False)
+                self._result.seed_context_propagated = _pivot_result.get("seed_context_propagated", False)
+                self._result.lanes_unlocked_by_seed_context = _pivot_result.get(
+                    "lanes_unlocked_by_seed_context", []
+                )
+                self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
+            except Exception as _exc:
+                log.debug("[F223A] Runtime pivot prelude error: %s", _exc)
+                self._result.seed_context_skip_reason = "prelude_error"
 
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
             await self._run_nonfeed_prelude_gather(
@@ -5864,6 +5925,8 @@ class SprintScheduler:
                         duckdb_store=duckdb_store,
                         hermes_engine=self._hermes_engine,
                         memory_manager=self._memory_manager,
+                        public_bootstrap_enabled=False,  # stable path: bootstrap off
+                        seed_context=None,  # stable path: no seed_context bootstrap
                     )
             except asyncio.TimeoutError:
                 log.debug("[stable] PUBLIC branch timed out after %ss", public_timeout)
@@ -6170,6 +6233,7 @@ class SprintScheduler:
                         hermes_engine=self._hermes_engine,
                         memory_manager=self._memory_manager,
                         public_bootstrap_enabled=_bootstrap_enabled,
+                        seed_context=_seed_ctx,  # Sprint F223C: bounded seed_context bootstrap
                     )
             except _asyncio.TimeoutError:
                 log.debug("[aggressive] Public branch timed out after %ss", branch_timeout)
@@ -6431,6 +6495,7 @@ class SprintScheduler:
         hermes_engine: Any | None = None,
         memory_manager: Any | None = None,
         public_bootstrap_enabled: bool = False,  # Sprint F217C: deterministic bootstrap
+        seed_context: Any | None = None,  # Sprint F223C: NonfeedSeedContext for bounded bootstrap
     ) -> None:
         """
         Sprint 8XE: Run public discovery pipeline in the current cycle.
@@ -6483,6 +6548,7 @@ class SprintScheduler:
                         memory_manager=memory_manager,  # P11: session history for RAG context
                         enqueue_hypothesis_pivot=self.enqueue_hypothesis_pivot,  # Sprint F193B: bounded feedback seam
                         public_bootstrap_enabled=public_bootstrap_enabled,  # Sprint F217C: deterministic bootstrap
+                        seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
                     ),
                     name="sprint:public",
                 )
@@ -6695,6 +6761,17 @@ class SprintScheduler:
                 if not _pub_bootstrap_en and _pub_bootstrap_ord == "disabled"
                 else ""
             ),
+            # Sprint F223C: Seed context bootstrap debug fields
+            "seed_context_available": _seed_ctx is not None and (
+                bool(getattr(_seed_ctx, 'domains', ()) or getattr(_seed_ctx, 'urls', ()))
+            ),
+            "bootstrap_eligible": (
+                _pub_bootstrap_en and _pub_bootstrap_ord != "disabled"
+                and _seed_ctx is not None
+                and bool(getattr(_seed_ctx, 'domains', ()) or getattr(_seed_ctx, 'urls', ()))
+            ),
+            "bootstrap_used": getattr(public_result, 'public_bootstrap_candidates_count', 0) > 0,
+            "bootstrap_candidate_count": getattr(public_result, 'public_bootstrap_candidates_count', 0) or 0,
         }
         self._result.public_provider_selection_debug = _psd
 
@@ -9966,6 +10043,10 @@ class SprintScheduler:
                 duplicate_rejection_summary_by_family=getattr(self._result, "duplicate_rejection_summary_by_family", None) or {},
                 low_information_by_family=getattr(self._result, "low_information_by_family", None) or {},
                 nonfeed_candidate_ledger_summary=(self._nonfeed_ledger.summary() if hasattr(self, "_nonfeed_ledger") and self._nonfeed_ledger is not None and hasattr(self._nonfeed_ledger, "summary") else {}),
+                # Sprint F225A: Acquisition plan build error surface
+                acquisition_plan_build_failed=getattr(self._result, "acquisition_plan_build_failed", False),
+                acquisition_plan_build_error_type=getattr(self._result, "acquisition_plan_build_error_type", ""),
+                acquisition_plan_build_error=getattr(self._result, "acquisition_plan_build_error", ""),
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only

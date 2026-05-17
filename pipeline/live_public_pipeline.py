@@ -466,10 +466,84 @@ def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> 
     return urls
 
 
+# Sprint F223C: Bounded seed_context bootstrap for nonfeed_diagnostic profile
+_MAX_SEED_CONTEXT_BOOTSTRAP: int = 10  # hard cap
+
+
+def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:
+    """
+    Generate deterministic bootstrap URLs from NonfeedSeedContext.
+
+    Bounded: at most max_candidates URLs returned.
+    Fail-safe: returns empty list for None seed_context or parse errors.
+    No network I/O — pure synchronous URL construction.
+    No browser, no recursive crawl.
+
+    Bootstrap sources (in priority order):
+      1. seed_context.domains → https://domain/ (top 5 only)
+      2. seed_context.urls → as-is (top 5 only)
+
+    Args:
+        seed_context: NonfeedSeedContext with domains/urls tuples.
+        max_candidates: Maximum number of URLs to return (default 10).
+
+    Returns:
+        List of absolute URL strings (max max_candidates). Empty list if
+        seed_context is None or has no domains/urls.
+    """
+    if not seed_context or max_candidates < 1:
+        return []
+
+    urls: list[str] = []
+    _has_domains = bool(getattr(seed_context, 'domains', ()))
+    _has_urls = bool(getattr(seed_context, 'urls', ()))
+    _both_sources = _has_domains and _has_urls
+
+    # Split budget: if both sources present, split evenly (5+5 for max=10)
+    # If only one source, use full budget for that source
+    if _both_sources:
+        _max_per_source = (max_candidates + 1) // 2
+    else:
+        _max_per_source = max_candidates
+
+    # Domains: construct root URL for each domain (top N)
+    if _has_domains:
+        for domain in list(getattr(seed_context, 'domains', ()))[:_max_per_source]:
+            if len(urls) >= max_candidates:
+                break
+            # Basic domain validation — skip IPs and obvious noise
+            if not domain or "." not in domain:
+                continue
+            try:
+                # Ensure proper URL form
+                domain = domain.lower().strip()
+                if not domain.startswith(("http://", "https://")):
+                    urls.append(f"https://{domain}")
+                else:
+                    urls.append(domain)
+            except Exception:
+                continue
+
+    # URLs: use as-is (top N)
+    if _has_urls:
+        for url in list(getattr(seed_context, 'urls', ()))[:_max_per_source]:
+            if len(urls) >= max_candidates:
+                break
+            if not url:
+                continue
+            try:
+                url_str = str(url).strip()
+                if not url_str.startswith(("http://", "https://")):
+                    continue  # skip bare domains that would duplicate domain entries
+                urls.append(url_str)
+            except Exception:
+                continue
+
+    return urls[:max_candidates]
+
+
 def _extract_domain_from_query(query: str) -> str | None:
     """
-    Extract the registered domain from an OSINT query string.
-
     Handles:
       - Plain domains: example.com, www.example.com, *.example.com
       - URLs: https://example.com/path, https://www.example.com/path
@@ -2905,6 +2979,8 @@ async def async_run_live_public_pipeline(
     enqueue_hypothesis_pivot: Any | None = None,  # Sprint F193B: bounded feedback seam
     # Sprint F217C: Deterministic bootstrap — if True, prepend bootstrap URLs before discovery
     public_bootstrap_enabled: bool = False,
+    # Sprint F223C: Bounded seed_context bootstrap for nonfeed_diagnostic profile
+    seed_context: Any | None = None,
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -2996,13 +3072,14 @@ async def async_run_live_public_pipeline(
         """
         Engine 1: Handles all discovery-related logic.
 
-        Input state: query, store, max_results, public_bootstrap_enabled
+        Input state: query, store, max_results, public_bootstrap_enabled, seed_context
         Output state: enriched hits tuple + all discovery telemetry accumulators
         """
         query: str
         store: Any
         max_results: int
         public_bootstrap_enabled: bool
+        seed_context: Any | None  # Sprint F223C: NonfeedSeedContext for bounded bootstrap
 
         async def run(
             self,
@@ -3051,6 +3128,7 @@ async def async_run_live_public_pipeline(
             _pub_build_success_count: int = 0
             _pub_build_failure_count: int = 0
             _pub_duplicate_count: int = 0
+            public_acceptance_reject_reasons: dict[str, int] = {}
 
             # F232: Provider surface telemetry — local accumulators (reset each run)
             _pub_provider_selected: list[str] = []
@@ -3112,6 +3190,31 @@ async def async_run_live_public_pipeline(
                             _pub_rescue_order = "rescue_fallback"
                     except Exception:
                         _pub_rescue_candidates_count = 0
+
+                # Sprint F223C: Seed context bootstrap fallback
+                # When query-based bootstrap + rescue both returned zero AND seed_context is available,
+                # use bounded static URLs from seed_context.domains/urls.
+                # Enabled only in nonfeed_diagnostic profile with seed_context (propagated from scheduler).
+                if _pub_bootstrap_candidates_count == 0 and _pub_rescue_candidates_count == 0 and self.seed_context is not None:
+                    try:
+                        seed_bootstrap_urls = generate_seed_context_bootstrap_urls(
+                            self.seed_context, max_candidates=_MAX_SEED_CONTEXT_BOOTSTRAP
+                        )
+                        _pub_bootstrap_candidates_count = len(seed_bootstrap_urls)
+                        for idx, url in enumerate(seed_bootstrap_urls):
+                            bootstrap_hits.append(DiscoveryHit(
+                                query=self.query,
+                                title=f"SeedBootstrap {idx+1}",
+                                url=url,
+                                snippet=f"Seed context bootstrap URL: {url}",
+                                score=0.80,
+                                reason="seed_context_bootstrap",
+                                rank=-1,
+                                source="seed_bootstrap",
+                                retrieved_ts=0.0,
+                            ))
+                    except Exception:
+                        _pub_bootstrap_candidates_count = 0
 
             try:
                 _discovery_start = time.monotonic()
@@ -3531,6 +3634,7 @@ async def async_run_live_public_pipeline(
         store=store,
         max_results=max_results,
         public_bootstrap_enabled=public_bootstrap_enabled,
+        seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
     ).run(uma_state=uma_state)
 
     # Unpack discovery telemetry into main-line state
@@ -3574,6 +3678,9 @@ async def async_run_live_public_pipeline(
     _pub_rescue_accepted_findings = discovery_telemetry.get('public_rescue_accepted_findings', 0)
     _pub_rescue_errors = discovery_telemetry.get('public_rescue_errors', 0)
     _pub_rescue_order = discovery_telemetry.get('public_rescue_order', 'disabled')
+
+    # F207J-C: PUBLIC Acceptance — local accumulator for rejection reasons
+    public_acceptance_reject_reasons: dict[str, int] = {}
 
     # ---- Fetch batch ---------------------------------------------------------
     # Per-call semaphore, no global batch timeout

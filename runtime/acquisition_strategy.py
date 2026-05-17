@@ -1204,6 +1204,10 @@ def build_acquisition_report(
     seed_context_available: bool = False,
     seed_context_propagated: bool = False,
     lanes_unlocked_by_seed_context: list[str] | None = None,
+    # Sprint F225A: Acquisition plan build error surface
+    acquisition_plan_build_failed: bool = False,
+    acquisition_plan_build_error_type: str = "",
+    acquisition_plan_build_error: str = "",
 ) -> dict:
     """
     [F208C] Build a stable canonical acquisition report dict.
@@ -1384,10 +1388,20 @@ def build_acquisition_report(
     if terminality:
         required_lane_plan = list(terminality.get("required_lanes", []) or [])
 
-    # effective_acquisition_plan: union of required + actually attempted
-    effective_acquisition_plan: list[str] = list(
-        set(required_lane_plan) | set(runtime_attempted_lanes)
-    )
+    # effective_acquisition_plan: ordered union — required first, then attempted (deduped)
+    # F225B: deterministic ordering (was list(set(...) | set(...)) which is non-deterministic)
+    _effective_seen: set[str] = set()
+    effective_acquisition_plan: list[str] = []
+
+    for lane in required_lane_plan:
+        if lane and lane not in _effective_seen:
+            _effective_seen.add(lane)
+            effective_acquisition_plan.append(lane)
+
+    for lane in runtime_attempted_lanes:
+        if lane and lane not in _effective_seen:
+            _effective_seen.add(lane)
+            effective_acquisition_plan.append(lane)
 
     # plan_semantics: distinguishes prelude-only from effective_runtime
     # "prelude_only" = prelude plan was generated but no lane was attempted yet
@@ -1510,6 +1524,10 @@ def build_acquisition_report(
             acquisition_profile=_effective_profile,
             plan=plan,
         ),
+        # Sprint F225A: Acquisition plan build error surface
+        "acquisition_plan_build_failed": acquisition_plan_build_failed,
+        "acquisition_plan_build_error_type": acquisition_plan_build_error_type,
+        "acquisition_plan_build_error": acquisition_plan_build_error,
     }
 
 

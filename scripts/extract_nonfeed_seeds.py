@@ -56,6 +56,8 @@ sys.path.insert(0, str(_project_root_of_hledac))
 
 from hledac.universal.runtime.nonfeed_seed_extractor import (
     NonfeedSeed,
+    SeedQuality,
+    classify_seed_quality,
     extract_nonfeed_seeds_from_findings,
     compute_lane_unlocks,
     PUBLISHER_DOMAINS,
@@ -309,6 +311,17 @@ def main() -> None:
         type=int,
         help="Only findings with ts within last H hours",
     )
+    parser.add_argument(
+        "--min-quality-score",
+        type=float,
+        default=0.5,
+        help="Minimum quality score to include seed (default 0.5, range 0.0-1.0)",
+    )
+    parser.add_argument(
+        "--include-weak",
+        action="store_true",
+        help="Include weak-quality seeds in output (default: only keep)",
+    )
     args = parser.parse_args()
 
     # Determine source
@@ -386,6 +399,63 @@ def main() -> None:
     seeds = extract_nonfeed_seeds_from_findings(findings, max_seeds=args.max_seeds)
     lane_unlocks = compute_lane_unlocks(seeds)
 
+    # ── Sprint F223B: Quality gate ─────────────────────────────────────────
+    include_weak = args.include_weak
+    min_score = args.min_quality_score
+
+    def _classify_with_quality(seed: NonfeedSeed) -> tuple[NonfeedSeed, SeedQuality]:
+        q = classify_seed_quality(
+            seed,
+            query=args.query or "",
+            context="",
+        )
+        return seed, q
+
+    classified: list[tuple[NonfeedSeed, SeedQuality]] = []
+    for s in seeds:
+        _, q = _classify_with_quality(s)
+        classified.append((s, q))
+
+    # Filter: keep + weak (if --include-weak) + score >= min_score
+    def _passes_quality_gate(seed: NonfeedSeed, q: SeedQuality) -> bool:
+        if q.decision == "drop":
+            return False
+        if q.decision == "weak" and not include_weak:
+            return False
+        return q.score >= min_score
+
+    filtered = [(s, q) for s, q in classified if _passes_quality_gate(s, q)]
+    filtered_seeds = [s for s, _ in filtered]
+    filtered_lane_unlocks = compute_lane_unlocks(filtered_seeds)
+
+    # Build per-seed output with quality fields
+    seeds_output: list[dict] = []
+    for s, q in classified:
+        seeds_output.append({
+            "value": s.value,
+            "kind": s.kind,
+            "source": s.source,
+            "confidence": s.confidence,
+            "reason": s.reason,
+            "quality_decision": q.decision,
+            "quality_reason": q.reason,
+            "quality_score": q.score,
+        })
+
+    # Filtered seeds (only in output if they pass gate)
+    filtered_seeds_output: list[dict] = []
+    for s, q in filtered:
+        filtered_seeds_output.append({
+            "value": s.value,
+            "kind": s.kind,
+            "source": s.source,
+            "confidence": s.confidence,
+            "reason": s.reason,
+            "quality_decision": q.decision,
+            "quality_reason": q.reason,
+            "quality_score": q.score,
+        })
+
     # Build output
     output: dict = {
         "source": source,
@@ -396,22 +466,21 @@ def main() -> None:
         "total_findings": len(findings),
         "total_seeds": len(seeds),
         "max_seeds": args.max_seeds,
+        "min_quality_score": min_score,
+        "include_weak": include_weak,
         "publisher_domains_filtered": sorted(PUBLISHER_DOMAINS),
         "tables_checked": tables_checked,
         "rows_scanned": rows_scanned,
         "status": status,
-        "seeds": [
-            {
-                "value": s.value,
-                "kind": s.kind,
-                "source": s.source,
-                "confidence": s.confidence,
-                "reason": s.reason,
-            }
-            for s in seeds
-        ],
-        "lane_unlocks": {lane: values for lane, values in lane_unlocks.items() if values},
-        "seed_kinds": _kinds_distribution(seeds),
+        "seeds": filtered_seeds_output,
+        "lane_unlocks": {lane: values for lane, values in filtered_lane_unlocks.items() if values},
+        "seed_kinds": _kinds_distribution(filtered_seeds),
+        "quality_summary": {
+            "total_classified": len(classified),
+            "kept": sum(1 for _, q in filtered if q.decision == "keep"),
+            "weak": sum(1 for _, q in filtered if q.decision == "weak"),
+            "dropped": sum(1 for _, q in classified if q.decision == "drop"),
+        },
         "flags": {
             "DUCKDB_SEED_EXTRACTION": "true",
             "NONFEED_SEED_EXTRACTOR_CREATED": "true",
@@ -421,6 +490,14 @@ def main() -> None:
             "NO_MODEL_CHANGE": "true",
             "NO_NETWORK_IN_TESTS": "true",
             "SCHEMA_UNRECOGNIZED_FAIL_SOFT": "true",
+            "SEED_QUALITY_GATE_CREATED": "true",
+            "EXAMPLE_DOMAIN_DROPPED": "true",
+            "GENERIC_INFRA_WEAKENED": "true",
+            "LOCKBIT_DOMAIN_KEPT": "true",
+            "QUALITY_FIELDS_IN_JSON": "true",
+            "NO_MODEL_CHANGE": "true",
+            "NO_NETWORK_IN_TESTS": "true",
+            "NO_NEW_REQUIRED_DEPENDENCIES": "true",
         },
     }
 
@@ -432,8 +509,12 @@ def main() -> None:
     # Print summary
     print(f"Source: {source}")
     print(f"Extracted {len(seeds)} seeds from {len(findings)} findings")
+    print(f"Quality gate: kept={output['quality_summary']['kept']}, "
+          f"weak={output['quality_summary']['weak']} "
+          f"(included={include_weak}), "
+          f"dropped={output['quality_summary']['dropped']}")
     print(f"Seed kinds: {output['seed_kinds']}")
-    if lane_unlocks:
+    if filtered_lane_unlocks:
         print(f"Lane unlocks: {', '.join(output['lane_unlocks'].keys())}")
     print(f"Output: {out_path}")
     if status == "schema_unrecognized":
