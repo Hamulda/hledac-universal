@@ -355,6 +355,8 @@ class M1ResourceGovernor:
     def renderer_admission(self) -> RendererAdmission:
         """
         F214R: Canonical renderer admission check.
+        @pending_integration: no confirmed production call sites as of F214R audit.
+        See tests/test_resource_governor_authority_seal.py::TestPendingIntegrationMarkers.
 
         Returns RendererAdmission with:
         - allowed: True if JS renderer may be used
@@ -408,6 +410,8 @@ class M1ResourceGovernor:
     def model_admission(self, _model_name: str = "", estimated_mb: int = 0) -> ModelAdmission:
         """
         F214R: Canonical model load admission check.
+        @pending_integration: no confirmed production call sites as of F214R audit.
+        See tests/test_resource_governor_authority_seal.py::TestPendingIntegrationMarkers.
 
         Returns ModelAdmission with:
         - allowed: True if model load is permitted
@@ -458,6 +462,8 @@ class M1ResourceGovernor:
     def branch_admission(self, _branch_name: str = "", estimated_mb: int = 0) -> BranchAdmission:
         """
         F214R: Canonical branch admission check.
+        @pending_integration: no confirmed production call sites as of F214R audit.
+        See tests/test_resource_governor_authority_seal.py::TestPendingIntegrationMarkers.
 
         Returns BranchAdmission with:
         - allowed: True if branch can run
