@@ -3,44 +3,50 @@
   "timestamp": "2026-05-01T12:54:00Z",
   "scope": "graph_ecosystem_authority_and_write_path_seal",
   "authority_matrix": {
-    "truth_writer": {
-      "module": "knowledge/ioc_graph.py",
-      "class": "IOCGraph",
-      "backend": "Kuzu",
-      "write_methods": ["upsert_ioc", "buffer_ioc", "upsert_ioc_batch", "add_relation", "export_stix_bundle"],
-      "canonical": true,
-      "deprecation_risk": "NONE — active truth store",
-      "callers": [
-        "runtime/sprint_scheduler.py::_accumulate_findings_to_graph (line ~1844)",
-        "runtime/sprint_scheduler.py::_buffer_ioc_pivot (line ~4674)",
-        "runtime/sprint_scheduler.py::buffer_ioc (line ~4862)",
-        "coordinators/graph_coordinator.py (reasoning overlay, read path only)"
-      ]
-    },
-    "analytics_writer": {
+    "active_truth_writer": {
       "module": "graph/quantum_pathfinder.py",
       "class": "DuckPGQGraph",
       "backend": "DuckDB",
       "write_methods": ["add_ioc", "add_relation"],
-      "canonical": false,
-      "deprecation_risk": "LOW — analytics store, not canonical truth",
-      "notes": "Read-only overlay for reasoning. add_ioc/add_relation are donor methods."
+      "canonical": true,
+      "deprecation_risk": "NONE — active truth store for scheduler accumulation path (Sprint F226)",
+      "callers": [
+        "runtime/sprint_scheduler.py::_accumulate_findings_to_graph (line ~7090)",
+        "runtime/sprint_scheduler.py::graph_service.upsert_ioc_batch (line ~7128)"
+      ]
     },
     "facade": {
       "module": "knowledge/graph_service.py",
       "class": "module-level functions",
-      "write_methods": ["upsert_ioc", "upsert_relation", "upsert_identity_edge"],
+      "write_methods": ["upsert_ioc", "upsert_relation", "upsert_identity_edge", "upsert_ioc_batch"],
       "canonical": false,
-      "deprecation_risk": "NONE — facade delegates to IOCGraph",
-      "notes": "reset_session() exists at line 152 — called at sprint_scheduler.py:5832"
+      "deprecation_risk": "NONE — facade delegates to DuckPGQGraph",
+      "notes": "reset_session() exists at line ~152 — called at sprint teardown. _get_graph() lazy-inits DuckPGQGraph."
+    },
+    "standalone_truth_store": {
+      "module": "knowledge/ioc_graph.py",
+      "class": "IOCGraph",
+      "backend": "Kuzu",
+      "write_methods": ["upsert_ioc", "buffer_ioc", "upsert_ioc_batch", "add_relation", "export_stix_bundle"],
+      "canonical": false,
+      "deprecation_risk": "NONE — valid standalone truth store, not active in scheduler accumulation path",
+      "notes": "IOCGraph remains a valid standalone truth store. Not the active target for _accumulate_findings_to_graph."
+    },
+    "capability_gate": {
+      "module": "knowledge/graph_attachment.py",
+      "class": "GraphAttachmentStore",
+      "write_methods": ["inject_graph (capability-checked)", "inject_truth_write_graph"],
+      "canonical": false,
+      "deprecation_risk": "NONE — explicit capability/authority check in inject_graph",
+      "notes": "inject_graph docstring: 'STORE IS NOT GRAPH TRUTH OWNER'. Capability check at line 64."
     },
     "sprint_facts_store": {
       "module": "knowledge/duckdb_store.py",
       "class": "DuckDBShadowStore",
-      "write_methods": ["inject_graph (CAPABILITY-GATED)"],
+      "write_methods": ["inject_graph (DEPRECATED — delegates to GraphAttachmentStore)"],
       "canonical": false,
-      "deprecation_risk": "NONE — explicitly labeled NOT graph authority",
-      "notes": "inject_graph() requires buffer_ioc/buffer_observation/flush_buffers capability. Explicit VERDICT comments throughout."
+      "deprecation_risk": "NONE — explicitly labeled DEPRECATED in docstring (Sprint F222)",
+      "notes": "inject_graph() marked DEPRECATED, delegates entirely to _graph_store().inject_graph(). NOT graph authority."
     },
     "reasoning_overlay_read_only": {
       "module": "coordinators/graph_coordinator.py",
@@ -94,53 +100,60 @@
     }
   },
   "write_path_call_sites": {
-    "canonical_upsert_ioc": [
+    "canonical_upsert_ioc_batch": [
       {
         "caller": "runtime/sprint_scheduler.py",
-        "line": 1844,
+        "line": 7090,
         "method": "_accumulate_findings_to_graph",
-        "target": "graph_service.upsert_ioc",
-        "authority": "IOCGraph (Kuzu) — TRUTH"
+        "target": "graph_service.upsert_ioc_batch",
+        "authority": "DuckPGQGraph (DuckDB) — ACTIVE TRUTH (Sprint F226)"
+      },
+      {
+        "caller": "runtime/sprint_scheduler.py",
+        "line": 7128,
+        "method": "_accumulate_findings_to_graph",
+        "target": "DuckPGQGraph.upsert_ioc_batch (via graph_service)",
+        "authority": "DuckPGQGraph — ACTIVE TRUTH"
       }
     ],
     "buffer_ioc_pivot": [
       {
         "caller": "runtime/sprint_scheduler.py",
-        "line": 4674,
+        "line": 10696,
         "method": "_buffer_ioc_pivot",
-        "target": "_pivot_ioc_graph.buffer_ioc",
-        "authority": "IOCGraph — TRUTH"
-      }
-    ],
-    "add_relation_ioc_graph": [
-      {
-        "caller": "runtime/sprint_scheduler.py",
-        "line": 4625,
-        "method": "async def _buffer_ioc_pivot",
         "target": "self._ioc_graph.add_relation",
-        "authority": "IOCGraph — TRUTH"
+        "authority": "DuckPGQGraph — self._ioc_graph is DuckPGQGraph instance"
       },
       {
         "caller": "runtime/sprint_scheduler.py",
-        "line": 4666,
-        "method": "async def _buffer_ioc_pivot",
+        "line": 10704,
+        "method": "_buffer_ioc_pivot",
+        "target": "_pivot_ioc_graph.buffer_ioc",
+        "authority": "IOCGraph (Kuzu) — _pivot_ioc_graph is IOCGraph (Kuzu) injected via inject_ioc_graph"
+      }
+    ],
+    "buffer_ioc": [
+      {
+        "caller": "runtime/sprint_scheduler.py",
+        "line": 10996,
+        "method": "buffer_ioc",
         "target": "self._ioc_graph.add_relation",
-        "authority": "IOCGraph — TRUTH"
+        "authority": "DuckPGQGraph"
       }
     ]
   },
   "reset_session_verification": {
     "exists": true,
     "location": "knowledge/graph_service.py:152",
-    "call_site": "runtime/sprint_scheduler.py:5832",
+    "call_site": "runtime/sprint_scheduler.py:12103",
     "status": "VERIFIED — reset_session called at sprint teardown"
   },
   "duckdb_shadow_store_gate": {
-    "inject_graph_capability_required": true,
-    "required_methods": ["buffer_ioc", "buffer_observation", "flush_buffers"],
-    "verdict_comment_present": true,
-    "lines": "692-710 approx",
-    "status": "VERIFIED"
+    "inject_graph_capability_required": false,
+    "inject_graph_deprecated": true,
+    "deprecation_note": "DEPRECATED (Sprint F222): delegates to GraphAttachmentStore.inject_graph()",
+    "capability_gate_lives_in": "GraphAttachmentStore.inject_graph (graph_attachment.py:64)",
+    "status": "UPDATED — DuckDBShadowStore.inject_graph is DEPRECATED; capability gate moved to GraphAttachmentStore"
   },
   "deprecated_modules_verdict": {
     "graph_layer": "CANNOT SILENTLY BECOME ACTIVE — add_entry() has zero production call sites",

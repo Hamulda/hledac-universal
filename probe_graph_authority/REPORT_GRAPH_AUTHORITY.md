@@ -16,10 +16,11 @@ All graph write paths have been classified. No deprecated module can silently be
 
 | Module | Class | Type | Write Methods | Status |
 |--------|-------|------|---------------|--------|
-| `knowledge/ioc_graph.py` | `IOCGraph` | **TRUTH** | `upsert_ioc`, `buffer_ioc`, `upsert_ioc_batch`, `add_relation`, `export_stix_bundle` | ACTIVE — Kuzu backend |
-| `knowledge/graph_service.py` | module (facade) | **FACADE** | `upsert_ioc`, `upsert_relation`, `upsert_identity_edge` | ACTIVE — delegates to IOCGraph |
-| `graph/quantum_pathfinder.py` | `DuckPGQGraph` | **ANALYTICS** | `add_ioc`, `add_relation` | ACTIVE — DuckDB donor backend |
-| `knowledge/duckdb_store.py` | `DuckDBShadowStore` | **SPRINT FACTS** | `inject_graph` (capability-gated) | ACTIVE — NOT graph authority |
+| `knowledge/graph_service.py` | module (facade) | **FACADE** | `upsert_ioc`, `upsert_relation`, `upsert_identity_edge`, `upsert_ioc_batch` | ACTIVE — delegates to DuckPGQGraph |
+| `graph/quantum_pathfinder.py` | `DuckPGQGraph` | **ACTIVE TRUTH** | `add_ioc`, `upsert_ioc_batch`, `add_relation` | ACTIVE — DuckDB backend for scheduler accumulation |
+| `knowledge/ioc_graph.py` | `IOCGraph` | **STANDALONE TRUTH** | `upsert_ioc`, `buffer_ioc`, `upsert_ioc_batch`, `add_relation`, `export_stix_bundle` | STANDBY — Kuzu backend, not active in scheduler accumulation path |
+| `knowledge/graph_attachment.py` | `GraphAttachmentStore` | **CAPABILITY GATE** | `inject_graph` (capability-checked), `inject_truth_write_graph` | ACTIVE — capability gate for graph attachment |
+| `knowledge/duckdb_store.py` | `DuckDBShadowStore` | **SPRINT FACTS** | `inject_graph` (DEPRECATED, delegates to GraphAttachmentStore) | ACTIVE — NOT graph authority |
 | `coordinators/graph_coordinator.py` | `GraphCoordinator` | **REASONING OVERLAY** | none | READ-ONLY |
 | `graph/quantum_pathfinder.py` | `QuantumInspiredPathFinder` | **REASONING OVERLAY** | none | READ-ONLY |
 | `knowledge/graph_layer.py` | `KnowledgeGraphLayer` | **DEPRECATED** | `add_entry` | NO PRODUCTION CALL SITES |
@@ -29,28 +30,25 @@ All graph write paths have been classified. No deprecated module can silently be
 
 ---
 
-## Canonical Write Path
+## Canonical Write Path (F226/F232 update)
 
 ```
 runtime/sprint_scheduler.py
-  └─ _accumulate_findings_to_graph (line ~1844)
-       └─ graph_service.upsert_ioc()
-            └─ IOCGraph.upsert_ioc() [Kuzu TRUTH STORE]
+  └─ _accumulate_findings_to_graph (line ~7090)
+       └─ graph_service.upsert_ioc_batch()
+            └─ _get_graph() → DuckPGQGraph.add_ioc() [DuckDB ACTIVE TRUTH STORE]
 ```
 
-```
-runtime/sprint_scheduler.py
-  └─ _buffer_ioc_pivot (line ~4674)
-       └─ _pivot_ioc_graph.buffer_ioc()
-            └─ IOCGraph.buffer_ioc() [TRUTH]
-```
+**Active backend:** `DuckPGQGraph` (DuckDB) — all scheduler graph accumulation writes go here
+via `graph_service.upsert_ioc_batch()` → `DuckPGQGraph.upsert_ioc_batch()`.
 
-```
-runtime/sprint_scheduler.py
-  └─ _buffer_ioc_pivot (line ~4625, 4666)
-       └─ self._ioc_graph.add_relation()
-            └─ IOCGraph.add_relation() [TRUTH]
-```
+**IOCGraph (Kuzu):** Standalone truth store, not the active accumulation target for scheduler
+writes. Exists as a separate module (`knowledge/ioc_graph.py`) and can serve as a future
+truth-write backend if DuckDB path is deprecated.
+
+**Key change from F206AI:** `graph_service.upsert_ioc()` (and `upsert_ioc_batch()`) delegates
+to `DuckPGQGraph` via `_get_graph()`, not to IOCGraph. The Kuzu path (`IOCGraph`) is
+present in module structure but is not invoked by scheduler's graph accumulation seam.
 
 ---
 
@@ -62,18 +60,32 @@ runtime/sprint_scheduler.py
 
 ---
 
-## DuckDBShadowStore Capability Gate
+## DuckDBShadowStore — DEPRECATED (Sprint F222)
 
 ```python
 def inject_graph(self, graph: Any) -> None:
-    """STORE IS NOT GRAPH TRUTH OWNER ..."""
-    # Capability requirements for buffered writes (ACTIVE phase):
-    #   - Requires: buffer_ioc(), buffer_observation(), flush_buffers()
-    #   - IOCGraph has these; DuckPGQGraph may not
+    """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_graph()."""
+    self._graph_store().inject_graph(graph)
 ```
 
-- **Status:** VERIFIED — capability check present in docstring and implementation
-- **VERDICT comment:** Present at line ~692-710
+- **Status:** DEPRECATED — delegates entirely to GraphAttachmentStore
+- **Capability gate responsibility** moved to GraphAttachmentStore.inject_graph()
+- DuckDBShadowStore is explicitly labeled NOT graph authority in its class docs
+
+---
+
+## DuckDBShadowStore Capability Gate (GraphAttachmentStore)
+
+```python
+def inject_graph(self, graph: Any) -> None:
+    """
+    STORE IS NOT GRAPH TRUTH OWNER ...
+    Capability must be checked, never assumed. Set by inject_graph().
+    """
+```
+
+- **Status:** VERIFIED — capability/authority check present in GraphAttachmentStore.inject_graph()
+- **VERDICT comment:** Present at graph_attachment.py:62-64
 
 ---
 

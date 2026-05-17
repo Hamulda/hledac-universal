@@ -93,42 +93,57 @@ class TestGraphServiceResetSession:
 
 
 class TestDuckDBShadowStoreCapabilityGate:
-    """DuckDBShadowStore inject_graph is capability-gated."""
+    """DuckDBShadowStore inject_graph is DEPRECATED (Sprint F222).
 
-    def test_inject_graph_requires_capability(self):
-        """inject_graph requires buffer_ioc/buffer_observation/flush_buffers."""
+   duckdb_store.py::DuckDBShadowStore.inject_graph now delegates to
+    GraphAttachmentStore.inject_graph() and is labeled DEPRECATED.
+    The capability gate responsibility has moved to GraphAttachmentStore.
+    """
+
+    def test_inject_graph_is_deprecated(self):
+        """inject_graph is deprecated and delegates to GraphAttachmentStore."""
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         import inspect
 
         inject_source = inspect.getsource(DuckDBShadowStore.inject_graph)
-        # Must have capability check comment
-        assert "capability" in inject_source.lower() or "NOT graph authority" in inject_source
+        # Must be marked DEPRECATED in docstring
+        assert "DEPRECATED" in inject_source, "inject_graph must be marked DEPRECATED"
+        # Must delegate to _graph_store()
+        assert "_graph_store()" in inject_source, "inject_graph must delegate to _graph_store()"
 
-    def test_inject_graph_docstring_labels_authority(self):
-        """inject_graph docstring explicitly states DuckDBShadowStore is NOT graph authority."""
+    def test_inject_graph_docstring_is_deprecated_label(self):
+        """inject_graph docstring labels the method as DEPRECATED."""
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
         doc = DuckDBShadowStore.inject_graph.__doc__
         assert doc is not None, "inject_graph must have docstring"
-        assert "NOT graph authority" in doc or "NOT GRAPH TRUTH" in doc.upper()
+        assert "DEPRECATED" in doc, "inject_graph must be labeled DEPRECATED"
+        assert "GraphAttachmentStore" in doc, "must mention GraphAttachmentStore as delegate target"
 
-    def test_inject_graph_accepts_iocgraph(self):
-        """inject_graph accepts IOCGraph (Kuzu) as full-capability injection."""
+    def test_duckdb_shadow_store_not_graph_authority(self):
+        """DuckDBShadowStore explicitly labels itself NOT graph authority."""
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+        import inspect
 
-        inject_source = inspect.getsource(DuckDBShadowStore.inject_graph)
-        # IOCGraph (Kuzu) is the full-capability truth store
-        assert "IOCGraph" in inject_source or "Kuzu" in inject_source, \
-            "inject_graph should mention IOCGraph or Kuzu as truth backend"
+        # The class docstring or inject_graph docstring must state NOT graph authority
+        class_doc = DuckDBShadowStore.__doc__ or ""
+        inject_doc = DuckDBShadowStore.inject_graph.__doc__ or ""
+        combined = class_doc + inject_doc
+        # Should explicitly state the store is NOT graph truth owner
+        assert "NOT GRAPH TRUTH" in combined.upper() or "NOT graph authority" in combined.lower() or \
+               "DEPRECATED" in combined, \
+            "DuckDBShadowStore must explicitly label itself not graph authority"
 
-    def test_inject_graph_has_capability_check(self):
-        """inject_graph checks for buffer_ioc/buffer_observation/flush_buffers capability."""
-        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+    def test_capability_gate_lives_in_graph_attachment(self):
+        """The capability gate check lives in GraphAttachmentStore, not DuckDBShadowStore."""
+        from hledac.universal.knowledge.graph_attachment import GraphAttachmentStore
+        import inspect
 
-        inject_source = inspect.getsource(DuckDBShadowStore.inject_graph)
-        # Must require capability
-        assert ("buffer_ioc" in inject_source or "capability" in inject_source.lower()), \
-            "inject_graph must check for capability (buffer_ioc or capability)"
+        inject_source = inspect.getsource(GraphAttachmentStore.inject_graph)
+        # GraphAttachmentStore.inject_graph must have capability/authority check
+        assert "capability" in inject_source.lower() or "TRUTH" in inject_source or \
+               "authority" in inject_source.lower(), \
+            "GraphAttachmentStore.inject_graph must check capability/authority"
 
 
 class TestGraphAnalyticsBounded:
