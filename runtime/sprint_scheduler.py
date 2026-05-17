@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Callable, Final, Optional, Sequence
 
 from hledac.universal.patterns.pattern_matcher import match_text
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
+from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 from hledac.universal.utils.async_helpers import _check_gathered
 from hledac.universal.transport.circuit_breaker import (
     get_all_breaker_snapshots,
@@ -1901,6 +1902,8 @@ class SprintScheduler:
         self._last_sources: list[str] = []
         self._pivot_stats: dict[str, int] = {"total": 0, "processed": 0, "errors": 0}
         self._pivot_ioc_graph: Any = None  # IOCGraph reference injected via inject_ioc_graph
+        # Sprint F232I: Graph accumulation adapter
+        self._graph_accumulator = None  # type: SprintGraphAccumulator | None
         # Sprint 8UC B.4: Speculative prefetch
         self._bg_tasks: set[asyncio.Task] = set()
         self._speculative_results: dict[str, object] = {}
@@ -7095,41 +7098,15 @@ class SprintScheduler:
         """
         F198A: Extract IOCs from accepted findings and upsert to graph_service.
 
-        Each finding is represented as an IOC node:
-          - ioc_type  = source_type (e.g. "ct_log", "public", "feed")
-          - ioc_value = finding_id (stable cross-sprint identifier)
-          - confidence = finding.confidence
-          - source    = sprint_id
-
-        Fail-soft: graph errors must NOT prevent sprint continuation.
+        Delegates to SprintGraphAccumulator. Fail-soft: graph errors
+        must NOT prevent sprint continuation.
 
         Returns:
             Number of findings successfully upserted to graph.
         """
-        if not findings:
-            return 0
-        count = 0
-        try:
-            from hledac.universal.knowledge import graph_service
-
-            # Build batch rows — deduplication against _SEEN_IOCS happens inside upsert_ioc_batch
-            rows: list[tuple[str, str, float, str]] = []
-            for finding in findings:
-                fid = getattr(finding, "finding_id", None)
-                if not fid:
-                    continue
-                src_type = getattr(finding, "source_type", "unknown") or "unknown"
-                confidence = getattr(finding, "confidence", 0.5) or 0.5
-                rows.append((fid, src_type, confidence, sprint_id or ""))
-
-            # D7: Batch upsert — single DuckDB round-trip for all rows.
-            # Idempotency (duplicate filtering) is handled inside upsert_ioc_batch.
-            if rows:
-                graph_service.upsert_ioc_batch(rows)
-                count = len(rows)
-        except Exception:
-            pass  # Fail-soft: graph must never block sprint
-        return count
+        if self._graph_accumulator is None:
+            self._graph_accumulator = SprintGraphAccumulator()
+        return self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
 
     # ── Sprint F216G: Quality Rejection Ledger recording ─────────────────────────
 
