@@ -47,7 +47,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -479,9 +479,9 @@ class LaneRule:
 
     lane: str
     spec: LaneSpec
-    enabled: callable[[AcquisitionContext], bool]
-    reason: callable[[AcquisitionContext], str]   # enabled-reason only; disabled-reason is _disabled_reason()
-    concurrency: callable[[AcquisitionContext], int]
+    enabled: Callable[[AcquisitionContext], bool]
+    reason: Callable[[AcquisitionContext], str]   # enabled-reason only; disabled-reason is _disabled_reason()
+    concurrency: Callable[[AcquisitionContext], int]
 
 
 # ── Lane decision table ────────────────────────────────────────────────────────
@@ -2854,7 +2854,7 @@ def build_acquisition_plan(
       - No network I/O
       - No model/MLX load
       - No asyncio.run() / loop.run_until_complete()
-      - Bounded: max 8 lane plans
+      - Bounded: max 12 lane plans (all canonical acquisition lanes)
       - Fail-soft: on any error returns minimal snapshot with all lanes disabled
     """
     # F228A: Defensive normalization — benchmark aliases must not reach
