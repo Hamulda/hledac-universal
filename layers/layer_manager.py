@@ -859,7 +859,7 @@ class UnifiedCapabilitiesManager:
     def knowledge_graph(self) -> Optional[Any]:
         """Atomic storage knowledge graph"""
         try:
-            from ..knowledge.atomic_storage import AtomicJSONKnowledgeGraph
+            from ..legacy.atomic_storage import AtomicJSONKnowledgeGraph
             if 'kg' not in self._coordinators:
                 self._coordinators['kg'] = AtomicJSONKnowledgeGraph()
             return self._coordinators['kg']
