@@ -1,26 +1,39 @@
 """
-SprintLifecycleRunner — lifecycle orchestration helper extracted from SprintScheduler.
+SprintLifecycleRunner — mechanical lifecycle boundary extracted from SprintScheduler.
 
-Responsibilities (what this runner OWNS):
+This runner is a PURE MECHANICAL SEAM. It does NOT own policy. It does NOT make
+decisions. It translates lifecycle state into phase transitions and tick/sleep calls.
+
+What this runner OWNS (mechanical only):
 - LifecycleAdapter creation and lifecycle start
 - WARMUP→ACTIVE transition
 - Periodic tick() call
 - Wind-down guard (should_enter_windup check)
 - Post-sleep windup gate
 - Sleep with lifecycle tick (sleep_or_abort)
-- Final phase teardown transitions
-- Partial export trigger signal
+- Final phase teardown transitions (phase markers only)
 
-What stays in SprintScheduler (canonical owner):
+What stays in SprintScheduler (canonical policy owner):
 - Branch execution (_run_one_cycle)
-- Sidecar dispatch
+- Acquisition lane planning (AcquisitionLane, nonfeed lanes, etc.)
+- Sidecar dispatch and orchestration
 - Advisory evaluation
-- Export execution
-- Dedup/forensics flush (called by runner before windup break)
-- All result bookkeeping
+- Export execution (any export_* logic, DuckDB write seams, STIX, Markdown)
+- Dedup/forensics flush
+- All result bookkeeping, confidence scoring, hypothesis planning
 
-No new behavior. No intelligence. Pure mechanical extraction.
-GHOST_INVARIANTS: gather(return_exceptions=True) + _check_gathered(), no asyncio.run().
+PRE_WINDUP_BARRIER CALLBACK SEAM:
+  pre_windup_barrier is the ONLY permitted scheduler callback seam into this runner.
+  It is called from windup_guard() to allow the scheduler to inject lane-terminality
+  checks or other policy before the windup break. No other callback seams exist.
+
+INVARIANTS:
+  - This module must NOT import: SprintScheduler, AcquisitionLane, any sidecar module,
+    duckdb_store, export, or any module that owns policy beyond lifecycle mechanics.
+  - pre_windup_barrier is the only external callback seam.
+  - GHOST_INVARIANTS: gather(return_exceptions=True) + _check_gathered(), no asyncio.run().
+
+No new behavior. No intelligence. Pure mechanical boundary extraction.
 """
 
 from __future__ import annotations
@@ -37,10 +50,11 @@ log = logging.getLogger(__name__)
 
 class SprintLifecycleRunner:
     """
-    Lifecycle orchestration helper for SprintScheduler.
+    Mechanical lifecycle boundary for SprintScheduler.
 
-    Encapsulates lifecycle adapter, tick/windup/sleep/teardown logic.
-    Scheduler remains canonical owner for branches, sidecars, advisory, export.
+    Encapsulates lifecycle adapter, tick/windup/sleep/teardown mechanics.
+    Scheduler (SprintScheduler) is the canonical policy owner — this runner
+    only translates state into phase transitions. No intelligence, no policy.
     """
 
     __slots__ = ("_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier", "_guard_observation")
@@ -280,7 +294,7 @@ class SprintLifecycleRunner:
         except Exception:
             pass  # teardown is best-effort
 
-    # ── Partial export signal ───────────────────────────────────────────────
+    # ── Phase / wall clock accessors ────────────────────────────────────────
 
     @property
     def current_phase(self) -> str:

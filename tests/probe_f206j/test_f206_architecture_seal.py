@@ -358,6 +358,66 @@ class TestSidecarDispatcherExports:
 
 
 # ============================================================================
+# F206J-18: SprintLifecycleRunner is a mechanical boundary — no policy imports
+# ============================================================================
+# sprint_lifecycle_runner.py must NOT import any module that owns policy.
+# pre_windup_barrier is the ONLY permitted callback seam.
+
+
+class TestLifecycleRunnerBoundary:
+    """Verify SprintLifecycleRunner is sealed as a mechanical boundary."""
+
+    # Forbidden imports — any of these appearing in sprint_lifecycle_runner.py
+    # indicates policy has leaked into the mechanical boundary.
+    FORBIDDEN_MODULES = [
+        "sprint_scheduler",   # canonical policy owner — not a seam
+        "acquisition_lane",  # lane planning is policy
+        "sidecar_bus",       # sidecar dispatch is policy
+        "sidecar_orchestrator",  # sidecar orchestration is policy
+        "sidecar_dispatcher",    # sidecar dispatch is policy
+        "duckdb_store",      # export/write seam is policy
+        "export",            # export modules are policy
+        "sprint_exporter",   # export execution is policy
+    ]
+
+    @pytest.mark.parametrize("forbidden", FORBIDDEN_MODULES)
+    def test_lifecycle_runner_imports_no_policy_modules(self, forbidden: str):
+        """F206J-18: sprint_lifecycle_runner must not import any policy module."""
+        runner_path = (
+            Path(__file__).parent.parent.parent / "runtime" / "sprint_lifecycle_runner.py"
+        )
+        content = runner_path.read_text()
+
+        # Check for import lines containing the forbidden module
+        # Patterns: "from hledac.universal.runtime.sprint_scheduler import"
+        # or: "import hledac.universal.runtime.sprint_scheduler"
+        lines_with_import = [
+            line.strip()
+            for line in content.splitlines()
+            if f"{forbidden}" in line and ("import" in line or "from" in line)
+        ]
+        assert not lines_with_import, (
+            f"FORBIDDEN: sprint_lifecycle_runner.py imports '{forbidden}': {lines_with_import}. "
+            f"This module is a mechanical lifecycle boundary — policy must not leak in."
+        )
+
+    def test_pre_windup_barrier_is_documented_callback_seam(self):
+        """F206J-18: Docstring documents pre_windup_barrier as the only callback seam."""
+        runner_path = (
+            Path(__file__).parent.parent.parent / "runtime" / "sprint_lifecycle_runner.py"
+        )
+        content = runner_path.read_text()
+        # The module docstring must mention pre_windup_barrier as the permitted seam
+        assert "pre_windup_barrier" in content, (
+            "Module docstring must document pre_windup_barrier as the only callback seam"
+        )
+        # And must mention it is the ONLY permitted seam
+        assert "ONLY permitted" in content or "only external callback" in content.lower(), (
+            "Module docstring must state pre_windup_barrier is the only permitted callback seam"
+        )
+
+
+# ============================================================================
 # Smoke: module imports
 # ============================================================================
 
