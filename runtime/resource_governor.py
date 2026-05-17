@@ -71,6 +71,60 @@ class SidecarAdmission:
 
 
 @dataclass(frozen=True)
+class RendererAdmission:
+    """F214R: Result of renderer admission check.
+
+    One unified answer to: can JS renderer be used right now?
+    Combines model lifecycle + UMA state in one call.
+    """
+    allowed: bool
+    reason: str
+    uma_state: str
+    model_loaded: bool
+
+
+@dataclass(frozen=True)
+class ModelAdmission:
+    """F214R: Result of model load admission check.
+
+    One unified answer to: can a new model load be initiated?
+    Uses current UMA state (not model lifecycle — that's caller-provided).
+    """
+    allowed: bool
+    reason: str
+    uma_state: str
+    free_uma_gib: float
+
+
+@dataclass(frozen=True)
+class BranchAdmission:
+    """F214R: Result of branch admission check.
+
+    Answers: can a named branch run given current memory state?
+    estimated_mb is the expected RAM cost of the branch.
+    """
+    allowed: bool
+    reason: str
+    uma_state: str
+    branch_concurrency: int
+    estimated_mb: int
+
+
+@dataclass(frozen=True)
+class LaneAdmission:
+    """F214R: Result of lane admission check.
+
+    Answers: can a named lane be admitted given current memory state?
+    risk_level: "low" | "medium" | "high" | "critical"
+    estimated_mb: expected RAM cost of the lane.
+    """
+    allowed: bool
+    reason: str
+    uma_state: str
+    risk_level: str
+
+
+@dataclass(frozen=True)
 class MissionBudgetSnapshot:
     """F204J: Budget snapshot for scorecard export."""
     sprint_id: str
@@ -297,6 +351,230 @@ class M1ResourceGovernor:
         except Exception as exc:
             logger.debug("[Governor] get_model_lifecycle_status failed: %s", exc)
             return {"loaded": False, "current_model": None, "initialized": False, "last_error": None}
+
+    def renderer_admission(self) -> RendererAdmission:
+        """
+        F214R: Canonical renderer admission check.
+
+        Returns RendererAdmission with:
+        - allowed: True if JS renderer may be used
+        - reason: human-readable denial reason
+        - uma_state: current UMA state
+        - model_loaded: whether model is currently loaded
+
+        Combines model lifecycle + UMA state in one authoritative call.
+        Fail-soft: returns allowed=False with "unknown" reason on errors.
+        """
+        uma_state = "ok"
+        try:
+            uma = sample_uma_status()
+            uma_state = uma.state
+        except Exception as exc:
+            logger.debug("[Governor] renderer_admission sample_uma_status failed: %s", exc)
+            return RendererAdmission(allowed=False, reason="uma_check_failed", uma_state="unknown", model_loaded=False)
+
+        model_loaded = False
+        try:
+            model_status = self._get_model_status()
+            model_loaded = model_status.get("loaded", False)
+        except Exception as exc:
+            logger.debug("[Governor] renderer_admission get_model_status failed: %s", exc)
+
+        # CRITICAL/EMERGENCY → deny renderer
+        if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+            return RendererAdmission(
+                allowed=False,
+                reason=f"uma_{uma_state}_blocking_renderer",
+                uma_state=uma_state,
+                model_loaded=model_loaded,
+            )
+
+        # Model loaded → deny renderer (M1 constraint: no model + JS renderer)
+        if model_loaded:
+            return RendererAdmission(
+                allowed=False,
+                reason="model_loaded_blocking_renderer",
+                uma_state=uma_state,
+                model_loaded=True,
+            )
+
+        return RendererAdmission(
+            allowed=True,
+            reason="admitted",
+            uma_state=uma_state,
+            model_loaded=model_loaded,
+        )
+
+    def model_admission(self, _model_name: str = "", estimated_mb: int = 0) -> ModelAdmission:
+        """
+        F214R: Canonical model load admission check.
+
+        Returns ModelAdmission with:
+        - allowed: True if model load is permitted
+        - reason: human-readable denial reason
+        - uma_state: current UMA state
+        - free_uma_gib: available UMA GiB
+
+        Note: actual model lifecycle is managed by brain/model_lifecycle.py.
+        This only checks UMA state suitability for a new load.
+        Fail-soft: returns allowed=False with "unknown" reason on errors.
+        """
+        uma_state = "ok"
+        free_uma_gib = 0.0
+        try:
+            uma = sample_uma_status()
+            uma_state = uma.state
+            free_uma_gib = getattr(uma, "system_available_gib", 0.0)
+        except Exception as exc:
+            logger.debug("[Governor] model_admission sample_uma_status failed: %s", exc)
+            return ModelAdmission(allowed=False, reason="uma_check_failed", uma_state="unknown", free_uma_gib=0.0)
+
+        # CRITICAL/EMERGENCY → deny new model load
+        if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+            return ModelAdmission(
+                allowed=False,
+                reason=f"uma_{uma_state}_blocking_model_load",
+                uma_state=uma_state,
+                free_uma_gib=free_uma_gib,
+            )
+
+        # Check estimated MB vs free UMA
+        if estimated_mb > 0 and free_uma_gib > 0:
+            if estimated_mb / 1024 > free_uma_gib * 0.9:
+                return ModelAdmission(
+                    allowed=False,
+                    reason="insufficient_uma_for_model_load",
+                    uma_state=uma_state,
+                    free_uma_gib=free_uma_gib,
+                )
+
+        return ModelAdmission(
+            allowed=True,
+            reason="admitted",
+            uma_state=uma_state,
+            free_uma_gib=free_uma_gib,
+        )
+
+    def branch_admission(self, _branch_name: str = "", estimated_mb: int = 0) -> BranchAdmission:
+        """
+        F214R: Canonical branch admission check.
+
+        Returns BranchAdmission with:
+        - allowed: True if branch can run
+        - reason: human-readable denial reason
+        - uma_state: current UMA state
+        - branch_concurrency: recommended concurrency for this branch
+        - estimated_mb: the estimate that was evaluated
+
+        Fail-soft: returns allowed=True with normal concurrency on errors.
+        """
+        uma_state = "ok"
+        branch_concurrency = 4
+        try:
+            uma = sample_uma_status()
+            uma_state = uma.state
+        except Exception as exc:
+            logger.debug("[Governor] branch_admission sample_uma_status failed: %s", exc)
+            return BranchAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", branch_concurrency=4, estimated_mb=estimated_mb)
+
+        # CRITICAL/EMERGENCY → force minimal concurrency
+        if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+            return BranchAdmission(
+                allowed=True,
+                reason=f"uma_{uma_state}_reduced_concurrency",
+                uma_state=uma_state,
+                branch_concurrency=1,
+                estimated_mb=estimated_mb,
+            )
+
+        # Model loaded → reduced concurrency (evaluated before WARN to match evaluate() priority)
+        model_loaded = False
+        try:
+            model_status = self._get_model_status()
+            model_loaded = model_status.get("loaded", False)
+        except Exception:
+            pass
+        if model_loaded:
+            return BranchAdmission(
+                allowed=True,
+                reason="model_loaded_reduced_concurrency",
+                uma_state=uma_state,
+                branch_concurrency=2,
+                estimated_mb=estimated_mb,
+            )
+
+        # WARN → reduced concurrency
+        if uma_state == UMA_STATE_WARN:
+            branch_concurrency = 3
+
+        return BranchAdmission(
+            allowed=True,
+            reason="admitted",
+            uma_state=uma_state,
+            branch_concurrency=branch_concurrency,
+            estimated_mb=estimated_mb,
+        )
+
+    def lane_admission(self, _lane_name: str = "", risk_level: str = "medium", _estimated_mb: int = 0) -> LaneAdmission:
+        """
+        F214R: Canonical lane admission check.
+
+        Returns LaneAdmission with:
+        - allowed: True if lane can be admitted
+        - reason: human-readable denial reason
+        - uma_state: current UMA state
+        - risk_level: the risk level that was evaluated
+
+        risk_level: "low" | "medium" | "high" | "critical"
+        Heavy lanes (high/critical risk) are blocked under critical/emergency UMA.
+        Fail-soft: returns allowed=True on errors.
+        """
+        uma_state = "ok"
+        try:
+            uma = sample_uma_status()
+            uma_state = uma.state
+        except Exception as exc:
+            logger.debug("[Governor] lane_admission sample_uma_status failed: %s", exc)
+            return LaneAdmission(allowed=True, reason="uma_check_failed_allowing", uma_state="unknown", risk_level=risk_level)
+
+        # CRITICAL/EMERGENCY → block high/critical risk lanes
+        if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+            if risk_level in ("high", "critical"):
+                return LaneAdmission(
+                    allowed=False,
+                    reason=f"uma_{uma_state}_blocking_{risk_level}_lane",
+                    uma_state=uma_state,
+                    risk_level=risk_level,
+                )
+
+        # RAM guard for heavy lanes
+        if risk_level in ("high", "critical"):
+            try:
+                uma = sample_uma_status()
+                rss_gib = uma.system_used_gib / (1024**3) if uma.system_used_gib else 0.0
+                if hasattr(uma, "high_water") and uma.high_water > 0.85:
+                    return LaneAdmission(
+                        allowed=False,
+                        reason="high_water_exceeded_85pct",
+                        uma_state=uma_state,
+                        risk_level=risk_level,
+                    )
+                if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
+                    return LaneAdmission(
+                        allowed=False,
+                        reason="rss_exceeds_headroom_limit",
+                        uma_state=uma_state,
+                        risk_level=risk_level,
+                    )
+            except Exception:
+                pass  # Fail-soft
+
+        return LaneAdmission(
+            allowed=True,
+            reason="admitted",
+            uma_state=uma_state,
+            risk_level=risk_level,
+        )
 
     def snapshot(self) -> GovernorSnapshot:
         """Current state snapshot for dashboard rendering."""

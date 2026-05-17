@@ -434,6 +434,257 @@ class AcquisitionLanePlan:
     risk_level: str = RiskLevel.MEDIUM
 
 
+@dataclass(frozen=True)
+class AcquisitionContext:
+    """Derived flags bundle for lane planning — constructed once per _build_plan_impl call."""
+
+    query: str
+    duration_s: float
+    aggressive_mode: bool
+    uma_state: str
+    swap_detected: bool
+    hardware_critical: bool          # uma_state in (critical, emergency) or swap_detected
+    has_domain: bool
+    has_url: bool
+    has_crypto: bool
+    has_long_duration: bool          # duration_s >= 300.0
+    is_nonfeed_diagnostic: bool
+    transport_degraded: bool
+    stealth_ready: bool
+    base_concurrency: int
+    is_academic: bool
+    cid_present: bool                # explicit IPFS CID in query
+    # Feed cap for nonfeed_diagnostic profile
+    _feed_max_items: int = field(default=50)
+    _feed_cap_reason: str | None = field(default=None)
+
+
+@dataclass(frozen=True)
+class LaneSpec:
+    """Static per-lane execution constants."""
+
+    max_items: int
+    timeout_s: int
+    risk_level: str
+
+
+@dataclass(frozen=True)
+class LaneRule:
+    """Table-driven lane planning rule.
+
+    One rule per AcquisitionLane.  The enabled/reason/concurrency logic
+    is expressed as pure functions of AcquisitionContext so the full
+    decision table is visible and auditable in one place.
+    """
+
+    lane: str
+    spec: LaneSpec
+    enabled: callable[[AcquisitionContext], bool]
+    reason: callable[[AcquisitionContext], str]   # enabled-reason only; disabled-reason is _disabled_reason()
+    concurrency: callable[[AcquisitionContext], int]
+
+
+# ── Lane decision table ────────────────────────────────────────────────────────
+
+# All 12 lanes.  Each rule's enabled() / reason() / concurrency() methods
+# preserve the original inline logic verbatim — see _build_plan_impl for the
+# single loop that consumes this table.
+
+LaneSpecFeed     = LaneSpec(max_items=50,  timeout_s=30,  risk_level=RiskLevel.LOW)
+LaneSpecFeedNFD  = LaneSpec(max_items=25,  timeout_s=30,  risk_level=RiskLevel.LOW)
+LaneSpecPublic   = LaneSpec(max_items=30,  timeout_s=45,  risk_level=RiskLevel.MEDIUM)
+LaneSpecCT       = LaneSpec(max_items=100, timeout_s=60,  risk_level=RiskLevel.MEDIUM)
+LaneSpecDOH      = LaneSpec(max_items=20,  timeout_s=30,  risk_level=RiskLevel.MEDIUM)
+LaneSpecWayback  = LaneSpec(max_items=20,  timeout_s=90,  risk_level=RiskLevel.MEDIUM)
+LaneSpecPDNS     = LaneSpec(max_items=50,  timeout_s=30,  risk_level=RiskLevel.MEDIUM)
+LaneSpecBlockchain = LaneSpec(max_items=20, timeout_s=60,  risk_level=RiskLevel.HIGH)
+LaneSpecStealth  = LaneSpec(max_items=10,  timeout_s=120, risk_level=RiskLevel.CRITICAL)
+LaneSpecPivot    = LaneSpec(max_items=20,  timeout_s=15,  risk_level=RiskLevel.LOW)
+LaneSpecAcademic = LaneSpec(max_items=10,  timeout_s=45,  risk_level=RiskLevel.MEDIUM)
+LaneSpecIPFS     = LaneSpec(max_items=3,   timeout_s=60,  risk_level=RiskLevel.MEDIUM)
+LaneSpecOpenSrc  = LaneSpec(max_items=20, timeout_s=60,  risk_level=RiskLevel.MEDIUM)
+
+
+def _lc(lane: str, base: int, uma_state: str) -> int:
+    """Apply lane-specific concurrency adjustments on top of base."""
+    if uma_state in ("critical", "emergency"):
+        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.STEALTH):
+            return max(1, base // 2)
+    if uma_state == "warn":
+        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
+            return max(1, base - 1)
+    return base
+
+
+def _lane_rule(
+    lane: str,
+    spec: LaneSpec,
+    enabled_fn: callable,
+    reason_fn: callable,
+    conc_fn: callable,
+) -> LaneRule:
+    return LaneRule(
+        lane=lane, spec=spec,
+        enabled=enabled_fn, reason=reason_fn, concurrency=conc_fn,
+    )
+
+
+def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
+    """Return the disabled-reason string for a lane, matching original inline logic."""
+    if lane == AcquisitionLane.FEED:
+        return "hardware_critical"
+    if lane == AcquisitionLane.PUBLIC:
+        if ctx.transport_degraded:
+            return "transport_degraded"
+        if ctx.hardware_critical:
+            return "hardware_critical"
+        return "query_not_domain"
+    if lane == AcquisitionLane.CT:
+        return "query_not_domain_like"
+    if lane == AcquisitionLane.DOH:
+        return "query_without_domain_or_ip"
+    if lane == AcquisitionLane.WAYBACK:
+        return "query_without_url"
+    if lane == AcquisitionLane.PASSIVE_DNS:
+        return "query_without_indicator"
+    if lane == AcquisitionLane.BLOCKCHAIN:
+        return "query_without_crypto"
+    if lane == AcquisitionLane.STEALTH:
+        if ctx.is_nonfeed_diagnostic:
+            return "nonfeed_diagnostic_disabled"
+        if ctx.hardware_critical:
+            return "hardware_critical"
+        return "disabled_by_default"
+    if lane == AcquisitionLane.PIVOT_EXECUTOR:
+        return "always_allowed_lightweight"  # never disabled
+    if lane == AcquisitionLane.ACADEMIC:
+        if ctx.hardware_critical:
+            return "hardware_critical"
+        return "non_academic_profile"
+    if lane == AcquisitionLane.IPFS:
+        if not ctx.cid_present:
+            return "no_cid_in_query"
+        return "hardware_critical"
+    if lane == AcquisitionLane.OPEN_SOURCE:
+        if ctx.hardware_critical:
+            return "hardware_critical"
+        return "non_academic_profile"
+    return "lane_disabled"
+
+
+LANE_RULES: tuple[LaneRule, ...] = tuple([
+    # ── FEED ────────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.FEED, LaneSpecFeed,
+        lambda ctx: not ctx.hardware_critical,
+        lambda ctx: "always_allowed",
+        lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── PUBLIC ──────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.PUBLIC, LaneSpecPublic,
+        lambda ctx: (
+            (ctx.is_nonfeed_diagnostic and ctx.has_domain and not ctx.transport_degraded)
+            if ctx.is_nonfeed_diagnostic
+            else (not ctx.hardware_critical and not ctx.transport_degraded)
+        ),
+        lambda ctx: (
+            "nonfeed_diagnostic_domain"
+            if (ctx.is_nonfeed_diagnostic and ctx.has_domain)
+            else ("transport_degraded" if ctx.transport_degraded
+                  else ("hardware_critical" if ctx.hardware_critical else "query_eligible"))
+        ),
+        lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── CT ─────────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.CT, LaneSpecCT,
+        lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic)
+                    and not ctx.hardware_critical,
+        lambda ctx: "domain_or_aggressive_or_nonfeed_diagnostic",
+        lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── DOH ────────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.DOH, LaneSpecDOH,
+        lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
+                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic),
+        lambda ctx: "domain_or_ip_or_nonfeed_diagnostic",
+        lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── WAYBACK ────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.WAYBACK, LaneSpecWayback,
+        lambda ctx: (ctx.has_url or ctx.has_long_duration
+                     or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
+                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic),
+        lambda ctx: "has_url_or_long_duration_or_nonfeed_domain",
+        lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── PASSIVE_DNS ────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS,
+        lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic),
+        lambda ctx: "has_domain_or_ip",
+        lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── BLOCKCHAIN ─────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain,
+        lambda ctx: ctx.has_crypto and not ctx.hardware_critical,
+        lambda ctx: "has_crypto_indicator",
+        lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── STEALTH ────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.STEALTH, LaneSpecStealth,
+        lambda ctx: ctx.stealth_ready and not ctx.hardware_critical
+                    and not ctx.is_nonfeed_diagnostic,
+        lambda ctx: "stealth_ready",
+        lambda ctx: 1,
+    ),
+
+    # ── PIVOT_EXECUTOR ─────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot,
+        lambda ctx: True,
+        lambda ctx: "always_allowed_lightweight",
+        lambda ctx: ctx.base_concurrency + 1,
+    ),
+
+    # ── ACADEMIC ───────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.ACADEMIC, LaneSpecAcademic,
+        lambda ctx: ctx.is_academic and not ctx.hardware_critical,
+        lambda ctx: "academic_profile",
+        lambda ctx: 1,
+    ),
+
+    # ── IPFS ───────────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.IPFS, LaneSpecIPFS,
+        lambda ctx: ctx.cid_present and not ctx.hardware_critical,
+        lambda ctx: "explicit_cid_in_query",
+        lambda ctx: 1,
+    ),
+
+    # ── OPEN_SOURCE ────────────────────────────────────────────────────────
+    _lane_rule(
+        AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc,
+        lambda ctx: ctx.is_academic and not ctx.hardware_critical,
+        lambda ctx: "academic_profile",
+        lambda ctx: 1,
+    ),
+])
+
+
 @dataclass
 class NonfeedPlanDebug:
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
@@ -2669,251 +2920,70 @@ def _build_plan_impl(
 ) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
 
-    # ── Derive flags ─────────────────────────────────────────────────────────
+    # ── Derive AcquisitionContext ─────────────────────────────────────────────
     hardware_critical = uma_state in ("critical", "emergency") or swap_detected
     has_domain = _has_domain_or_ip(query)
     has_url = _has_url(query)
     has_crypto = _has_crypto_indicator(query)
     has_long_duration = duration_s >= 300.0
-
-    # F216B: Nonfeed diagnostic profile flags
     is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
-    nonfeed_priority_enabled = is_nonfeed_diagnostic
-
-    # Transport authority signals
     transport_degraded = False
     stealth_phase_num = 0
     stealth_breaker_ready = False
     if transport_authority_status:
         transport_degraded = bool(transport_authority_status.get("degraded", False))
-    # stealth_phase kwarg takes priority; transport_authority_status does NOT set stealth phase
     if stealth_phase:
         stealth_phase_num = int(stealth_phase.get("phase", 0))
         stealth_breaker_ready = bool(stealth_phase.get("breaker_seam_ready", False))
-
-    # Stealth explicit readiness: requires phase >= 3 (breaker_seam_ready) OR explicit flag
     stealth_ready = stealth_breaker_ready or stealth_phase_num >= 3
-
     base_conc = _base_concurrency(uma_state, swap_detected)
 
+    # Feed cap: nonfeed_diagnostic caps at 25 so nonfeed lanes get oxygen
+    if is_nonfeed_diagnostic:
+        _feed_max = 25
+        _feed_cap_r = "nonfeed_diagnostic_profile_capped_25"
+    else:
+        _feed_max = 50
+        _feed_cap_r = None
+
+    ctx = AcquisitionContext(
+        query=query,
+        duration_s=duration_s,
+        aggressive_mode=aggressive_mode,
+        uma_state=uma_state,
+        swap_detected=swap_detected,
+        hardware_critical=hardware_critical,
+        has_domain=has_domain,
+        has_url=has_url,
+        has_crypto=has_crypto,
+        has_long_duration=has_long_duration,
+        is_nonfeed_diagnostic=is_nonfeed_diagnostic,
+        transport_degraded=transport_degraded,
+        stealth_ready=stealth_ready,
+        base_concurrency=base_conc,
+        is_academic=is_academic_profile(acquisition_profile),
+        cid_present=_has_explicit_cid(query.strip()),
+        _feed_max_items=_feed_max,
+        _feed_cap_reason=_feed_cap_r,
+    )
+
+    # ── Build plans from LANE_RULES table ──────────────────────────────────────
     plans: list[AcquisitionLanePlan] = []
-
-    # ── FEED ────────────────────────────────────────────────────────────────
-    # F216B: nonfeed_diagnostic caps FEED at 25 so nonfeed lanes get oxygen
-    if is_nonfeed_diagnostic:
-        feed_max_items = 25
-        feed_cap_reason = "nonfeed_diagnostic_profile_capped_25"
-    else:
-        feed_max_items = 50
-        feed_cap_reason = None
-
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.FEED,
-            enabled=not hardware_critical,
-            reason="hardware_critical" if hardware_critical else "always_allowed",
-            max_items=feed_max_items,
-            timeout_s=30,
-            concurrency=_lane_concurrency(AcquisitionLane.FEED, base_conc, uma_state),
-            risk_level=RiskLevel.LOW,
-        )
-    )
-
-    # ── PUBLIC ─────────────────────────────────────────────────────────────
-    # F216B: nonfeed_diagnostic enables PUBLIC for domain/IP even under memory emergency
-    if is_nonfeed_diagnostic:
-        # nonfeed_diagnostic: PUBLIC enabled for domain query regardless of hardware state
-        public_enabled = bool(has_domain) and not transport_degraded
-        public_reason = "nonfeed_diagnostic_domain" if public_enabled else (
-            "transport_degraded" if transport_degraded else "query_not_domain"
-        )
-    else:
-        public_enabled = not hardware_critical and not transport_degraded
-        public_reason = (
-            "hardware_critical"
-            if hardware_critical
-            else ("transport_degraded" if transport_degraded else "query_eligible")
-        )
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.PUBLIC,
-            enabled=public_enabled,
-            reason=public_reason,
-            max_items=30,
-            timeout_s=45,
-            concurrency=_lane_concurrency(AcquisitionLane.PUBLIC, base_conc, uma_state),
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── CT ─────────────────────────────────────────────────────────────────
-    # F216B: nonfeed_diagnostic enables CT for domain unless memory emergency
-    ct_enabled = bool(has_domain) or aggressive_mode or is_nonfeed_diagnostic
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.CT,
-            enabled=ct_enabled and not hardware_critical,
-            reason="domain_or_aggressive_or_nonfeed_diagnostic"
-            if ct_enabled
-            else "query_not_domain_like",
-            max_items=100,
-            timeout_s=60,
-            concurrency=_lane_concurrency(AcquisitionLane.CT, base_conc, uma_state),
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── DOH ─────────────────────────────────────────────────────────────────
-    # F222B: DOH lane enabled for domain/IP queries; nonfeed_diagnostic adds domain candidates
-    # F226A: nonfeed_diagnostic bypasses hardware_critical block (same pattern as PASSIVE_DNS)
-    doh_enabled = has_domain or (is_nonfeed_diagnostic and has_domain)
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.DOH,
-            enabled=doh_enabled and (not hardware_critical or is_nonfeed_diagnostic),
-            reason="domain_or_ip_or_nonfeed_diagnostic"
-            if doh_enabled
-            else "query_without_domain_or_ip",
-            max_items=20,
-            timeout_s=30,
-            concurrency=_lane_concurrency(AcquisitionLane.DOH, base_conc, uma_state),
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── WAYBACK ────────────────────────────────────────────────────────────
-    # F216B: nonfeed_diagnostic enables WAYBACK for domain/URL even under hardware_critical
-    # F226A: nonfeed_diagnostic bypasses hardware_critical block (same pattern as PASSIVE_DNS)
-    wayback_enabled = has_url or has_long_duration or (is_nonfeed_diagnostic and has_domain)
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.WAYBACK,
-            enabled=wayback_enabled and (not hardware_critical or is_nonfeed_diagnostic),
-            reason="has_url_or_long_duration_or_nonfeed_domain"
-            if wayback_enabled
-            else "query_without_url",
-            max_items=20,
-            timeout_s=90,
-            concurrency=_lane_concurrency(AcquisitionLane.WAYBACK, base_conc, uma_state),
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── PASSIVE_DNS ─────────────────────────────────────────────────────────
-    # F216B: nonfeed_diagnostic enables PASSIVE_DNS for domain even under hardware_critical
-    pdns_enabled = has_domain and (not hardware_critical or is_nonfeed_diagnostic)
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.PASSIVE_DNS,
-            enabled=pdns_enabled,
-            reason="has_domain_or_ip" if has_domain else "query_without_indicator",
-            max_items=50,
-            timeout_s=30,
-            concurrency=_lane_concurrency(AcquisitionLane.PASSIVE_DNS, base_conc, uma_state),
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── BLOCKCHAIN ─────────────────────────────────────────────────────────
-    # Allowed for crypto wallet/hash indicators
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.BLOCKCHAIN,
-            enabled=has_crypto and not hardware_critical,
-            reason="has_crypto_indicator" if has_crypto else "query_without_crypto",
-            max_items=20,
-            timeout_s=60,
-            concurrency=_lane_concurrency(AcquisitionLane.BLOCKCHAIN, base_conc, uma_state),
-            risk_level=RiskLevel.HIGH,
-        )
-    )
-
-    # ── STEALTH ────────────────────────────────────────────────────────────
-    # F216B: nonfeed_diagnostic explicitly disables STEALTH
-    stealth_enabled = stealth_ready and not hardware_critical and not is_nonfeed_diagnostic
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.STEALTH,
-            enabled=stealth_enabled,
-            reason="stealth_ready"
-            if stealth_enabled
-            else ("nonfeed_diagnostic_disabled" if is_nonfeed_diagnostic
-                  else ("hardware_critical" if hardware_critical else "disabled_by_default")),
-            max_items=10,
-            timeout_s=120,
-            concurrency=1,
-            risk_level=RiskLevel.CRITICAL,
-        )
-    )
-
-    # ── PIVOT_EXECUTOR ─────────────────────────────────────────────────────
-    # Always allowed (lightweight advisory lane)
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.PIVOT_EXECUTOR,
-            enabled=True,
-            reason="always_allowed_lightweight",
-            max_items=20,
-            timeout_s=15,
-            concurrency=base_conc + 1,
-            risk_level=RiskLevel.LOW,
-        )
-    )
-
-    # ── ACADEMIC ───────────────────────────────────────────────────────────
-    # R9: Optional lane — enabled only for research/academic/geopolitical profiles.
-    # NOT enabled for default domain/IP/infrastructure queries.
-    academic_enabled = is_academic_profile(acquisition_profile) and not hardware_critical
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.ACADEMIC,
-            enabled=academic_enabled,
-            reason="academic_profile"
-            if academic_enabled
-            else ("hardware_critical" if hardware_critical else "non_academic_profile"),
-            max_items=10,  # hard cap 10
-            timeout_s=45,
-            concurrency=1,
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── IPFS ─────────────────────────────────────────────────────────────────
-    # R10: CID-only evidence fetch — enabled only when explicit CID is present.
-    # No DHT. No search. No recursive traversal. No pinning. No daemon dependency.
-    query_has_cid = _has_explicit_cid(query.strip())
-    ipfs_enabled = query_has_cid and not hardware_critical
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.IPFS,
-            enabled=ipfs_enabled,
-            reason="explicit_cid_in_query"
-            if ipfs_enabled
-            else ("no_cid_in_query" if not query_has_cid else "hardware_critical"),
-            max_items=3,  # default max CIDs per sprint; hard cap is 5
-            timeout_s=60,
-            concurrency=1,
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
-
-    # ── Open Source Collectors ───────────────────────────────────────────────
-    # OSINT: pastebin, usenet, matrix, academic, sec_edgar, court records.
-    # Enabled for research/academic/geopolitical profiles, bounded.
-    open_source_enabled = is_academic_profile(acquisition_profile) and not hardware_critical
-    plans.append(
-        AcquisitionLanePlan(
-            lane=AcquisitionLane.OPEN_SOURCE,
-            enabled=open_source_enabled,
-            reason="academic_profile"
-            if open_source_enabled
-            else ("hardware_critical" if hardware_critical else "non_academic_profile"),
-            max_items=20,
-            timeout_s=60,
-            concurrency=1,
-            risk_level=RiskLevel.MEDIUM,
-        )
-    )
+    for rule in LANE_RULES:
+        enabled = rule.enabled(ctx)
+        plans.append(AcquisitionLanePlan(
+            lane=rule.lane,
+            enabled=enabled,
+            reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx),
+            max_items=(
+                rule.spec.max_items
+                if not (rule.lane == AcquisitionLane.FEED and is_nonfeed_diagnostic)
+                else 25
+            ),
+            timeout_s=rule.spec.timeout_s,
+            concurrency=rule.concurrency(ctx),
+            risk_level=rule.spec.risk_level,
+        ))
 
     # [F207L] Build nonfeed_plan_debug for live KPI diagnosis
     # F216B: Updated to include nonfeed_diagnostic telemetry
@@ -2956,8 +3026,8 @@ def _build_plan_impl(
             _disabled_reasons.append(_plan.reason)
 
     _nonfeed_debug = NonfeedPlanDebug(
-        domain_detected=has_domain,
-        wallet_detected=has_crypto,
+        domain_detected=ctx.has_domain,
+        wallet_detected=ctx.has_crypto,
         enabled_nonfeed_lanes=tuple(_enabled_nonfeed),
         disabled_nonfeed_lanes=tuple(_disabled_nonfeed),
         disabled_reasons=tuple(_disabled_reasons),
@@ -2965,12 +3035,12 @@ def _build_plan_impl(
         hardware_skipped_lanes=tuple(_hardware_skipped),
         nonfeed_execution_scheduled=bool(_scheduled_nonfeed),
         nonfeed_execution_skip_reason=(
-            "hardware_critical" if hardware_critical else None
+            "hardware_critical" if ctx.hardware_critical else None
         ),
         # F216B: Nonfeed diagnostic profile telemetry
         acquisition_profile=acquisition_profile,
-        feed_cap_reason=feed_cap_reason,
-        nonfeed_priority_enabled=nonfeed_priority_enabled,
+        feed_cap_reason=ctx._feed_cap_reason,
+        nonfeed_priority_enabled=ctx.is_nonfeed_diagnostic,
         nonfeed_profile_expected_lanes=(
             (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS,
              AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH)

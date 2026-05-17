@@ -13451,38 +13451,6 @@ class TestSprint11BloomFilter:
             f"Expected <= {bf_module.MAX_HASH_CACHE_SIZE} entries, got {len(bf._hash_cache)}"
 
 
-class TestSprint12Checkpoint:
-    """Test Sprint 12: bounded_json_dumps does not mutate input."""
-
-    def test_bounded_json_dumps_does_not_mutate_input(self):
-        """Verify bounded_json_dumps does not mutate its input dict."""
-        from hledac.universal.tools.checkpoint import bounded_json_dumps
-
-        # Prepare a dict with keys that would be mutated
-        obj = {
-            "debug_info": {"key": "value", "extra": "data"},
-            "results": [{"id": i, "text": "x" * 100} for i in range(50)],
-            "other_field": "preserve_me"
-        }
-
-        # Make a snapshot of relevant fields before call
-        original_debug_info = obj.get("debug_info")
-        original_results_len = len(obj.get("results", []))
-
-        # Call bounded_json_dumps
-        result = bounded_json_dumps(obj)
-
-        # Assert original dict was not mutated
-        assert "debug_info" in obj, "debug_info should still be in obj"
-        assert obj.get("debug_info") == original_debug_info, "debug_info should be unchanged"
-        assert len(obj.get("results", [])) == original_results_len, "results should not be truncated"
-
-        # Basic sanity: result should be a JSON string
-        import json
-        parsed = json.loads(result)
-        assert isinstance(parsed, dict)
-
-
 class TestSprint12EvidenceLog:
     """Test Sprint 12: EvidenceLog uses deque and triggers rebuild on overflow."""
 

@@ -2491,21 +2491,35 @@ class SprintScheduler:
 
         # Sprint F206BG: Build acquisition strategy plan at sprint start
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
-            uma = sample_uma_status()
-            _uma_state = "ok"
-            if uma.is_emergency:
-                _uma_state = "emergency"
-            elif uma.is_critical:
-                _uma_state = "critical"
-            elif uma.is_warn:
-                _uma_state = "warn"
+            # F214R: Use governor.evaluate() for authoritative uma_state.
+            # Eliminates duplicate policy computation in scheduler.
+            _governor_decision = None
+            if self._governor is not None:
+                try:
+                    _governor_decision = await self._governor.evaluate()
+                except Exception:
+                    pass
+            if _governor_decision is not None:
+                _uma_state = _governor_decision.uma_state
+                _swap_detected = getattr(_governor_decision, "swap_detected", False)
+            else:
+                # Fallback: read raw UMA (backward compat for non-governor runs)
+                from hledac.universal.core.resource_governor import sample_uma_status
+                uma = sample_uma_status()
+                _uma_state = "ok"
+                if uma.is_emergency:
+                    _uma_state = "emergency"
+                elif uma.is_critical:
+                    _uma_state = "critical"
+                elif uma.is_warn:
+                    _uma_state = "warn"
+                _swap_detected = uma.swap_detected
             self._acquisition_plan = build_acquisition_plan(
                 query=query,
                 duration_s=self._config.sprint_duration_s,
                 aggressive_mode=self._config.aggressive_mode,
                 uma_state=_uma_state,
-                swap_detected=uma.swap_detected,
+                swap_detected=_swap_detected,
                 accepted_findings_so_far=self._result.accepted_findings,
                 branch_timeout_count=self._result.branch_timeout_count,
                 # F223A: Explicit acquisition profile override from config
@@ -6065,7 +6079,12 @@ class SprintScheduler:
         # STEALTH excluded — never auto-runs; FEED and PUBLIC already handled above
         # F212-B: Skip if remaining time is below safety floor
         lanes_timeout = self._branch_timeout_s("ADVISORY", remaining_s)
-        _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
+        # F214R: Use governor.lane_admission() for authoritative uma_state on advisory lanes
+        if self._governor is not None:
+            _lane_check = self._governor.lane_admission("advisory", risk_level="high")
+            _uma = _lane_check.uma_state
+        else:
+            _uma = getattr(self._governor, "_uma_state", "ok") if self._governor else "ok"
         if lanes_timeout > 0:
             try:
                 async with asyncio.timeout(lanes_timeout):
