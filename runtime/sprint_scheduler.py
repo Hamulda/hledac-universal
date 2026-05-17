@@ -5140,6 +5140,36 @@ class SprintScheduler:
                     self._result.seed_context_skip_reason = ""
                     self._result.seed_context_source = "domain_query_fallback"
 
+            # F227B: Seed-Unlocked Lanes Bridge — after domain fallback, before prelude gather.
+            # Propagate lanes_unlocked_by_seed_context into _nonfeed_lanes_to_run so they
+            # run in the current sprint instead of waiting for the next query-derived run.
+            self._result.nonfeed_profile_expected_lanes = getattr(self._result, "nonfeed_profile_expected_lanes", ()) or ()
+            _unlocked: list[str] = getattr(self._result, "lanes_unlocked_by_seed_context", []) or []
+            if _unlocked and self._result.seed_context_available:
+                _existing: set[str] = {lane for lane, *_ in _nonfeed_lanes_to_run}
+                _expected: set[str] = set(self._result.nonfeed_profile_expected_lanes)
+                # Conservative timeouts/max_items for seed-unlocked lanes
+                _seed_lane_defaults: dict[str, tuple[float, int]] = {
+                    "DOH": (12.0, 8),
+                    "CT": (18.0, 10),
+                    "WAYBACK": (18.0, 8),
+                    "PASSIVE_DNS": (12.0, 8),
+                }
+                for _lane in ("CT", "DOH", "WAYBACK", "PASSIVE_DNS"):
+                    if _lane not in _unlocked:
+                        continue
+                    if _lane in _existing:
+                        continue  # deduplication — already scheduled
+                    if _lane not in _expected:
+                        continue  # not in profile expected lanes
+                    _timeout_s, _max_items = _seed_lane_defaults.get(_lane, (20.0, 5))
+                    # F220J critical: skip heavy lanes under hardware critical memory
+                    if _hardware_critical and _lane in ("DOH", "WAYBACK"):
+                        _nonfeed_prelude_skipped[_lane] = "seed_unlocked_but_memory_blocked"
+                        continue
+                    _nonfeed_lanes_to_run.append((_lane, True, _timeout_s, _max_items))
+                    _nonfeed_expected.append(_lane)
+
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
             await self._run_nonfeed_prelude_gather(
                 query=query,
