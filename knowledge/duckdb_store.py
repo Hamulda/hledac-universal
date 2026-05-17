@@ -121,6 +121,9 @@ from .quality_assessment import _DEDUP_HOT_CACHE_MAX as _DEDUP_HOT_CACHE_MAX
 from .wal import WALManager
 from .dedup import DedupManager
 
+# Sprint F222: Semantic buffering (extracted from this file)
+from .semantic_store_buffer import SemanticStoreBuffer
+
 
 # Sprint F217: Ingest Pipeline Interface
 # --------------------------------------------------------------------------
@@ -618,6 +621,9 @@ class DuckDBShadowStore:
         # Sprint 8SB: Semantic store (FastEmbed + LanceDB)
         self._semantic_store: Optional[Any] = None
 
+        # Sprint F222: Semantic buffering extracted to SemanticStoreBuffer
+        self._semantic_buffer: SemanticStoreBuffer = SemanticStoreBuffer()
+
         # Sprint F222: Graph slots moved to dedicated adapter
         self.__graph_store = None  # GraphAttachmentStore instance (lazy init, name-mangled)
 
@@ -734,6 +740,7 @@ class DuckDBShadowStore:
         indexing during WINDUP flush.
         """
         self._semantic_store = store
+        self._semantic_buffer.inject(store)
 
     def _semantic_buffer_findings(self, findings: list[CanonicalFinding]) -> None:
         """
@@ -741,38 +748,9 @@ class DuckDBShadowStore:
 
         Runs as a background task (not awaited). Fail-open: any exception
         is caught and logged — semantic buffering failure never blocks storage.
+        Delegated to SemanticStoreBuffer.
         """
-        import logging as _logging
-
-        _logger = _logging.getLogger(__name__)
-        if self._semantic_store is None:
-            return
-        try:
-            for f in findings:
-                text = f.payload_text or ""
-                if not text:
-                    continue
-                # Collect IOC types from pattern_matches
-                ioc_types: list[str] = []
-                pm = getattr(f, "pattern_matches", None)
-                if pm:
-                    for item in pm:
-                        if isinstance(item, tuple) and len(item) >= 2:
-                            ioc_types.append(str(item[1]))
-                        elif isinstance(item, dict):
-                            lbl = item.get("label") or ""
-                            if lbl:
-                                ioc_types.append(str(lbl))
-                ioc_types = list(set(ioc_types)) if ioc_types else []
-                self._semantic_store.buffer_finding(
-                    text=text,
-                    source_type=getattr(f, "source_type", "unknown"),
-                    finding_id=f.finding_id,
-                    ts=getattr(f, "ts", 0.0),
-                    ioc_types=ioc_types,
-                )
-        except Exception as exc:
-            _logger.debug("Semantic buffering skipped: %s", exc)
+        self._semantic_buffer.buffer_findings(findings)
 
     def _graph_ingest_findings(self, findings: list[CanonicalFinding]) -> None:
         """
