@@ -15,6 +15,8 @@ This service acts as the sprint memory seam between the two.
 
 ARCHITECTURE (F226):
 - GraphService class holds instance-isolated state: _duckpgq_graph, _seen_iocs, _seen_rels.
+- Instance methods call module-level _get_graph() for duckDB graph singleton — this
+  allows tests to patch graph_service._get_graph and affect all instance calls.
 - Module-level functions delegate to _DEFAULT_GRAPH_SERVICE (default singleton facade).
 - New code should prefer injected GraphService instances for test isolation.
 - Existing module-level API (_SEEN_IOCS, _SEEN_RELS, reset_session) is preserved for
@@ -35,6 +37,29 @@ logger = logging.getLogger(__name__)
 MAX_GRAPH_ANALYTICS_NODES: int = 500
 MAX_GRAPH_ANALYTICS_TOP_K: int = 10
 
+# ── Module-level DuckPGQGraph singleton (lazy) ─────────────────────────────────
+# Used by module-level facade AND by GraphService instances via class lookup.
+# Tests patching graph_service._get_graph affect all callers.
+
+_DUCKPGQ_GRAPH: Optional[DuckPGQGraph] = None
+
+
+def _get_graph() -> Optional[DuckPGQGraph]:
+    """Lazy singleton getter for DuckPGQGraph.
+
+    Defined at module level so tests can patch it and affect all callers
+    (both module-level functions and GraphService instance methods).
+    """
+    global _DUCKPGQ_GRAPH
+    if _DUCKPGQ_GRAPH is None:
+        try:
+            _DUCKPGQ_GRAPH = DuckPGQGraph()
+        except Exception as e:
+            logger.warning(f"[GraphService] DuckPGQGraph init failed: {e}")
+            return None
+    return _DUCKPGQ_GRAPH
+
+
 # ── GraphService Class ─────────────────────────────────────────────────────────
 
 class GraphService:
@@ -42,33 +67,21 @@ class GraphService:
     Instance-isolated graph service with DuckPGQGraph backing.
 
     Each instance has its own:
-    - _duckpgq_graph: lazy DuckPGQGraph singleton
+    - _duckpgq_graph: lazy DuckPGQGraph singleton (via module-level _get_graph)
     - _seen_iocs: idempotency set for IOCs
     - _seen_rels: idempotency set for relations
 
     Use this directly for test isolation or cross-sprint tenant isolation.
-    For backward compatibility, module-level functions delegate to
-    _DEFAULT_GRAPH_SERVICE (the module-level singleton facade).
+    Instance methods call module-level _get_graph() for the DB singleton,
+    which allows tests to patch graph_service._get_graph and affect all
+    instance calls uniformly.
     """
 
-    __slots__ = ("_duckpgq_graph", "_seen_iocs", "_seen_rels")
+    __slots__ = ("_seen_iocs", "_seen_rels")  # _duckpgq_graph NOT stored (uses _get_graph)
 
     def __init__(self) -> None:
-        self._duckpgq_graph: Optional[DuckPGQGraph] = None
         self._seen_iocs: set[tuple[str, str]] = set()
         self._seen_rels: set[tuple[str, str, str]] = set()
-
-    # ── Internal helpers ───────────────────────────────────────────────────────
-
-    def _get_graph(self) -> Optional[DuckPGQGraph]:
-        """Lazy singleton getter for DuckPGQGraph."""
-        if self._duckpgq_graph is None:
-            try:
-                self._duckpgq_graph = DuckPGQGraph()
-            except Exception as e:
-                logger.warning(f"[GraphService] DuckPGQGraph init failed: {e}")
-                return None
-        return self._duckpgq_graph
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -92,7 +105,7 @@ class GraphService:
         if key in self._seen_iocs:
             return False
 
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return False
         try:
@@ -129,7 +142,7 @@ class GraphService:
         if not unique:
             return 0
 
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return 0
         try:
@@ -156,7 +169,7 @@ class GraphService:
         if key in self._seen_rels:
             return False
 
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return False
         try:
@@ -203,7 +216,7 @@ class GraphService:
             List of connected entity records (value, ioc_type, confidence, source),
             or empty list on error / if graph unavailable.
         """
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return []
         try:
@@ -214,7 +227,7 @@ class GraphService:
 
     def graph_stats(self) -> dict:
         """Return graph node/edge statistics. Returns empty dict on error."""
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return {}
         try:
@@ -225,7 +238,7 @@ class GraphService:
 
     def checkpoint(self) -> None:
         """Flush WAL to disk. No-op on error."""
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return
         try:
@@ -240,9 +253,10 @@ class GraphService:
         Call at sprint start to prevent cross-sprint state leakage.
         Resets only this instance's state — does NOT affect other instances.
         """
+        global _DUCKPGQ_GRAPH
         self._seen_iocs.clear()
         self._seen_rels.clear()
-        self._duckpgq_graph = None
+        _DUCKPGQ_GRAPH = None
 
     # ── Analytics ─────────────────────────────────────────────────────────────
 
@@ -270,7 +284,7 @@ class GraphService:
         if top_k > MAX_GRAPH_ANALYTICS_TOP_K:
             top_k = MAX_GRAPH_ANALYTICS_TOP_K
 
-        graph = self._get_graph()
+        graph = _get_graph()
         if graph is None:
             return {
                 "top_central_entities": [],
@@ -280,7 +294,6 @@ class GraphService:
             }
 
         try:
-            # 1. Top entities by degree (bounded)
             raw_top = graph.get_top_nodes_by_degree(
                 n=min(top_k, MAX_GRAPH_ANALYTICS_NODES)
             )
@@ -292,7 +305,6 @@ class GraphService:
                 if val:
                     entities.append({"value": val, "ioc_type": ioc, "degree": deg})
 
-            # 2. Community count via simple label propagation (approximate)
             community_count = _estimate_community_count(graph)
 
             return {
@@ -312,59 +324,22 @@ class GraphService:
 
 
 # ── Module-level singleton facade ──────────────────────────────────────────────
+# Default instance — preserves backward compatibility for code that imports
+# graph_service and calls graph_service.upsert_ioc() etc.
 
-# Default instance — all module-level functions delegate to this.
-# Preserves backward compatibility: existing code that imports graph_service
-# and calls graph_service.upsert_ioc() etc. still works against this singleton.
 _DEFAULT_GRAPH_SERVICE = GraphService()
 
 
-# ── Backward-compat module-level state ────────────────────────────────────────
-# These aliases point to the default instance's sets so that existing test code
-# (gs._SEEN_IOCS.clear()) continues to work without modification.
+# ── Module-level state (for backward compat with existing tests) ───────────────
+# Existing tests do gs._SEEN_IOCS.clear() and gs._SEEN_RELS.clear() on the module.
+# We point these to the default instance's sets.
 
-# NOTE: These are module-level references to the DEFAULT instance's state.
-# If you create a new GraphService() instance, it will have its own separate
-# _seen_iocs / _seen_rels sets — this is the desired isolation behavior.
-# Tests that directly mutate _SEEN_IOCS / _SEEN_RELS are mutating the
-# default facade instance's state, which is correct for backward compat.
+_SeenIOcs = _DEFAULT_GRAPH_SERVICE._seen_iocs
+_SeenRels = _DEFAULT_GRAPH_SERVICE._seen_rels
 
-
-def _make_facade_method(method_name: str):
-    """Create a module-level function that delegates to _DEFAULT_GRAPH_SERVICE."""
-    method = getattr(_DEFAULT_GRAPH_SERVICE, method_name)
-
-    def facade(*args, **kwargs):
-        return method(*args, **kwargs)
-
-    facade.__name__ = method_name
-    facade.__doc__ = method.__doc__
-    return facade
-
-
-# ── Module-level function exports (delegate to default facade) ─────────────────
-
-upsert_ioc = _make_facade_method("upsert_ioc")
-upsert_ioc_batch = _make_facade_method("upsert_ioc_batch")
-upsert_relation = _make_facade_method("upsert_relation")
-upsert_identity_edge = _make_facade_method("upsert_identity_edge")
-find_entity_history = _make_facade_method("find_entity_history")
-graph_stats = _make_facade_method("graph_stats")
-checkpoint = _make_facade_method("checkpoint")
-reset_session = _make_facade_method("reset_session")
-graph_analytics_summary = _make_facade_method("graph_analytics_summary")
-
-
-# ── Module-level state accessors (for backward compat with existing tests) ──────
-# These let tests do gs._SEEN_IOCS.clear() directly on the module.
-
-# Point to the default instance's sets — existing tests mutate these directly.
-_SeenIOcs = _DEFAULT_GRAPH_SERVICE._seen_iocs  # exposed for gs._SEEN_IOCS compat
-_SeenRels = _DEFAULT_GRAPH_SERVICE._seen_rels  # exposed for gs._SEEN_RELS compat
-
-# Provide mutable module-level aliases with the exact names existing tests use.
+# Wrapper classes so tests can call .clear() (method call) instead of .clear (attr)
 class _ModuleSeenIOCs:
-    """Wrapper that delegates to _DEFAULT_GRAPH_SERVICE._seen_iocs."""
+    """Forward clear/add/contains/iter to _DEFAULT_GRAPH_SERVICE._seen_iocs."""
     def clear(self):
         _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
     def add(self, key):
@@ -376,7 +351,7 @@ class _ModuleSeenIOCs:
 
 
 class _ModuleSeenRels:
-    """Wrapper that delegates to _DEFAULT_GRAPH_SERVICE._seen_rels."""
+    """Forward clear/add/contains/iter to _DEFAULT_GRAPH_SERVICE._seen_rels."""
     def clear(self):
         _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
     def add(self, key):
@@ -387,26 +362,67 @@ class _ModuleSeenRels:
         return iter(_DEFAULT_GRAPH_SERVICE._seen_rels)
 
 
-# Module-level names used by existing tests: gs._SEEN_IOCS, gs._SEEN_RELS
-# These are objects (not sets) so that tests can call .clear() on them.
-# We reassign the module-level variables to these wrapper instances.
-_SeenIOcs = _ModuleSeenIOCs()
-_SeenRels = _ModuleSeenRels()
+_SEEN_IOCS = _ModuleSeenIOCs()
+_SEEN_RELS = _ModuleSeenRels()
 
-# Create module-level _SEEN_IOCS and _SEEN_RELS that tests can access
-_SEEN_IOCS = _SeenIOcs
-_SEEN_RELS = _SeenRels
 
-# Backward-compat: also expose the raw set references for code that does
-# "if key in _SEEN_IOCS" (the set membership check is forwarded).
-# For code that accesses .add() directly, the wrapper forwards it.
+# ── Module-level functions (delegate to default facade) ────────────────────────
+
+def upsert_ioc(
+    value: str,
+    ioc_type: str = "unknown",
+    confidence: float = 0.5,
+    source: str = ""
+) -> bool:
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(value, ioc_type, confidence, source)
+
+
+def upsert_ioc_batch(rows: list[tuple[str, str, float, str]]) -> int:
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(rows)
+
+
+def upsert_relation(
+    src: str,
+    dst: str,
+    rel_type: str,
+    weight: float = 1.0,
+    evidence: str = ""
+) -> bool:
+    return _DEFAULT_GRAPH_SERVICE.upsert_relation(src, dst, rel_type, weight, evidence)
+
+
+def upsert_identity_edge(
+    src: str,
+    dst: str,
+    confidence: float = 0.5,
+    evidence: str = "",
+) -> bool:
+    return _DEFAULT_GRAPH_SERVICE.upsert_identity_edge(src, dst, confidence, evidence)
+
+
+def find_entity_history(value: str, max_hops: int = 2) -> list[dict]:
+    return _DEFAULT_GRAPH_SERVICE.find_entity_history(value, max_hops)
+
+
+def graph_stats() -> dict:
+    return _DEFAULT_GRAPH_SERVICE.graph_stats()
+
+
+def checkpoint() -> None:
+    return _DEFAULT_GRAPH_SERVICE.checkpoint()
+
+
+def reset_session() -> None:
+    global _DUCKPGQ_GRAPH
+    _DEFAULT_GRAPH_SERVICE.reset_session()
+    _DUCKPGQ_GRAPH = None
+
+
+def graph_analytics_summary(top_k: int = MAX_GRAPH_ANALYTICS_TOP_K) -> dict:
+    return _DEFAULT_GRAPH_SERVICE.graph_analytics_summary(top_k)
+
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
-
-def _get_graph() -> Optional[DuckPGQGraph]:
-    """Lazy singleton getter for DuckPGQGraph (module-level facade)."""
-    return _DEFAULT_GRAPH_SERVICE._get_graph()
-
 
 def _estimate_community_count(graph: "DuckPGQGraph") -> int:
     """
@@ -425,29 +441,24 @@ def _estimate_community_count(graph: "DuckPGQGraph") -> int:
         if node_count < 3:
             return 1
 
-        # Label propagation: assign each node its own label, propagate 5 iterations
         labels: dict[int, int] = {}
         edges = graph.con.execute(f"""
             SELECT src_id, dst_id FROM ioc_edges
             LIMIT {MAX_GRAPH_ANALYTICS_NODES}
         """).fetchall()
 
-        # Initialize labels
         nodes: set[int] = set()
         for src, dst in edges:
             nodes.add(src)
             nodes.add(dst)
         for i, node in enumerate(sorted(nodes)):
-            labels[node] = i % 10  # Seed with small number of initial labels
+            labels[node] = i % 10
 
-        # Propagate
         for _ in range(5):
             for src, dst in edges:
                 if src in labels and dst in labels:
-                    # Majority vote
                     pass  # Simplified: just count unique labels at end
 
-        # Count unique labels
         unique_labels = len({labels.get(n, 0) for n in nodes})
         return max(1, unique_labels)
     except Exception:
