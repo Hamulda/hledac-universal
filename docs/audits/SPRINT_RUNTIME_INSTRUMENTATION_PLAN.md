@@ -1,6 +1,8 @@
 # SPRINT RUNTIME INSTRUMENTATION PLAN
 
 **Date:** 2026-05-18
+**Last verified against:** `runtime/sprint_scheduler.py` (current branch, lines 86, 545, 2702, 3650, 4548, 4761, 6035, 7232, 7290, 7305, 9706)
+**Verdict:** Call site names updated to reflect F218E–F223x state. No implementation needed — plan only.
 **Author:** Based on `SPRINT_CRITICAL_PATH_BOTTLENECK_AUDIT.md`
 **Goal:** Measure, not fix — prepare runtime observability for sprint critical path bottlenecks
 **Forbidden:** No invasive scheduler refactor; no live network required
@@ -16,8 +18,8 @@ All timer points use `time.monotonic()` (not `time.time()`) for wall-time deltas
 | Label | Call site | Notes |
 |-------|----------|-------|
 | `preflight_start` | `SprintScheduler.__init__()` entry | Before any async work |
-| `preflight_end` | After `_init_connection()` + lifecycle setup | Before `run()` is called |
-| `preflight_duckdb_connect` | `_init_connection()` return | Isolated DuckDB init cost |
+| `preflight_end` | Before `run()` is called | After lifecycle + duckdb_store setup |
+| `preflight_duckdb_connect` | Inline DuckDB init in `__init__` | Isolated cost not in separate method |
 
 ### 1.2 Acquisition Prelude
 
@@ -31,21 +33,21 @@ All timer points use `time.monotonic()` (not `time.time()`) for wall-time deltas
 
 | Label | Call site | Notes |
 |-------|----------|-------|
-| `lane_start_{name}` | Inside each branch task before `run()` | `name` ∈ {`feed`, `public`, `ct`, `academic`, `nonfeed`} |
-| `lane_end_{name}` | After lane task completes | Must pair with `lane_start_{name}` |
-| `lane_accepted_{name}` | `lane_result.accepted_findings` | Count of accepted findings |
+| `lane_start_{name}` | Before `asyncio.gather(*_tasks)` dispatch | `name` from `dispatch_{feed,public,ct,nonfeed}_probe_lanes` |
+| `lane_end_{name}` | After gather returns | Must pair with `lane_start_{name}` |
+| `lane_accepted_{name}` | `lane_result.accepted_findings` | Count of accepted findings per lane |
 
 ### 1.4 Public Pipeline (per candidate)
 
 | Label | Call site | Notes |
 |-------|----------|-------|
-| `pipeline_run_start` | `live_public_pipeline.run()` entry | |
-| `pipeline_discovery_start` | Before `DuckDuckGoAdapter` discovery | |
-| `pipeline_discovery_end` | After discovery returns | |
-| `pipeline_fetch_start` | Before `public_fetcher` | |
-| `pipeline_fetch_end` | After fetcher returns | |
-| `pipeline_candidate_count` | Number of candidates produced | Gauge |
-| `pipeline_run_end` | `live_public_pipeline.run()` exit | |
+| `pipeline_run_start` | `async_run_live_public_pipeline()` entry | `runtime/sprint_scheduler.py:4548` via lazy import |
+| `pipeline_discovery_start` | Before `DuckDuckGoAdapter` discovery call inside pipeline | Not separately instrumented |
+| `pipeline_discovery_end` | After discovery returns | Not separately instrumented |
+| `pipeline_fetch_start` | Before `public_fetcher` call | Not separately instrumented |
+| `pipeline_fetch_end` | After fetcher returns | Not separately instrumented |
+| `pipeline_candidate_count` | Number of candidates produced | Gauge from `PipelineRunResult` |
+| `pipeline_run_end` | After `async_run_live_public_pipeline()` returns | `runtime/sprint_scheduler.py:4600` |
 
 ### 1.5 Ingest Batch
 
@@ -61,28 +63,28 @@ All timer points use `time.monotonic()` (not `time.time()`) for wall-time deltas
 
 | Label | Call site | Notes |
 |-------|----------|-------|
-| `graph_accum_start` | `_accumulate_findings_to_graph()` entry | F198A wired |
-| `graph_accum_end` | After all IOC upserts complete | |
-| `graph_upsert_count` | `len(iocs) + len(rels)` | Gauge |
+| `graph_accum_start` | `SprintGraphAccumulator._accumulate()` entry | `runtime/sprint_scheduler.py:7305` instantiated; `_accumulate` at line ~7290 |
+| `graph_accum_end` | After all IOC upserts complete | Via `SprintGraphAccumulator` |
+| `graph_upsert_count` | IOC + rel counts from accumulator | Gauge |
 
 ### 1.7 Windup Barrier
 
 | Label | Call site | Notes |
 |-------|----------|-------|
-| `windup_barrier_start` | `should_enter_windup()` first True → before barrier | |
-| `windup_barrier_end` | After `_ensure_nonfeed_predispatch_before_finalization()` returns | |
-| `windup_guard_call` | Each `windup_guard()` invocation | Existing `_result.windup_guard_call_count` incremented here |
-| `windup_guard_duration_s` | `windup_guard()` elapsed | Existing `_result.prewindup_barrier_duration_s` |
+| `windup_barrier_start` | `should_enter_windup()` returns True → before `_ensure_nonfeed_predispatch_before_finalization()` | `runtime/sprint_scheduler.py:545` |
+| `windup_barrier_end` | After `_ensure_nonfeed_predispatch_before_finalization()` returns | `runtime/sprint_scheduler.py:3650` |
+| `windup_guard_call` | Each `windup_guard()` invocation | `_runner.windup_guard()` at `runtime/sprint_scheduler.py:2811` |
+| `windup_guard_duration_s` | `windup_guard()` elapsed | Already tracked in `_result.prewindup_barrier_duration_s` |
 
 ### 1.8 Export
 
 | Label | Call site | Notes |
 |-------|----------|-------|
-| `export_start` | `export_sprint()` entry | |
-| `export_markdown_end` | After markdown format writes | |
-| `export_jsonld_end` | After JSON-LD writes | |
-| `export_stix_end` | After STIX writes | |
-| `export_end` | After all formats + parquet flush | |
+| `export_start` | `_run_export()` entry | `runtime/sprint_scheduler.py:9706` |
+| `export_markdown_end` | After markdown format writes | Via `_run_export()` |
+| `export_jsonld_end` | After JSON-LD writes | Via `_run_export()` |
+| `export_stix_end` | After STIX writes | Via `_run_export()` |
+| `export_end` | After all formats + parquet flush | Via `_run_export()` |
 
 ---
 
