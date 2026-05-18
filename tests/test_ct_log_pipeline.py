@@ -90,10 +90,9 @@ class TestSprintF193A:
         sched._result = SprintSchedulerResult()
         sched._ct_log_client = mock_client
         # bypassed __init__ — set all attrs that _run_ct_log_discovery_in_cycle touches
-        sched._forensics_enricher = None
-        sched._forensics_lmdb_env = None
-        sched._multimodal_enricher = None
-        sched._multimodal_lmdb_env = None
+        sched._enrichment_services = None
+        sched._graph_accumulator = None  # bypassed __init__
+        sched._sidecar_orchestrator = AsyncMock()  # bypassed __init__
         sched.sprint_id = ""  # used by _accumulate_findings_to_graph
         sched._sidecar_dispatcher = None  # bypassed __init__
 
@@ -199,10 +198,9 @@ class TestSprintF194A:
         sched._result = SprintSchedulerResult()
         sched._ct_log_client = mock_client
         # bypassed __init__ — set all attrs that _run_ct_log_discovery_in_cycle touches
-        sched._forensics_enricher = None
-        sched._forensics_lmdb_env = None
-        sched._multimodal_enricher = None
-        sched._multimodal_lmdb_env = None
+        sched._enrichment_services = None
+        sched._graph_accumulator = None  # bypassed __init__
+        sched._sidecar_orchestrator = AsyncMock()  # bypassed __init__
         sched.sprint_id = ""  # used by _accumulate_findings_to_graph
         sched._sidecar_dispatcher = None  # bypassed __init__
 

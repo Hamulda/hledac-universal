@@ -292,7 +292,7 @@ class TestMultimodalEnricherAsync:
 # ---------------------------------------------------------------------------
 
 class TestMultimodalSchedulerIntegration:
-    """Tests that the sprint scheduler correctly integrates multimodal enrichment."""
+    """Tests that SprintScheduler correctly delegates multimodal to EnrichmentServices (F350M)."""
 
     def test_sprint_result_has_multimodal_field(self):
         """SprintSchedulerResult has multimodal_enriched_findings field."""
@@ -302,8 +302,8 @@ class TestMultimodalSchedulerIntegration:
         assert hasattr(result, "multimodal_enriched_findings")
         assert result.multimodal_enriched_findings == 0
 
-    def test_scheduler_has_multimodal_attributes(self):
-        """SprintScheduler has _multimodal_enricher and _multimodal_lmdb_env."""
+    def test_scheduler_has_enrichment_services_attribute(self):
+        """SprintScheduler has _enrichment_services (F350M delegation)."""
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
@@ -311,203 +311,18 @@ class TestMultimodalSchedulerIntegration:
 
         config = SprintSchedulerConfig()
         scheduler = SprintScheduler(config)
-        assert hasattr(scheduler, "_multimodal_enricher")
-        assert hasattr(scheduler, "_multimodal_lmdb_env")
-        assert scheduler._multimodal_enricher is None
-        assert scheduler._multimodal_lmdb_env is None
+        assert hasattr(scheduler, "_enrichment_services")
+        assert scheduler._enrichment_services is None
 
     def test_multimodal_lmdb_path_function_exists(self):
         """_get_multimodal_lmdb_path() returns a Path ending in multimodal_enrichment.lmdb."""
-        from hledac.universal.runtime.sprint_scheduler import (
+        from hledac.universal.runtime.enrichment_services import (
             _get_multimodal_lmdb_path,
         )
 
         result = _get_multimodal_lmdb_path()
         assert isinstance(result, Path)
         assert result.name == "multimodal_enrichment.lmdb"
-
-
-class TestMultimodalSchedulerLifecycle:
-    """Tests for multimodal lifecycle methods on SprintScheduler."""
-
-    @pytest.mark.asyncio
-    async def test_init_multimodal_sets_enricher_to_none_on_failure(self):
-        """_init_multimodal() sets enricher to None when initialization fails."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-
-        # Even if multimodal modules fail to import, init should not raise
-        await scheduler._init_multimodal()
-
-        # Either enricher is None (import failed) or it's an actual object
-        assert scheduler._multimodal_enricher is None or hasattr(
-            scheduler._multimodal_enricher, "initialize"
-        )
-
-    @pytest.mark.asyncio
-    async def test_close_multimodal_fail_safe_with_none(self):
-        """_close_multimodal() never raises when enricher is None."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-        scheduler._multimodal_enricher = None
-        scheduler._multimodal_lmdb_env = None
-
-        await scheduler._close_multimodal()
-
-    @pytest.mark.asyncio
-    async def test_flush_multimodal_idempotent(self):
-        """_flush_multimodal() is a no-op that never raises."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-        scheduler._multimodal_lmdb_env = None
-
-        await scheduler._flush_multimodal()
-
-    @pytest.mark.asyncio
-    async def test_close_multimodal_close_enricher(self):
-        """_close_multimodal() calls enricher.close() if enricher is set."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-
-        mock_enricher = AsyncMock()
-        scheduler._multimodal_enricher = mock_enricher
-
-        await scheduler._close_multimodal()
-
-        mock_enricher.close.assert_called_once()
-        assert scheduler._multimodal_enricher is None
-
-
-class TestEnrichFindingsMultimodal:
-    """Tests for _enrich_findings_multimodal method."""
-
-    @pytest.mark.asyncio
-    async def test_enrich_empty_list_noop(self):
-        """_enrich_findings_multimodal handles empty findings list."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-        scheduler._multimodal_enricher = None
-        scheduler._multimodal_lmdb_env = None
-
-        await scheduler._enrich_findings_multimodal([])
-
-    @pytest.mark.asyncio
-    async def test_enrich_skips_when_enricher_none(self):
-        """_enrich_findings_multimodal skips when enricher is None."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-        scheduler._multimodal_enricher = None
-        scheduler._multimodal_lmdb_env = MagicMock()
-
-        finding = MagicMock(finding_id="test-1", payload_text="/tmp/file.jpg")
-        initial_count = scheduler._result.multimodal_enriched_findings
-
-        await scheduler._enrich_findings_multimodal([finding])
-
-        assert scheduler._result.multimodal_enriched_findings == initial_count
-
-    @pytest.mark.asyncio
-    async def test_enrich_skips_when_lmdb_none(self):
-        """_enrich_findings_multimodal skips when LMDB env is None."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-
-        mock_enricher = AsyncMock()
-        scheduler._multimodal_enricher = mock_enricher
-        scheduler._multimodal_lmdb_env = None
-
-        finding = MagicMock(finding_id="test-2", payload_text="/tmp/file.jpg")
-
-        await scheduler._enrich_findings_multimodal([finding])
-
-        mock_enricher.enrich.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_enrich_increments_counter_on_success(self):
-        """_enrich_findings_multimodal increments counter when enrichment succeeds."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-
-        mock_lmdb = MagicMock()
-        mock_txn = MagicMock()
-        mock_lmdb.begin.return_value.__enter__ = MagicMock(return_value=mock_txn)
-        mock_lmdb.begin.return_value.__exit__ = MagicMock(return_value=False)
-        scheduler._multimodal_lmdb_env = mock_lmdb
-
-        mock_enricher = AsyncMock()
-        mock_enricher.enrich.return_value = {"vision_embedding": [0.1] * 1280}
-        scheduler._multimodal_enricher = mock_enricher
-
-        finding = MagicMock(finding_id="test-3", payload_text="/tmp/file.jpg")
-
-        await scheduler._enrich_findings_multimodal([finding])
-
-        assert scheduler._result.multimodal_enriched_findings == 1
-        mock_txn.put.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_enrich_never_crashes_on_exception(self):
-        """_enrich_findings_multimodal is fail-safe — exceptions are swallowed."""
-        from hledac.universal.runtime.sprint_scheduler import (
-            SprintScheduler,
-            SprintSchedulerConfig,
-        )
-
-        config = SprintSchedulerConfig()
-        scheduler = SprintScheduler(config)
-
-        mock_lmdb = MagicMock()
-        mock_lmdb.begin.side_effect = RuntimeError("LMDB error")
-        scheduler._multimodal_lmdb_env = mock_lmdb
-
-        mock_enricher = AsyncMock()
-        mock_enricher.enrich.side_effect = RuntimeError("Enricher error")
-        scheduler._multimodal_enricher = mock_enricher
-
-        finding = MagicMock(finding_id="test-4", payload_text="/tmp/file.jpg")
-
-        # Must not raise
-        await scheduler._enrich_findings_multimodal([finding])
 
 
 class TestFindingNotMutated:

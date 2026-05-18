@@ -1126,13 +1126,51 @@ def _build_product_value_summary(
 
 
 # ---------------------------------------------------------------------------
-# F229B: Lane corroboration score helpers
+# ---------------------------------------------------------------------------
+# F229B/F230E: Lane corroboration score helpers
 # ---------------------------------------------------------------------------
 
+def _get_corrob_outcomes(scorecard: dict) -> dict:
+    """Normalize lane outcomes from either src_family_outcomes or source_family_outcomes.
+
+    Live sprint reports write ``source_family_outcomes`` as a list of dicts with
+    ``family`` and lane data keys (terminal_state, accepted_count, raw_count, etc.).
+    F229B helpers historically read only ``src_family_outcomes`` as a flat dict keyed
+    by family name.
+
+    This function accepts both shapes and returns a flat dict keyed by family name,
+    matching what ``runtime.corroboration_score.score_from_result`` expects.
+
+    Normalisation rules
+    -------------------
+    1. If ``src_family_outcomes`` is a non-empty dict, return it directly (F229B compat).
+    2. Otherwise, read ``source_family_outcomes`` as a list and index by ``family``.
+    3. On any failure, return ``{}`` (fail-soft).
+    """
+    # 1. Prefer src_family_outcomes dict (F229B shape)
+    sfo = scorecard.get("src_family_outcomes")
+    if isinstance(sfo, dict) and sfo:
+        return sfo
+
+    # 2. Normalise source_family_outcomes list (live shape)
+    try:
+        sfo_list = scorecard.get("source_family_outcomes", [])
+        if not isinstance(sfo_list, list):
+            return {}
+        out = {}
+        for entry in sfo_list:
+            if isinstance(entry, dict):
+                fam = entry.get("family")
+                if fam and isinstance(fam, str):
+                    out[fam.lower()] = entry
+        return out
+    except Exception:
+        return {}
+
 def _corroboration_score_value(scorecard: dict) -> float:
-    """Compute corroboration score (0.0–1.0) from src_family_outcomes."""
+    """Compute corroboration score (0.0-1.0) from src_family_outcomes or source_family_outcomes."""
     from runtime.corroboration_score import score_from_result
-    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+    outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
         __slots__ = ("src_family_outcomes", "seed_context_available")
@@ -1151,7 +1189,7 @@ def _corroboration_score_value(scorecard: dict) -> float:
 def _corroborating_families(scorecard: dict) -> tuple:
     """Return tuple of families that contributed to corroboration."""
     from runtime.corroboration_score import score_from_result
-    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+    outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
         __slots__ = ("src_family_outcomes", "seed_context_available")
@@ -1170,7 +1208,7 @@ def _corroborating_families(scorecard: dict) -> tuple:
 def _corroboration_reason_str(scorecard: dict) -> str:
     """Return human-readable corroboration reason."""
     from runtime.corroboration_score import score_from_result
-    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+    outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
         __slots__ = ("src_family_outcomes", "seed_context_available")
@@ -1181,18 +1219,17 @@ def _corroboration_reason_str(scorecard: dict) -> str:
     result = _Result(outcomes)
     try:
         sc = score_from_result(result)
-        return sc.corroboration_reason
+        return sc.corrobation_reason
     except Exception:
         return "corroboration unavailable"
 
 
 def _corroboration_penalties_list(scorecard: dict) -> list:
     """Return list of active penalties."""
-    from runtime.corroboration_score import score_from_result, _NONFEED_FAMILIES, _TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS
-    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
-    penalties: list = []
+    from runtime.corroboration_score import _NONFEED_FAMILIES, _TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS
+    outcomes = _get_corrob_outcomes(scorecard)
+    penalties = []
 
-    # Check nonfeed missing penalty
     feed_present = bool(outcomes.get("feed", {}).get("accepted_count", 0) > 0)
     nonfeed_terminals = sum(
         1 for f in _NONFEED_FAMILIES
@@ -1205,18 +1242,17 @@ def _corroboration_penalties_list(scorecard: dict) -> list:
     if not feed_present and nonfeed_missed and nonfeed_terminals == 0:
         penalties.append("nonfeed_expected_missing")
 
-    # Check feed-only penalty
     if feed_present and nonfeed_terminals == 0:
         ct_t = outcomes.get("ct", {}).get("terminal_state") not in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
         doh_t = outcomes.get("doh", {}).get("terminal_state") not in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
         if ct_t and doh_t:
             penalties.append("feed_only_no_nonfeed")
 
-    # Check public zero-results penalty
     if outcomes.get("public", {}).get("terminal_state") == _TERMINAL_NO_RESULTS:
         penalties.append("public_zero_results")
 
     return penalties
+
 
 
 def _derive_hypothesis_queries(
@@ -2351,17 +2387,20 @@ def _build_capability_synthesis(
     # Note: The F229A fix (step 2) requires runtime_accepted > 0 from a reconciled source,
     # not just pvs.accepted. When pvs.accepted > 0 but _pvs_accepted (reconciled) is 0,
     # the F229A path should NOT override the F230C low-corroboration check.
-    if is_meaningful is False:
-        verdict = "smoke_capability"
-        confidence = 0.85
-    elif _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
-        # F230C: Low corroboration with feed-only penalty → weak capability
-        # (checked before F229A path to handle low_score + high_accepted case)
+    # Verdict precedence order (finalized F229A+F230C+F230F):
+    #   1. F230C: Low corroboration score (< 0.3) with feed-only penalty → weak_capability
+    #   2. Smoke: is_meaningful=False → smoke_capability (F229A precedence: checked before runtime override)
+    #   3. F229A runtime override: runtime has accepted findings (from runtime_truth source)
+    #      → useful_capability (requires terminality satisfied to preserve smoke precedence)
+    #   4. Invalid: terminality unsatisfied → invalid_capability
+    #   5. Default: terminality satisfied + meaningful → useful_capability
+    if _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
         verdict = "weak_capability"
         confidence = 0.70
-    elif runtime_accepted > 0 and truth_recon_applied:
-        # F229A: runtime_truth had accepted findings but pvs was zeroed.
-        # Override the zeroed pvs signal — this is a meaningful run.
+    elif is_meaningful is False:
+        verdict = "smoke_capability"
+        confidence = 0.85
+    elif runtime_accepted > 0 and truth_recon_applied and terminality_satisfied:
         verdict = "useful_capability"
         confidence = 0.80
     elif not terminality_satisfied:

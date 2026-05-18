@@ -2018,12 +2018,10 @@ class SprintScheduler:
         self._ioc_scorer: Any = None
         # Sprint F195: DuckDB store for canonical finding persistence
         self._duckdb_store: Any = None
-        # Sprint F195C: Forensics enrichment layer
-        self._forensics_enricher: Any = None
-        self._forensics_lmdb_env: Any = None
-        # Sprint F195C: Multimodal enrichment layer
-        self._multimodal_enricher: Any = None
-        self._multimodal_lmdb_env: Any = None
+        # Sprint F195C: Forensics enrichment layer (F350M: moved to EnrichmentServices)
+        # Sprint F195C: Multimodal enrichment layer (F350M: moved to EnrichmentServices)
+        # Sprint F350M: Unified enrichment services (forensics + multimodal lifecycle)
+        self._enrichment_services: Any = None
         # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
         self._ioc_graph: Any = None
         # Sprint F193B: Hypothesis → finding feedback loop tracking
@@ -2463,9 +2461,8 @@ class SprintScheduler:
         )
 
         # Sprint F195C: Initialize forensics enricher and LMDB
-        await self._init_forensics()
-        # Sprint F195C: Initialize multimodal enricher and LMDB
-        await self._init_multimodal()
+        if self._enrichment_services:
+            await self._enrichment_services.init()
         # Sprint F205H: Initialize metrics registry (fail-soft, run_dir from config or default)
         await self._init_metrics_registry()
         # F205H: Capture baseline RSS at sprint start (not just at cycle end)
@@ -2758,7 +2755,8 @@ class SprintScheduler:
                     # Sprint 8RA: Flush dedup at WINDUP entry
                     await self._flush_dedup()
                     # Sprint F195C: Flush forensics at WINDUP entry
-                    await self._flush_forensics()
+                    if self._enrichment_services:
+                        await self._enrichment_services.flush()
                     # Sprint 8VQ: Evaluate advisory gate at WINDUP entry (diagnostic only)
                     self.evaluate_advisory_gate()
                     # Sprint F195B: write partial on early windup so latest state survives
@@ -3026,9 +3024,8 @@ class SprintScheduler:
         # Sprint 8RA: Close persistent dedup at TEARDOWN
         await self._close_dedup()
         # Sprint F195C: Close forensics enricher and LMDB at TEARDOWN
-        await self._close_forensics()
-        # Sprint F195C: Close multimodal enricher and LMDB at TEARDOWN
-        await self._close_multimodal()
+        if self._enrichment_services:
+            await self._enrichment_services.close()
 
         # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
         await self._sidecar_orchestrator.run_advisory_runner()
@@ -7129,9 +7126,9 @@ class SprintScheduler:
             self._result.ct_log_discovered = len(findings)
             if findings:
                 # Sprint F195C: Enrich findings before storage (fail-safe — never crashes)
-                await self._enrich_ct_findings_forensics(findings)
-                # Sprint F195C: Multimodal enrichment for PDF/image findings
-                await self._enrich_findings_multimodal(findings)
+                if self._enrichment_services:
+                    await self._enrichment_services.enrich_ct_findings(findings, self._result)
+                    await self._enrichment_services.enrich_findings_multimodal(findings, self._result)
                 # Sprint F198A: Accumulate findings to cross-sprint graph (fail-soft)
                 self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
                 # F232: ct_storage_attempted — storage was attempted
@@ -10210,10 +10207,10 @@ class SprintScheduler:
             _surf_wayback = _sfo_by_family.get("wayback", {})
             _surf_pdns = _sfo_by_family.get("passive_dns", {})
             # F227A: If wayback/passive_dns eligible but not surfaced, set explicit terminal state
-            if not _surf_wayback and "WAYBACK" in _missing:
-                _surf_wayback = {"terminal_state": "eligible_not_scheduled"}
-            if not _surf_pdns and "PASSIVE_DNS" in _missing:
-                _surf_pdns = {"terminal_state": "eligible_not_scheduled"}
+            if (not _surf_wayback or not _surf_wayback.get("terminal_state")) and "WAYBACK" in _missing:
+                _surf_wayback = {"terminal_state": "not_scheduled"}
+            if (not _surf_pdns or not _surf_pdns.get("terminal_state")) and "PASSIVE_DNS" in _missing:
+                _surf_pdns = {"terminal_state": "not_scheduled"}
             _surf_ct = _sfo_by_family.get("ct", {})
             _surf_public = _sfo_by_family.get("public", {})
             # A lane is "surfaced" if it was attempted OR explicitly skipped (not absent)
@@ -10524,6 +10521,10 @@ class SprintScheduler:
         """
         self._multimodal_enricher = enricher
         self._multimodal_lmdb_env = lmdb_env
+
+    def inject_enrichment_services(self, services: Any) -> None:
+        """F350M: Inject EnrichmentServices (forensics + multimodal unified lifecycle)."""
+        self._enrichment_services = services
 
     def inject_source_economics(
         self,
