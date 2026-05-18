@@ -32,6 +32,9 @@ from typing import Any, Callable, Optional
 
 import aiohttp
 
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
+
 logger = logging.getLogger(__name__)
 
 
@@ -449,31 +452,56 @@ async def call_lookup_passive_dns(
                     return [], outcome
                 text = await resp.text()
         else:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
-                    if resp.status == 404:
-                        elapsed = time.monotonic() - start
-                        outcome = PassiveDNSOutcome(
-                            attempted=True,
-                            query=domain_stripped,
-                            result_count=0,
-                            error=None,
-                            duration_s=elapsed,
-                        )
-                        await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
-                        return [], outcome
-                    if resp.status != 200:
-                        elapsed = time.monotonic() - start
-                        outcome = PassiveDNSOutcome(
-                            attempted=True,
-                            query=domain_stripped,
-                            result_count=0,
-                            error=f"http_{resp.status}",
-                            duration_s=elapsed,
-                        )
-                        await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
-                        return [], outcome
-                    text = await resp.text()
+            # F229: Align with canonical transport seam
+            session = await async_get_aiohttp_session()
+            http_timeout = aiohttp.ClientTimeout(total=15)
+
+            resp, err = await checked_aiohttp_get(
+                session,
+                url,
+                headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                timeout=http_timeout,
+                failure_kind="circl_pdns",
+            )
+
+            if err:
+                elapsed = time.monotonic() - start
+                is_timeout = err == "timeout"
+                outcome = PassiveDNSOutcome(
+                    attempted=True,
+                    query=domain_stripped,
+                    result_count=0,
+                    error=err,
+                    timeout=is_timeout,
+                    duration_s=elapsed,
+                )
+                await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
+                return [], outcome
+
+            assert resp is not None
+            if resp.status == 404:
+                elapsed = time.monotonic() - start
+                outcome = PassiveDNSOutcome(
+                    attempted=True,
+                    query=domain_stripped,
+                    result_count=0,
+                    error=None,
+                    duration_s=elapsed,
+                )
+                await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
+                return [], outcome
+            if resp.status != 200:
+                elapsed = time.monotonic() - start
+                outcome = PassiveDNSOutcome(
+                    attempted=True,
+                    query=domain_stripped,
+                    result_count=0,
+                    error=f"http_{resp.status}",
+                    duration_s=elapsed,
+                )
+                await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
+                return [], outcome
+            text = await resp.text()
 
         # Parse plain text response
         for line in text.splitlines():

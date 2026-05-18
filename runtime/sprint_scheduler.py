@@ -1309,6 +1309,15 @@ class SprintSchedulerResult:
     pivot_seed_hashes: tuple[str, ...] = ()
     pivot_seed_cves: tuple[str, ...] = ()
 
+    # F233C: IOC values from ioc_followup seeds (wired into NonfeedSeedContext)
+    next_seeds_query_suggestions: tuple[str, ...] = ()
+    next_seeds_skip_reason: str = ""
+    next_seeds_ioc_domains: tuple[str, ...] = ()
+    next_seeds_ioc_ips: tuple[str, ...] = ()
+    next_seeds_ioc_urls: tuple[str, ...] = ()
+    next_seeds_ioc_hashes: tuple[str, ...] = ()
+    next_seeds_ioc_cves: tuple[str, ...] = ()
+
 
 # ---------------------------------------------------------------------------
 # Sprint F240A: Type-safe result variants

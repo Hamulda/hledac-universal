@@ -6,28 +6,44 @@ introducing heavy plugin infrastructure.
 
 Sprint 8BN — Structured TI Ingest V1
 Sprint F202G — Pivot type mapping added
+Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Callable, Any
+
 
 # ---------------------------------------------------------------------------
-# Registry — stores adapter classes by source_type string
+# SourceEntry — F229: tier + acquisition_lane for source classification
 # ---------------------------------------------------------------------------
 
-_SOURCE_REGISTRY: dict[str, object] = {}
+@dataclass(frozen=True)
+class SourceEntry:
+    """F229: Named source with tier and acquisition lane."""
+    adapter: Callable[..., Any]
+    tier: int = 1  # 1=structured/deterministic, 2=overlay, 3=experimental
+    acquisition_lane: str = "passive_dns"  # which lane uses this source
 
 
-def register_source_adapter(source_type: str, adapter_class: object) -> None:
+# ---------------------------------------------------------------------------
+# Registry — stores SourceEntry by source_type string
+# ---------------------------------------------------------------------------
+
+_SOURCE_REGISTRY: dict[str, SourceEntry] = {}
+
+
+def register_source_adapter(source_type: str, entry: SourceEntry) -> None:
     """
-    Register a source adapter class for the given source_type.
+    Register a SourceEntry for the given source_type.
 
     Parameters
     ----------
     source_type:
         Unique identifier for the source type (e.g. "nvd", "cisa_kev", "rss").
-    adapter_class:
-        The adapter class implementing SourceAdapter protocol.
+    entry:
+        SourceEntry with adapter callable, tier, and acquisition_lane.
 
     Raises
     ------
@@ -36,19 +52,16 @@ def register_source_adapter(source_type: str, adapter_class: object) -> None:
     """
     if source_type in _SOURCE_REGISTRY:
         raise ValueError(f"source_type already registered: {source_type}")
-    _SOURCE_REGISTRY[source_type] = adapter_class
+    _SOURCE_REGISTRY[source_type] = entry
 
 
-def get_source_adapter(source_type: str) -> object | None:
+def get_source_adapter(source_type: str) -> SourceEntry | None:
     """
-    Return a new instance of the registered adapter for source_type.
+    Return the SourceEntry for source_type.
 
     Returns None if source_type is not registered.
     """
-    cls = _SOURCE_REGISTRY.get(source_type)
-    if cls is None:
-        return None
-    return cls()
+    return _SOURCE_REGISTRY.get(source_type)
 
 
 def list_registered_source_types() -> list[str]:
@@ -156,3 +169,20 @@ def get_pivot_task_types(pivot_type: str) -> list[str]:
         "graph": ["ioc_graph_traverse", "threat_intel_lookup"],
     }
     return task_map.get(pivot_type, ["multi_engine_search"])
+
+
+# ---------------------------------------------------------------------------
+# Sprint F229: Source registration
+# ---------------------------------------------------------------------------
+
+from .circl_pdns_adapter import async_search_circl_pdns as _circl_adapter
+
+register_source_adapter(
+    "circl_pdns",
+    SourceEntry(
+        adapter=_circl_adapter,
+        tier=1,
+        acquisition_lane="passive_dns",
+    ),
+)
+"

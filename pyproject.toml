@@ -267,6 +267,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q --tb=short"
+asyncio_mode = "auto"
 
 [tool.uv]
 python-preference = "only-managed"
