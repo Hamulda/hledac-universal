@@ -1,5 +1,6 @@
 """
 Sprint F226G: Acquisition Telemetry SSOT Helper.
+Sprint F231B: Lane Detail to Source Family Outcome Bridge.
 
 ROLE: Reconcile lane detail fields with source_family_outcomes so reports
 never contradict the authoritative outcomes list.
@@ -16,16 +17,262 @@ RULES:
 
 Apply reconcile_lane_detail_fields(report) before final report is
 returned/written.
+
+Sprint F231B: complete_source_family_outcomes_from_lane_details applies AFTER
+reconcile_lane_detail_fields to ensure lane detail telemetry creates missing
+source_family_outcomes entries (the reverse direction).
 """
 
 from __future__ import annotations
 
 import logging
 
-__all__ = ["reconcile_lane_detail_fields"]
+__all__ = ["reconcile_lane_detail_fields", "complete_source_family_outcomes_from_lane_details"]
 
 logger = logging.getLogger(__name__)
 
+
+# ── Sprint F231B: helpers ──────────────────────────────────────────────────────
+
+def _normalize_terminal_state(stage: str) -> str:
+    """Normalize lane detail terminal stage to source_family_outcomes terminal_state."""
+    if not stage:
+        return ""
+    _l = stage.lower()
+    if _l in ("attempted_accepted", "accepted"):
+        return "ATTEMPTED_ACCEPTED"
+    if _l in ("attempted_empty", "no_candidates"):
+        return "ATTEMPTED_NO_RESULTS"
+    if _l in ("timeout", "request_timeout"):
+        return "ATTEMPTED_TIMEOUT"
+    if _l in ("provider_error", "dependency_missing", "error"):
+        return "ATTEMPTED_ERROR"
+    if _l == "skipped":
+        return "SKIPPED"
+    if _l in ("no_terminal", "terminal_no_results"):
+        return "ATTEMPTED_NO_RESULTS"
+    if "skipped" in _l:
+        return "SKIPPED"
+    return stage
+
+
+def _family_exists(sfo_list: list[dict], family: str) -> bool:
+    """Check if a family already exists in source_family_outcomes."""
+    for _sfo in sfo_list:
+        if (_sfo.get("family") or "").lower() == family.lower():
+            return True
+    return False
+
+
+def _add_outcome_if_missing(
+    sfo_list: list[dict],
+    family: str,
+    attempted: bool,
+    raw_count: int = 0,
+    accepted_count: int = 0,
+    terminal_state: str = "",
+    timeout: bool = False,
+    error: str | None = None,
+    skip_reason: str | None = None,
+) -> list[dict]:
+    """Add family outcome only if it doesn't already exist in the list."""
+    if _family_exists(sfo_list, family):
+        return sfo_list
+
+    _outcome = {
+        "family": family,
+        "attempted": attempted,
+        "skipped": not attempted,
+        "skip_reason": skip_reason,
+        "raw_count": raw_count,
+        "built_count": 0,
+        "accepted_count": accepted_count,
+        "error": error,
+        "timeout": timeout,
+        "duration_s": None,
+        "terminal_state": _normalize_terminal_state(terminal_state) if terminal_state else "",
+    }
+    return sfo_list + [_outcome]
+
+
+def complete_source_family_outcomes_from_lane_details(report: dict) -> dict:
+    """
+    Sprint F231B: Complete source_family_outcomes from lane detail fields.
+
+    The reverse of reconcile_lane_detail_fields: lane detail telemetry exists
+    (doh_request_attempted, wayback_terminal_state, etc.) but source_family_outcomes
+    may be missing the corresponding family entry.
+
+    RULES:
+      - Preserve existing source_family_outcomes entries.
+      - Normalize family names to lowercase.
+      - If a family already exists, do not duplicate — merge only missing fields.
+      - If doh_request_attempted or doh_terminal_stage is set and no doh outcome exists,
+        add one.
+      - If wayback_terminal_state is set and no wayback outcome exists, add one.
+      - If passive_dns_terminal_state is set and no passive_dns outcome exists, add one.
+      - If ct_terminal_stage is set and no ct outcome exists, add one.
+      - If terminal state is blank, do not invent success.
+        Use explicit not_attempted_unknown only if the lane was expected/planned/scheduled.
+      - Zero accepted findings are valid terminal coverage, not positive corroboration.
+
+    Apply after reconcile_lane_detail_fields in the report pipeline.
+    """
+    result = dict(report)
+
+    # Ensure source_family_outcomes exists as a list
+    sfo_list: list[dict] = result.get("source_family_outcomes") or []
+    if not isinstance(sfo_list, list):
+        sfo_list = []
+
+    # ── DOH ─────────────────────────────────────────────────────────────────
+    _doh_attempted = result.get("doh_request_attempted", False)
+    _doh_stage = result.get("doh_terminal_stage", "") or ""
+    _doh_raw = result.get("doh_raw_count", 0)
+    _doh_accepted = result.get("doh_accepted_findings", 0)
+    _doh_errors = result.get("doh_provider_errors", ())
+    _doh_planned = result.get("doh_planned", False)
+    _doh_scheduled = result.get("doh_scheduled", False)
+
+    if (_doh_attempted or _doh_stage) and not _family_exists(sfo_list, "doh"):
+        _err = _doh_errors[0] if _doh_errors else None
+        _timeout = _doh_stage == "timeout"
+        if not _err:
+            if _doh_stage == "no_candidates":
+                _err = "no_candidates"
+            elif _doh_stage == "attempted_empty":
+                _err = "attempted_empty"
+            elif _doh_stage == "attempted_accepted":
+                _err = None
+        _skip = not _doh_attempted and not _doh_stage
+        sfo_list = _add_outcome_if_missing(
+            sfo_list,
+            family="doh",
+            attempted=_doh_attempted,
+            raw_count=_doh_raw,
+            accepted_count=_doh_accepted,
+            terminal_state=_doh_stage,
+            timeout=_timeout,
+            error=_err,
+            skip_reason="doh_not_attempted" if _skip else None,
+        )
+    elif (_doh_planned or _doh_scheduled) and not _doh_attempted and not _doh_stage:
+        # Expected/planned but never attempted — explicit skipped coverage
+        if not _family_exists(sfo_list, "doh"):
+            sfo_list = _add_outcome_if_missing(
+                sfo_list,
+                family="doh",
+                attempted=False,
+                raw_count=0,
+                accepted_count=0,
+                terminal_state="",
+                skip_reason="planned_not_attempted",
+            )
+
+    # ── Wayback ─────────────────────────────────────────────────────────────
+    _wb_stage = result.get("wayback_terminal_state", "") or ""
+    _wb_raw = result.get("wayback_raw_count", 0)
+    _wb_accepted = result.get("wayback_accepted_count", 0)
+    _wb_planned = result.get("wayback_planned", False)
+    _wb_scheduled = result.get("wayback_scheduled", False)
+
+    if _wb_stage and not _family_exists(sfo_list, "wayback"):
+        _err = None
+        _attempted = True
+        if _wb_stage in ("no_terminal", "terminal_no_results"):
+            _err = "no_terminal"
+        elif _wb_stage == "skipped":
+            # "skipped" means the lane did not run — attempted=False
+            _attempted = False
+            _err = "skipped"
+        elif _wb_stage == "wayback_unchanged_rejected":
+            _err = _wb_stage
+        sfo_list = _add_outcome_if_missing(
+            sfo_list,
+            family="wayback",
+            attempted=_attempted,
+            raw_count=_wb_raw,
+            accepted_count=_wb_accepted,
+            terminal_state=_wb_stage,
+            error=_err,
+        )
+    elif (_wb_planned or _wb_scheduled) and not _wb_stage:
+        if not _family_exists(sfo_list, "wayback"):
+            sfo_list = _add_outcome_if_missing(
+                sfo_list,
+                family="wayback",
+                attempted=False,
+                raw_count=0,
+                accepted_count=0,
+                terminal_state="",
+                skip_reason="planned_not_attempted",
+            )
+
+    # ── PassiveDNS ──────────────────────────────────────────────────────────
+    _pdns_stage = result.get("passive_dns_terminal_state", "") or ""
+    _pdns_raw = result.get("passive_dns_raw_count", 0)
+    _pdns_accepted = result.get("passive_dns_accepted_count", 0)
+    _pdns_planned = result.get("passive_dns_planned", False)
+    _pdns_scheduled = result.get("passive_dns_scheduled", False)
+
+    if _pdns_stage and not _family_exists(sfo_list, "passive_dns"):
+        _err = None
+        _attempted = True
+        if _pdns_stage in ("no_terminal", "terminal_no_results"):
+            _err = "no_terminal"
+        elif _pdns_stage == "skipped":
+            # "skipped" means the lane did not run — attempted=False
+            _attempted = False
+            _err = "skipped"
+        sfo_list = _add_outcome_if_missing(
+            sfo_list,
+            family="passive_dns",
+            attempted=_attempted,
+            raw_count=_pdns_raw,
+            accepted_count=_pdns_accepted,
+            terminal_state=_pdns_stage,
+            error=_err,
+        )
+    elif (_pdns_planned or _pdns_scheduled) and not _pdns_stage:
+        if not _family_exists(sfo_list, "passive_dns"):
+            sfo_list = _add_outcome_if_missing(
+                sfo_list,
+                family="passive_dns",
+                attempted=False,
+                raw_count=0,
+                accepted_count=0,
+                terminal_state="",
+                skip_reason="planned_not_attempted",
+            )
+
+    # ── CT (if missing but detail fields exist) ─────────────────────────────
+    _ct_attempted = result.get("ct_request_attempted", False)
+    _ct_stage = result.get("ct_terminal_stage", "") or ""
+    _ct_raw = result.get("ct_raw_count", 0)
+    _ct_accepted = result.get("ct_storage_accepted", False)
+
+    if (_ct_attempted or _ct_stage) and not _family_exists(sfo_list, "ct"):
+        _err = None
+        if _ct_stage == "request_timeout":
+            _err = "timeout"
+        elif _ct_stage == "attempted_error":
+            _err = "attempted_error"
+        sfo_list = _add_outcome_if_missing(
+            sfo_list,
+            family="ct",
+            attempted=_ct_attempted,
+            raw_count=_ct_raw,
+            accepted_count=1 if _ct_accepted else 0,
+            terminal_state=_ct_stage,
+            timeout=_ct_stage == "request_timeout",
+            error=_err,
+        )
+
+    result["source_family_outcomes"] = sfo_list
+    return result
+
+
+# ── Sprint F226G: original reconcile ────────────────────────────────────────────
 
 def reconcile_lane_detail_fields(report: dict) -> dict:
     """

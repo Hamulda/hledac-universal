@@ -280,9 +280,6 @@ class FetchCoordinator(UniversalCoordinator):
         # Sprint 80: Token bucket concurrency (still kept for compatibility)
         self._concurrency = TokenBucketController(rate=5, capacity=10)
 
-        # Sprint F3/F8/F9: Local corpus ingester seam (lazy, fail-soft)
-        self._corpus_ingester = None
-
         # Sprint 4B: AIMD Adaptive Concurrency Controller
         self._aimd_concurrency: float = float(CONCURRENCY_CLEARNET)  # current window
         self._aimd_successes: int = 0  # successes since last increase
@@ -913,15 +910,6 @@ class FetchCoordinator(UniversalCoordinator):
         if 'frontier' in ctx:
             self._frontier = deque(ctx['frontier'], maxlen=1000)
 
-        # Sprint F3/F8/F9: lazy-init corpus ingester on first start
-        if self._corpus_ingester is None:
-            try:
-                from ..knowledge.corpus_ingester import get_corpus_ingester
-                self._corpus_ingester = get_corpus_ingester()
-            except Exception as e:
-                logger.warning(f"CorpusIngester: lazy init failed: {e}")
-                self._corpus_ingester = None
-
         logger.info(f"FetchCoordinator started with {len(self._frontier)} URLs in frontier")
 
     def _url_priority(self, url: str) -> int:
@@ -1023,13 +1011,6 @@ class FetchCoordinator(UniversalCoordinator):
             if result and result.get('success'):
                 self._processed_urls.add(url)
                 self._urls_fetched_count += 1
-
-                # Sprint F3/F8/F9: ingest successful fetch into local corpus
-                if self._corpus_ingester is not None:
-                    try:
-                        self._corpus_ingester.ingest(result)
-                    except Exception as e:
-                        logger.debug(f"[INGEST] corpus ingest failed for {url}: {e}")
 
                 # Extract evidence ID
                 evidence_id = result.get('evidence_id')
@@ -1402,13 +1383,6 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier.clear()
         # Recreate bloom filter instead of clear() (not available in RotatingBloomFilter)
         self._processed_urls = _create_dedup_strategy()
-
-        # Sprint F3/F8/F9: persist local corpus manifest at windup
-        if self._corpus_ingester is not None:
-            try:
-                self._corpus_ingester.close()
-            except Exception as e:
-                logger.debug(f"CorpusIngester close failed: {e}")
 
         # F300M: Cleanup SessionManager and LMDB env — correct order:
         # 1. SessionManager.close() first (closes ThreadPoolExecutor)

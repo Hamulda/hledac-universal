@@ -1123,6 +1123,8 @@ def _build_product_value_summary(
         "lane_terminal_coverage_score": _terminal_coverage_score(scorecard),
         "terminal_families": _terminal_families(scorecard),
         "terminal_coverage_reason": _terminal_coverage_reason_str(scorecard),
+        # F232C: Provider yield signals from existing provider debug surfaces
+        **_compute_provider_yield_signals(scorecard),
     }
 
     # Remove None fields for cleaner output (keep 0 as valid)
@@ -1173,7 +1175,7 @@ def _get_corrob_outcomes(scorecard: dict) -> dict:
 
 def _corroboration_score_value(scorecard: dict) -> float:
     """Compute corroboration score (0.0-1.0) from src_family_outcomes or source_family_outcomes."""
-    from runtime.corroboration_score import score_from_result
+    from hledac.universal.runtime.corroboration_score import score_from_result
     outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
@@ -1192,7 +1194,7 @@ def _corroboration_score_value(scorecard: dict) -> float:
 
 def _corroborating_families(scorecard: dict) -> tuple:
     """Return tuple of families that contributed to corroboration."""
-    from runtime.corroboration_score import score_from_result
+    from hledac.universal.runtime.corroboration_score import score_from_result
     outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
@@ -1211,7 +1213,7 @@ def _corroborating_families(scorecard: dict) -> tuple:
 
 def _corroboration_reason_str(scorecard: dict) -> str:
     """Return human-readable corroboration reason."""
-    from runtime.corroboration_score import score_from_result
+    from hledac.universal.runtime.corroboration_score import score_from_result
     outcomes = _get_corrob_outcomes(scorecard)
 
     class _Result:
@@ -1230,7 +1232,7 @@ def _corroboration_reason_str(scorecard: dict) -> str:
 
 def _corroboration_penalties_list(scorecard: dict) -> list:
     """Return list of active penalties."""
-    from runtime.corroboration_score import _NONFEED_FAMILIES, _TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS
+    from hledac.universal.runtime.corroboration_score import _NONFEED_FAMILIES, _TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS
     outcomes = _get_corrob_outcomes(scorecard)
     penalties = []
 
@@ -1266,7 +1268,7 @@ def _terminal_coverage_score(scorecard: dict) -> float:
     because the lane was planned and attempted — it is not absent/silent.
     This is separate from corroboration_score which only rewards positive outcomes.
     """
-    from runtime.corroboration_score import compute_terminal_coverage
+    from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         tc = compute_terminal_coverage(outcomes)
@@ -1277,7 +1279,7 @@ def _terminal_coverage_score(scorecard: dict) -> float:
 
 def _terminal_families(scorecard: dict) -> tuple:
     """Return families that reached terminal/attempted state."""
-    from runtime.corroboration_score import compute_terminal_coverage
+    from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         tc = compute_terminal_coverage(outcomes)
@@ -1288,13 +1290,152 @@ def _terminal_families(scorecard: dict) -> tuple:
 
 def _terminal_coverage_reason_str(scorecard: dict) -> str:
     """Return human-readable terminal coverage reason."""
-    from runtime.corroboration_score import compute_terminal_coverage
+    from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
     outcomes = _get_corrob_outcomes(scorecard)
     try:
         tc = compute_terminal_coverage(outcomes)
         return tc.terminal_coverage_reason
     except Exception:
         return "terminal coverage unavailable"
+
+
+def _compute_provider_yield_signals(
+    scorecard: dict,
+    doh_provider_errors: tuple[str, ...] | None = None,
+    public_provider_errors: list[dict] | None = None,
+    nonfeed_missing_expected_lanes: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Sprint F232C: Provider yield signals from existing provider debug surfaces.
+
+    Derives provider yield diagnostics from the union of:
+      - scorecard["source_family_outcomes"]
+      - doh_provider_errors (tuple of provider error strings)
+      - public_provider_errors (list of {family, error, error_type} dicts)
+      - nonfeed_missing_expected_lanes (list of family names)
+
+    NO network. NO model. NO new dependencies. NO HTML in output strings.
+
+    Returns
+    -------
+    dict with keys:
+      provider_yield_summary : dict with keys:
+        dependency_gaps    : list[str]  families with dependency_missing errors
+        timeout_families   : list[str]  families with timeout errors
+        low_yield_families  : list[str]  families with zero/minimal accepted results
+        coverage_gaps       : list[str]  families expected but not attempted
+      low_yield_families        : tuple[str, ...]
+      dependency_gap_families    : tuple[str, ...]
+      timeout_families          : tuple[str, ...]
+      recommended_provider_actions : tuple[str, ...]
+    """
+    errors = doh_provider_errors or ()
+    pub_errors = public_provider_errors or []
+    missing = nonfeed_missing_expected_lanes or []
+    sfo_list = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
+    nonfeed_expected = scorecard.get("nonfeed_expected_lanes", []) or []
+
+    # Detect feed-only: only feed family has accepted findings, no nonfeed attempted
+    nonfeed_families = {"ct", "doh", "wayback", "passive_dns", "shodan", "hunter"}
+    _feed_only = False
+    if sfo_list:
+        feed_entry = next((e for e in sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
+        nonfeed_attempted = [e for e in sfo_list if isinstance(e, dict) and e.get("family") in nonfeed_families and e.get("attempted")]
+        _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and len(nonfeed_attempted) == 0
+
+    # 1. dependency_gap_families — from doh_provider_errors
+    _dep_gaps: list[str] = []
+    for e in errors:
+        if isinstance(e, str) and "dependency_missing" in e:
+            _dep_gaps.append("doh")
+    # Also check public_provider_errors for dependency signals
+    for pe in pub_errors:
+        if isinstance(pe, dict):
+            err = str(pe.get("error", "")).lower()
+            if "dependency_missing" in err or "dependency" in err:
+                fam = str(pe.get("family", "")).lower()
+                if fam and fam not in _dep_gaps:
+                    _dep_gaps.append(fam)
+
+    # 2. timeout_families — from terminal_state containing "timeout" or public_provider_errors
+    _timeout_fams: list[str] = []
+    for pe in pub_errors:
+        if isinstance(pe, dict):
+            err_type = str(pe.get("error_type", "")).lower()
+            if err_type == "timeout":
+                fam = str(pe.get("family", ""))
+                if fam and fam not in _timeout_fams:
+                    _timeout_fams.append(fam)
+    # Also scan source_family_outcomes terminal_state
+    for entry in sfo_list:
+        if isinstance(entry, dict):
+            ts = str(entry.get("terminal_state", "")).lower()
+            if "timeout" in ts:
+                fam = str(entry.get("family", ""))
+                if fam and fam not in _timeout_fams:
+                    _timeout_fams.append(fam)
+
+    # 3. low_yield_families — families that attempted but produced minimal/no findings
+    _low_yield: list[str] = []
+    for entry in sfo_list:
+        if isinstance(entry, dict) and entry.get("attempted"):
+            fam = entry.get("family", "")
+            accepted = entry.get("accepted_count", 0)
+            ts = str(entry.get("terminal_state", "")).lower()
+            # not_scheduled while expected = low yield
+            if ts == "not_scheduled" and fam in missing:
+                if fam not in _low_yield:
+                    _low_yield.append(fam)
+            # zero accepted + attempted = low yield (and not already flagged as dep/timeout gap)
+            elif accepted == 0 and fam not in (_dep_gaps + _timeout_fams):
+                if fam not in _low_yield:
+                    _low_yield.append(fam)
+    # Missing expected nonfeed lanes that were never attempted
+    for fam in missing:
+        if fam not in _low_yield and fam not in _dep_gaps:
+            _low_yield.append(fam)
+
+    # 4. recommended_provider_actions
+    _actions: list[str] = []
+    outcomes = _get_corrob_outcomes(scorecard)
+    try:
+        from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
+        tc = compute_terminal_coverage(outcomes)
+        terminal_score = tc.terminal_coverage_score
+    except Exception:
+        terminal_score = 0.0
+
+    corrob_score = _corroboration_score_value(scorecard)
+
+    # High terminal coverage (all families reached terminal) + low corroboration
+    # → provider quality improvement recommended
+    if terminal_score >= 0.75 and corrob_score < 0.3 and not _feed_only:
+        _actions.append("improve_provider_quality")
+
+    # Feed-only with missing nonfeed lanes → scheduling recommendation, not provider quality
+    if _feed_only and missing:
+        _actions.append("expand_scheduling_coverage")
+
+    # Dependency gaps detected → fix dependencies
+    if _dep_gaps:
+        _actions.append("resolve_provider_dependencies")
+
+    # Timeouts detected → improve provider reliability
+    if _timeout_fams:
+        _actions.append("improve_provider_reliability")
+
+    return {
+        "provider_yield_summary": {
+            "dependency_gaps": _dep_gaps,
+            "timeout_families": _timeout_fams,
+            "low_yield_families": _low_yield,
+            "coverage_gaps": [f for f in missing if f not in _dep_gaps and f not in _timeout_fams],
+        },
+        "low_yield_families": tuple(_low_yield),
+        "dependency_gap_families": tuple(_dep_gaps),
+        "timeout_families": tuple(_timeout_fams),
+        "recommended_provider_actions": tuple(_actions),
+    }
 
 
 def _derive_hypothesis_queries(

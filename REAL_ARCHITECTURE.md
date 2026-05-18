@@ -1286,7 +1286,7 @@ Viz `legacy/archived/ARCHIVE_MANIFEST.py` — full verdicts + rationale per modu
 - `orchestrator/` subtree je secondary facade/orchestration stack, ne canonical sprint path.
 - `federated/federated_coordinator_v2.py` a `federated/model_store_v2.py` se samy označují jako archived.
 - `behavior_simulator.py` **F205D: archived to legacy/archived/** — ghost placeholder, zero call-sites.
-- `knowledge/atomic_storage.py` a `knowledge/corpus_ingester.py` nesou stub/archival signály.
+- `knowledge/atomic_storage.py` nese stub/archival signály.
 
 ### Duplikované nebo zastaralé authority surfaces
 - Root `__main__.py` vs `core/__main__.py`: dvě entrypoint plochy, ale jen jedna canonical sprint authority.

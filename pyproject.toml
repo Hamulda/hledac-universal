@@ -225,10 +225,10 @@ transport = [
 ]
 
 # --- graph-truth: Kuzu IOC graph backend (optional, for truth store) ---
-# Kuzu has no cp314 arm64 wheel — install from source or use kuzu-graph extra.
+# Kuzu has no cp314 arm64 wheel — install from source or use graph-truth extra.
 # IOCGraph (Kuzu) is the truth store. DuckPGQGraph (DuckDB) is the canonical
 # analytics backend and is always available in default/m1-local.
-# Default/m1-local: NO kuzu dependency.
+# Default/m1-local: NO kuzu/igraph dependency (both are fully lazy/fail-soft).
 graph-truth = [
     "kuzu>=0.6.0",
 ]

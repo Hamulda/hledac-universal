@@ -19,6 +19,13 @@ from tools.registry import (
     RateLimits,
     RiskLevel,
     SourceReputation,
+)
+
+# Re-export from executor (schemas + async execution)
+from tools.executor import (
+    ToolExecutor,
+    execute_dns_tunnel_sync,
+    create_default_registry,
     # Schemas
     WebSearchArgs,
     WebSearchResult,
@@ -34,13 +41,6 @@ from tools.registry import (
     PythonExecuteResult,
     DNSTunnelCheckArgs,
     DNSTunnelCheckResult,
-)
-
-# Re-export from executor (async execution)
-from tools.executor import (
-    ToolExecutor,
-    execute_dns_tunnel_sync,
-    create_default_registry,
 )
 
 # Task handler registry (unchanged — pure decorator pattern)

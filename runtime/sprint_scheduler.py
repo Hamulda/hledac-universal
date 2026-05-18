@@ -10213,12 +10213,12 @@ class SprintScheduler:
                 if entry.get("attempted") or entry.get("skipped")
             }
             _missing = [e for e in _expected if _FAM_MAP.get(e, e.lower()) not in _surfaced_lower]
-            # F231A: Also mark eligible-but-not-surfaced lanes as missing (case-insensitive)
+            # F231B: explicit eligibility check — lowercase first, then uppercase; deduplicate _missing
             _elig = getattr(self._result, "nonfeed_lane_eligibility", {}) or {}
             for _lane_el in ("DOH", "WAYBACK", "PASSIVE_DNS"):
                 _fam_key = _FAM_MAP.get(_lane_el, _lane_el.lower())
-                if (_fam_key not in _surfaced_lower and
-                    _elig.get(_lane_el.lower()) or _elig.get(_lane_el, False)):
+                _eligible = bool(_elig.get(_lane_el.lower()) or _elig.get(_lane_el, False))
+                if _fam_key not in _surfaced_lower and _eligible and _lane_el not in _missing:
                     _missing.append(_lane_el)
             # F227A/F231A: If wayback/passive_dns eligible+missing, set explicit terminal state
             _surf_wayback = _sfo_by_family.get("wayback", {})
