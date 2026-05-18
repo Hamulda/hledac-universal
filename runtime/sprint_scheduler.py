@@ -716,6 +716,9 @@ class SprintSchedulerConfig:
     # when True and guard is triggered (ratio > 0.95, nonfeed < 5)
     require_nonfeed_corrob_for_early_exit: bool = False
 
+    # F233C: Optional predecessor sprint_id for next_sprint_seeds consumption
+    predecessor_sprint_id: str | None = None
+
     def tier_of(self, source: str) -> SourceTier:
         return self.source_tier_map.get(source, SourceTier.OTHER)
 
@@ -1587,8 +1590,19 @@ class SprintResult:
     lanes_unlocked_by_seed_context: list[str] = field(default_factory=list)
     seed_context_skip_reason: str = ""
 
+    # F233C: next_sprint_seeds consumption telemetry
+    next_seeds_provider_yield: bool = False
+    next_seeds_pivot_deepening: bool = False
+    next_seeds_query_suggestions: tuple[str, ...] = ()
+    next_seeds_skip_reason: str = ""
+    # F233C: IOC values from ioc_followup seeds (wired into NonfeedSeedContext)
+    next_seeds_ioc_domains: tuple[str, ...] = ()
+    next_seeds_ioc_ips: tuple[str, ...] = ()
+    next_seeds_ioc_urls: tuple[str, ...] = ()
+    next_seeds_ioc_hashes: tuple[str, ...] = ()
+    next_seeds_ioc_cves: tuple[str, ...] = ()
+
     # Nonfeed prelude
-    nonfeed_prelude_enabled: bool = False
     nonfeed_prelude_expected_lanes: tuple[str, ...] = ()
     nonfeed_prelude_attempted_lanes: tuple[str, ...] = ()
     nonfeed_prelude_terminal_lanes: tuple[str, ...] = ()
@@ -2567,6 +2581,56 @@ class SprintScheduler:
                 elif uma.is_warn:
                     _uma_state = "warn"
                 _swap_detected = uma.swap_detected
+            # Sprint F233C: Consume predecessor's next_sprint_seeds for acquisition planning
+            # Fail-soft: missing predecessor or seeds file → empty diagnostics
+            _next_seeds_ioc_seeds: list = []
+            _next_seeds_diagnostics: Any = None
+            _next_seeds_skip_reason = ""
+            if self._config.predecessor_sprint_id:
+                try:
+                    from hledac.universal.runtime.next_seeds_consumption import (
+                        consume_next_sprint_seeds,
+                        extract_ioc_values_from_seeds,
+                        NextSeedsDiagnostics,
+                    )
+                    (
+                        _next_seeds_ioc_seeds,
+                        _next_seeds_diagnostics,
+                        _next_seeds_query_suggestions,
+                        _next_seeds_skip_reason,
+                    ) = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
+                    self._result.next_seeds_provider_yield = (
+                        _next_seeds_diagnostics.provider_yield_active
+                        if _next_seeds_diagnostics else False
+                    )
+                    self._result.next_seeds_pivot_deepening = (
+                        _next_seeds_diagnostics.pivot_deepening_active
+                        if _next_seeds_diagnostics else False
+                    )
+                    self._result.next_seeds_query_suggestions = (
+                        _next_seeds_diagnostics.query_suggestions
+                        if _next_seeds_diagnostics else ()
+                    )
+                    self._result.next_seeds_skip_reason = _next_seeds_skip_reason
+                    # F233C: Extract IOC values from ioc_followup seeds for NonfeedSeedContext
+                    if _next_seeds_ioc_seeds:
+                        _ioc_vals = extract_ioc_values_from_seeds(_next_seeds_ioc_seeds)
+                        self._result.next_seeds_ioc_domains = _ioc_vals["domains"]
+                        self._result.next_seeds_ioc_ips = _ioc_vals["ips"]
+                        self._result.next_seeds_ioc_urls = _ioc_vals["urls"]
+                        self._result.next_seeds_ioc_hashes = _ioc_vals["hashes"]
+                        self._result.next_seeds_ioc_cves = _ioc_vals["cves"]
+                    if _next_seeds_ioc_seeds and _next_seeds_diagnostics and _next_seeds_diagnostics.any_active:
+                        log.debug(
+                            "[F233C] consumed seeds from %s: ioc_seeds=%d, diagnostics=%s",
+                            self._config.predecessor_sprint_id,
+                            len(_next_seeds_ioc_seeds),
+                            _next_seeds_diagnostics,
+                        )
+                except Exception as _exc:
+                    log.debug("[F233C] next_sprint_seeds consumption failed (fail-soft): %s", _exc)
+                    _next_seeds_skip_reason = "consumption_error"
+
             self._acquisition_plan = build_acquisition_plan(
                 query=query,
                 duration_s=self._config.sprint_duration_s,
@@ -4714,12 +4778,19 @@ class SprintScheduler:
         _t0 = _time.monotonic()
         self._result.acquisition_prelude_checked = True
 
-        # Sprint F233D: Detect nonfeed_diagnostic before domain check
+        # Sprint F233D: Detect nonfeed_diagnostic and deep_osint_m1 profiles
         _nd_debug = getattr(self._acquisition_plan, "nonfeed_plan_debug", None) if self._acquisition_plan else None
         _is_nonfeed_diagnostic = getattr(_nd_debug, "is_nonfeed_diagnostic", False) if _nd_debug else False
         # Fallback: check config directly when acquisition_plan failed to build (FIX-06b)
         if not _is_nonfeed_diagnostic and self._config.acquisition_profile == "nonfeed_diagnostic":
             _is_nonfeed_diagnostic = True
+        # F233D: deep_osint_m1 profile detection (from NonfeedPlanDebug.acquisition_profile)
+        _is_deep_osint_m1 = False
+        if _nd_debug:
+            _profile = getattr(_nd_debug, "acquisition_profile", "") or ""
+            _is_deep_osint_m1 = _profile == "deep_osint_m1"
+        if not _is_deep_osint_m1 and self._config.acquisition_profile == "deep_osint_m1":
+            _is_deep_osint_m1 = True
 
         # Determine memory state
         _uma = "ok"
@@ -5143,11 +5214,13 @@ class SprintScheduler:
                 run_runtime_pivot_prelude as _run_runtime_pivot_prelude,
             )
 
+            # F233D: Activate runtime pivot prelude for both nonfeed_diagnostic and deep_osint_m1
+            _pivot_profile_active = _is_nonfeed_diagnostic or _is_deep_osint_m1
             try:
                 _pivot_result = await _run_runtime_pivot_prelude(
                     query=query,
                     duckdb_store=duckdb_store,
-                    nonfeed_diagnostic_active=_is_nonfeed_diagnostic,
+                    nonfeed_diagnostic_active=_pivot_profile_active,
                     existing_findings=None,  # prelude phase: no accepted findings yet
                 )
                 self._result.pivot_seed_domains = _pivot_result.get("pivot_seed_domains", ())
@@ -5219,6 +5292,10 @@ class SprintScheduler:
                     # F220J critical: skip heavy lanes under hardware critical memory
                     if _hardware_critical and _lane in ("DOH", "WAYBACK"):
                         _nonfeed_prelude_skipped[_lane] = "seed_unlocked_but_memory_blocked"
+                        continue
+                    # F233D: skip nonfeed lanes for deep_osint_m1 if memory is warn/critical
+                    if _is_deep_osint_m1 and _uma in ("warn", "critical", "emergency"):
+                        _nonfeed_prelude_skipped[_lane] = "deep_osint_m1_memory_throttled"
                         continue
                     _nonfeed_lanes_to_run.append((_lane, True, _timeout_s, _max_items))
                     _nonfeed_expected.append(_lane)

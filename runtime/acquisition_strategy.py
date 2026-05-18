@@ -121,7 +121,7 @@ def normalize_acquisition_profile(profile: str | None) -> dict:
     Canonical profiles: "default", "nonfeed_diagnostic"
     Benchmark aliases: "nonfeed_diagnostic180" → "nonfeed_diagnostic"
     """
-    _CANONICAL = frozenset(["default", "nonfeed_diagnostic"])
+    _CANONICAL = frozenset(["default", "nonfeed_diagnostic", "deep_osint_m1"])
     _input = profile
     _effective = profile
     _normalized = False
@@ -218,11 +218,22 @@ def is_academic_profile(profile: str) -> bool:
     return profile in _ACADEMIC_PROFILES
 
 
+# F233D: Valid profiles that enable the deep_osint_m1 staged research flow.
+# deep_osint_m1 itself plus research/academic/geopolitical inherit the same lane logic.
+_DEEP_OSINT_M1_PROFILES = frozenset({"deep_osint_m1", "research", "academic", "geopolitical"})
+
+
+def is_deep_osint_m1_profile(profile: str) -> bool:
+    """Return True if profile enables the deep_osint_m1 staged research flow."""
+    return profile in _DEEP_OSINT_M1_PROFILES
+
+
 class AcquisitionProfile:
     """F216B: Acquisition runtime profile controlling lane caps and priorities."""
 
     DEFAULT = "default"
     NONFEED_DIAGNOSTIC = "nonfeed_diagnostic"
+    DEEP_OSINT_M1 = "deep_osint_m1"
 
 
 # F227D: Per-mission FEED cap thresholds — mission_intent → max_feed_accepted_before_nonfeed
@@ -458,6 +469,7 @@ class AcquisitionContext:
     stealth_ready: bool
     base_concurrency: int
     is_academic: bool
+    is_deep_osint_m1: bool            # F233D: deep_osint_m1 staged research profile
     cid_present: bool                # explicit IPFS CID in query
     # Feed cap for nonfeed_diagnostic profile
     _feed_max_items: int = field(default=50)
@@ -590,15 +602,24 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
     _lane_rule(
         AcquisitionLane.PUBLIC, LaneSpecPublic,
         lambda ctx: (
-            (ctx.is_nonfeed_diagnostic and ctx.has_domain and not ctx.transport_degraded)
-            if ctx.is_nonfeed_diagnostic
-            else (not ctx.hardware_critical and not ctx.transport_degraded)
+            # F233D: deep_osint_m1 stage 1 — always allowed (feed/public lightweight discovery)
+            (not ctx.hardware_critical and not ctx.transport_degraded)
+            if ctx.is_deep_osint_m1
+            else (
+                (ctx.is_nonfeed_diagnostic and ctx.has_domain and not ctx.transport_degraded)
+                if ctx.is_nonfeed_diagnostic
+                else (not ctx.hardware_critical and not ctx.transport_degraded)
+            )
         ),
         lambda ctx: (
-            "nonfeed_diagnostic_domain"
-            if (ctx.is_nonfeed_diagnostic and ctx.has_domain)
-            else ("transport_degraded" if ctx.transport_degraded
-                  else ("hardware_critical" if ctx.hardware_critical else "query_eligible"))
+            "deep_osint_m1_stage1"
+            if ctx.is_deep_osint_m1
+            else (
+                "nonfeed_diagnostic_domain"
+                if (ctx.is_nonfeed_diagnostic and ctx.has_domain)
+                else ("transport_degraded" if ctx.transport_degraded
+                      else ("hardware_critical" if ctx.hardware_critical else "query_eligible"))
+            )
         ),
         lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -607,7 +628,8 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
     _lane_rule(
         AcquisitionLane.CT, LaneSpecCT,
         lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic)
-                    and not ctx.hardware_critical,
+                    and not ctx.hardware_critical
+                    and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "domain_or_aggressive_or_nonfeed_diagnostic",
         lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -616,7 +638,8 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
     _lane_rule(
         AcquisitionLane.DOH, LaneSpecDOH,
         lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
-                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic),
+                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic)
+                    and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "domain_or_ip_or_nonfeed_diagnostic",
         lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -626,7 +649,8 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
         AcquisitionLane.WAYBACK, LaneSpecWayback,
         lambda ctx: (ctx.has_url or ctx.has_long_duration
                      or (ctx.is_nonfeed_diagnostic and ctx.has_domain))
-                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic),
+                    and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic)
+                    and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "has_url_or_long_duration_or_nonfeed_domain",
         lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -634,7 +658,8 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
     # ── PASSIVE_DNS ────────────────────────────────────────────────────────
     _lane_rule(
         AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS,
-        lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic),
+        lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic)
+                    and not ctx.is_deep_osint_m1,  # F233D: requires seed_context at runtime
         lambda ctx: "has_domain_or_ip",
         lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state),
     ),
@@ -2967,6 +2992,7 @@ def _build_plan_impl(
     has_crypto = _has_crypto_indicator(query)
     has_long_duration = duration_s >= 300.0
     is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
+    is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
     transport_degraded = False
     stealth_phase_num = 0
     stealth_breaker_ready = False
@@ -3002,6 +3028,7 @@ def _build_plan_impl(
         stealth_ready=stealth_ready,
         base_concurrency=base_conc,
         is_academic=is_academic_profile(acquisition_profile),
+        is_deep_osint_m1=is_deep_osint_m1,
         cid_present=_has_explicit_cid(query.strip()),
         _feed_max_items=_feed_max,
         _feed_cap_reason=_feed_cap_r,
@@ -3082,9 +3109,10 @@ def _build_plan_impl(
         feed_cap_reason=ctx._feed_cap_reason,
         nonfeed_priority_enabled=ctx.is_nonfeed_diagnostic,
         nonfeed_profile_expected_lanes=(
+            # F233D: deep_osint_m1 and nonfeed_diagnostic both enable CT/DOH/WAYBACK/PASSIVE_DNS
             (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS,
              AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH)
-            if is_nonfeed_diagnostic
+            if is_nonfeed_diagnostic or is_deep_osint_m1
             else _required_lanes if _intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else ()
         ),
         # F216F: Pivot executor telemetry — initialized here, filled by scheduler

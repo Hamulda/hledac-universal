@@ -89,6 +89,7 @@ async def run_runtime_pivot_prelude(
 ) -> dict:
     """
     F223A: Runtime pivot prelude — extract seeds from query + DuckDB findings.
+    F233D: Also activated for deep_osint_m1 staged research profile.
 
     Called BEFORE nonfeed acquisition lanes run, so that seed_context is
     available when build_lane_query() shapes lane queries.
@@ -96,7 +97,7 @@ async def run_runtime_pivot_prelude(
     Args:
         query: The sprint query string.
         duckdb_store: DuckDBShadowStore instance (may be None).
-        nonfeed_diagnostic_active: True if nonfeed_diagnostic profile is active.
+        nonfeed_diagnostic_active: True if nonfeed_diagnostic or deep_osint_m1 profile is active.
         existing_findings: Optional list of finding dicts from current sprint
             result fields. Preferred source over DuckDB.
 
@@ -126,7 +127,7 @@ async def run_runtime_pivot_prelude(
     }
 
     if not nonfeed_diagnostic_active:
-        result["seed_context_skip_reason"] = "profile_not_nonfeed_diagnostic"
+        result["seed_context_skip_reason"] = "profile_not_nonfeed_diagnostic_or_deep_osint"
         return result
 
     # Step 1: direct extraction from query

@@ -43,6 +43,8 @@ from typing import Optional
 __all__ = [
     "InvestigationAction",
     "plan_next_investigation_actions",
+    "build_planner_state_from_report",
+    "summarize_planner_actions",
     "MAX_ACTIONS",
 ]
 
@@ -420,3 +422,142 @@ def plan_next_investigation_actions(
         ]
 
     return actions
+
+
+def build_planner_state_from_report(report: dict) -> dict:
+    """
+    Build planner state dict from a live/export report.
+
+    Accepts full live/export report dict.
+    Read acquisition_report if present.
+    Read live-style source_family_outcomes list.
+    Also tolerates legacy src_family_outcomes.
+
+    Read fields:
+      pivot_seed_domains, pivot_seed_ips, pivot_seed_urls, pivot_seed_hashes,
+      pivot_seed_cves, seed_context_available, seed_context_propagated,
+      lanes_unlocked_by_seed_context, nonfeed_missing_expected_lanes,
+      nonfeed_prelude_missing_lanes, nonfeed_prelude_error_by_lane,
+      capability_synthesis, product_value_summary, runtime_truth
+
+    Convert this into the current planner input shape expected by
+    plan_next_investigation_actions.
+
+    Fail soft on missing fields. No model imports. No network deps.
+    """
+    result: dict = {}
+
+    # ── query ─────────────────────────────────────────────────────────────────
+    result["current_query"] = report.get("query", "") or ""
+
+    # ── seed context ─────────────────────────────────────────────────────────
+    seed_context: dict = {"available": False, "source": "", "domains": [], "ips": [], "urls": [], "hashes": [], "cves": []}
+    seed_available = report.get("seed_context_available", False)
+    if not seed_available:
+        # Check pivot_seed_* fields
+        domains = report.get("pivot_seed_domains") or []
+        ips = report.get("pivot_seed_ips") or []
+        urls = report.get("pivot_seed_urls") or []
+        hashes = report.get("pivot_seed_hashes") or []
+        cves = report.get("pivot_seed_cves") or []
+        if domains or ips or urls or hashes or cves:
+            seed_available = True
+            seed_context["source"] = "pivot_seed_fields"
+            seed_context["domains"] = domains if isinstance(domains, list) else []
+            seed_context["ips"] = ips if isinstance(ips, list) else []
+            seed_context["urls"] = urls if isinstance(urls, list) else []
+            seed_context["hashes"] = hashes if isinstance(hashes, list) else []
+            seed_context["cves"] = cves if isinstance(cves, list) else []
+    if not seed_available:
+        # Try seed_context dict
+        _sc = report.get("seed_context") or {}
+        if isinstance(_sc, dict) and _sc:
+            seed_available = True
+            seed_context["source"] = "seed_context_dict"
+            seed_context["domains"] = _sc.get("domains") or _sc.get("pivot_seed_domains") or []
+            seed_context["ips"] = _sc.get("ips") or _sc.get("pivot_seed_ips") or []
+            seed_context["urls"] = _sc.get("urls") or _sc.get("pivot_seed_urls") or []
+            seed_context["hashes"] = _sc.get("hashes") or _sc.get("pivot_seed_hashes") or []
+            seed_context["cves"] = _sc.get("cves") or _sc.get("pivot_seed_cves") or []
+    seed_context["available"] = seed_available
+    result["seed_context"] = seed_context
+
+    # ── source_family_outcomes ────────────────────────────────────────────────
+    sfo_raw = report.get("source_family_outcomes")
+    if not sfo_raw:
+        sfo_raw = report.get("src_family_outcomes", {})
+    if isinstance(sfo_raw, list):
+        # Live-style list of dicts → dict[family, {accepted, rejected, pending}]
+        sfo_dict: dict[str, dict] = {}
+        for entry in sfo_raw:
+            if not isinstance(entry, dict):
+                continue
+            family = (entry.get("family") or "").lower()
+            if family:
+                sfo_dict[family] = {
+                    "accepted": entry.get("accepted_count", 0) or entry.get("accepted", 0),
+                    "rejected": entry.get("rejected_count", 0) or entry.get("rejected", 0),
+                    "pending": entry.get("pending_count", 0) or entry.get("pending", 0),
+                }
+        result["source_family_outcomes"] = sfo_dict
+    elif isinstance(sfo_raw, dict):
+        result["source_family_outcomes"] = sfo_raw
+    else:
+        result["source_family_outcomes"] = {}
+
+    # ── corroboration_scores from capability_synthesis ───────────────────────
+    corroboration_scores: dict[str, float] = {}
+    cap_synth = report.get("capability_synthesis") or {}
+    if isinstance(cap_synth, dict):
+        corr = cap_synth.get("corroboration_scores") or cap_synth.get("corroboration") or {}
+        if isinstance(corr, dict):
+            for k, v in corr.items():
+                try:
+                    corroboration_scores[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    pass
+    result["corroboration_scores"] = corroboration_scores
+
+    # ── missing_lanes ─────────────────────────────────────────────────────────
+    missing_lanes: list[str] = list(
+        report.get("nonfeed_missing_expected_lanes") or
+        report.get("nonfeed_prelude_missing_lanes") or
+        []
+    )
+    result["missing_lanes"] = missing_lanes if isinstance(missing_lanes, list) else []
+
+    # ── public_provider_status ────────────────────────────────────────────────
+    result["public_provider_status"] = {"public": True}
+
+    # ── memory_state ──────────────────────────────────────────────────────────
+    rt = report.get("runtime_truth") or {}
+    if isinstance(rt, dict):
+        mem_critical = rt.get("memory_critical", False)
+        mem_available = rt.get("memory_available", 1.0)
+    else:
+        mem_critical = False
+        mem_available = 1.0
+    result["memory_state"] = {"memory_critical": mem_critical, "memory_available": mem_available}
+
+    return result
+
+
+def summarize_planner_actions(actions: list[InvestigationAction]) -> list[dict]:
+    """
+    Convert bounded list of InvestigationAction into serializable dict list.
+
+    Bounds: max 10 actions.
+    """
+    MAX = 10
+    summarized: list[dict] = []
+    for action in actions:
+        if len(summarized) >= MAX:
+            break
+        summarized.append({
+            "action": action.action,
+            "target": action.target,
+            "priority": round(action.priority, 4),
+            "reason": action.reason,
+            "lane": action.lane,
+        })
+    return summarized

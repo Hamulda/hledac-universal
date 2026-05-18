@@ -31,7 +31,7 @@ from typing import Any, Optional
 import xxhash
 
 # Kuzu lazy import — fail-soft backend. kuzu is NOT in default deps or m1-local.
-# Install via: pip install hledac-universal[kuzu-graph]
+# Install via: pip install hledac-universal[graph-truth]
 # Canonical write path: DuckPGQGraph (DuckDB). IOCGraph is opt-in truth store only.
 _KUZU_AVAILABLE: bool = False
 _kuzu = None

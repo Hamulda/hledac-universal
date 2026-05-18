@@ -536,6 +536,14 @@ class OneButtonResult:
     canonical_fallback_detected: bool = False  # canonical acquisition fallback detected
     f232g_research_quality_present: bool = False  # F232G research_quality truth present
     f233d_nonfeed_prelude_coverage: bool = False  # F233D nonfeed prelude coverage artifact present
+    # F232B: Investigation admission (sprint run type admission)
+    can_run_live_acquisition: bool = True
+    can_run_nonfeed_diagnostic: bool = True
+    can_run_llm_synthesis: bool = False
+    recommended_mode: str = "dry_plan"  # dry_plan|domain_live|text_live|restart_first|fix_artifacts
+    max_safe_iterations: int = 0
+    max_safe_pivots: int = 0
+    investigation_reason: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -565,6 +573,16 @@ class OneButtonResult:
             "canonical_fallback_detected": self.canonical_fallback_detected,
             "f232g_research_quality_present": self.f232g_research_quality_present,
             "f233d_nonfeed_prelude_coverage": self.f233d_nonfeed_prelude_coverage,
+            # F232B: Investigation admission
+            "investigation_admission": {
+                "can_run_live_acquisition": self.can_run_live_acquisition,
+                "can_run_nonfeed_diagnostic": self.can_run_nonfeed_diagnostic,
+                "can_run_llm_synthesis": self.can_run_llm_synthesis,
+                "recommended_mode": self.recommended_mode,
+                "max_safe_iterations": self.max_safe_iterations,
+                "max_safe_pivots": self.max_safe_pivots,
+                "reason": self.investigation_reason,
+            },
         }
 
 
@@ -841,6 +859,7 @@ def run_one_button_gate(
         why_nonfeed_capability_blocked = f"swap={swap_gib:.3f}GiB_exceeds_hard_block_threshold"
         reasons.append(f"Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run")
         warnings.append(f"Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}")
+        swap_policy_tier = "hard_block"
 
     # --------------------------------------------------------------------------- #
     # F233F: Feed baseline allowed (memory OK, basic contracts pass)
@@ -917,6 +936,62 @@ def run_one_button_gate(
         if not triage_another_live_useful:
             warnings.append("Last-live triage: another live run may not be useful")
 
+    # --------------------------------------------------------------------------- #
+    # F232B: Investigation admission — derived from verdict + swap + surface state
+    # --------------------------------------------------------------------------- #
+    # live_allowed is True when Rule 7 (clean swap) or Rule 6 (diagnostic + capability) passes
+    # capability_live_allowed reflects nonfeed capability check (F232G/f233d/provider)
+    if swap_policy_tier == "hard_block":
+        can_run_live = False
+        can_run_nonfeed_diag = False
+        can_run_llm = False
+        recommended_mode = "restart_first"
+        max_safe_iter = 0
+        max_safe_piv = 0
+        investigation_reason = f"swap_hard_block: swap={swap_gib:.3f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB}GiB"
+    elif swap_policy_tier == "diagnostic":
+        can_run_live = live_allowed
+        can_run_nonfeed_diag = True
+        can_run_llm = False
+        recommended_mode = "dry_plan"
+        max_safe_iter = 0
+        max_safe_piv = 0
+        investigation_reason = f"swap_diagnostic: swap={swap_gib:.3f}GiB in ({CLEAN_SWAP_MAX_GIB}, {DIAGNOSTIC_SWAP_MAX_GIB}]GiB"
+    elif swap_policy_tier == "clean" and live_allowed:
+        can_run_live = True
+        can_run_nonfeed_diag = True
+        can_run_llm = True
+        recommended_mode = "domain_live"
+        max_safe_iter = 5
+        max_safe_piv = 20
+        investigation_reason = "clean_swap_full_capability"
+    elif swap_policy_tier == "clean" and not live_allowed:
+        can_run_live = False
+        can_run_nonfeed_diag = True
+        can_run_llm = False
+        recommended_mode = "fix_artifacts"
+        max_safe_iter = 0
+        max_safe_piv = 0
+        investigation_reason = f"capability_blocked: {why_nonfeed_capability_blocked}"
+    else:
+        can_run_live = False
+        can_run_nonfeed_diag = True
+        can_run_llm = False
+        recommended_mode = "dry_plan"
+        max_safe_iter = 0
+        max_safe_piv = 0
+        investigation_reason = "unknown_swap_tier"
+
+    if not provider_surface_ok:
+        can_run_live = False
+        recommended_mode = "fix_artifacts"
+        investigation_reason = f"provider_surface_broken: {investigation_reason}"
+
+    if fallback_blocked:
+        can_run_live = False
+        recommended_mode = "fix_artifacts"
+        investigation_reason = f"fallback_schema_blocked: {investigation_reason}"
+
     return OneButtonResult(
         verdict=verdict,
         live_allowed=live_allowed,
@@ -936,7 +1011,6 @@ def run_one_button_gate(
         live_command=live_command,
         triage_verdict=triage_verdict,
         triage_another_live_useful=triage_another_live_useful,
-        # F233F: Split gate output contract
         capability_live_allowed=capability_live_allowed,
         feed_baseline_allowed=feed_baseline_allowed,
         why_nonfeed_capability_blocked=why_nonfeed_capability_blocked,
@@ -944,6 +1018,14 @@ def run_one_button_gate(
         canonical_fallback_detected=canonical_fallback_detected,
         f232g_research_quality_present=f232g_research_quality_present,
         f233d_nonfeed_prelude_coverage=f233d_nonfeed_prelude_coverage,
+        # F232B: Investigation admission
+        can_run_live_acquisition=can_run_live,
+        can_run_nonfeed_diagnostic=can_run_nonfeed_diag,
+        can_run_llm_synthesis=can_run_llm,
+        recommended_mode=recommended_mode,
+        max_safe_iterations=max_safe_iter,
+        max_safe_pivots=max_safe_piv,
+        investigation_reason=investigation_reason,
     )
 
 

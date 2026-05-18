@@ -62,9 +62,9 @@ from hledac.universal.paths import get_sprint_json_report_path
 from benchmarks.live_measurement_parser import parse_sprint_report as _parse_sprint_report_impl
 import benchmarks.live_measurement_quality as _qm
 from benchmarks.live_measurement_quality import _derive_run_quality_verdict as _quality_derive
-PROFILE_DURATION: dict[str, int] = {'smoke180': 180, 'nonfeed_diagnostic180': 180, 'active300': 300, 'active600': 600}
-PROFILE_META: dict[str, dict] = {'smoke180': {'planned_duration_s': 180, 'expected_windup_lead_s': 180, 'expected_active_window_s': 0, 'active_runtime_expected': False}, 'nonfeed_diagnostic180': {'planned_duration_s': 180, 'expected_windup_lead_s': 0, 'expected_active_window_s': 180, 'active_runtime_expected': True, 'acquisition_profile': 'nonfeed_diagnostic'}, 'active300': {'planned_duration_s': 300, 'expected_windup_lead_s': 180, 'expected_active_window_s': 120, 'active_runtime_expected': True}, 'active600': {'planned_duration_s': 600, 'expected_windup_lead_s': 180, 'expected_active_window_s': 420, 'active_runtime_expected': True}}
-_CANONICAL_ACQUISITION_PROFILES = frozenset(['default', 'nonfeed_diagnostic'])
+PROFILE_DURATION: dict[str, int] = {'smoke180': 180, 'nonfeed_diagnostic180': 180, 'active300': 300, 'active600': 600, 'deep_osint_m1_300': 300}
+PROFILE_META: dict[str, dict] = {'smoke180': {'planned_duration_s': 180, 'expected_windup_lead_s': 180, 'expected_active_window_s': 0, 'active_runtime_expected': False}, 'nonfeed_diagnostic180': {'planned_duration_s': 180, 'expected_windup_lead_s': 0, 'expected_active_window_s': 180, 'active_runtime_expected': True, 'acquisition_profile': 'nonfeed_diagnostic'}, 'active300': {'planned_duration_s': 300, 'expected_windup_lead_s': 180, 'expected_active_window_s': 120, 'active_runtime_expected': True}, 'active600': {'planned_duration_s': 600, 'expected_windup_lead_s': 180, 'expected_active_window_s': 420, 'active_runtime_expected': True}, 'deep_osint_m1_300': {'planned_duration_s': 300, 'expected_windup_lead_s': 180, 'expected_active_window_s': 120, 'active_runtime_expected': True, 'acquisition_profile': 'deep_osint_m1'}}
+_CANONICAL_ACQUISITION_PROFILES = frozenset(['default', 'nonfeed_diagnostic', 'deep_osint_m1'])
 
 def _resolve_acquisition_profile(profile: str) -> str:
     """
@@ -646,6 +646,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument('--output-json', type=str, default=None, help='Path to write JSON measurement result')
     parser.add_argument('--output-md', type=str, default=None, help='Path to write markdown summary')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
+    parser.add_argument('--require-one-button-gate', type=str, default=None,
+                        help='F232B: Path to one-button gate JSON. If set, live runs are skipped when investigation_admission.can_run_live_acquisition is false, writing status=skipped/preflight_blocked instead.')
     return parser
 
 def _render_md(result: LiveMeasurementResult) -> str:
@@ -699,6 +701,59 @@ async def main() -> int:
     is_live = args.live and (not args.dry_run)
     mode_str = 'LIVE' if is_live else 'DRY-RUN'
     logging.info('[%s] Profile=%s duration=%ds query=%r aggressive=%s', mode_str, args.profile, duration_s, args.query, args.aggressive)
+
+    # F232B: Check one-button gate before live execution
+    gate_blocked = False
+    gate_block_reason = ""
+    if args.require_one_button_gate and is_live:
+        gate_path = Path(args.require_one_button_gate).resolve()
+        if gate_path.exists():
+            with open(gate_path) as f:
+                gate_data = json.load(f)
+            inv_adm = gate_data.get("investigation_admission", {})
+            if not inv_adm.get("can_run_live_acquisition", True):
+                gate_blocked = True
+                gate_block_reason = inv_adm.get("reason", "unknown")
+                logging.warning('[GATE] Live acquisition blocked by one-button gate: %s', gate_block_reason)
+        else:
+            logging.warning('[GATE] Gate file not found: %s', gate_path)
+
+    if gate_blocked:
+        result = LiveMeasurementResult(
+            measurement_id=_make_measurement_id(),
+            sprint_id=None,
+            mode=RunMode.LIVE,
+            status=MeasurementStatus.ABORTED,
+            start_time_iso=_now_iso(),
+            end_time_iso=_now_iso(),
+            planned_duration_s=float(duration_s),
+            actual_duration_s=0.0,
+            query=args.query,
+            profile=args.profile,
+            uma_pre_used_gib=0.0,
+            uma_pre_swap_gib=0.0,
+            uma_pre_state="unknown",
+            error=f"preflight_blocked: {gate_block_reason}",
+        )
+        result.run_quality_verdict = "PREFLIGHT_GATE_BLOCKED"
+        if args.output_json:
+            out_path = Path(args.output_json).resolve()
+            result.resolved_output_json = str(out_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, 'w') as f:
+                f.write(result.to_json())
+            logging.info('JSON result written to %s', out_path)
+        if args.output_md:
+            md_path = Path(args.output_md).resolve()
+            result.resolved_output_md = str(md_path)
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(md_path, 'w') as f:
+                f.write(_render_md(result))
+            logging.info('Markdown summary written to %s', md_path)
+        print(f'[LIVE GATE BLOCKED] measurement_id={result.measurement_id} status={result.status.value}')
+        print(f'  reason={gate_block_reason}')
+        print(f'  gate={gate_path}')
+        return 2
     if is_live:
         export_dir = str(Path.home() / '.hledac' / 'reports')
         result = await _run_live_sprint(query=args.query, profile=args.profile, duration_s=duration_s, aggressive_mode=args.aggressive, deep_probe=args.deep_probe, export_dir=export_dir, require_memory_ok=args.require_memory_ok, allow_high_swap=args.allow_high_swap)

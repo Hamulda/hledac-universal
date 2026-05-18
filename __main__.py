@@ -2554,6 +2554,16 @@ async def _print_scorecard_report(
     if _analyst_brief_for_markdown:
         scorecard_data["analyst_brief"] = _analyst_brief_for_markdown
 
+    # Sprint F232C: Build and attach investigation_packet for markdown analyst brief
+    try:
+        from hledac.universal.export.sprint_exporter import _build_investigation_packet
+        if sprint_report and isinstance(sprint_report, dict):
+            scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report)
+        elif sprint_report is not None and hasattr(sprint_report, "__dict__"):
+            scorecard_data["investigation_packet"] = _build_investigation_packet(sprint_report.__dict__)
+    except Exception:
+        pass
+
     # Print structured report
     print("\n" + "=" * 60)
     print("SPRINT 8VD SCORECARD")

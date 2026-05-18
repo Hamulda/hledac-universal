@@ -14,7 +14,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from transport.body_limiter import read_body_with_cap
+from .body_limiter import read_body_with_cap
 
 logger = logging.getLogger(__name__)
 

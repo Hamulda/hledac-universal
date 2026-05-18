@@ -61,6 +61,190 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Sprint F232A: Investigation Packet builder
+# Connects existing reconciliation + planner into report enrichment.
+# No new storage, no new model deps, no live network calls.
+# ---------------------------------------------------------------------------
+
+from hledac.universal.runtime.acquisition_telemetry_reconcile import (
+    complete_source_family_outcomes_from_lane_details,
+    reconcile_lane_detail_fields,
+)
+from hledac.universal.runtime.investigation_planner import (
+    build_planner_state_from_report,
+    plan_next_investigation_actions,
+    summarize_planner_actions,
+)
+
+
+def _build_investigation_packet(report: dict) -> dict:
+    """
+    Sprint F232A: Build investigation_packet from a live/export report dict.
+
+    Calls existing reconciliation + planner through their public APIs:
+      1. reconcile_lane_detail_fields (from acquisition_telemetry_reconcile)
+      2. complete_source_family_outcomes_from_lane_details
+      3. build_planner_state_from_report
+      4. plan_next_investigation_actions
+      5. summarize_planner_actions
+
+    investigation_packet shape:
+      {
+        "query": str,
+        "seed_context": {available, source, domains, ips, urls, hashes, cves},
+        "source_family_summary": [...],
+        "terminal_coverage": {...},
+        "corroboration": {...},
+        "capability": {...},
+        "gaps": [...],
+        "planner_actions": [...],
+        "next_pivots": [...]
+      }
+
+    Bounds:
+      max planner_actions: 10
+      max next_pivots: 10
+      max source families: 20
+      no raw HTML
+      no raw huge evidence bodies
+
+    Fail soft throughout. Returns partial packet on any error.
+    """
+    try:
+        # 1. Reconcile lane detail fields first
+        reconciled = reconcile_lane_detail_fields(dict(report))
+        reconciled = complete_source_family_outcomes_from_lane_details(reconciled)
+
+        # 2. Build planner state
+        planner_state = build_planner_state_from_report(reconciled)
+
+        # 3. Run planner
+        raw_actions = plan_next_investigation_actions(planner_state, max_actions=10)
+        planner_actions = summarize_planner_actions(raw_actions)
+
+        # ── Seed context ───────────────────────────────────────────────────────
+        sc = planner_state.get("seed_context") or {}
+        seed_context_out = {
+            "available": bool(sc.get("available", False)),
+            "source": str(sc.get("source", "") or ""),
+            "domains": list(sc.get("domains", []))[:50],
+            "ips": list(sc.get("ips", []))[:50],
+            "urls": list(sc.get("urls", []))[:20],
+            "hashes": list(sc.get("hashes", []))[:20],
+            "cves": list(sc.get("cves", []))[:20],
+        }
+
+        # ── Source family summary ──────────────────────────────────────────────
+        sfo_dict = planner_state.get("source_family_outcomes") or {}
+        source_family_summary: list[dict] = []
+        for family, outcome in sfo_dict.items():
+            if len(source_family_summary) >= 20:
+                break
+            if not isinstance(outcome, dict):
+                continue
+            accepted = outcome.get("accepted", 0)
+            rejected = outcome.get("rejected", 0)
+            pending = outcome.get("pending", 0)
+            # Terminal-only lanes (zero accepted, attempted) count as coverage
+            attempted = outcome.get("attempted", False)
+            terminal_state = outcome.get("terminal_state", "")
+            source_family_summary.append({
+                "family": family,
+                "accepted": accepted,
+                "rejected": rejected,
+                "pending": pending,
+                "attempted": attempted,
+                "terminal_state": terminal_state,
+                "has_findings": accepted > 0,
+                "terminal_only": (attempted or bool(terminal_state)) and accepted == 0,
+            })
+
+        # ── Terminal coverage ───────────────────────────────────────────────────
+        terminal_coverage: dict[str, str] = {}
+        for entry in source_family_summary:
+            fam = entry.get("family", "")
+            if fam and entry.get("terminal_only") or entry.get("attempted"):
+                terminal_coverage[fam] = entry.get("terminal_state", "") or "attempted_no_results"
+
+        # ── Corroboration ──────────────────────────────────────────────────────
+        corr_scores = planner_state.get("corroboration_scores") or {}
+        corroboration: dict[str, float] = {}
+        for k, v in corr_scores.items():
+            if len(corroboration) >= 50:
+                break
+            corroboration[str(k)] = round(float(v), 4) if v is not None else 0.0
+
+        # ── Capability ─────────────────────────────────────────────────────────
+        cap_synth = report.get("capability_synthesis") or {}
+        if isinstance(cap_synth, dict):
+            capability = {
+                "synthesis_available": True,
+                "product_value_summary": report.get("product_value_summary") or {},
+            }
+        else:
+            capability = {"synthesis_available": False}
+
+        # ── Gaps ───────────────────────────────────────────────────────────────
+        gaps: list[str] = []
+        missing = planner_state.get("missing_lanes") or []
+        for lane in missing:
+            if len(gaps) >= 20:
+                break
+            gaps.append(f"lane_missing={lane}")
+
+        # No accepted findings at all
+        total_accepted = sum(v.get("accepted", 0) for v in sfo_dict.values())
+        if total_accepted == 0 and not gaps:
+            gaps.append("no_accepted_findings")
+
+        # Feed dominance without nonfeed corroboration
+        from hledac.universal.runtime.investigation_planner import _is_feed_dominant
+        if _is_feed_dominant(sfo_dict) and not corroboration:
+            gaps.append("feed_dominant_no_nonfeed_corroboration")
+
+        # ── Next pivots from planner actions ───────────────────────────────────
+        next_pivots: list[dict] = []
+        for action in planner_actions:
+            if len(next_pivots) >= 10:
+                break
+            act_type = action.get("action", "")
+            target = action.get("target", "")
+            if act_type in ("run_doh_on_domain", "run_ct_on_domain", "run_wayback_on_url",
+                           "run_passivedns_on_domain_or_ip"):
+                next_pivots.append({
+                    "pivot_type": act_type.replace("run_", "").replace("_on_", "_"),
+                    "target": target,
+                    "priority": action.get("priority", 0.0),
+                    "lane": action.get("lane", ""),
+                })
+
+        return {
+            "query": str(planner_state.get("current_query", "") or ""),
+            "seed_context": seed_context_out,
+            "source_family_summary": source_family_summary,
+            "terminal_coverage": terminal_coverage,
+            "corroboration": corroboration,
+            "capability": capability,
+            "gaps": gaps,
+            "planner_actions": planner_actions,
+            "next_pivots": next_pivots,
+        }
+    except Exception as e:
+        logger.warning(f"[EXPORT] investigation_packet build failed (fail-soft): {e}")
+        return {
+            "query": report.get("query", "") or "",
+            "seed_context": {"available": False, "source": "", "domains": [], "ips": [], "urls": [], "hashes": [], "cves": []},
+            "source_family_summary": [],
+            "terminal_coverage": {},
+            "corroboration": {},
+            "capability": {"synthesis_available": False},
+            "gaps": ["investigation_packet_build_failed"],
+            "planner_actions": [],
+            "next_pivots": [],
+        }
+
+
+# ---------------------------------------------------------------------------
 # Sprint F229A: Terminal truth reconciliation helper
 # Resolves contradictions between product_value_summary, runtime_truth,
 # partial_export finding_count, and capability_synthesis surfaces.

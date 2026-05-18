@@ -84,8 +84,8 @@ These are declared in `pyproject.toml` but **never imported** by any source file
 |---------|------------------|-------------------|--------|
 | `igraph` | `intelligence/relationship_discovery.py` (lazy, fail-soft) | N/A — not a hard dep, already fail-soft via `try/except` |
 | `kuzu` | `knowledge/ioc_graph.py` | `graph-truth` (optional) | ❌ MISSING — no cp314 arm64 wheel; already lazy with `GraphBackendUnavailable` |
-| `pybloom-live` | `tools/url_dedup.py` | dependencies | ❌ MISSING — needed for `RotatingBloomFilter` |
-| `curl_cffi` | `fetching/public_fetcher.py` | dependencies | ❌ MISSING — FetchCoordinator seam |
+| `probables` | `tools/url_dedup.py` | `dependencies` | ✅ ALREADY INSTALLED (RotatingBloomFilter from probables, not pybloom-live) |
+| `curl_cffi` | `fetching/public_fetcher.py` | `osint-html` extra | ✅ ALREADY INSTALLED (via `osint-html` which is in `m1-local`) |
 | `pyahocorasick` | `tools/url_dedup.py` | dependencies | ⚠️ Installed (site-packages) but not uv-tracked |
 | `pytesseract` | n/a | dependencies | ⚠️ Installed (site-packages) but not uv-tracked |
 
@@ -116,11 +116,11 @@ These are in optional extras but not installed in current venv:
 
 ## Notes
 
-**Note 1 — curl_cffi:** `fetching/public_fetcher.py` imports `curl_cffi`. This is a **real gap**. `curl_cffi` provides JA3 TLS fingerprint spoofing for the stealth HTTP layer. However, `httpx` is installed as fallback transport lane. The code has a try/except ImportError for `curl_cffi` — fail-soft, but the seam is real.
+**Note 1 — curl_cffi:** `fetching/public_fetcher.py` imports `curl_cffi`. `curl_cffi` is in the `osint-html` extra and IS currently installed in the active venv (via `m1-local` which includes `osint-html`). The seam has fail-soft fallback via `httpx`. Status: ✅ RESOLVED — no additional action needed beyond `uv sync --extra osint-html`.
 
 **Note 2 — datasketch:** In `light` extra but never imported in source. `pyprobables` (which IS installed) provides `RotatingBloomFilter` for URL dedup. datasketch MinHash LSH is not used.
 
-**Note 3 — pybloom-live:** `tools/url_dedup.py` uses `RotatingBloomFilter` from `pybloom_live` (import name: `pybloom_live`). This is a **real gap** — the class is used but the package is not installed.
+**Note 3 — pybloom-live:** `tools/url_dedup.py` does NOT import `pybloom_live`. It imports `from probables import RotatingBloomFilter` (or `from pyprobables import RotatingBloomFilter` as fallback). `probables` IS installed and in uv.lock. **This was a misidentification in the audit** — the real dep is `probables`, not `pybloom-live`. Status: ✅ RESOLVED.
 
 **Note 4 — scikit-learn:** `sklearn` import fails, but `sklearn` is NOT imported directly in hledac/universal source. It appears in `transformers/generation/candidate_generator.py` (transitive). The `sklearn` dep in pyproject.toml is unnecessary.
 
@@ -153,8 +153,8 @@ These were installed by `uv pip install` directly (bypassing lockfile) or from a
 |----------|---------|--------|-----|
 | ~~**HIGH**~~ | `igraph` | `intelligence/relationship_discovery.py` — already fail-soft via `try/except` at import time | No action needed |
 | ~~**HIGH**~~ | `kuzu` | `knowledge/ioc_graph.py` — already fail-soft via lazy import + `GraphBackendUnavailable`; `graph-truth` extra exists | No action needed |
-| **HIGH** | `pybloom-live` | `tools/url_dedup.py` uses `RotatingBloomFilter`; dead-soft if missing | `uv add pybloom-live` |
-| **MEDIUM** | `curl_cffi` | `fetching/public_fetcher.py` has JA3 seam; fail-soft | `uv add curl_cffi` |
+| ~~**HIGH**~~ | `pybloom-live` | `tools/url_dedup.py` uses `probables.RotatingBloomFilter` (not pybloom_live); `probables` IS in uv.lock | No action needed — misidentified dep, already resolved |
+| **MEDIUM** | `curl_cffi` | `fetching/public_fetcher.py` has JA3 seam; fail-soft; already in `osint-html` extra (part of `m1-local`) | `uv sync --extra osint-html` or just use `m1-local` extra |
 | **LOW** | `pytesseract` | In pyproject, installed but broken import | Fix or remove |
 | **LOW** | `pyprobables` | In pyproject, installed but broken import | Fix or remove |
 | **LOW** | `pyzipper` | In pyproject, installed but broken import | Fix or remove |
@@ -167,7 +167,7 @@ These were installed by `uv pip install` directly (bypassing lockfile) or from a
 ## Recommendations
 
 1. **Immediate:** Run `uv sync` to align venv with lockfile (82 tracked packages)
-2. **Real gaps:** `uv add pybloom-live` for `RotatingBloomFilter`; `curl_cffi` if not present in `osint-html`/`m1-local` extras
+2. **Real gaps:** `probables` is already installed (provides RotatingBloomFilter); `curl_cffi` is in `osint-html` extra and already installed via `m1-local`. Both are resolved — no `uv add` needed.
 3. **Graph backends (optional):** `igraph` and `kuzu` are **not** default or `m1-local` deps — they are in the `graph-truth` extra only. Install via `uv sync --extra graph-truth` when DuckPGQGraph (active scheduler path) is insufficient and the optional Kuzu/IOCGraph standalone backend is needed.
 4. **Dead weight removal:** Audit and remove the 18 unimported packages from pyproject.toml
 5. **Broken installs:** `pytesseract`, `pyprobables`, `pyzipper` in site-packages but not importable — reinstall via `uv pip install --force-reinstall`

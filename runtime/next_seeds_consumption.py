@@ -34,11 +34,15 @@ Shared fields: task_type, suggested_action, priority, reason
 
 Integration: Advisory-only, read from file, fed to SprintAdvisoryRunner
 as informational context (no live execution, no scheduler ownership change).
+
+Sprint F233C: Added consume_next_sprint_seeds() + NextSeedsDiagnostics for
+active consumption in acquisition planning.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re as _re
 from typing import Any
 
 from hledac.universal.paths import get_sprint_next_seeds_path
@@ -171,4 +175,184 @@ def get_seed_summary(seeds: list[dict[str, Any]]) -> dict[str, Any]:
         "has_F226D_format": any(
             "seed_source" in s or "mission_intent" in s for s in seeds
         ),
+    }
+
+
+# ── F233C: Consumption layer ─────────────────────────────────────────────────
+
+
+class NextSeedsDiagnostics:
+    """F233C: Diagnostic flags surfaced from next_sprint_seeds consumption."""
+
+    __slots__ = (
+        "provider_yield_active",
+        "pivot_deepening_active",
+        "query_suggestions",
+    )
+
+    def __init__(
+        self,
+        provider_yield_active: bool = False,
+        pivot_deepening_active: bool = False,
+        query_suggestions: tuple[str, ...] = (),
+    ) -> None:
+        self.provider_yield_active: bool = provider_yield_active
+        self.pivot_deepening_active: bool = pivot_deepening_active
+        self.query_suggestions: tuple[str, ...] = query_suggestions
+
+    @property
+    def any_active(self) -> bool:
+        return self.provider_yield_active or self.pivot_deepening_active or bool(self.query_suggestions)
+
+    def __repr__(self) -> str:
+        return (
+            f"NextSeedsDiagnostics(provider_yield={self.provider_yield_active}, "
+            f"pivot_deepening={self.pivot_deepening_active}, "
+            f"query_suggestions={len(self.query_suggestions)})"
+        )
+
+
+# ── F233C: Bounds ────────────────────────────────────────────────────────────
+MAX_SEEDS_READ: int = 32
+MAX_IOC_SEEDS: int = 16
+MAX_QUERY_SUGGESTIONS: int = 8
+
+IOC_SEED_TYPES: frozenset[str] = frozenset(["ioc_followup"])
+DIAGNOSTIC_SEED_TYPES: frozenset[str] = frozenset(["provider_yield_seed", "pivot_deepening_seed"])
+QUERY_SEED_TYPES: frozenset[str] = frozenset(["query_suggestion"])
+REPORT_ONLY_SEED_TYPES: frozenset[str] = frozenset(["investigation_seed", "engineering_seed"])
+
+
+def consume_next_sprint_seeds(
+    sprint_id: str,
+) -> tuple[
+    list[dict[str, Any]],  # ioc seeds for seed_context population
+    NextSeedsDiagnostics,  # diagnostic flags
+    list[str],  # query suggestions for expansion
+    str,  # skip_reason (empty = not skipped)
+]:
+    """
+    F233C: Load and categorize next_sprint_seeds for acquisition planning.
+
+    Fail-soft: returns empty lists on any error.
+
+    Returns:
+        Tuple of:
+          - ioc_seeds: list of seed dicts with IOC values (domain/ip/url/hash)
+          - diagnostics: NextSeedsDiagnostics with flags set
+          - query_suggestions: list of query suggestion strings
+          - skip_reason: empty string if loaded, reason if skipped
+    """
+    seeds = load_next_sprint_seeds(sprint_id)
+    if not seeds:
+        return [], NextSeedsDiagnostics(), [], "no_seeds"
+
+    # Cap at MAX_SEEDS_READ
+    if len(seeds) > MAX_SEEDS_READ:
+        seeds = seeds[:MAX_SEEDS_READ]
+        log.debug("[F233C] seeds capped at %d from %d", MAX_SEEDS_READ, len(seeds))
+
+    ioc_seeds: list[dict[str, Any]] = []
+    query_suggestions: list[str] = []
+    provider_yield_active = False
+    pivot_deepening_active = False
+
+    for seed in seeds:
+        task_type = seed.get("task_type", "")
+
+        if task_type in IOC_SEED_TYPES:
+            if len(ioc_seeds) >= MAX_IOC_SEEDS:
+                continue
+            value = seed.get("value")
+            if value and isinstance(value, str) and value.strip():
+                ioc_seeds.append(seed)
+
+        elif task_type in QUERY_SEED_TYPES:
+            if len(query_suggestions) >= MAX_QUERY_SUGGESTIONS:
+                continue
+            value = seed.get("value")
+            if value and isinstance(value, str) and value.strip():
+                query_suggestions.append(value.strip())
+
+        elif task_type == "provider_yield_seed":
+            provider_yield_active = True
+
+        elif task_type == "pivot_deepening_seed":
+            pivot_deepening_active = True
+
+        elif task_type in REPORT_ONLY_SEED_TYPES:
+            pass  # report-only: no acquisition, no flag
+
+        # Unknown task_type: skip silently (fail-soft)
+
+    diagnostics = NextSeedsDiagnostics(
+        provider_yield_active=provider_yield_active,
+        pivot_deepening_active=pivot_deepening_active,
+        query_suggestions=tuple(query_suggestions),
+    )
+
+    log.debug(
+        "[F233C] consumed %d ioc_seeds, diagnostics=%s, query_suggestions=%d",
+        len(ioc_seeds),
+        diagnostics,
+        len(query_suggestions),
+    )
+    return ioc_seeds, diagnostics, query_suggestions, ""
+
+
+def extract_ioc_values_from_seeds(
+    seeds: list[dict[str, Any]],
+) -> dict[str, tuple[str, ...]]:
+    """
+    Extract IOC values from ioc_followup seeds into typed tuples.
+
+    Returns dict with keys: domains, ips, urls, hashes, cves
+    Each value is a tuple of strings (capped at 10 per type per NonfeedSeedContext).
+    """
+    domains: list[str] = []
+    ips: list[str] = []
+    urls: list[str] = []
+    hashes: list[str] = []
+    cves: list[str] = []
+
+    domain_pat = _re.compile(
+        r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
+    )
+    ip_pat = _re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+    cve_pat = _re.compile(r'^CVE-\d{4}-\d{4,}$', _re.IGNORECASE)
+
+    for seed in seeds:
+        value = seed.get("value", "")
+        if not value or not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value:
+            continue
+
+        task_type = seed.get("task_type", "")
+
+        if task_type == "ioc_followup":
+            if cve_pat.match(value):
+                if value.upper() not in cves:
+                    cves.append(value.upper())
+            elif domain_pat.match(value):
+                if value not in domains:
+                    domains.append(value)
+            elif ip_pat.match(value):
+                if value not in ips:
+                    ips.append(value)
+            elif value.startswith(('http://', 'https://')):
+                if value not in urls:
+                    urls.append(value)
+            elif len(value) == 64 and all(c in '0123456789abcdefABCDEF' for c in value):
+                if value not in hashes:
+                    hashes.append(value)
+
+    MAX_PER_TYPE = 10
+    return {
+        "domains": tuple(domains[:MAX_PER_TYPE]),
+        "ips": tuple(ips[:MAX_PER_TYPE]),
+        "urls": tuple(urls[:MAX_PER_TYPE]),
+        "hashes": tuple(hashes[:MAX_PER_TYPE]),
+        "cves": tuple(cves[:MAX_PER_TYPE]),
     }

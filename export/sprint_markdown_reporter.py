@@ -278,6 +278,15 @@ def render_sprint_markdown(
         if brief_section:
             parts.append(brief_section)
 
+    # Sprint F232C: render deterministic analyst brief from investigation_packet
+    investigation_packet = scorecard.get("investigation_packet")
+    if investigation_packet:
+        f232_section = _render_f232_analyst_brief(
+            investigation_packet, scorecard
+        )
+        if f232_section:
+            parts.append(f232_section)
+
     return "\n".join(parts)
 
 
@@ -885,4 +894,275 @@ def _render_evidence_chains_section(evidence_chains: list) -> str:
         lines.append("")
 
     lines.append(f"_{len(sorted_chains)} chain(s) shown (top 5 by depth)_")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F232C: Deterministic Analyst Brief from investigation_packet
+# ---------------------------------------------------------------------------
+
+def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> str:
+    """
+    Sprint F232C: Render deterministic Analyst Brief from investigation_packet.
+
+    Uses investigation_packet if present, falls back to
+    product_value_summary / capability_synthesis / source_family_outcomes.
+
+    Sections:
+      ## Executive Summary
+      ## Key Indicators and Seeds
+      ## Source Family Coverage
+      ## What Was Confirmed
+      ## What Was Attempted But Not Confirmed
+      ## Gaps and Failure Modes
+      ## Recommended Next Pivots
+      ## Planner Actions
+      ## Confidence and Constraints
+
+    Deterministic — NO LLM, NO invented claims. Bounded throughout.
+    """
+    if not investigation_packet or not isinstance(investigation_packet, dict):
+        return ""
+
+    lines: list[str] = ["", "## Analyst Brief", ""]
+
+    # ── Source family outcomes ──────────────────────────────────────────────
+    source_family_summary = investigation_packet.get("source_family_summary") or []
+    sfo_dict: dict[str, dict] = {}
+    for entry in source_family_summary:
+        if isinstance(entry, dict):
+            fam = entry.get("family", "")
+            if fam:
+                sfo_dict[fam] = entry
+
+    # ── Total accepted count ───────────────────────────────────────────────
+    total_accepted = sum(v.get("accepted", 0) for v in sfo_dict.values())
+
+    # ── Confidence derivation ─────────────────────────────────────────────
+    pvs = scorecard.get("product_value_summary") or {}
+    cap_synth = scorecard.get("capability_synthesis") or {}
+    capability_verdict = cap_synth.get("verdict", "unknown") if isinstance(cap_synth, dict) else "unknown"
+    signal_class = pvs.get("_signal_quality_classification", "unknown") if isinstance(pvs, dict) else "unknown"
+
+    if capability_verdict in ("useful_capability",):
+        confidence = "high"
+    elif capability_verdict == "weak_capability" or signal_class in ("medium_density",):
+        confidence = "medium"
+    elif total_accepted > 0:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    # ── Executive Summary ───────────────────────────────────────────────────
+    lines.append("### Executive Summary")
+    lines.append("")
+    if total_accepted == 0:
+        lines.append("Sprint produced **no accepted findings** — zero-signal run.")
+        lines.append("")
+        if capability_verdict == "smoke_capability":
+            lines.append("This was a smoke run with no meaningful signal detected.")
+        elif capability_verdict == "invalid_capability":
+            lines.append("Acquisition terminality was not satisfied — no findings could be accepted.")
+        else:
+            lines.append("No findings reached acceptance threshold. Check source availability and query scope.")
+    else:
+        accepted = total_accepted
+        density = pvs.get("ioc_density", 0.0) if isinstance(pvs, dict) else 0.0
+        if signal_class == "high_density":
+            lines.append(f"Good sprint: **{accepted}** accepted IOC at density {density:.2f}.")
+        elif signal_class == "medium_density":
+            lines.append(f"Mixed sprint: **{accepted}** accepted IOC, density {density:.2f}.")
+        elif signal_class == "slow_novelty":
+            fpm = pvs.get("findings_per_minute", 0.0) if isinstance(pvs, dict) else 0.0
+            lines.append(f"Slow but existing signal: **{accepted}** IOC at {fpm:.2f} finds/min.")
+        else:
+            lines.append(f"Sprint produced **{accepted}** accepted finding(s).")
+        lines.append("")
+        # Capability verdict summary
+        cap_label = {
+            "useful_capability": "useful capability",
+            "weak_capability": "weak capability",
+            "smoke_capability": "smoke capability",
+            "invalid_capability": "invalid capability",
+            "incomparable_capability": "incomparable (hardware constrained)",
+        }.get(capability_verdict, capability_verdict)
+        lines.append(f"Capability assessment: **{cap_label}**.")
+    lines.append("")
+
+    # ── Key Indicators and Seeds ──────────────────────────────────────────
+    seed_context = investigation_packet.get("seed_context") or {}
+    seed_available = seed_context.get("available", False) if isinstance(seed_context, dict) else False
+    seed_source = seed_context.get("source", "") if isinstance(seed_context, dict) else ""
+    seed_domains = (seed_context.get("domains") or [])[:10] if isinstance(seed_context, dict) else []
+    seed_ips = (seed_context.get("ips") or [])[:10] if isinstance(seed_context, dict) else []
+
+    lines.append("### Key Indicators and Seeds")
+    lines.append("")
+    if seed_available and (seed_domains or seed_ips):
+        lines.append(f"Seed source: **{seed_source or 'unknown'}**")
+        lines.append("")
+        if seed_domains:
+            dom_str = ", ".join(f"`{d}`" for d in seed_domains[:5])
+            lines.append(f"Domains: {dom_str}")
+        if seed_ips:
+            ip_str = ", ".join(f"`{ip}`" for ip in seed_ips[:5])
+            lines.append(f"IPs: {ip_str}")
+    else:
+        lines.append("_Seed context not available_")
+    lines.append("")
+    # Query
+    query = investigation_packet.get("query", "")
+    if query:
+        lines.append(f"Query: **{query[:120]}**")
+        lines.append("")
+
+    # ── Source Family Coverage ─────────────────────────────────────────────
+    lines.append("### Source Family Coverage")
+    lines.append("")
+    if source_family_summary:
+        lines.append("| Family | Accepted | Rejected | Pending | Status |")
+        lines.append("|:-------|--------:|--------:|--------:|:-------|")
+        for entry in source_family_summary[:15]:
+            if isinstance(entry, dict):
+                fam = entry.get("family", "?")
+                acc = entry.get("accepted", 0)
+                rej = entry.get("rejected", 0)
+                pend = entry.get("pending", 0)
+                terminal_only = entry.get("terminal_only", False)
+                attempted = entry.get("attempted", False)
+                if terminal_only:
+                    status = "terminal only"
+                elif attempted:
+                    status = "attempted"
+                elif acc > 0:
+                    status = "had findings"
+                elif rej > 0:
+                    status = "rejected"
+                else:
+                    status = "no data"
+                lines.append(f"| `{fam}` | {acc} | {rej} | {pend} | {status} |")
+        lines.append("")
+    else:
+        lines.append("_Source family data not available_")
+        lines.append("")
+
+    # ── What Was Confirmed ─────────────────────────────────────────────────
+    lines.append("### What Was Confirmed")
+    lines.append("")
+    if total_accepted == 0:
+        lines.append("_No findings were accepted — nothing was confirmed._")
+    else:
+        # High-value families with accepted > 0
+        confirmed: list[str] = []
+        for entry in source_family_summary:
+            if isinstance(entry, dict) and entry.get("accepted", 0) > 0:
+                fam = entry.get("family", "?")
+                acc = entry.get("accepted", 0)
+                confirmed.append(f"`{fam}` ({acc} accepted)")
+        if confirmed:
+            for c in confirmed[:8]:
+                lines.append(f"- {c}")
+        else:
+            lines.append(f"**{total_accepted}** accepted finding(s) from sources not enumerated.")
+    lines.append("")
+
+    # ── What Was Attempted But Not Confirmed ───────────────────────────────
+    lines.append("### What Was Attempted But Not Confirmed")
+    lines.append("")
+    attempted_not_confirmed: list[str] = []
+    for entry in source_family_summary:
+        if isinstance(entry, dict):
+            acc = entry.get("accepted", 0)
+            attempted = entry.get("attempted", False)
+            terminal_only = entry.get("terminal_only", False)
+            terminal_state = entry.get("terminal_state", "")
+            fam = entry.get("family", "?")
+            if acc == 0 and (attempted or terminal_only or terminal_state):
+                state_str = terminal_state if terminal_state else "attempted, no results"
+                attempted_not_confirmed.append(f"`{fam}`: {state_str}")
+    if attempted_not_confirmed:
+        for a in attempted_not_confirmed[:10]:
+            lines.append(f"- {a}")
+    else:
+        if total_accepted == 0:
+            lines.append("_All lanes failed to produce accepted findings._")
+        else:
+            lines.append("_No terminal-only lanes without accepted findings._")
+    lines.append("")
+
+    # ── Gaps and Failure Modes ──────────────────────────────────────────────
+    gaps = investigation_packet.get("gaps") or []
+    lines.append("### Gaps and Failure Modes")
+    lines.append("")
+    if gaps:
+        for g in gaps[:10]:
+            lines.append(f"- {g}")
+    else:
+        lines.append("_No significant gaps identified._")
+    lines.append("")
+
+    # ── Recommended Next Pivots ────────────────────────────────────────────
+    next_pivots = investigation_packet.get("next_pivots") or []
+    lines.append("### Recommended Next Pivots")
+    lines.append("")
+    if next_pivots:
+        for pivot in next_pivots[:8]:
+            if isinstance(pivot, dict):
+                pt = pivot.get("pivot_type", "?")
+                tgt = pivot.get("target", "?")
+                pri = pivot.get("priority", 0.0)
+                lines.append(f"- **{pt}** on `{tgt}` (priority {pri:.2f})")
+            elif isinstance(pivot, str):
+                lines.append(f"- {pivot}")
+    else:
+        lines.append("_No specific pivots recommended._")
+    lines.append("")
+
+    # ── Planner Actions ─────────────────────────────────────────────────────
+    planner_actions = investigation_packet.get("planner_actions") or []
+    lines.append("### Planner Actions")
+    lines.append("")
+    if planner_actions:
+        for action in planner_actions[:10]:
+            if isinstance(action, dict):
+                act_type = action.get("action", "?")
+                tgt = action.get("target", "")
+                reason = action.get("reason", "")
+                if tgt:
+                    lines.append(f"- **{act_type}** on `{tgt[:60]}` — {reason[:80]}")
+                else:
+                    lines.append(f"- **{act_type}** — {reason[:80]}")
+            elif isinstance(action, str):
+                lines.append(f"- {action}")
+    else:
+        lines.append("_No planner actions recorded._")
+    lines.append("")
+
+    # ── Confidence and Constraints ─────────────────────────────────────────
+    lines.append("### Confidence and Constraints")
+    lines.append("")
+    lines.append(f"**Confidence:** {confidence}")
+    lines.append("")
+
+    # Constraints from capability_synthesis
+    if isinstance(cap_synth, dict):
+        feed_noise = cap_synth.get("feed_noise_summary", "")
+        source_div = cap_synth.get("source_diversity_summary", "")
+        corr = cap_synth.get("corroboration_summary", "")
+        if feed_noise:
+            lines.append(f"- Feed noise: **{feed_noise}**")
+        if source_div:
+            lines.append(f"- Source diversity: **{source_div}**")
+        if corr:
+            lines.append(f"- Corroboration: **{corr}**")
+
+    # Constraints from terminal coverage
+    terminal_coverage = investigation_packet.get("terminal_coverage") or {}
+    if terminal_coverage and isinstance(terminal_coverage, dict):
+        term_fams = list(terminal_coverage.keys())
+        if term_fams:
+            lines.append(f"- Terminal-only lanes: **{', '.join(term_fams[:5])}**")
+
+    lines.append("")
+
     return "\n".join(lines)

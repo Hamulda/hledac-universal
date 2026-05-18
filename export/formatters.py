@@ -42,6 +42,7 @@ __all__ = [
     "JSONFormatter",
     "export_sprint",
     "export_partial_sprint",
+    "render_investigation_packet_markdown",
 ]
 
 
@@ -252,6 +253,9 @@ class JSONFormatter(ExportFormatter):
                         sanitized_obj[_field] = _value
                 sanitized_obj = _reconcile_acquisition_terminality_from_source_outcomes(sanitized_obj)
                 sanitized_obj["capability_synthesis"] = capability_synthesis
+                # Sprint F232A: investigation_packet — report enrichment via existing owners
+                from hledac.universal.export.sprint_exporter import _build_investigation_packet
+                sanitized_obj["investigation_packet"] = _build_investigation_packet(sanitized_obj)
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 
@@ -422,4 +426,102 @@ class JSONFormatter(ExportFormatter):
             "next_sprint_seeds_generated": True,
             "next_sprint_seeds_count": seeds_count,
             "next_sprint_seeds_path": str(seeds_path) if seeds_path else None,
+            "investigation_packet": sanitized_obj.get("investigation_packet") if isinstance(sanitized_obj, dict) else None,
         }
+
+
+def render_investigation_packet_markdown(packet: dict | None) -> str:
+    """
+    Sprint F232A: Render compact Investigation Packet markdown section.
+
+    Deterministic. No LLM. No new report file type.
+    Sections: Seed Context, Source Family Coverage, Corroboration, Gaps,
+              Recommended Next Actions.
+
+    Applied to existing export/formatters.py as Phase 3 integration point.
+    No new markdown formatter file created.
+    """
+    if not packet:
+        return ""
+
+    lines: list[str] = []
+    lines.append("## Investigation Packet")
+
+    # ── Seed Context ───────────────────────────────────────────────────────
+    sc = packet.get("seed_context") or {}
+    lines.append("### Seed Context")
+    available = sc.get("available", False)
+    source = sc.get("source", "") or "unknown"
+    lines.append(f"- **Available**: {available}")
+    lines.append(f"- **Source**: {source}")
+    domains = sc.get("domains", [])
+    ips = sc.get("ips", [])
+    urls = sc.get("urls", [])
+    hashes = sc.get("hashes", [])
+    cves = sc.get("cves", [])
+    if domains:
+        lines.append(f"- **Domains** ({len(domains)}): {', '.join(str(d) for d in domains[:10])}")
+    if ips:
+        lines.append(f"- **IPs** ({len(ips)}): {', '.join(str(ip) for ip in ips[:10])}")
+    if urls:
+        lines.append(f"- **URLs** ({len(urls)}): {', '.join(str(u) for u in urls[:5])}")
+    if hashes:
+        lines.append(f"- **Hashes** ({len(hashes)}): {', '.join(str(h) for h in hashes[:5])}")
+    if cves:
+        lines.append(f"- **CVEs** ({len(cves)}): {', '.join(str(c) for c in cves[:5])}")
+    if not (domains or ips or urls or hashes or cves):
+        lines.append("- _No seed context available_")
+    lines.append("")
+
+    # ── Source Family Coverage ─────────────────────────────────────────────
+    sfs = packet.get("source_family_summary") or []
+    lines.append("### Source Family Coverage")
+    if sfs:
+        for sf in sfs[:20]:
+            fam = sf.get("family", "?")
+            accepted = sf.get("accepted", 0)
+            ts = sf.get("terminal_state", "") or "no_attempt"
+            has_f = sf.get("has_findings", False)
+            term_only = sf.get("terminal_only", False)
+            status = "FINDINGS" if has_f else ("TERMINAL_ONLY" if term_only else "no_result")
+            lines.append(f"- **{fam}**: {accepted} accepted, {ts} [{status}]")
+    else:
+        lines.append("- _No source family data_")
+    lines.append("")
+
+    # ── Corroboration ─────────────────────────────────────────────────────
+    corr = packet.get("corroboration") or {}
+    lines.append("### Corroboration")
+    if corr:
+        for ioc, score in list(corr.items())[:20]:
+            lines.append(f"- {ioc}: {round(float(score), 4) if score is not None else 0.0}")
+    else:
+        lines.append("- _No corroboration scores_")
+    lines.append("")
+
+    # ── Gaps ──────────────────────────────────────────────────────────────
+    gaps = packet.get("gaps") or []
+    lines.append("### Gaps")
+    if gaps:
+        for gap in gaps[:20]:
+            lines.append(f"- {gap}")
+    else:
+        lines.append("- _No significant gaps identified_")
+    lines.append("")
+
+    # ── Recommended Next Actions ─────────────────────────────────────────
+    actions = packet.get("planner_actions") or []
+    lines.append("### Recommended Next Actions")
+    if actions:
+        for act in actions[:10]:
+            act_type = act.get("action", "?")
+            target = act.get("target", "") or ""
+            priority = act.get("priority", 0.0)
+            lane = act.get("lane", "")
+            reason = act.get("reason", "") or ""
+            target_str = f" → {target}" if target else ""
+            lines.append(f"- **{act_type}**{target_str} (p={round(priority, 3)}, lane={lane}) — {reason}")
+    else:
+        lines.append("- _No actions generated_")
+
+    return "\n".join(lines)
