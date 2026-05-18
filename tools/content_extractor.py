@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +27,15 @@ try:
 except ImportError:
     HTML_TEXT_FAST_AVAILABLE = False
     html_to_text_fast = None  # type: ignore[assignment]
+
+# Tier 2 migration: selectolax-first for title + links extraction
+try:
+    from selectolax.parser import HTMLParser as SelectoLAXParser
+
+    SELECTOLAX_AVAILABLE = True
+except ImportError:
+    SELECTOLAX_AVAILABLE = False
+    SelectoLAXParser = None  # type: ignore[assignment]
 
 
 def extract_main_text_from_html(html_preview: str, max_chars: int = 20_000) -> str:
@@ -181,9 +189,46 @@ class ExtractedContent:
     metadata: dict = field(default_factory=dict)
 
 
+def _extract_title_selectolax(html: str) -> str:
+    """Extract title using selectolax (Tier 2 migration)."""
+    try:
+        tree = SelectoLAXParser(html)
+        title = tree.css_first("title")
+        if title:
+            return title.text(strip=True)
+    except Exception:
+        pass
+    return ""
+
+
+def _extract_links_selectolax(html: str, base_url: str, max_links: int = 50) -> list[str]:
+    """Extract links using selectolax (Tier 2 migration)."""
+    try:
+        tree = SelectoLAXParser(html)
+        links = []
+        seen = set()
+        for a in tree.css("a[href]"):
+            href = a.attributes.get("href", "")
+            if href and href not in seen:
+                seen.add(href)
+                # Skip javascript, mailto, anchor
+                if href.startswith(("javascript:", "mailto:", "#")):
+                    continue
+                links.append(href)
+                if len(links) >= max_links:
+                    break
+        return links
+    except Exception:
+        return []
+
+
 def extract_content_bounded(url: str, html: str, max_text_chars: int = 20_000) -> ExtractedContent:
     """
     Extract content from HTML with bounded output.
+
+    Tier 2 migration: selectolax-first for title + links, html_to_text_fast for main_content.
+    Falls back to bs4 html.parser only if selectolax unavailable.
+    Falls back to regex/stdlib if neither available.
 
     Args:
         url: Source URL
@@ -201,28 +246,34 @@ def extract_content_bounded(url: str, html: str, max_text_chars: int = 20_000) -
     html = html[:100_000]  # Hard limit on input
 
     try:
-        if BS4_AVAILABLE:
+        # Tier 2: selectolax-first for title + links
+        if SELECTOLAX_AVAILABLE:
+            content.title = _extract_title_selectolax(html)
+            content.links = _extract_links_selectolax(html, url)
+        # bs4 fallback for title + links
+        elif BS4_AVAILABLE:
             soup = BeautifulSoup(html, 'html.parser')
-
-            # Extract title
             if soup.title:
                 content.title = soup.title.string or ""
-
-            # Extract main text
-            content.main_content = extract_main_text_from_html(html, max_text_chars)
-
-            # Extract links (bounded)
             for a in soup.find_all('a', href=True)[:50]:
                 href = a.get('href', '')
                 if href and not href.startswith(('javascript:', 'mailto:', '#')):
                     content.links.append(href)
         else:
-            # Fallback without BeautifulSoup
+            # Regex fallback for title
             title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
             if title_match:
                 content.title = title_match.group(1)
+            # Regex fallback for links
+            for match in re.finditer(r'<a\s[^>]*href=["\']([^"\']+)["\']', html, re.IGNORECASE):
+                href = match.group(1)
+                if href and not href.startswith(("javascript:", "mailto:", "#")):
+                    content.links.append(href)
+                    if len(content.links) >= 50:
+                        break
 
-            content.main_content = extract_main_text_from_html(html, max_text_chars)
+        # Main content: html_to_text_fast (selectolax-first) always used
+        content.main_content = extract_main_text_from_html(html, max_text_chars)
 
     except Exception as e:
         logger.warning(f"Content extraction failed for {url}: {e}")
