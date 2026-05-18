@@ -82,8 +82,8 @@ These are declared in `pyproject.toml` but **never imported** by any source file
 
 | Package | Import in source | pyproject section | Action |
 |---------|------------------|-------------------|--------|
-| `igraph` | `knowledge/ioc_graph.py` | dependencies | ❌ MISSING — cp314 arm64 may not have wheel |
-| `kuzu` | `knowledge/ioc_graph.py` | dependencies | ❌ MISSING — no cp314 arm64 wheel |
+| `igraph` | `intelligence/relationship_discovery.py` (lazy, fail-soft) | N/A — not a hard dep, already fail-soft via `try/except` |
+| `kuzu` | `knowledge/ioc_graph.py` | `graph-truth` (optional) | ❌ MISSING — no cp314 arm64 wheel; already lazy with `GraphBackendUnavailable` |
 | `pybloom-live` | `tools/url_dedup.py` | dependencies | ❌ MISSING — needed for `RotatingBloomFilter` |
 | `curl_cffi` | `fetching/public_fetcher.py` | dependencies | ❌ MISSING — FetchCoordinator seam |
 | `pyahocorasick` | `tools/url_dedup.py` | dependencies | ⚠️ Installed (site-packages) but not uv-tracked |
@@ -151,8 +151,8 @@ These were installed by `uv pip install` directly (bypassing lockfile) or from a
 
 | Priority | Package | Reason | Fix |
 |----------|---------|--------|-----|
-| **HIGH** | `igraph` | `knowledge/ioc_graph.py` imports it; no arm64 cp314 wheel | Install via `uv add igraph` or pin older version |
-| **HIGH** | `kuzu` | `knowledge/ioc_graph.py` imports it; no arm64 cp314 wheel | Install via `uv add kuzu` or remove from pyproject if unused |
+| ~~**HIGH**~~ | `igraph` | `intelligence/relationship_discovery.py` — already fail-soft via `try/except` at import time | No action needed |
+| ~~**HIGH**~~ | `kuzu` | `knowledge/ioc_graph.py` — already fail-soft via lazy import + `GraphBackendUnavailable`; `graph-truth` extra exists | No action needed |
 | **HIGH** | `pybloom-live` | `tools/url_dedup.py` uses `RotatingBloomFilter`; dead-soft if missing | `uv add pybloom-live` |
 | **MEDIUM** | `curl_cffi` | `fetching/public_fetcher.py` has JA3 seam; fail-soft | `uv add curl_cffi` |
 | **LOW** | `pytesseract` | In pyproject, installed but broken import | Fix or remove |
@@ -167,7 +167,8 @@ These were installed by `uv pip install` directly (bypassing lockfile) or from a
 ## Recommendations
 
 1. **Immediate:** Run `uv sync` to align venv with lockfile (82 tracked packages)
-2. **Real gaps:** `uv add igraph kuzu pybloom-live curl_cffi` for production seams
-3. **Dead weight removal:** Audit and remove the 18 unimported packages from pyproject.toml
-4. **Broken installs:** `pytesseract`, `pyprobables`, `pyzipper` in site-packages but not importable — reinstall via `uv pip install --force-reinstall`
-5. **Do NOT change versions in first commit** — only audit and document
+2. **Real gaps:** `uv add pybloom-live` for `RotatingBloomFilter`; `curl_cffi` if not present in `osint-html`/`m1-local` extras
+3. **Graph backends (optional):** `igraph` and `kuzu` are **not** default or `m1-local` deps — they are in the `graph-truth` extra only. Install via `uv sync --extra graph-truth` when DuckPGQGraph (active scheduler path) is insufficient and the optional Kuzu/IOCGraph standalone backend is needed.
+4. **Dead weight removal:** Audit and remove the 18 unimported packages from pyproject.toml
+5. **Broken installs:** `pytesseract`, `pyprobables`, `pyzipper` in site-packages but not importable — reinstall via `uv pip install --force-reinstall`
+6. **Do NOT change versions in first commit** — only audit and document
