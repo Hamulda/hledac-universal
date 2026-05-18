@@ -1466,6 +1466,22 @@ def build_acquisition_report(
     acquisition_plan_build_failed: bool = False,
     acquisition_plan_build_error_type: str = "",
     acquisition_plan_build_error: str = "",
+    # Sprint F228E: Acquisition plan prelude fields
+    acquisition_plan_present_for_prelude: bool = False,
+    acquisition_plan_lanes_for_prelude: tuple[str, ...] = (),
+    acquisition_plan_enabled_lanes_for_prelude: tuple[str, ...] = (),
+    acquisition_plan_profile_for_prelude: str = "",
+    acquisition_plan_build_error_for_prelude: str = "",
+    # Sprint F228E: Nonfeed prelude telemetry
+    nonfeed_prelude_enabled: bool = False,
+    nonfeed_prelude_expected_lanes: tuple[str, ...] = (),
+    nonfeed_prelude_attempted_lanes: tuple[str, ...] = (),
+    nonfeed_prelude_terminal_lanes: tuple[str, ...] = (),
+    nonfeed_prelude_missing_lanes: tuple[str, ...] = (),
+    nonfeed_prelude_error_by_lane: dict | None = None,
+    nonfeed_prelude_accepted_by_lane: dict | None = None,
+    nonfeed_prelude_duration_s: float = 0.0,
+    nonfeed_prelude_feed_blocked_until_complete: bool = False,
 ) -> dict:
     """
     [F208C] Build a stable canonical acquisition report dict.
@@ -1788,6 +1804,22 @@ def build_acquisition_report(
         "acquisition_plan_build_failed": acquisition_plan_build_failed,
         "acquisition_plan_build_error_type": acquisition_plan_build_error_type,
         "acquisition_plan_build_error": acquisition_plan_build_error,
+        # Sprint F228E: Acquisition plan prelude fields
+        "acquisition_plan_present_for_prelude": acquisition_plan_present_for_prelude,
+        "acquisition_plan_lanes_for_prelude": list(acquisition_plan_lanes_for_prelude) if acquisition_plan_lanes_for_prelude else [],
+        "acquisition_plan_enabled_lanes_for_prelude": list(acquisition_plan_enabled_lanes_for_prelude) if acquisition_plan_enabled_lanes_for_prelude else [],
+        "acquisition_plan_profile_for_prelude": acquisition_plan_profile_for_prelude,
+        "acquisition_plan_build_error_for_prelude": acquisition_plan_build_error_for_prelude,
+        # Sprint F228E: Nonfeed prelude telemetry
+        "nonfeed_prelude_enabled": nonfeed_prelude_enabled,
+        "nonfeed_prelude_expected_lanes": list(nonfeed_prelude_expected_lanes) if nonfeed_prelude_expected_lanes else [],
+        "nonfeed_prelude_attempted_lanes": list(nonfeed_prelude_attempted_lanes) if nonfeed_prelude_attempted_lanes else [],
+        "nonfeed_prelude_terminal_lanes": list(nonfeed_prelude_terminal_lanes) if nonfeed_prelude_terminal_lanes else [],
+        "nonfeed_prelude_missing_lanes": list(nonfeed_prelude_missing_lanes) if nonfeed_prelude_missing_lanes else [],
+        "nonfeed_prelude_error_by_lane": nonfeed_prelude_error_by_lane or {},
+        "nonfeed_prelude_accepted_by_lane": nonfeed_prelude_accepted_by_lane or {},
+        "nonfeed_prelude_duration_s": nonfeed_prelude_duration_s,
+        "nonfeed_prelude_feed_blocked_until_complete": nonfeed_prelude_feed_blocked_until_complete,
     }
     # Sprint F226G: Reconcile lane detail fields with source_family_outcomes
     # so reports never contradict the authoritative outcomes list.

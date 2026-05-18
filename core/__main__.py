@@ -523,30 +523,28 @@ def _scheduler_result_acquisition_payload(
             seed_context_available=bool(getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())),
             seed_context_propagated=bool(getattr(result, "seed_context_propagated", False)),
             lanes_unlocked_by_seed_context=list(getattr(result, "lanes_unlocked_by_seed_context", ()) or ()),
+            # F225A: Acquisition plan build error surface
+            acquisition_plan_build_failed=getattr(result, "acquisition_plan_build_failed", False),
+            acquisition_plan_build_error_type=getattr(result, "acquisition_plan_build_error_type", ""),
+            acquisition_plan_build_error=getattr(result, "acquisition_plan_build_error", ""),
+            # Sprint F228E: Acquisition plan prelude fields
+            acquisition_plan_present_for_prelude=getattr(result, "acquisition_plan_present_for_prelude", False),
+            acquisition_plan_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),
+            acquisition_plan_enabled_lanes_for_prelude=tuple(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),
+            acquisition_plan_profile_for_prelude=getattr(result, "acquisition_plan_profile_for_prelude", ""),
+            acquisition_plan_build_error_for_prelude=getattr(result, "acquisition_plan_build_error_for_prelude", ""),
+            # Sprint F228E: Nonfeed prelude telemetry
+            nonfeed_prelude_enabled=getattr(result, "nonfeed_prelude_enabled", False),
+            nonfeed_prelude_expected_lanes=tuple(getattr(result, "nonfeed_prelude_expected_lanes", ()) or ()),
+            nonfeed_prelude_attempted_lanes=tuple(getattr(result, "nonfeed_prelude_attempted_lanes", ()) or ()),
+            nonfeed_prelude_terminal_lanes=tuple(getattr(result, "nonfeed_prelude_terminal_lanes", ()) or ()),
+            nonfeed_prelude_missing_lanes=tuple(getattr(result, "nonfeed_prelude_missing_lanes", ()) or ()),
+            nonfeed_prelude_error_by_lane=dict(getattr(result, "nonfeed_prelude_error_by_lane", None) or {}),
+            nonfeed_prelude_accepted_by_lane=dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),
+            nonfeed_prelude_duration_s=float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
+            nonfeed_prelude_feed_blocked_until_complete=getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),
         )
-        # F224: Ensure acquisition_prelude is surfaced in acquisition_report
-        # build_acquisition_report does not yet have acquisition_prelude params,
-        # so we inject from result attributes after the call.
-        _acq_report["acquisition_prelude_checked"] = getattr(result, "acquisition_prelude_checked", False)
-        _acq_report["acquisition_prelude_ran"] = getattr(result, "acquisition_prelude_ran", False)
-        _acq_report["acquisition_prelude_required_lanes"] = list(
-            getattr(result, "acquisition_prelude_required_lanes", ()) or ()
-        )
-        _acq_report["acquisition_prelude_terminal_lanes"] = list(
-            getattr(result, "acquisition_prelude_terminal_lanes", ()) or ()
-        )
-        _acq_report["acquisition_prelude_missing_lanes"] = list(
-            getattr(result, "acquisition_prelude_missing_lanes", ()) or ()
-        )
-        _acq_report["acquisition_prelude_skipped_lanes"] = dict(
-            getattr(result, "acquisition_prelude_skipped_lanes", {}) or {}
-        )
-        _acq_report["acquisition_prelude_errors"] = dict(
-            getattr(result, "acquisition_prelude_errors", {}) or {}
-        )
-        _acq_report["acquisition_prelude_duration_s"] = getattr(result, "acquisition_prelude_duration_s", 0.0)
-        _acq_report["acquisition_prelude_reason"] = getattr(result, "acquisition_prelude_reason", "")
-        # F228A: Normalization telemetry — surfaces the three-phase normalization chain
+        # F228E: Normalization telemetry — surfaces the three-phase normalization chain
         _acq_report["acquisition_profile_input"] = _acq_input
         _acq_report["acquisition_profile_effective"] = _acq_effective
         _acq_report["acquisition_profile_normalized"] = _acq_normalized
@@ -718,6 +716,26 @@ def _scheduler_result_acquisition_payload(
                 # NOTE R1: surfaced from scheduler runtime
                 "budget_violations": getattr(result, "budget_violations", 0),
                 "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",
+                # F225A: Acquisition plan build error surface
+                "acquisition_plan_build_failed": getattr(result, "acquisition_plan_build_failed", False),
+                "acquisition_plan_build_error_type": getattr(result, "acquisition_plan_build_error_type", ""),
+                "acquisition_plan_build_error": getattr(result, "acquisition_plan_build_error", ""),
+                # Sprint F228E: Acquisition plan prelude fields
+                "acquisition_plan_present_for_prelude": getattr(result, "acquisition_plan_present_for_prelude", False),
+                "acquisition_plan_lanes_for_prelude": list(getattr(result, "acquisition_plan_lanes_for_prelude", ()) or ()),
+                "acquisition_plan_enabled_lanes_for_prelude": list(getattr(result, "acquisition_plan_enabled_lanes_for_prelude", ()) or ()),
+                "acquisition_plan_profile_for_prelude": getattr(result, "acquisition_plan_profile_for_prelude", ""),
+                "acquisition_plan_build_error_for_prelude": getattr(result, "acquisition_plan_build_error_for_prelude", ""),
+                # Sprint F228E: Nonfeed prelude telemetry
+                "nonfeed_prelude_enabled": getattr(result, "nonfeed_prelude_enabled", False),
+                "nonfeed_prelude_expected_lanes": list(getattr(result, "nonfeed_prelude_expected_lanes", ()) or ()),
+                "nonfeed_prelude_attempted_lanes": list(getattr(result, "nonfeed_prelude_attempted_lanes", ()) or ()),
+                "nonfeed_prelude_terminal_lanes": list(getattr(result, "nonfeed_prelude_terminal_lanes", ()) or ()),
+                "nonfeed_prelude_missing_lanes": list(getattr(result, "nonfeed_prelude_missing_lanes", ()) or ()),
+                "nonfeed_prelude_error_by_lane": dict(getattr(result, "nonfeed_prelude_error_by_lane", None) or {}),
+                "nonfeed_prelude_accepted_by_lane": dict(getattr(result, "nonfeed_prelude_accepted_by_lane", None) or {}),
+                "nonfeed_prelude_duration_s": float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
+                "nonfeed_prelude_feed_blocked_until_complete": getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),
             }
             # F226G: Reconcile lane detail fields from source_family_outcomes in fallback path
             _acq_report = reconcile_lane_detail_fields(_acq_report)

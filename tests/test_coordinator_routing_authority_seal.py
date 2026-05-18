@@ -154,5 +154,65 @@ class TestBrokenArtifactAwareness(unittest.TestCase):
             )
 
 
+class TestMixinArchitectureRemoved(unittest.TestCase):
+    """Architecture seal: no coordinator uses mixin classes."""
+
+    def test_mixins_file_does_not_exist(self):
+        """coordinators/mixins.py must not exist."""
+        base = _base_path()
+        mixins_path = base / "coordinators" / "mixins.py"
+        self.assertFalse(
+            mixins_path.exists(),
+            "coordinators/mixins.py must be deleted — dead mixin architecture"
+        )
+
+    def test_no_coordinator_inherits_from_mixin(self):
+        """No coordinator class may inherit from mixin classes."""
+        base = _base_path()
+        violations = []
+
+        for path in (base / "coordinators").glob("*.py"):
+            if path.name == "mixins.py":
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+
+            # Match class definition lines that inherit from mixins
+            # e.g. "class Foo(OperationTrackingMixin):" or "class Bar(Base, LoadFactorMixin):"
+            for line_no, line in enumerate(content.splitlines(), 1):
+                stripped = line.strip()
+                # Only check class definition lines
+                if not stripped.startswith("class "):
+                    continue
+                if "OperationTrackingMixin" in line or "LoadFactorMixin" in line or "MemoryPressureMixin" in line:
+                    violations.append(f"{path.name}:{line_no}")
+
+        self.assertEqual(
+            violations, [],
+            f"Mixin inheritance found:\n" + "\n".join(violations)
+        )
+
+    def test_universal_coordinator_has_inline_implementations(self):
+        """UniversalCoordinator must have track_operation, get_load_factor, check_memory_pressure."""
+        import sys
+        from pathlib import Path
+        # Project root is parent.parent of test file (tests/ -> universal/ -> project/)
+        base = _base_path()
+        project_root = base.parent.parent
+        sys.path.insert(0, str(project_root))
+        try:
+            from hledac.universal.coordinators.base import UniversalCoordinator
+            # Check methods exist on the class (not abstract, inlined from former mixins)
+            self.assertTrue(hasattr(UniversalCoordinator, "track_operation"))
+            self.assertTrue(hasattr(UniversalCoordinator, "get_load_factor"))
+            self.assertTrue(hasattr(UniversalCoordinator, "check_memory_pressure"))
+            # Verify they are not abstract methods
+            self.assertFalse(getattr(UniversalCoordinator, "track_operation").__isabstractmethod__ if hasattr(getattr(UniversalCoordinator, "track_operation"), "__isabstractmethod__") else False)
+        finally:
+            sys.path.pop(0)
+
+
 if __name__ == "__main__":
     unittest.main()

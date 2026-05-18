@@ -41,6 +41,48 @@ from typing import TYPE_CHECKING, Any, Callable, Final, Optional, Sequence
 
 from hledac.universal.patterns.pattern_matcher import match_text
 from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager, SprintPhase
+
+
+# ── Sprint F228F: Nonfeed Prelude Policy ────────────────────────────────────
+_NONFEED_DIAGNOSTIC_FALLBACK_LANES = ("CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH")
+
+
+def canonical_lane_name(lane: object) -> str:
+    """Normalize lane to UPPERCASE string — handles Enum values and plain strings."""
+    value = getattr(lane, "value", lane)
+    return str(value).upper()
+
+
+def resolve_nonfeed_expected_lanes(
+    result_expected: tuple[str, ...],
+    local_expected: list[str],
+    plan_debug_expected: list[str],
+    acquisition_profile: str,
+) -> tuple[str, ...]:
+    """
+    Sprint F228F: Resolve effective nonfeed expected lanes with explicit fallback chain.
+
+    Rules:
+    - If result_expected is non-empty, use it.
+    - Else if local_expected is non-empty, use it.
+    - Else if plan_debug_expected is non-empty, use it.
+    - Else if acquisition_profile == "nonfeed_diagnostic", return fallback tuple.
+    - Never let an empty tuple silently block seed-unlocked lanes.
+    """
+    if result_expected:
+        return result_expected
+    if local_expected:
+        return tuple(local_expected)
+    if plan_debug_expected:
+        return tuple(plan_debug_expected)
+    if acquisition_profile == "nonfeed_diagnostic":
+        return _NONFEED_DIAGNOSTIC_FALLBACK_LANES
+    return ()
+
+
+# ── End F228F helpers ────────────────────────────────────────────────────────
+
+
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 from hledac.universal.utils.async_helpers import _check_gathered
 from hledac.universal.transport.circuit_breaker import (
