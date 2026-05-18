@@ -321,7 +321,7 @@ def _check_vlm_analyzer() -> dict:
         "file_exists": False,
         "class_exists": False,
         "uses_mlx_vlm": False,
-        "vlm_default_removed": False  # removed per F216C — kept as structural marker",
+        "vlm_default_removed": False,  # removed per F216C — kept as structural marker
         "has_unload": False,
         "has_metal_clear_cache": False,
         "singleton_pattern": False,
