@@ -2342,8 +2342,11 @@ async def _fetch_and_process_page(
 # Placeholder fetch/match imports (patched in tests; real code uses 8AD/8X)
 # -----------------------------------------------------------------------------
 
-_ASYNC_FETCH_PUBLIC_TEXT: Any = None  # patched by tests
-_SYNC_MATCH_TEXT: Any = None  # patched by tests
+# Legacy module-level globals — backward compatibility only.
+# DO NOT add new _ASYNC_* / _SYNC_* patch globals.
+# Preferred test hook: explicit keyword arguments to async_run_live_public_pipeline.
+_ASYNC_FETCH_PUBLIC_TEXT: Any = None  # legacy: patched by tests
+_SYNC_MATCH_TEXT: Any = None  # legacy: patched by tests
 _PATCHED_BY_ENSURE: bool = False  # guard: once _ensure_patched() runs, don't re-overwrite
 
 
