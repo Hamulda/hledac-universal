@@ -106,7 +106,7 @@ class MambaFusion:
                 self.mamba = nn_mod.Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2)
                 self.post = nn_mod.Identity()
             except Exception as e:
-                logger.W(f"Failed to init nn.Mamba; falling back to MLP. err={e}")
+                logger.warning(f"Failed to init nn.Mamba; falling back to MLP. err={e}")
                 self._has_mamba = False
 
         if not self._has_mamba:
