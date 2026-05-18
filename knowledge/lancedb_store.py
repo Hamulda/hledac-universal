@@ -875,13 +875,26 @@ class LanceDBIdentityStore:
 
         return selected
 
-    # TODO D7: LanceDB ANN index rebuild on startup can exceed 5GB on M1 8GB.
-    # Add a RAM check before rebuild: if uma_available_gb < 4.0: skip rebuild,
-    # use FLAT scan as fallback. Index rebuild should be a manual maintenance op.
+    # C4: RAM guard — skip index build if <4GB available to avoid OOM on M1 8GB
     async def _ensure_usearch_index(self) -> None:
         """Lazy load usearch index (experimental)."""
         if self._usearch_loaded or self._table is None:
             return
+
+        # M1 8GB RAM guard — skip index build if <4GB available
+        try:
+            import psutil
+
+            available_gb = psutil.virtual_memory().available / (1024**3)
+            if available_gb < 4.0:
+                logger.warning(
+                    f"[INDEX] M1 memory pressure ({available_gb:.1f}GB available), "
+                    "skipping usearch index build"
+                )
+                self._usearch_loaded = True
+                return
+        except Exception:
+            pass
 
         try:
             import usearch
