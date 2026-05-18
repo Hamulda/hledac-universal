@@ -6,7 +6,7 @@ Samostatně testovatelná komponenta.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple, List, TYPE_CHECKING, Any
+from typing import Optional, Tuple, List, Any
 
 logger = logging.getLogger(__name__)
 
