@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Set
 
+import msgspec
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -67,7 +68,7 @@ class CostModel(BaseModel):
         }
 
 
-class CostSummary(BaseModel):
+class CostSummary(msgspec.Struct):
     """Summary of estimated costs for a plan."""
 
     total_ram_mb: int = 0
@@ -87,7 +88,7 @@ class CostSummary(BaseModel):
         return True
 
 
-class BudgetLimits(BaseModel):
+class BudgetLimits(msgspec.Struct):
     """Budget limits for execution."""
 
     max_ram_mb: int = 2048  # 2GB default
@@ -96,7 +97,7 @@ class BudgetLimits(BaseModel):
     max_snapshot_writes: int = 20
 
 
-class SourceReputation(BaseModel):
+class SourceReputation(msgspec.Struct):
     """Source reliability scoring from own data."""
 
     domain: str
