@@ -62,6 +62,7 @@ from hledac.universal.runtime.source_finding_bridge import (
 
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     reconcile_lane_detail_fields,
+    complete_source_family_outcomes_from_lane_details,
 )
 
 __all__ = [
@@ -102,6 +103,7 @@ __all__ = [
     "_CIDV0_RE",
     "_CIDV1_BASE32_RE",
     "reconcile_lane_detail_fields",
+    "complete_source_family_outcomes_from_lane_details",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)

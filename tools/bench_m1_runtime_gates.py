@@ -430,7 +430,9 @@ def bench_wal_manager_single_write_smoke() -> dict[str, Any]:
     Skips if imports fail due to missing deps (aiohttp, etc.).
     """
     try:
-        from hledac.universal.knowledge.wal import WALManager
+        # Use repo-local import: UNIVERSAL_ROOT is on sys.path, so
+        # knowledge.wal resolves to UNIVERSAL_ROOT/knowledge/wal.py
+        from knowledge.wal import WALManager
     except ImportError as e:
         return {
             "name": "wal_manager_single_write_smoke",
