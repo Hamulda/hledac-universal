@@ -65,7 +65,8 @@ dependencies = [
     "duckduckgo-search>=8.0.0",
     # Parsing
     "beautifulsoup4>=4.12.0",
-    "pytesseract>=0.3.10",
+    # OCR — pytesseract is a lazy-import fallback; primary OCR path uses vision pipeline
+    # "pytesseract>=0.3.10",  # MOVED_TO ocr extra
     # Networking
     "dnspython>=2.4.0",
     "stem>=1.8.0",
@@ -158,6 +159,13 @@ acceleration = [
     "rapidfuzz>=3.0.0",        # fast fuzzy matching; import: rapidfuzz
 ]
 
+# --- ocr: optical character recognition (optional, for captcha solving) ---
+# pytesseract is a lazy-import fallback; primary OCR uses vision pipeline.
+# captcha_solver.py already has try/except ImportError — fail-soft by design.
+ocr = [
+    "pytesseract>=0.3.10",
+]
+
 # --- rerank: neural reranking ---
 rerank = [
     "flashrank>=0.2.0",        # neural rerank; import: flashrank
@@ -190,9 +198,15 @@ transport = [
     "aiohttp-socks>=0.8.0",     # SOCKS5 proxy support for aiohttp
 ]
 
+# --- m1-local: ergonomic default for MacBook Air M1 8GB (no torch, no browser, no heavy OCR) ---
+# Recommended for routine local use on Apple Silicon:
+#   uv sync --extra m1-local --extra dev
+m1-local = [
+    "hledac-universal[apple-accel,osint-html,graph-storage,acceleration,transport]",
+]
 # --- all: everything except torch (torch is too heavy for routine dev) ---
 all = [
-    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport]",
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,m1-local]",
 ]
 
 [project.scripts]
