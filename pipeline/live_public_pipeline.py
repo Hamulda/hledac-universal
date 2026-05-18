@@ -2981,6 +2981,12 @@ async def async_run_live_public_pipeline(
     public_bootstrap_enabled: bool = False,
     # Sprint F223C: Bounded seed_context bootstrap for nonfeed_diagnostic profile
     seed_context: Any | None = None,
+    # DI F226: explicit dependency injection for testable seams
+    fetch_fn: Any | None = None,  # async_fetch_public_text replacement
+    match_fn: Any | None = None,  # match_text replacement
+    discovery_fn: Any | None = None,  # async_search_public_web replacement
+    ct_subdomains_fn: Any | None = None,  # CT scanner get_subdomains replacement
+    clear_query_cache_fn: Any | None = None,  # _clear_query_cache replacement
 ) -> PipelineRunResult:
     """
     Sprint 8AE: Live public OSINT pipeline.
@@ -3008,6 +3014,27 @@ async def async_run_live_public_pipeline(
         Optional MemoryManager instance for persistent RAG history.
     session_id:
         Optional session ID for memory manager. If None, uses query hash.
+    enqueue_hypothesis_pivot:
+        Optional callback for bounded hypothesis pivot feedback (Sprint F193B).
+    public_bootstrap_enabled:
+        If True, prepend bootstrap URLs before discovery (Sprint F217C).
+    seed_context:
+        Optional seed context for nonfeed_diagnostic profile bootstrap (Sprint F223C).
+    fetch_fn:
+        DI F226: explicit async_fetch_public_text replacement. If None,
+        falls back to _ensure_patched() → async_fetch_public_text from 8AD.
+    match_fn:
+        DI F226: explicit match_text replacement. If None, falls back to
+        _ensure_patched() → match_text from 8X.
+    discovery_fn:
+        DI F226: explicit async_search_public_web replacement. If None,
+        falls back to _ensure_discovery_patched() (providerless cascade or DDG).
+    ct_subdomains_fn:
+        DI F226: explicit CT scanner get_subdomains(domain, async_session)
+        replacement. If None, falls back to _ensure_ct_scanner_patched().
+    clear_query_cache_fn:
+        DI F226: explicit _clear_query_cache replacement. If None,
+        imports and calls duckduckgo_adapter._clear_query_cache.
 
     Returns
     -------
@@ -3018,8 +3045,12 @@ async def async_run_live_public_pipeline(
     reset_temporal_signal_layer()
 
     # F207I-A: Clear per-run DDG query cache at pipeline run start
-    from hledac.universal.discovery.duckduckgo_adapter import _clear_query_cache
-    _clear_query_cache()
+    # DI F226: explicit dependency injection — clear_query_cache_fn
+    _resolved_clear_cache: Any = clear_query_cache_fn
+    if _resolved_clear_cache is None:
+        from hledac.universal.discovery.duckduckgo_adapter import _clear_query_cache
+        _resolved_clear_cache = _clear_query_cache
+    _resolved_clear_cache()
 
     # Sprint F206Q: Restore from persistent snapshot if store is enabled
     persistence_enabled = False
@@ -3034,6 +3065,22 @@ async def async_run_live_public_pipeline(
             persistence_restored = load_temporal_signal_snapshot()
     except Exception:
         pass
+
+    # DI F226: explicit dependency injection — resolve all seams before use
+    # fetch_fn / match_fn override globals; otherwise _ensure_patched() sets them
+    if fetch_fn is not None:
+        global _ASYNC_FETCH_PUBLIC_TEXT
+        _ASYNC_FETCH_PUBLIC_TEXT = fetch_fn
+    if match_fn is not None:
+        global _SYNC_MATCH_TEXT
+        _SYNC_MATCH_TEXT = match_fn
+    # discovery_fn / ct_subdomains_fn override globals
+    if discovery_fn is not None:
+        global _ASYNC_DISCOVERY_SEARCH
+        _ASYNC_DISCOVERY_SEARCH = discovery_fn
+    if ct_subdomains_fn is not None:
+        global _CT_SCANNER_GET_SUBDOMAINS
+        _CT_SCANNER_GET_SUBDOMAINS = ct_subdomains_fn
 
     # Ensure hot-path imports are resolved
     _ensure_patched()
