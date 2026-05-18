@@ -5,10 +5,10 @@
 ## Quick Reference
 
 | Profile | Extras | MLX | Browser | OCR | Torch | M1 Safe |
-|---------|--------|-----|---------|-----|-------|---------|
+|---------|--------|-----|---------|-----|-------|----------|
 | `default` | — | — | — | — | — | ✅ |
 | `m1-local` | `apple-accel,osint-html,graph-storage,acceleration,transport` | ✅ | — | — | — | ✅ |
-| `m1-local+dev` | `m1-local` + `dev` | ✅ | — | — | — | ✅ |
+| `m1-local+dev` | `m1-local` + `dev` (two extras) | ✅ | — | — | — | ✅ |
 | `osint-html` | `selectolax,curl_cffi,h2` | — | — | — | — | ✅ |
 | `graph-storage` | `duckdb,lancedb,pyarrow,polars` | — | — | — | — | ✅ |
 | `graph-truth` | `kuzu` | — | — | — | — | ⚠️ source |
@@ -17,6 +17,13 @@
 | `ocr` | `pytesseract` | — | — | ✅ | — | ✅ |
 | `torch` | `torch,torchvision` | — | — | — | ✅ | ⚠️ heavy |
 | `rerank` | `flashrank` | — | — | — | — | ✅ |
+| `light` | `fast-langdetect,datasketch` | — | — | — | — | ✅ |
+| `nlp` | `fast-langdetect` | — | — | — | — | ✅ |
+| `security` | `cryptography>=48.0.0` | — | — | — | — | ✅ |
+| `search` | `duckduckgo-search>=8.0.0` | — | — | — | — | ✅ |
+| `legacy-html` | `beautifulsoup4>=4.12.0` | — | — | — | — | ✅ |
+| `coreml` | `coremltools,pyobjc-framework-coreml` | — | — | — | — | ⚠️ darwin |
+| `all` | everything except `torch` | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ |
 
 ---
 
@@ -32,8 +39,8 @@ uv sync --extra dev
 
 | Field | Value |
 |-------|-------|
-| **deps** | `default` |
-| **expected memory** | ~1.5 GB |
+| **deps** | `default` (transformers,duckdb,lancedb,aiohttp,httpx)` |
+| **expected memory** | ~2 GB (base install; MLX/browsers add significant overhead) |
 | **network** | optional (httpx, aiohttp-socks) |
 | **MLX allowed** | ❌ |
 | **browser** | ❌ |
@@ -231,8 +238,8 @@ uv sync --extra rerank --extra dev
 
 | Field | Value |
 |-------|-------|
-| **deps** | `flashrank>=0.2.0,transformers>=5.8.0` |
-| **expected memory** | ~5 GB+ |
+| **deps** | `flashrank>=0.2.0` (transformers already in default deps) |
+| **expected memory** | ~4 GB+ (HF models exceed M1 8GB ceiling) |
 | **network** | optional |
 | **MLX allowed** | ❌ (HF and MLX both need UMA) |
 | **browser** | ❌ |
@@ -273,7 +280,7 @@ pip install torch torchvision
 
 | Profile | Memory | MLX | Browser | Stealth | Graph | Torch | Best For |
 |---------|--------|-----|---------|---------|-------|-------|----------|
-| `default` | ~1.5GB | ❌ | ❌ | partial | duckdb | ❌ | CI, minimal env |
+| `default` | ~2GB | ❌ | ❌ | partial | duckdb+lancedb | ❌ | CI, minimal env |
 | `m1-local` | ~3.5GB | ✅ | ❌ | ✅ | full | ❌ | Daily local research |
 | `osint-html` | ~2GB | ❌ | ❌ | ✅ | partial | ❌ | Fast crawling |
 | `graph-storage` | ~2.5GB | ❌ | ❌ | ❌ | full | ❌ | Analytics |
