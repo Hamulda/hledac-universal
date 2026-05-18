@@ -286,6 +286,7 @@ async def subdomain_probe(
 # ---------------------------------------------------------------------------
 
 CACHE_TTL = 3600  # 1h cache
+MAX_CACHE_ENTRIES = 200  # Sprint F226F: bound cache by count for M1 8GB safety
 
 
 class DOHAdapter:
@@ -316,6 +317,12 @@ class DOHAdapter:
 
         # Run resolution
         findings = await full_doh_profile(domain, session)
+
+        # F226F: Enforce MAX_CACHE_ENTRIES bound — evict oldest entry if at capacity
+        if len(self._cache) >= MAX_CACHE_ENTRIES:
+            oldest_key = next(k for k, (_, ts) in self._cache.items())
+            del self._cache[oldest_key]
+
         self._cache[domain] = (findings, time.time())
         return findings
 

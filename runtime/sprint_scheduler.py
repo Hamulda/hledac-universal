@@ -4323,12 +4323,13 @@ class SprintScheduler:
         skipped: dict[str, str] = {}
         errors: dict[str, str] = {}
 
-        # Check if lanes already have terminal state
-        # PUBLIC terminal = _public_outcome is not None
-        # CT terminal = ct_log_discovered > 0 or lane_ct_accepted_findings > 0
+        # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
         _ct_done = (
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
+            or self._result.ct_request_timeout
+            or self._result.ct_terminal_stage
+            in ("error", "skipped", "request_timeout", "no_candidates")
         )
         _public_done = self._public_outcome is not None
 
@@ -5174,6 +5175,18 @@ class SprintScheduler:
                     _nonfeed_expected.append(_lane)
 
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
+            # F228A: Build NonfeedSeedContext from pivot seeds so prelude lanes can shape queries.
+            _seed_ctx: Optional[NonfeedSeedContext] = None
+            if (self._result.pivot_seed_domains or self._result.pivot_seed_ips
+                    or self._result.pivot_seed_urls):
+                _seed_ctx = NonfeedSeedContext(
+                    domains=tuple(self._result.pivot_seed_domains or ()),
+                    ips=tuple(self._result.pivot_seed_ips or ()),
+                    urls=tuple(self._result.pivot_seed_urls or ()),
+                    hashes=tuple(self._result.pivot_seed_hashes or ()),
+                    cves=tuple(self._result.pivot_seed_cves or ()),
+                )
+
             await self._run_nonfeed_prelude_gather(
                 query=query,
                 duckdb_store=duckdb_store,
@@ -5189,6 +5202,7 @@ class SprintScheduler:
                 nonfeed_prelude_accepted=_nonfeed_prelude_accepted,
                 nonfeed_prelude_errors=_nonfeed_prelude_errors,
                 pivot_lanes=_pivot_lanes,
+                seed_context=_seed_ctx,
             )
 
             # Mark nonfeed prelude complete so it runs exactly once per sprint
@@ -5261,13 +5275,15 @@ class SprintScheduler:
         nonfeed_prelude_accepted: dict[str, int],
         nonfeed_prelude_errors: dict[str, str],
         pivot_lanes: Optional[Sequence[Any]] = None,
+        seed_context: Optional["NonfeedSeedContext"] = None,
     ) -> None:
         """
-        Sprint F233D: Run nonfeed prelude lanes concurrently (Semaphore(3) for M1 8GB).
+        Sprint F233D / F228A: Run nonfeed prelude lanes concurrently (Semaphore(3) for M1 8GB).
 
         F220J: pivot_lanes provides pre-computed LanePlanItem tuples from
         plan_lanes_for_pivot_seeds(). If None, pivots are generated inline.
 
+        F228A: seed_context enables domain/IP shaping for text queries via build_lane_query.
         DOH lane uses pivot domain seed instead of raw query when available.
         """
         _sem = asyncio.Semaphore(3)
@@ -5286,12 +5302,14 @@ class SprintScheduler:
                                 query, duckdb_store, time_module,
                                 nonfeed_prelude_attempted, nonfeed_prelude_terminal,
                                 nonfeed_prelude_accepted,
+                                seed_context=seed_context,
                             )
                         elif _lane_name == "PASSIVE_DNS":
                             return await self._run_pdns_prelude_lane(
                                 query, duckdb_store, time_module,
                                 nonfeed_prelude_attempted, nonfeed_prelude_terminal,
                                 nonfeed_prelude_accepted,
+                                seed_context=seed_context,
                             )
                         elif _lane_name == "DOH":
                             return await self._run_doh_prelude_lane(
@@ -5299,6 +5317,7 @@ class SprintScheduler:
                                 nonfeed_prelude_attempted, nonfeed_prelude_terminal,
                                 nonfeed_prelude_accepted,
                                 pivot_doh_items=pivot_lanes,
+                                seed_context=seed_context,
                             )
                         elif _lane_name == "PIVOT_EXECUTOR":
                             # PIVOT_EXECUTOR: inline (already structured)
@@ -5345,13 +5364,17 @@ class SprintScheduler:
         nonfeed_prelude_attempted: list[str],
         nonfeed_prelude_terminal: list[str],
         nonfeed_prelude_accepted: dict[str, int],
+        seed_context: Optional["NonfeedSeedContext"] = None,
     ) -> tuple[str, int]:
-        """Sprint F233D: WAYBACK prelude lane — archive replay for pivot discovery."""
+        """Sprint F233D / F228A: WAYBACK prelude lane — archive replay for pivot discovery.
+
+        F228A: seed_context enables domain/IP shaping for text queries.
+        """
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
         from hledac.universal.intelligence.wayback_diff_miner import WaybackDiffMiner
         from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
 
-        _wb_query = build_lane_query(query, AcquisitionLane.WAYBACK)
+        _wb_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context=seed_context)
         if _wb_query and not isinstance(_wb_query, dict):
             _wb_miner = WaybackDiffMiner()
             try:
@@ -5393,13 +5416,17 @@ class SprintScheduler:
         nonfeed_prelude_attempted: list[str],
         nonfeed_prelude_terminal: list[str],
         nonfeed_prelude_accepted: dict[str, int],
+        seed_context: Optional["NonfeedSeedContext"] = None,
     ) -> tuple[str, int]:
-        """Sprint F233D: PASSIVE_DNS prelude lane — passive DNS recon."""
+        """Sprint F233D / F228A: PASSIVE_DNS prelude lane — passive DNS recon.
+
+        F228A: seed_context enables domain/IP shaping for text queries.
+        """
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
         from hledac.universal.security.passive_dns import call_lookup_passive_dns
         from hledac.universal.runtime.source_finding_bridge import passive_dns_results_to_findings
 
-        _pdns_query = build_lane_query(query, AcquisitionLane.PASSIVE_DNS)
+        _pdns_query = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_context=seed_context)
         if _pdns_query and not isinstance(_pdns_query, dict):
             _pdns_ips, _pdns_outcome = await call_lookup_passive_dns(str(_pdns_query))
             _pdns_cands, _pdns_rejs, _pdns_tel = passive_dns_results_to_findings(
@@ -5434,17 +5461,22 @@ class SprintScheduler:
         nonfeed_prelude_terminal: list[str],
         nonfeed_prelude_accepted: dict[str, int],
         pivot_doh_items: Optional[Sequence[Any]] = None,
+        seed_context: Optional["NonfeedSeedContext"] = None,
     ) -> tuple[str, int]:
-        """Sprint F234A / F214: DOH prelude lane — DNS-over-HTTPS passive DNS recon.
+        """Sprint F234A / F214 / F228A: DOH prelude lane — DNS-over-HTTPS passive DNS recon.
 
         F220J: If pivot_doh_items contains a domain DOH item, use its seed_value
         directly instead of parsing the raw query. This ensures DOH prelude uses
         the domain extracted by the pivot planner, not a domain extracted from
         raw query text (which may be absent or wrong).
 
+        F228A: seed_context enables domain/IP shaping for text queries when
+        pivot_doh_items does not provide an explicit domain seed.
+
         Args:
             pivot_doh_items: Sequence of LanePlanItem with lane="DOH" from pivot plan.
                 Each has seed_value, seed_type, priority, reason fields.
+            seed_context: Optional NonfeedSeedContext from pivot/DuckDB extraction.
         """
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query, is_lane_enabled
         from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
@@ -5471,8 +5503,9 @@ class SprintScheduler:
             _doh_query: Any = _doh_domain
             self._result.doh_seed_source = "pivot_plan"
         else:
-            _doh_query = build_lane_query(query, AcquisitionLane.DOH)
-            self._result.doh_seed_source = "raw_query"
+            # F228A: Use seed_context for domain/IP shaping when pivot_doh_items has no explicit domain.
+            _doh_query = build_lane_query(query, AcquisitionLane.DOH, seed_context=seed_context)
+            self._result.doh_seed_source = "seed_context" if seed_context and seed_context.domains else "raw_query"
             # F220J: raw query never reaches DOH if it has no domain seed.
             # build_lane_query already returns _disabled dict for non-domain queries.
             if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get("_disabled")):
@@ -5481,12 +5514,17 @@ class SprintScheduler:
                 nonfeed_prelude_accepted["DOH"] = 0
                 return ("DOH", 0)
 
-        # dependency_missing: adapter or store unavailable
+        # F226F: Lazy init — attempt to create adapter if not yet initialized.
+        # Never report doh_adapter_not_initialized just because the field starts as None.
         if self._doh_adapter is None:
-            self._result.doh_terminal_stage = "dependency_missing"
-            self._result.doh_provider_errors = ("doh_adapter_not_initialized",)
-            nonfeed_prelude_accepted["DOH"] = 0
-            return ("DOH", 0)
+            try:
+                from hledac.universal.intelligence.doh_lane import DOHAdapter
+                self._doh_adapter = DOHAdapter()
+            except Exception as _init_exc:
+                self._result.doh_terminal_stage = "dependency_missing"
+                self._result.doh_provider_errors = (f"doh_adapter_init_failed:{type(_init_exc).__name__}:{_init_exc}",)
+                nonfeed_prelude_accepted["DOH"] = 0
+                return ("DOH", 0)
 
         _doh_session = None
         try:
@@ -5651,14 +5689,20 @@ class SprintScheduler:
 
         self._result.return_guard_required_lanes = tuple(_required)
 
-        # Check terminal state for each required lane using lane_is_terminal()
-        # PUBLIC terminal: _public_outcome is not None
-        # CT terminal: ct_log_discovered > 0 or lane_ct_accepted_findings > 0
-        _public_done = self._public_outcome is not None
+        # [F228C] CT terminal if: ct_log_discovered > 0 or lane_ct_accepted_findings > 0,
+        # OR ct_request_timeout (timeout counts as terminal even with zero findings),
+        # OR ct_terminal_stage in (error, skipped, request_timeout, no_candidates).
         _ct_done = (
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
+            or self._result.ct_request_timeout
+            or self._result.ct_terminal_stage
+            in ("error", "skipped", "request_timeout", "no_candidates")
         )
+
+        # Check terminal state for each required lane using lane_is_terminal()
+        # PUBLIC terminal: _public_outcome is not None
+        _public_done = self._public_outcome is not None
 
         # Build observed outcomes dict for terminality_report
         _observed: dict[str, dict] = {}
@@ -5746,9 +5790,13 @@ class SprintScheduler:
 
         # Re-check terminal state after attempted barrier
         _public_done = self._public_outcome is not None
+        # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
         _ct_done = (
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
+            or self._result.ct_request_timeout
+            or self._result.ct_terminal_stage
+            in ("error", "skipped", "request_timeout", "no_candidates")
         )
 
         _still_unsatisfied: list[str] = []
@@ -6459,6 +6507,7 @@ class SprintScheduler:
                 log.debug("[aggressive] CT branch timed out after %ss", branch_timeout)
                 self._result.ct_branch_timed_out = True
                 self._result.ct_request_timeout = True
+                self._result.ct_terminal_stage = "request_timeout"
                 self._result.ct_log_error = "terminal:timeout"
             except _asyncio.CancelledError:
                 log.debug("[aggressive] CT branch cancelled")
@@ -12086,6 +12135,8 @@ class SprintScheduler:
             pass
         # Sprint F202J: Reset governor telemetry (but keep singleton instance)
         self._governor = None  # Will be re-initialized on next run()
+        # Sprint F226F: Reset DOH adapter so cache is cleared between sprints
+        self._doh_adapter = None
         # Sprint F205F: Reset sidecar orchestrator tracking
         if hasattr(self, "_sidecar_orchestrator") and self._sidecar_orchestrator is not None:
             self._sidecar_orchestrator.reset()

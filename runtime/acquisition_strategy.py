@@ -60,6 +60,10 @@ from hledac.universal.runtime.source_finding_bridge import (
     MAX_SAMPLE_REJECTIONS,
 )
 
+from hledac.universal.runtime.acquisition_telemetry_reconcile import (
+    reconcile_lane_detail_fields,
+)
+
 __all__ = [
     "AcquisitionLane",
     "AcquisitionProfile",
@@ -97,6 +101,7 @@ __all__ = [
     "_extract_cids_from_text",
     "_CIDV0_RE",
     "_CIDV1_BASE32_RE",
+    "reconcile_lane_detail_fields",
 ]
 
 # Stable canonical schema version for acquisition report (F208C)
@@ -1784,6 +1789,9 @@ def build_acquisition_report(
         "acquisition_plan_build_error_type": acquisition_plan_build_error_type,
         "acquisition_plan_build_error": acquisition_plan_build_error,
     }
+    # Sprint F226G: Reconcile lane detail fields with source_family_outcomes
+    # so reports never contradict the authoritative outcomes list.
+    result = reconcile_lane_detail_fields(result)
 
 
 # ── Helper APIs for lane admission gating ──────────────────────────────────

@@ -68,6 +68,7 @@ from hledac.universal.runtime.acquisition_strategy import (
     build_acquisition_report,
     normalize_source_family_outcome,
     canonicalize_source_family_outcomes,
+    reconcile_lane_detail_fields,
     ACQUISITION_REPORT_SCHEMA_VERSION,
 )
 from hledac.universal.export.sprint_exporter import export_sprint
@@ -561,21 +562,8 @@ def _scheduler_result_acquisition_payload(
         _acq_report["ct_quarantine_samples"] = list(
             getattr(result, "ct_quarantine_samples", ()) or ()
         )
-        # F222L: Reconcile CT fields from source_family_outcomes when result fields are stale
-        # If source_family_outcomes shows CT was attempted but ct_request_attempted=False (stale),
-        # derive minimal CT telemetry from the outcome so the report is consistent.
-        if _sfo_list:
-            for _sfo in _sfo_list:
-                if _sfo.get("family") == "CT" and _sfo.get("attempted"):
-                    if not getattr(result, "ct_request_attempted", False):
-                        _acq_report["ct_request_attempted"] = True
-                    if not getattr(result, "ct_terminal_stage", ""):
-                        _acq_report["ct_terminal_stage"] = _sfo.get("error") or "attempted_error"
-                    if getattr(result, "ct_raw_count", 0) == 0 and _sfo.get("raw_count"):
-                        _acq_report["ct_raw_count"] = _sfo.get("raw_count", 0)
-                    if getattr(result, "ct_storage_attempted", False) is False and _sfo.get("accepted_count", 0) > 0:
-                        _acq_report["ct_storage_attempted"] = True
-                    break
+        # F226G: Reconcile lane detail fields from source_family_outcomes
+        _acq_report = reconcile_lane_detail_fields(_acq_report)
         # F222L: Seed context — if pivot seeds exist but seed_context fields are absent,
         # derive explicit skip reason so the report is not silently blank.
         if not _acq_report.get("seed_context_available"):
@@ -731,18 +719,8 @@ def _scheduler_result_acquisition_payload(
                 "budget_violations": getattr(result, "budget_violations", 0),
                 "return_guard_block_reason": getattr(result, "return_guard_block_reason", "") or "",
             }
-            # F222L: Reconcile CT fields from source_family_outcomes in fallback path too
-            for _sfo in _sfo_list:
-                if _sfo.get("family") == "CT" and _sfo.get("attempted"):
-                    if not _acq_report.get("ct_request_attempted"):
-                        _acq_report["ct_request_attempted"] = True
-                    if not _acq_report.get("ct_terminal_stage"):
-                        _acq_report["ct_terminal_stage"] = _sfo.get("error") or "attempted_error"
-                    if _acq_report.get("ct_raw_count", 0) == 0 and _sfo.get("raw_count"):
-                        _acq_report["ct_raw_count"] = _sfo.get("raw_count", 0)
-                    if not _acq_report.get("ct_storage_attempted") and _sfo.get("accepted_count", 0) > 0:
-                        _acq_report["ct_storage_attempted"] = True
-                    break
+            # F226G: Reconcile lane detail fields from source_family_outcomes in fallback path
+            _acq_report = reconcile_lane_detail_fields(_acq_report)
             # F222L: Seed context skip reason in fallback path
             if not _acq_report.get("seed_context_available"):
                 _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())
