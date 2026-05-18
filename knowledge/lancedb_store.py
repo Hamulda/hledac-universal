@@ -266,10 +266,17 @@ class LanceDBIdentityStore:
                 with self._cache_env.begin(write=True) as txn:
                     for key, val in items:
                         txn.put(key.encode(), orjson.dumps(val))
-            except Exception:
-                pass
+                return None  # success
+            except Exception as e:
+                logger.warning(f"LMDB batch put failed ({len(items)} items): {e}")
+                return items  # return failed items for re-queue
 
-        await asyncio.to_thread(_batch_put)
+        failed_items = await asyncio.to_thread(_batch_put)
+        if failed_items:
+            async with self._writeback_lock:
+                for key, val in failed_items:
+                    if key not in self._writeback_buffer:
+                        self._writeback_buffer[key] = val
 
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
