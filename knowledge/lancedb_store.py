@@ -253,16 +253,23 @@ class LanceDBIdentityStore:
             pass
 
     async def _flush_writeback(self) -> None:
-        """Flush writeback buffer to LMDB."""
+        """Flush writeback buffer to LMDB — single batch transaction."""
         async with self._writeback_lock:
             items = list(self._writeback_buffer.items())
             self._writeback_buffer.clear()
 
-        for key, val in items:
+        if not items:
+            return
+
+        def _batch_put():
             try:
-                await asyncio.to_thread(self._lmdb_put, key, val)
+                with self._cache_env.begin(write=True) as txn:
+                    for key, val in items:
+                        txn.put(key.encode(), orjson.dumps(val))
             except Exception:
                 pass
+
+        await asyncio.to_thread(_batch_put)
 
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
