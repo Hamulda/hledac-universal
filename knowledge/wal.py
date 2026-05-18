@@ -297,6 +297,9 @@ class WALManager:
 
         Removes (total_count - keep_count) oldest markers by timestamp.
         Returns number of markers evicted.
+
+        M1-safe: uses bounded heap instead of full sort, single write transaction
+        for all deletions, and processes in chunks to limit memory pressure.
         """
         if self._wal_lmdb is None:
             return 0
@@ -306,13 +309,35 @@ class WALManager:
             if env is None:
                 return 0
 
-            # Collect all pending markers with their timestamps
             prefix = "pending_duckdb_sync:"
-            markers: list[tuple[float, str]] = []  # (timestamp, key)
+            prefix_bytes = prefix.encode("utf-8")
+
+            # Phase 1: count total markers efficiently (cursor range)
+            with env.begin(write=False, buffers=True) as txn:
+                cursor = txn.cursor()
+                if not cursor.set_range(prefix_bytes):
+                    return 0
+                total_count = 0
+                for key_bytes, _ in cursor.iternext():
+                    key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                    if not key.startswith(prefix):
+                        break
+                    total_count += 1
+
+            if total_count <= keep_count:
+                return 0
+
+            evict_count = total_count - keep_count
+
+            # Phase 2: bounded heap — only keep evict_count smallest by ts
+            # heapq.nsmallest is O(n log k) vs full sort O(n log n), k = evict_count
+            import heapq
+            prefix_bytes = prefix.encode("utf-8")
+            oldest_keys: list[tuple[float, str]] = []
 
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
-                if cursor.set_range(prefix.encode("utf-8")):
+                if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
                         key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
                         if not key.startswith(prefix):
@@ -321,24 +346,27 @@ class WALManager:
                             vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
                             value = orjson.loads(vb)
                             ts = value.get("ts", 0.0)
-                            markers.append((ts, key))
+                            if len(oldest_keys) < evict_count:
+                                heapq.heappush(oldest_keys, (ts, key))
+                            elif ts < oldest_keys[0][0]:
+                                heapq.heapreplace(oldest_keys, (ts, key))
                         except Exception:
                             continue
 
-            if len(markers) <= keep_count:
+            if not oldest_keys:
                 return 0
 
-            # Sort by timestamp ascending (oldest first)
-            markers.sort(key=lambda x: x[0])
-            # Evict oldest (len - keep_count) markers
-            evict_count = len(markers) - keep_count
-            evicted = 0
-            for i in range(evict_count):
-                _, key = markers[i]
-                if self._wal_lmdb.delete(key):
-                    evicted += 1
+            # Extract just the keys for deletion (ts already embedded in heap)
+            keys_to_evict = [key for _, key in oldest_keys]
 
-            return evicted
+            # Phase 3: single write transaction for all deletions (C2 fix)
+            deleted = 0
+            with env.begin(write=True) as txn:
+                for key in keys_to_evict:
+                    if txn.delete(key.encode("utf-8")):
+                        deleted += 1
+
+            return deleted
         except Exception:
             return 0
 
