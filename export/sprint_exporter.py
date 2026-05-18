@@ -61,6 +61,93 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Sprint F229A: Terminal truth reconciliation helper
+# Resolves contradictions between product_value_summary, runtime_truth,
+# partial_export finding_count, and capability_synthesis surfaces.
+#
+# Truth precedence (first non-zero wins):
+#   1. explicit runtime_truth.accepted_findings if > 0
+#   2. scorecard.runtime_truth.accepted_findings if > 0
+#   3. scorecard.accepted_findings if > 0
+#   4. pvs.accepted / pvs.runtime_accepted_findings if > 0
+#   5. 0 fallback (all-zero = low-signal / smoke run)
+#
+# Rules:
+#   - If accepted_findings > 0 and meaningful=true, do NOT emit invalid_capability
+#     solely because product_value_summary is zero.
+#   - If pvs is zero but runtime_truth has accepted, backfill pvs.
+#   - Preserve explicit low-signal verdicts when ALL sources are zero.
+#   - Expose reconciliation via truth_reconciliation_applied + reason.
+# ---------------------------------------------------------------------------
+
+def reconcile_terminal_truth(
+    pvs: dict[str, Any] | None,
+    scorecard: dict[str, Any] | None,
+    runtime_truth: dict[str, Any] | None,
+    partial_finding_count: int | None = None,
+) -> tuple[dict[str, Any], int, bool, str]:
+    """
+    Sprint F229A: reconcile terminal truth across surfaces.
+
+    Returns (reconciled_pvs, accepted_count, truth_reconciliation_applied, reason).
+    Side-effect: reconciled_pvs may have accepted/runtime_accepted_findings backfilled.
+
+    Applied BEFORE: final terminal report write, partial export write, next_seeds,
+    and capability_synthesis generation.
+    """
+    scorecard = scorecard or {}
+    runtime_truth = runtime_truth or {}
+    pvs = dict(pvs) if pvs else {}
+
+    # Resolve accepted_findings using truth precedence
+    rt_accepted = 0
+    if runtime_truth and isinstance(runtime_truth, dict):
+        rt_accepted = runtime_truth.get("accepted_findings", 0) or 0
+
+    sc_rt_accepted = 0
+    _sc_rt = scorecard.get("runtime_truth")
+    if isinstance(_sc_rt, dict):
+        sc_rt_accepted = _sc_rt.get("accepted_findings", 0) or 0
+
+    sc_accepted = _pvs_n(scorecard, "accepted_findings", 0)
+    pvs_accepted = pvs.get("accepted", 0) if pvs else 0
+    pvs_runtime_accepted = pvs.get("runtime_accepted_findings", 0) if pvs else 0
+    partial_count = partial_finding_count or 0
+
+    # Truth precedence order
+    candidates = [
+        ("runtime_truth.accepted_findings", rt_accepted),
+        ("scorecard.runtime_truth.accepted_findings", sc_rt_accepted),
+        ("scorecard.accepted_findings", sc_accepted),
+        ("pvs.accepted", pvs_accepted),
+        ("pvs.runtime_accepted_findings", pvs_runtime_accepted),
+        ("partial_finding_count", partial_count),
+    ]
+
+    accepted_count = 0
+    truth_applied = False
+    reason = ""
+
+    for name, val in candidates:
+        if val > 0:
+            accepted_count = val
+            truth_applied = True
+            reason = f"reconciled_from={name}"
+            break
+
+    # Backfill pvs if runtime_truth had the truth
+    if accepted_count > 0:
+        if pvs.get("accepted", 0) == 0:
+            pvs["accepted"] = accepted_count
+        if pvs.get("runtime_accepted_findings", 0) == 0:
+            pvs["runtime_accepted_findings"] = accepted_count
+        if pvs.get("findings_per_minute", 0.0) == 0.0 and pvs.get("runtime_findings_per_minute", 0.0) > 0:
+            pvs["findings_per_minute"] = pvs["runtime_findings_per_minute"]
+
+    return pvs, accepted_count, truth_applied, reason
+
+
+# ---------------------------------------------------------------------------
 # Sprint F192F §1: PVS helper — type-safe numeric coercion for scorecard reads
 # Consolidates isinstance guard pattern used throughout _build_product_value_summary.
 # Guards against MagicMock / non-numeric values in test or degraded scenarios.
@@ -106,22 +193,32 @@ async def export_partial_sprint(
         eh = ensure_export_handoff(handoff, default_sprint_id=_sprint_id)
         _sprint_id = eh.sprint_id if eh.sprint_id != "unknown" else _sprint_id
     except Exception:
-        eh = handoff if isinstance(handoff, dict) else None
+        eh = handoff if not isinstance(handoff, dict) else None
 
     report_path = get_sprint_json_report_path(_sprint_id)
     partial_path = report_path.parent / f"{_sprint_id}_partial.json"
 
     runtime_truth: dict = {}
+    scorecard: dict = {}
     if eh and hasattr(eh, "runtime_truth"):
         runtime_truth = eh.runtime_truth or {}
     elif isinstance(handoff, dict):
         runtime_truth = handoff.get("runtime_truth", {})
 
-    scorecard: dict = {}
     if eh and hasattr(eh, "scorecard"):
         scorecard = eh.scorecard or {}
     elif isinstance(handoff, dict):
         scorecard = handoff.get("scorecard", {})
+
+    # Fallback: if runtime_truth is empty but scorecard has runtime_truth, use it
+    # F230B: ensures partial export top-level runtime_truth mirrors scorecard.runtime_truth
+    _sc_rt = scorecard.get("runtime_truth")
+    if _sc_rt is None:
+        _sc_rt = scorecard.get("run_truth")
+    if not runtime_truth and _sc_rt is not None and isinstance(_sc_rt, dict):
+        # F230B: filter raw_evidence — evidence lives only in LMDB, not JSON surfaces
+        _filtered_rt = {k: v for k, v in _sc_rt.items() if k != "raw_evidence"}
+        runtime_truth = _filtered_rt
 
     partial_artifact = {
         "sprint_id": _sprint_id,
@@ -846,11 +943,17 @@ def _build_product_value_summary(
     # 1. Základní scorecard facts
     # Sprint F192F §1: use module-level _pvs_num / _pvs_n helpers
     # (previously local _num / _n closures — now consolidated at module scope)
-    # [F223D] runtime_accepted_findings is the authoritative full-truth total at windup
-    # time (all lanes + ct_log_stored). Use it as the primary accepted value so PVS
-    # is never contradictory with runtime_truth.accepted_findings.
-    # Fall back to scorecard accepted_findings for scorecard-only / legacy test builds.
+    # [F230A] runtime_truth.accepted_findings is the authoritative canonical truth
+    # from __main__._runtime_truth() — use it as the PRIMARY source. Scorecard
+    # runtime_accepted_findings is a duplicate that can be absent or stale (0) even
+    # when canonical runtime_truth.accepted_findings > 0 (F229B residual bug).
+    # Priority: runtime_truth.accepted_findings > scorecard.runtime_accepted_findings
+    # > scorecard.accepted_findings (legacy fallback for scorecard-only builds).
+    runtime_truth: dict[str, Any] = eh.runtime_truth or {}
+    _rt_accepted = _pvs_n(runtime_truth, "accepted_findings", 0)
     runtime_accepted_findings = _pvs_n(scorecard, "runtime_accepted_findings", 0)
+    if _rt_accepted > 0:
+        runtime_accepted_findings = _rt_accepted
     accepted = runtime_accepted_findings
     if accepted == 0:
         accepted = _pvs_n(scorecard, "accepted_findings", 0)
@@ -2203,7 +2306,20 @@ def _build_capability_synthesis(
       runtime_truth: canonical runtime truth (is_meaningful, primary_signal_source)
       acquisition_report: from acq_truth["acquisition_report"]
       research_depth: from _compute_research_depth()
+
+    Sprint F229A: Truth precedence applied before verdict determination.
+    If accepted_findings > 0 and runtime_truth.is_meaningful=true, do NOT emit
+    invalid_capability solely because pvs.accepted is zero.
     """
+    # Sprint F229A: Reconcile accepted count BEFORE verdict logic
+    # Uses reconcile_terminal_truth to resolve pvs=0 vs runtime_truth > 0 contradiction.
+    _scorecard = {}
+    reconciled_pvs, runtime_accepted, truth_recon_applied, truth_recon_reason = reconcile_terminal_truth(
+        pvs, _scorecard, runtime_truth
+    )
+    # Use reconciled pvs for accepted counts in verdict logic
+    _pvs_accepted = reconciled_pvs.get("accepted", 0) if reconciled_pvs else 0
+
     # ── 1. Baseline capability verdict ─────────────────────────────────────
     # Terminality is prerequisite for any capability claim
     terminality_satisfied = False
@@ -2214,18 +2330,49 @@ def _build_capability_synthesis(
 
     is_meaningful = runtime_truth.get("is_meaningful", None) if runtime_truth else None
 
-    if not terminality_satisfied:
-        verdict = "invalid_capability"
-        confidence = 0.95
-    elif is_meaningful is False:
+    # F229B: Read corroboration score from pvs for verdict influence
+    _corrob_score = pvs.get("corroboration_score", 0.0) if pvs else 0.0
+    _corrob_penalties = pvs.get("corroboration_penalties", []) if pvs else []
+    _corrob_families = pvs.get("corroborating_families", ()) if pvs else ()
+
+    # Sprint F229A: Verdict precedence order (tightened to fix truth contradiction):
+    #   1. Smoke: is_meaningful=False → smoke_capability (regardless of accepted count)
+    #   2. F229A Fix: runtime has accepted findings from a meaningful run → useful_capability
+    #      (This overrides terminality check when runtime shows real findings but
+    #       acquisition_report was not captured / is None — common in partial exports)
+    #   3. F230C: Low corroboration score → weak_capability/invalid_capability
+    #   4. Invalid: terminality explicitly unsatisfied → invalid_capability
+    #   5. Default: terminality satisfied + meaningful → useful_capability
+    # Rules:
+    #   - Do NOT emit invalid_capability solely because pvs.accepted is zeroed
+    #     when runtime_truth had meaningful accepted findings
+    #   - Preserve invalid_capability when terminality actually failed AND no runtime findings
+    #   - F230C: Low corroboration score (< 0.3) with feed-only penalty → weak_capability
+    # Note: The F229A fix (step 2) requires runtime_accepted > 0 from a reconciled source,
+    # not just pvs.accepted. When pvs.accepted > 0 but _pvs_accepted (reconciled) is 0,
+    # the F229A path should NOT override the F230C low-corroboration check.
+    if is_meaningful is False:
         verdict = "smoke_capability"
         confidence = 0.85
+    elif _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
+        # F230C: Low corroboration with feed-only penalty → weak capability
+        # (checked before F229A path to handle low_score + high_accepted case)
+        verdict = "weak_capability"
+        confidence = 0.70
+    elif runtime_accepted > 0 and truth_recon_applied:
+        # F229A: runtime_truth had accepted findings but pvs was zeroed.
+        # Override the zeroed pvs signal — this is a meaningful run.
+        verdict = "useful_capability"
+        confidence = 0.80
+    elif not terminality_satisfied:
+        verdict = "invalid_capability"
+        confidence = 0.95
     else:
         verdict = "useful_capability"
         confidence = 0.75
 
     # ── 2. Evidence quality signals ─────────────────────────────────────────
-    accepted = pvs.get("accepted", 0) if pvs else 0
+    accepted = _pvs_accepted if _pvs_accepted > 0 else (pvs.get("accepted", 0) if pvs else 0)
     nonfeed_accepted = 0
     if pvs:
         # nonfeed signals in pvs — look for ct_findings/public_findings in branch_mix
@@ -2258,17 +2405,16 @@ def _build_capability_synthesis(
     else:
         source_diversity_summary = "unknown_source"
 
-    # ── 4. Corroboration summary ─────────────────────────────────────────────
+    # ── 4. Corroboration summary (F230C: use F229B corroboration_score) ───────
+    # F230C: Derive corroboration_summary from pvs.lane_corroboration_score
+    # rather than research_depth.depth_signals (which is a different signal).
     corroboration = "none"
-    if research_depth and isinstance(research_depth, dict):
-        ds = research_depth.get("depth_signals", {})
-        if isinstance(ds, dict):
-            if ds.get("corroborated"):
-                corroboration = "corroborated"
-            elif ds.get("noisy_signal"):
-                corroboration = "noisy"
-            elif ds.get("campaign_hints", 0) > 0:
-                corroboration = "campaign_hint"
+    if _corrob_score >= 0.75:
+        corroboration = "corroborated"
+    elif _corrob_score < 0.3:
+        corroboration = "noisy" if _corrob_score > 0 else "feed_only"
+    elif "campaign_hint" in _corrob_families:
+        corroboration = "campaign_hint"
 
     # ── 5. Feed noise summary ─────────────────────────────────────────────────
     if pvs:
@@ -2288,10 +2434,14 @@ def _build_capability_synthesis(
         feed_noise_summary = "unknown"
 
     # ── 6. Non-feed value present ────────────────────────────────────────────
-    nonfeed_value = nonfeed_accepted > 0 or (len(source_types) > 1 and len(source_types) <= 3)
+    # F230C: Also consider corroborating_families for nonfeed presence
+    _nonfeed_families_set = {"ct", "doh", "wayback", "passive_dns"}
+    _has_corrob_nonfeed = bool(_nonfeed_families_set & set(_corrob_families))
+    nonfeed_value = nonfeed_accepted > 0 or _has_corrob_nonfeed or (len(source_types) > 1 and len(source_types) <= 3)
     nonfeed_value_present = bool(nonfeed_value)
 
     # ── 7. Next engineering action (deterministic, no ML) ───────────────────
+    # F230C: Influence engineering action from F229B corroboration score
     if verdict == "invalid_capability":
         next_engineering_action = "fix_terminality_before_capacity_expansion"
     elif hardware_constrained:
@@ -2300,6 +2450,15 @@ def _build_capability_synthesis(
         next_engineering_action = "resolve_terminality_gaps_first"
     elif feed_heavy and not useful_evidence:
         next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
+    elif _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
+        # F230C: Low corroboration + feed-only penalty → terminality fix
+        next_engineering_action = "fix_terminality_before_capacity_expansion"
+    elif _corrob_score >= 0.7 and _has_corrob_nonfeed:
+        # F230C: High corroboration with nonfeed families → expand
+        next_engineering_action = "expand_or_deepen_pivots"
+    elif "nonfeed_missed" in _corrob_penalties or _corrob_score < 0.2:
+        # F230C: Nonfeed missing → fix nonfeed terminality
+        next_engineering_action = "fix_nonfeed_terminality"
     elif corroboration == "noisy":
         next_engineering_action = "investigate_signal_noise_source"
     elif research_depth and isinstance(research_depth, dict):
@@ -2326,12 +2485,16 @@ def _build_capability_synthesis(
                 next_engineering_action = "bootstrap_ct_provider_before_scale"
 
     # ── 8. Next investigation action (for analyst) ─────────────────────────
+    # F230C: Influence from F229B corroboration score
     if analyst_brief and isinstance(analyst_brief, dict):
         target_memory = _get_brief_field(analyst_brief, "target_memory_summary", "") or ""
         if isinstance(target_memory, str) and target_memory:
             next_investigation_action = f"follow_up_on_target_memory_{target_memory[:40]}"
         else:
             next_investigation_action = "review_fresh_findings_and_query_adjustments"
+    elif _corrob_score < 0.2:
+        # F230C: Very low corroboration → diagnostic action
+        next_investigation_action = "diagnose_acquisition_or_query_effectiveness"
     elif accepted > 10:
         next_investigation_action = "analyze_top_findings_for_operational_actionability"
     elif accepted > 0:

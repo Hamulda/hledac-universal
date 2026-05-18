@@ -135,6 +135,7 @@ class JSONFormatter(ExportFormatter):
             _compute_research_depth,
             _build_capability_synthesis,
             _derive_run_truth_note,
+            reconcile_terminal_truth,
             _derive_branch_truth,
             _derive_best_first_move,
             _derive_why_this_run_matters,
@@ -198,6 +199,19 @@ class JSONFormatter(ExportFormatter):
 
         # Sprint F150I §2: Build product_value_summary
         pvs = _build_product_value_summary(store, eh, _sprint_id)
+
+        # Sprint F229A: Reconcile terminal truth BEFORE capability_synthesis
+        # Resolves pvs.accepted=0 vs runtime_truth.accepted=5 contradiction.
+        # capability_runtime_truth is computed fresh here (not from eh yet) to avoid
+        # forward-reference issues. It is re-derived below for report attachment.
+        eh_scorecard = eh.scorecard if eh.scorecard else {}
+        _pre_runtime_truth = _get_runtime_truth(eh)
+        reconciled_pvs, _, truth_recon_applied, truth_recon_reason = reconcile_terminal_truth(
+            pvs, eh_scorecard, _pre_runtime_truth
+        )
+        if truth_recon_applied:
+            pvs = reconciled_pvs
+            logger.info(f"[EXPORT] F229A truth reconciliation: {truth_recon_reason}")
 
         # Sprint F225F/F228D: capability_synthesis
         acquisition_report = _get_acquisition_truth(eh).get("acquisition_report")
