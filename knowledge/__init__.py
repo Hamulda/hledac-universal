@@ -23,7 +23,6 @@ from typing import Any
 _LAZY_EXPORT_MAP: dict[str, str] = {
     # duckdb_store — heavy: duckdb, psutil, msgspec
     "DuckDBShadowStore": "knowledge.duckdb_store",
-    "DuckDBReadStore": "knowledge.duckdb_read_store",
     "ActivationResult": "knowledge.duckdb_store",
     "ReplayResult": "knowledge.duckdb_store",
     "CanonicalFinding": "knowledge.duckdb_store",
@@ -185,13 +184,6 @@ def __getattr__(name: str) -> Any:
                 # knowledge subpackage on path but module not found —
                 # resolve to hledac.universal.knowledge.* path
                 module = import_module("hledac.universal." + module_path)
-                # If attribute not in this module, the DuckDBReadStore case:
-                # DuckDBReadStore lives in duckdb_read_store.py, not duckdb_store.py
-                # Try the sibling module before giving up
-                if not hasattr(module, name):
-                    sibling = module_path.replace("duckdb_store", "duckdb_read_store")
-                    if sibling != module_path:
-                        module = import_module("hledac.universal." + sibling)
             else:
                 raise
         value = getattr(module, name)
