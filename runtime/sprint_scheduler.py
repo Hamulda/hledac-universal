@@ -1294,6 +1294,17 @@ class SprintSchedulerResult:
     seed_context_propagated: bool = False
     lanes_unlocked_by_seed_context: list[str] = field(default_factory=list)
     seed_context_skip_reason: str = ""
+    seed_context_source: str = ""
+    # F220G: Feed → pivot integration telemetry
+    pivot_seed_count: int = 0
+    pivot_seed_type_counts: dict[str, int] = field(default_factory=dict)
+    pivot_seed_sample: tuple[str, ...] = ()
+    # [F222I] Grouped seeds for nonfeed lane seeding (built from extraction seeds)
+    pivot_seed_domains: tuple[str, ...] = ()
+    pivot_seed_ips: tuple[str, ...] = ()
+    pivot_seed_urls: tuple[str, ...] = ()
+    pivot_seed_hashes: tuple[str, ...] = ()
+    pivot_seed_cves: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

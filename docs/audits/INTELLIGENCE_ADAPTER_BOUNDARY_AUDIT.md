@@ -105,9 +105,11 @@ Not modified by this audit.
    ```
    chore(intelligence): remove deprecated ti_feed_adapter shim
    ```
-   - Remove file
-   - Remove from `intelligence/__init__.py` exports
-   - Verify zero remaining imports
+   - ~~Remove file~~
+   - ~~Remove from `intelligence/__init__.py` exports~~ (no exports)
+   - ~~Verify zero remaining imports~~
+   - ✅ **REMOVED** (Sprint F229) — file deleted, test-only references removed, seal test added at `tests/probe_f229/test_seal_intelligence_ti_feed_adapter.py`
+   - `discovery.ti_feed_adapter` remains ACTIVE
 
 3. **Pre-existing test failures** (7 failures in `probe_f202e` + `test_ipfs_canonical`): caused by `tool_registry.py` import error (`WebSearchArgs` not found in `tools.registry`). Unrelated to adapter audit — fix in separate sprint.
 

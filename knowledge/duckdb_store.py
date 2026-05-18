@@ -5673,39 +5673,24 @@ class DuckDBShadowStore:
         Value: serialized dict with id, query, source_type, confidence, ts
 
         Returns True if LMDB write succeeded.
+
+        Delegation: Sprint F233A micro-cleanup — routes through WALManager
+        to eliminate the residual direct LMDB WAL path.
         """
-        try:
-            import time as _time
+        # Sprint F233A: Delegate to WALManager (removes residual _wal_lmdb seam)
+        if self._wal_manager is None:
+            _wal_root = self._db_path.parent if self._db_path else None
+            if _wal_root is None:
+                return False
+            self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+            self._wal_manager.initialize()
 
-            from hledac.universal.tools.lmdb_kv import LMDBKVStore
-
-            # Get or create the shared LMDB WAL store
-            if not hasattr(self, "_wal_lmdb"):
-                _wal_root = self._db_path.parent if self._db_path else None
-                if _wal_root is None:
-                    return False
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
-                # Initialize schema on first access
-                try:
-                    self._wal_lmdb.put(
-                        "_schema_init",
-                        {"_": "ok"},
-                    )
-                    self._wal_lmdb.delete("_schema_init")
-                except Exception:
-                    pass
-
-            key = f"finding:{finding_id}"
-            value = {
-                "id": finding_id,
-                "query": query,
-                "source_type": source_type,
-                "confidence": confidence,
-                "ts": _time.time(),
-            }
-            return self._wal_lmdb.put(key, value)
-        except Exception:
-            return False
+        return self._wal_manager.wal_write_finding(
+            finding_id=finding_id,
+            query=query,
+            source_type=source_type,
+            confidence=confidence,
+        )
 
     def _activation_record_finding(
         self,

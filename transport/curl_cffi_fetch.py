@@ -14,6 +14,8 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
+from transport.body_limiter import read_body_with_cap
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S = 10.0
@@ -88,14 +90,11 @@ async def fetch_via_curl_cffi(
         )
 
         # Read body with hard cap at max_bytes
-        # F206K: Use bytearray.extend() — O(1) amortized vs bytes += O(n²)
-        content_bytes = bytearray()
-        async for chunk in response.iter_content(chunk_size=65536):
-            content_bytes.extend(chunk)
-            if len(content_bytes) > max_bytes:
-                del content_bytes[max_bytes:]  # truncate in-place
-                logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
-                break
+        # Uses shared body_limiter helper (same pattern: bytearray + del cap)
+        chunks = response.iter_content(chunk_size=65536)
+        content_bytes, _truncated = await read_body_with_cap(chunks, max_bytes)
+        if _truncated:
+            logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
 
         content_type = ""
         if response.headers:

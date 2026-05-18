@@ -361,7 +361,7 @@ def should_use_httpx_h2(
 async def fetch_via_httpx_h2(
     url: str,
     timeout_s: float = 20.0,
-    _max_bytes: int = 2 * 1024 * 1024,  # noqa: F841  # reserved for future size enforcement
+    _max_bytes: int = 2 * 1024 * 1024,  # noqa: F841  # reserved; body cap deferred — see TRANSPORT_COMMON_POLICY_AUDIT.md
     _max_redirects: int = 10,
 ) -> "httpx.Response":  # type: ignore[name-defined]  # httpx imported lazily inside
     """

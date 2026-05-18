@@ -18,6 +18,7 @@ Ran in: hledac/universal/tests/
 Command: python3 -m pytest test_sprint8ao_duckdb_sidecar.py -v
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -241,6 +242,101 @@ except Exception as e:
 """
         result = _run_python(code)
         assert result == "import_ok", f"orchestrator import failed: {result}"
+
+
+class TestWalWriteFindingDelegation:
+    """Sprint F233A: _wal_write_finding delegates to WALManager.wal_write_finding."""
+
+    def test_wal_write_finding_delegates_to_wal_manager(self):
+        """
+        _wal_write_finding(finding_id, query, source_type, confidence)
+        calls WALManager.wal_write_finding and returns its bool result.
+
+        Fail-soft: returns False when _wal_manager is None and _db_path is None.
+        """
+        code = """
+import sys, tempfile, json
+sys.path.insert(0, '.')
+from knowledge.duckdb_store import DuckDBShadowStore
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    store = DuckDBShadowStore()
+    store.initialize()
+
+    # _wal_write_finding should succeed via delegation
+    ok = store._wal_write_finding(
+        finding_id='f233a_test_1',
+        query='test query',
+        source_type='test_source',
+        confidence=0.99,
+    )
+    print(json.dumps({'delegation_ok': ok}))
+
+    # Verify WALManager has it
+    wm = store._wal_manager
+    record = wm.wal_get_finding('f233a_test_1') if wm else None
+    print(json.dumps({
+        'wal_manager_exists': wm is not None,
+        'record': record,
+    }))
+    store.close()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=str(UNIVERSAL_ROOT),
+        )
+        lines = [l for l in result.stdout.strip().splitlines()
+                 if l.startswith("{") and not l.startswith("WARNING")]
+        assert len(lines) >= 2, f"unexpected output: {result.stdout!r}"
+        data1 = json.loads(lines[0])
+        data2 = json.loads(lines[1])
+        assert data1.get("delegation_ok") is True, f"delegation failed: {data1}"
+        assert data2.get("wal_manager_exists") is True, f"no WALManager: {data2}"
+        record = data2.get("record")
+        assert record is not None, "finding not in WALManager"
+        assert record["query"] == "test query", f"wrong query: {record}"
+        assert record["source_type"] == "test_source", f"wrong source_type: {record}"
+        assert record["confidence"] == 0.99, f"wrong confidence: {record}"
+
+    def test_wal_write_finding_fail_soft_no_db_path(self):
+        """
+        Fail-soft: _wal_write_finding returns False when _db_path is None
+        (e.g., path resolution returns None) — WALManager cannot be initialized.
+        """
+        code = """
+import sys, json
+sys.path.insert(0, '.')
+from knowledge.duckdb_store import DuckDBShadowStore
+
+store = DuckDBShadowStore()
+# Simulate _db_path = None by patching after init (no path resolution)
+store._db_path = None
+store._wal_manager = None  # also ensure no stale manager
+
+ok = store._wal_write_finding(
+    finding_id='should_not_write',
+    query='orphan',
+    source_type='test',
+    confidence=0.5,
+)
+print(json.dumps({'fail_soft_ok': ok, 'db_path': store._db_path}))
+store.close()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=str(UNIVERSAL_ROOT),
+            env={**os.environ, "PYTHONPATH": "/Users/vojtechhamada/PycharmProjects/Hledac"},
+        )
+        lines = [l for l in result.stdout.strip().splitlines()
+                 if l.startswith("{") and not l.startswith("WARNING")]
+        assert len(lines) >= 1, f"unexpected output: {result.stdout!r}"
+        data = json.loads(lines[0])
+        # _db_path=None → fail-soft returns False
+        assert data.get("fail_soft_ok") is False, f"expected fail-soft False: {data}"
 
 
 if __name__ == "__main__":
