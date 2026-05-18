@@ -41,6 +41,14 @@ try:
 except ImportError:
     BS4_AVAILABLE = False
 
+# Tier 2: selectolax-first for HTML parsing (lazy import — no import-time requirement)
+SELECTOLAX_AVAILABLE = False
+try:
+    from selectolax.parser import HTMLParser as _SelectoLAXParser
+    SELECTOLAX_AVAILABLE = True
+except ImportError:
+    _SelectoLAXParser = None
+
 try:
     from hledac.security.temporal_anonymizer import TemporalAnonymizer
     from hledac.security.zero_attribution_engine import ZeroAttributionEngine
@@ -1185,51 +1193,85 @@ class ArchiveResurrector:
         return max(0.0, min(1.0, score))
     
     def _extract_metadata_html(self, content: str) -> Dict[str, Any]:
-        """Extract metadata from HTML content"""
+        """Extract metadata from HTML content.
+
+        Tier 2 migration: selectolax-first → bs4 fallback → regex/stdlib fallback.
+        """
         metadata = {}
-        
-        if not BS4_AVAILABLE:
-            return metadata
-        
+
+        # Tier 1: selectolax (fast, Rust-based)
+        if SELECTOLAX_AVAILABLE and _SelectoLAXParser:
+            try:
+                parser = _SelectoLAXParser(content)
+                for tag in parser.css("title"):
+                    text = tag.text(strip=True)
+                    if text:
+                        metadata["title"] = text
+                        break
+                for tag in parser.css('meta[property="og:title"]'):
+                    metadata["og_title"] = tag.attributes.get("content", "")
+                for tag in parser.css('meta[name="author"]'):
+                    metadata["author"] = tag.attributes.get("content", "")
+                for tag in parser.css('meta[property="article:published_time"]'):
+                    metadata["date"] = tag.attributes.get("content", "")
+                for tag in parser.css('meta[name="publishedDate"]'):
+                    metadata.setdefault("date", tag.attributes.get("content", ""))
+                for tag in parser.css('meta[name="date"]'):
+                    metadata.setdefault("date", tag.attributes.get("content", ""))
+                for tag in parser.css('meta[name="description"]'):
+                    metadata["description"] = tag.attributes.get("content", "")
+                return metadata
+            except Exception:
+                pass  # Fall through to bs4
+
+        # Tier 2: bs4 with html.parser fallback
+        if BS4_AVAILABLE:
+            try:
+                soup = BeautifulSoup(content, "html.parser")
+                title_tag = soup.find("title")
+                if title_tag:
+                    metadata["title"] = title_tag.get_text(strip=True)
+                og_title = soup.find("meta", property="og:title")
+                if og_title:
+                    metadata["og_title"] = og_title.get("content", "")
+                author = soup.find("meta", attrs={"name": "author"})
+                if author:
+                    metadata["author"] = author.get("content", "")
+                date_tags = [
+                    soup.find("meta", property="article:published_time"),
+                    soup.find("meta", attrs={"name": "publishedDate"}),
+                    soup.find("meta", attrs={"name": "date"}),
+                ]
+                for tag in date_tags:
+                    if tag:
+                        metadata["date"] = tag.get("content", "")
+                        break
+                desc = soup.find("meta", attrs={"name": "description"})
+                if desc:
+                    metadata["description"] = desc.get("content", "")
+                return metadata
+            except Exception:
+                pass  # Fall through to regex
+
+        # Tier 3: regex/stdlib fallback (no external dependencies)
         try:
-            soup = BeautifulSoup(content, 'html.parser')
-            
-            # Title
-            title_tag = soup.find('title')
-            if title_tag:
-                metadata["title"] = title_tag.get_text(strip=True)
-            
-            # OG title
-            og_title = soup.find('meta', property='og:title')
-            if og_title:
-                metadata["og_title"] = og_title.get('content', '')
-            
-            # Author
-            author = soup.find('meta', attrs={'name': 'author'})
-            if author:
-                metadata["author"] = author.get('content', '')
-            
-            # Publication date
-            date_tags = [
-                soup.find('meta', property='article:published_time'),
-                soup.find('meta', attrs={'name': 'publishedDate'}),
-                soup.find('meta', attrs={'name': 'date'}),
-            ]
-            for tag in date_tags:
-                if tag:
-                    metadata["date"] = tag.get('content', '')
-                    break
-            
-            # Description
-            desc = soup.find('meta', attrs={'name': 'description'})
-            if desc:
-                metadata["description"] = desc.get('content', '')
-            
-        except Exception as e:
-            logger.debug(f"Metadata extraction failed: {e}")
-        
+            title_match = re.search(r"<title[^>]*>([^<]+)</title>", content, re.IGNORECASE)
+            if title_match:
+                metadata["title"] = title_match.group(1).strip()
+            for match in re.finditer(r'<meta\s+(?:property|name)=["\']author["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):
+                metadata["author"] = match.group(1)
+            for match in re.finditer(r'<meta\s+property=["\']article:published_time["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):
+                metadata["date"] = match.group(1)
+            for match in re.finditer(r'<meta\s+name=["\'](?:publishedDate|date)["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE):
+                metadata.setdefault("date", match.group(1))
+            desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']', content, re.IGNORECASE)
+            if desc_match:
+                metadata["description"] = desc_match.group(1)
+        except Exception:
+            pass
+
         return metadata
-    
+
     def _select_best_content(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Select best content from results"""
         # Sort by quality (best first) and then by timestamp (most recent)

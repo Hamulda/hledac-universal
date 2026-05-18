@@ -254,3 +254,88 @@ class TestHtmlTextFast:
 
         text = html_to_text_fast("")
         assert text == ""
+
+
+# ---------------------------------------------------------------------------
+# archive_discovery — ArchiveResurrector._extract_metadata_html
+# ---------------------------------------------------------------------------
+
+_METADATA_HTML_FIXTURE = """<!DOCTYPE html>
+<html>
+<head>
+<title>Test Page Title</title>
+<meta property="og:title" content="OG Test Title">
+<meta name="author" content="Test Author">
+<meta property="article:published_time" content="2024-01-15T10:00:00Z">
+<meta name="description" content="Test page description">
+</head>
+<body><p>Content here</p></body>
+</html>"""
+
+_METADATA_HTML_NO_AUTHOR = """<!DOCTYPE html>
+<html>
+<head>
+<title>No Author Page</title>
+<meta name="publishedDate" content="2024-02-20">
+<meta name="description" content="A page without author">
+</head>
+<body>Empty</body>
+</html>"""
+
+
+class TestArchiveDiscoveryMetadataExtraction:
+    """Characterize ArchiveResurrector._extract_metadata_html behavior.
+
+    Current: bs4-only (html.parser), fails silently when bs4 unavailable.
+    Target: selectolax-first → bs4 fallback → regex/stdlib fallback.
+
+    Returns Dict with keys: title, og_title, author, date, description.
+    """
+
+    def test_extracts_standard_metadata(self) -> None:
+        """All standard meta fields are extracted."""
+        from intelligence.archive_discovery import ArchiveResurrector
+
+        resurrector = ArchiveResurrector()
+        meta = resurrector._extract_metadata_html(_METADATA_HTML_FIXTURE)
+
+        assert meta.get("title") == "Test Page Title"
+        assert meta.get("og_title") == "OG Test Title"
+        assert meta.get("author") == "Test Author"
+        assert meta.get("date") == "2024-01-15T10:00:00Z"
+        assert meta.get("description") == "Test page description"
+
+    def test_extracts_publisheddate_fallback(self) -> None:
+        """publishedDate meta tag is captured as date."""
+        from intelligence.archive_discovery import ArchiveResurrector
+
+        resurrector = ArchiveResurrector()
+        meta = resurrector._extract_metadata_html(_METADATA_HTML_NO_AUTHOR)
+
+        assert meta.get("title") == "No Author Page"
+        assert meta.get("date") == "2024-02-20"
+        assert meta.get("description") == "A page without author"
+
+    def test_malformed_html_no_crash(self, malformed_html: str) -> None:
+        """Malformed HTML must not raise; empty or partial dict is acceptable."""
+        from intelligence.archive_discovery import ArchiveResurrector
+
+        resurrector = ArchiveResurrector()
+        meta = resurrector._extract_metadata_html(malformed_html)
+        assert isinstance(meta, dict)
+
+    def test_empty_html_returns_empty_dict(self) -> None:
+        """Empty HTML returns empty dict, not an exception."""
+        from intelligence.archive_discovery import ArchiveResurrector
+
+        resurrector = ArchiveResurrector()
+        meta = resurrector._extract_metadata_html("")
+        assert meta == {}
+
+    def test_no_meta_tags_returns_empty_dict(self) -> None:
+        """HTML with no meta tags returns empty dict (title only if found)."""
+        from intelligence.archive_discovery import ArchiveResurrector
+
+        resurrector = ArchiveResurrector()
+        meta = resurrector._extract_metadata_html("<html><body>Plain text</body></html>")
+        assert isinstance(meta, dict)
