@@ -136,3 +136,18 @@ coordinators/swarm/
 2. **Re-export parity:** `coordinators/__init__.py` re-exports must match after split
 3. **No behavior change:** All methods on all 8 types must behave identically before/after split
 4. **Test coverage gap:** Characterization tests in this audit prevent regression during future split
+
+---
+
+## 8. Decision Record (2026-05-18)
+
+**Decision:** No production split in this sprint.
+
+| Topic | Decision | Rationale |
+|-------|----------|-----------|
+| Production split | **Deferred** | Risk of import/behavior regression; no urgency driving immediate action |
+| P2P layer | **Preserved as placeholder/stub** | `_reassign_node_tasks` is internal P2P helper; reachable only from `run_heartbeat_monitor`; no external callers |
+| P2P extraction path | `coordinators/swarm/{types,node,consensus}.py` | Domain decomposition in §3 maps cleanly to these three submodules |
+| Safety net | **Characterization tests** | `SwarmNode` + `ConsensusProposal` behavior tests (§5) are the regression guard for future split |
+
+**No runtime changes in this sprint.**
