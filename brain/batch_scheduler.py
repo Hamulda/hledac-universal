@@ -280,8 +280,6 @@ class BatchScheduler:
 
     async def _worker(self) -> None:
         """Background worker that processes batches with boundary segregation."""
-        tie_breaker = itertools.count()
-
         while True:
             # Poison pill guard — exit if shutdown flag is set
             if self._worker_shutting_down:
