@@ -81,8 +81,7 @@ class TestF234ExportSerializationFix:
 
     @pytest.mark.asyncio
     async def test_no_truncation_via_scorecard_size(self, handoff_with_nested_scorecard):
-        """Scorecard field size in JSON >= original scorecard dict size (no silent truncation)."""
-        original_size = len(json.dumps(handoff_with_nested_scorecard.scorecard))
+        """Deep scorecard field size in JSON >= original deep field size (no silent truncation)."""
         await export_sprint(store=None, handoff=handoff_with_nested_scorecard, export_mode="slim")
         report_path = get_sprint_json_report_path("F234A")
 
@@ -90,8 +89,10 @@ class TestF234ExportSerializationFix:
             data = json.load(f)
 
         output_scorecard_size = len(json.dumps(data.get("deep", {})))
-        assert output_scorecard_size >= original_size * 0.99, \
-            f"Scorecard appears truncated: output {output_scorecard_size} < original {original_size}"
+        # Compare deep field output size vs original deep field size (not full scorecard)
+        original_deep_size = len(json.dumps(handoff_with_nested_scorecard.scorecard["deep"]))
+        assert output_scorecard_size >= original_deep_size * 0.99, \
+            f"Deep field appears truncated: output {output_scorecard_size} < original {original_deep_size}"
 
     @pytest.mark.asyncio
     async def test_parse_error_fallback(self):

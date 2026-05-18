@@ -160,7 +160,7 @@ class JSONFormatter(ExportFormatter):
         boundary_content = _make_serializable(eh.scorecard)
         boundary_text = json.dumps(boundary_content, indent=2, default=str)
 
-        sanitized_scorecard_raw = boundary_text
+        sanitized_str = boundary_text
         sec_coordinator = None
         if enable_security_enrichment and export_mode == "full":
             try:
@@ -169,7 +169,7 @@ class JSONFormatter(ExportFormatter):
                 await sec_coordinator.initialize()
                 gate_result = await sec_coordinator.sanitize_outbound(boundary_text, force_fallback=True)
                 if "sanitized" in gate_result:
-                    sanitized_scorecard_raw = gate_result["sanitized"]
+                    sanitized_str = gate_result["sanitized"]
                 else:
                     logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key — using degraded structure")
                     degraded = {
@@ -177,7 +177,7 @@ class JSONFormatter(ExportFormatter):
                         "sprint_id": _sprint_id,
                         "report": "sanitization_failed_degraded_export",
                     }
-                    sanitized_scorecard_raw = json.dumps(degraded, default=str)
+                    sanitized_str = json.dumps(degraded, default=str)
                 if gate_result.get("pii_count"):
                     logger.info("[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
                                 gate_result.get("pii_count"), gate_result.get("risk_level", "unknown"))
@@ -188,7 +188,7 @@ class JSONFormatter(ExportFormatter):
                     "sprint_id": _sprint_id,
                     "report": "sanitization_failed_degraded_export",
                 }
-                sanitized_scorecard_raw = json.dumps(degraded, default=str)
+                sanitized_str = json.dumps(degraded, default=str)
             finally:
                 if sec_coordinator is not None:
                     try:
@@ -196,7 +196,18 @@ class JSONFormatter(ExportFormatter):
                     except Exception:
                         pass
         else:
-            sanitized_scorecard_raw = boundary_text
+            sanitized_str = boundary_text
+
+        # Sprint F234: Parse once — boundary_content stays as dict, sanitize works on JSON string.
+        # No dict→str→dict→str roundtrip. All downstream ops on dict.
+        try:
+            sanitized_obj = json.loads(sanitized_str)
+        except (json.JSONDecodeError, TypeError) as parse_err:
+            logger.warning(
+                "[EXPORT] sanitize boundary parse failed (size=%d): %s. Using boundary_content as degraded fallback.",
+                len(sanitized_str), parse_err
+            )
+            sanitized_obj = boundary_content if isinstance(boundary_content, dict) else {}
 
         # Sprint F150I §2: Build product_value_summary
         pvs = _build_product_value_summary(store, eh, _sprint_id)
@@ -224,17 +235,9 @@ class JSONFormatter(ExportFormatter):
 
         # 1. JSON report — canonical path
         try:
-            try:
-                sanitized_obj = json.loads(sanitized_scorecard_raw)
-            except (json.JSONDecodeError, TypeError) as parse_err:
-                logger.warning(
-                    "[EXPORT] sanitize boundary parse failed (truncated JSON, size=%d): %s. "
-                    "Writing sanitized prefix only.",
-                    len(sanitized_scorecard_raw), parse_err
-                )
-                sanitized_obj = json.loads(sanitized_scorecard_raw[:5000]) if sanitized_scorecard_raw else {}
-                if sanitized_obj is None:
-                    sanitized_obj = {}
+            # Sprint F234: sanitized_obj already parsed from sanitized_str above.
+            # No dict→str→dict→str roundtrip, no 5000-char truncation fallback.
+            # boundary_content (dict) used as degraded fallback on parse failure.
 
             # Sprint F206S §3: Attach additive canonical truth surfaces
             if isinstance(sanitized_obj, dict):
