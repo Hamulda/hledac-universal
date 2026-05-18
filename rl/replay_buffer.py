@@ -2,17 +2,28 @@
 Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatelné).
 """
 
+from __future__ import annotations
+
 import numpy as np
 from pathlib import Path
 from typing import Dict
 
-try:
-    import mlx.core as mx
+# Lazy MLX accessor — defer mlx.core to first use (M1 8GB import-time savings)
+_mlx_core_mod = None
+_MLX_CORE_AVAILABLE = False
 
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
+
+def _get_mlx_core():
+    """Lazily import mlx.core, returning None if unavailable."""
+    global _mlx_core_mod, _MLX_CORE_AVAILABLE
+    if _mlx_core_mod is None:
+        try:
+            import mlx.core as _mlx_core_mod
+            _MLX_CORE_AVAILABLE = True
+        except ImportError:
+            _mlx_core_mod = None
+            _MLX_CORE_AVAILABLE = False
+    return _mlx_core_mod
 
 
 class MARLReplayBuffer:
@@ -29,8 +40,10 @@ class MARLReplayBuffer:
         self.size = 0
 
     def push(self, state, actions: np.ndarray, reward: float, next_state, done: bool):
-        if MLX_AVAILABLE:
-            mx.eval(state, next_state)
+        if _MLX_CORE_AVAILABLE:
+            mx = _get_mlx_core()
+            if mx is not None:
+                mx.eval(state, next_state)
         self.states[self.pos] = np.array(state)
         self.actions[self.pos] = actions
         self.rewards[self.pos] = reward
@@ -41,14 +54,16 @@ class MARLReplayBuffer:
 
     def sample(self, batch_size: int) -> Dict:
         idx = np.random.randint(0, self.size, batch_size)
-        if MLX_AVAILABLE:
-            return {
-                'states': mx.array(self.states[idx]),
-                'actions': mx.array(self.actions[idx]),
-                'rewards': mx.array(self.rewards[idx]),
-                'next_states': mx.array(self.next_states[idx]),
-                'dones': mx.array(self.dones[idx])
-            }
+        if _MLX_CORE_AVAILABLE:
+            mx = _get_mlx_core()
+            if mx is not None:
+                return {
+                    'states': mx.array(self.states[idx]),
+                    'actions': mx.array(self.actions[idx]),
+                    'rewards': mx.array(self.rewards[idx]),
+                    'next_states': mx.array(self.next_states[idx]),
+                    'dones': mx.array(self.dones[idx])
+                }
         return {
             'states': self.states[idx],
             'actions': self.actions[idx],

@@ -3,18 +3,29 @@ Paged Attention Cache – ukládá top‑K tokenů po stránkách.
 Samostatně testovatelná komponenta.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
-# MLX import s fallback
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
+# Lazy MLX accessors — defer mlx.core to first use (M1 8GB import-time savings)
+_mlx_core_mod = None
+_MLX_CORE_AVAILABLE = False
+
+
+def _get_mlx_core():
+    """Lazily import mlx.core, returning None if unavailable."""
+    global _mlx_core_mod, _MLX_CORE_AVAILABLE
+    if _mlx_core_mod is None:
+        try:
+            import mlx.core as _mlx_core_mod
+            _MLX_CORE_AVAILABLE = True
+        except ImportError:
+            _mlx_core_mod = None
+            _MLX_CORE_AVAILABLE = False
+    return _mlx_core_mod
 
 
 class PagedAttentionCache:
@@ -47,7 +58,7 @@ class PagedAttentionCache:
         self.top_k = top_k
 
         # List of (keys, values, avg_score) tuples
-        self.pages: List[Tuple[mx.array, mx.array, float]] = []
+        self.pages: List[Tuple[Any, Any, float]] = []
         self.page_scores: List[float] = []
 
         logger.info(
@@ -57,9 +68,9 @@ class PagedAttentionCache:
 
     def update(
         self,
-        keys: mx.array,
-        values: mx.array,
-        attention_scores: mx.array
+        keys: Any,
+        values: Any,
+        attention_scores: Any
     ) -> None:
         """
         Přidá nové stránky do cache.
@@ -69,7 +80,11 @@ class PagedAttentionCache:
             values: V matrix shape (seq_len, num_heads, head_dim)
             attention_scores: Attention scores shape (seq_len,)
         """
-        if not MLX_AVAILABLE:
+        if not _MLX_CORE_AVAILABLE:
+            return
+
+        mx = _get_mlx_core()
+        if mx is None:
             return
 
         seq_len = keys.shape[0]
@@ -105,7 +120,7 @@ class PagedAttentionCache:
 
         logger.debug(f"PagedAttentionCache updated: {len(self.pages)} pages")
 
-    def get(self) -> Optional[Tuple[mx.array, mx.array]]:
+    def get(self) -> Optional[Tuple[Any, Any]]:
         """
         Vrátí všechny uložené pages jako concatenated keys a values.
 
@@ -115,7 +130,11 @@ class PagedAttentionCache:
         if not self.pages:
             return None
 
-        if not MLX_AVAILABLE:
+        if not _MLX_CORE_AVAILABLE:
+            return None
+
+        mx = _get_mlx_core()
+        if mx is None:
             return None
 
         all_keys = mx.concatenate([k for k, v, s in self.pages], axis=0)
@@ -123,7 +142,7 @@ class PagedAttentionCache:
 
         return all_keys, all_values
 
-    def get_top_pages(self, k: int) -> List[Tuple[mx.array, mx.array, float]]:
+    def get_top_pages(self, k: int) -> List[Tuple[Any, Any, float]]:
         """
         Vrátí top-k stránek seřazené podle skóre.
 
@@ -156,7 +175,7 @@ class PagedAttentionCache:
 
     def get_memory_usage(self) -> int:
         """Vrátí přibližné využití paměti v bytech."""
-        if not self.pages or not MLX_AVAILABLE:
+        if not self.pages or not _MLX_CORE_AVAILABLE:
             return 0
 
         total_bytes = 0
