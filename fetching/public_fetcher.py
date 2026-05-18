@@ -1491,6 +1491,10 @@ async def async_fetch_public_text(
                     _http_ver = f"http/{_http_ver.decode() if isinstance(_http_ver, bytes) else _http_ver}"
 
             # Read body with size cap (mirrors aiohttp chunked read logic)
+            # TODO(F226-body-cap): This inline loop duplicates body_limiter.read_body_with_cap
+            # logic but cannot be replaced by the helper due to return-type mismatch
+            # (helper returns tuple[bytes, bool], this path needs FetchResult error envelope)
+            # and missing declared_length tracking. See TRANSPORT_COMMON_POLICY_AUDIT.md §1.2 Future Work.
             _body_chunks: list[bytes] = []
             _total_read = 0
             async for _chunk in _httpx_resp.aiter_chunked(8192):

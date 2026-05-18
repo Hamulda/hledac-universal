@@ -155,33 +155,46 @@ else:
 # Drift detection
 # -----------------------------------------------------------------------------------------
 
+def _normalize_pkg(name: str) -> str:
+    """Normalize package name for comparison: lowercase, hyphens→underscores."""
+    return name.lower().replace("-", "_")
+
+
 def get_uv_tracked_packages() -> set[str]:
-    """Get packages tracked by uv (from uv pip list)."""
+    """
+    Get packages tracked by uv via 'uv pip list --format=freeze'.
+    Returns normalized package names from uv's lockfile perspective.
+    """
     result = subprocess.run(
-        [str(_VENV_PYTHON), "-c",
-         "import importlib.metadata; "
-         "import sys; "
-         "for d in importlib.metadata.packages_distributions().values(): "
-         "    for name in d: print(name)"],
+        ["uv", "pip", "list", "--format=freeze"],
         capture_output=True,
         text=True,
+        cwd=str(_PROJECT_ROOT),
     )
     if result.returncode != 0:
         return set()
     packages: set[str] = set()
     for line in result.stdout.strip().split("\n"):
-        if line.strip():
-            packages.add(line.strip().lower().replace("-", "_").replace(".", "_"))
+        if "==" in line:
+            raw = line.split("==")[0]
+            packages.add(_normalize_pkg(raw))
     return packages
 
 
 def get_site_packages_dirs() -> set[str]:
-    """Get directory names from site-packages (physically installed) using importlib.metadata."""
+    """
+    Get physically installed package names via importlib.metadata.distributions().
+    This is the canonical view of what Python can actually import — the same
+    source used by mypy, pytest, and other tools. It includes transitive deps
+    that uv installs as part of the lockfile resolution.
+    """
+    code = (
+        "import importlib.metadata; "
+        "for d in importlib.metadata.distributions(): "
+        "    print(d.name)"
+    )
     result = subprocess.run(
-        [str(_VENV_PYTHON), "-c",
-         "import importlib.metadata; "
-         "for d in importlib.metadata.packages_distributions().values(): "
-         "    for name in d: print(name)"],
+        [str(_VENV_PYTHON), "-c", code],
         capture_output=True,
         text=True,
     )
@@ -190,7 +203,7 @@ def get_site_packages_dirs() -> set[str]:
     packages: set[str] = set()
     for line in result.stdout.strip().split("\n"):
         if line.strip():
-            packages.add(line.strip().lower().replace("-", "_").replace(".", "_"))
+            packages.add(line.strip().lower().replace("-", "_"))
     return packages
 
 
