@@ -9,39 +9,46 @@ Kept for backward compatibility — existing imports continue to work.
 
 from __future__ import annotations
 
-# Re-export from registry (pure registration)
-from tools.registry import (
-    ToolRegistry,
-    Tool,
-    CostModel,
-    CostSummary,
-    BudgetLimits,
-    RateLimits,
-    RiskLevel,
-    SourceReputation,
-)
+# Lazy-load registry and executor symbols on first access.
+# Deferred: from tools.registry import (ToolRegistry, Tool, ...)
+# Deferred: from tools.executor import (ToolExecutor, ...)
+# Avoids sys.path issues when pytest runs from hledac/universal/ as root.
+_registry_cache: dict = {}
+_executor_cache: dict = {}
 
-# Re-export from executor (schemas + async execution)
-from tools.executor import (
-    ToolExecutor,
-    execute_dns_tunnel_sync,
-    create_default_registry,
-    # Schemas
-    WebSearchArgs,
-    WebSearchResult,
-    EntityExtractionArgs,
-    EntityExtractionResult,
-    AcademicSearchArgs,
-    AcademicSearchResult,
-    FileReadArgs,
-    FileReadResult,
-    FileWriteArgs,
-    FileWriteResult,
-    PythonExecuteArgs,
-    PythonExecuteResult,
-    DNSTunnelCheckArgs,
-    DNSTunnelCheckResult,
-)
+
+def __getattr__(name: str):
+    """Lazy-load re-exported symbols on first attribute access."""
+    # Registry symbols
+    _registry_symbols = (
+        "ToolRegistry", "Tool", "CostModel", "CostSummary", "BudgetLimits",
+        "RateLimits", "RiskLevel", "SourceReputation",
+    )
+    if name in _registry_symbols:
+        if name not in _registry_cache:
+            import importlib
+            mod = importlib.import_module("tools.registry")
+            _registry_cache[name] = getattr(mod, name)
+        return _registry_cache[name]
+
+    # Executor symbols
+    _executor_symbols = (
+        "ToolExecutor", "execute_dns_tunnel_sync", "create_default_registry",
+        "WebSearchArgs", "WebSearchResult", "EntityExtractionArgs",
+        "EntityExtractionResult", "AcademicSearchArgs", "AcademicSearchResult",
+        "FileReadArgs", "FileReadResult", "FileWriteArgs", "FileWriteResult",
+        "PythonExecuteArgs", "PythonExecuteResult", "DNSTunnelCheckArgs",
+        "DNSTunnelCheckResult",
+    )
+    if name in _executor_symbols:
+        if name not in _executor_cache:
+            import importlib
+            mod = importlib.import_module("tools.executor")
+            _executor_cache[name] = getattr(mod, name)
+        return _executor_cache[name]
+
+    raise AttributeError(name)
+
 
 # Task handler registry (unchanged — pure decorator pattern)
 _TASK_HANDLERS: dict[str, callable] = {}

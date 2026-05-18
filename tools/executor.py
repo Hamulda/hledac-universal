@@ -254,7 +254,7 @@ def execute_dns_tunnel_sync(args: dict) -> dict:
 
 def create_default_registry() -> "ToolRegistry":
     """Create ToolRegistry with all built-in tools registered."""
-    from tools.registry import ToolRegistry, CostModel, RateLimits, RiskLevel
+    from tools.registry import ToolRegistry, Tool, CostModel, RateLimits, RiskLevel
 
     registry = ToolRegistry()
 

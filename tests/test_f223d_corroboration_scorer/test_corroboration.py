@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.evidence_corroboration import (
+from hledac.universal.runtime.evidence_corroboration import (
     score_indicators_by_corroboration,
     score_seeds_by_corroboration,
     CorroborationScore,
