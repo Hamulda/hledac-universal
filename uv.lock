@@ -1099,13 +1099,10 @@ source = { virtual = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
-    { name = "aiohttp-socks" },
     { name = "aiosqlite" },
     { name = "dnspython" },
     { name = "duckdb" },
-    { name = "flashrank" },
     { name = "httpx" },
-    { name = "lancedb" },
     { name = "lmdb" },
     { name = "msgspec" },
     { name = "orjson" },
@@ -1116,7 +1113,6 @@ dependencies = [
     { name = "pyyaml" },
     { name = "pyzipper" },
     { name = "transformers" },
-    { name = "xxhash" },
 ]
 
 [package.optional-dependencies]
@@ -1226,7 +1222,6 @@ ocr = [
 ]
 osint-html = [
     { name = "curl-cffi" },
-    { name = "h2" },
     { name = "selectolax" },
     { name = "xxhash" },
 ]
@@ -1259,7 +1254,6 @@ webkit = [
 requires-dist = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "aiohttp", specifier = ">=3.9.0" },
-    { name = "aiohttp-socks", specifier = ">=0.8.0" },
     { name = "aiohttp-socks", marker = "extra == 'transport'", specifier = ">=0.8.0" },
     { name = "aiosqlite", specifier = ">=0.19.0" },
     { name = "beautifulsoup4", marker = "extra == 'legacy-html'", specifier = ">=4.12.0" },
@@ -1274,16 +1268,13 @@ requires-dist = [
     { name = "duckduckgo-search", marker = "extra == 'search'", specifier = ">=8.0.0" },
     { name = "fast-langdetect", marker = "extra == 'light'", specifier = ">=1.0.0" },
     { name = "fast-langdetect", marker = "extra == 'nlp'", specifier = ">=1.0.0" },
-    { name = "flashrank", specifier = ">=0.2.10" },
-    { name = "flashrank", marker = "extra == 'rerank'", specifier = ">=0.2.0" },
-    { name = "h2", marker = "extra == 'osint-html'", specifier = ">=4.1.0" },
+    { name = "flashrank", marker = "extra == 'rerank'", specifier = ">=0.2.10" },
     { name = "h2", marker = "extra == 'transport'", specifier = ">=4.1.0" },
     { name = "hledac-universal", extras = ["apple-accel", "osint-html", "graph-storage", "acceleration", "transport"], marker = "extra == 'm1-local'" },
     { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport", "ocr", "coreml", "search", "tor", "legacy-html", "m1-local"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "kuzu", marker = "extra == 'graph-truth'", specifier = ">=0.6.0" },
-    { name = "lancedb", specifier = ">=0.2.5" },
     { name = "lancedb", marker = "extra == 'graph-storage'", specifier = ">=0.2.5" },
     { name = "lmdb", specifier = ">=2.2.0,<3.0.0" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'apple-accel'", specifier = ">=0.16.0" },
@@ -1319,8 +1310,7 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'torch'", specifier = ">=0.16.0" },
     { name = "transformers", specifier = ">=5.8.0" },
     { name = "uvloop", marker = "sys_platform == 'darwin' and extra == 'apple-accel'", specifier = ">=0.21.0" },
-    { name = "xxhash", specifier = ">=3.6.0,<4.0.0" },
-    { name = "xxhash", marker = "extra == 'osint-html'", specifier = ">=3.4.0" },
+    { name = "xxhash", marker = "extra == 'osint-html'", specifier = ">=3.6.0,<4.0.0" },
 ]
 provides-extras = ["light", "nlp", "apple-accel", "osint-html", "graph-storage", "torch", "dev", "acceleration", "ocr", "coreml", "search", "tor", "legacy-html", "rerank", "browser", "webkit", "security", "transport", "graph-truth", "m1-local", "all"]
 

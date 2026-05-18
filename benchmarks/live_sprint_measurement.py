@@ -81,6 +81,102 @@ def _resolve_acquisition_profile(profile: str) -> str:
     return resolved
 MIN_DURATION_S = 180
 
+# F235B2: active measurement profiles subject to hard swap gate (>2.0 GiB)
+_ACTIVE_MEASUREMENT_PROFILES = frozenset(("active300", "active600", "deep_osint_m1_300"))
+# F235B2: hard-block boundary for active measurement profiles (>2.0 GiB → ABORTED)
+_ACTIVE_PROFILE_SWAP_HARD_BLOCK_GIB = 2.0
+
+
+def _is_active_measurement_profile(profile: str) -> bool:
+    """F235B2: Return True if profile is an active measurement profile subject to hard swap gate."""
+    return profile in _ACTIVE_MEASUREMENT_PROFILES
+
+
+def _apply_swap_gate(
+    result: LiveMeasurementResult,
+    profile: str,
+    swap_gib: float,
+    *,
+    phase: str,
+    allow_high_swap: bool = False,
+) -> bool:
+    """F235B2: Apply swap gate to result. Returns True if swap gate fired (hard block or taint).
+
+    For active measurement profiles (active300, active600, deep_osint_m1_300):
+      - swap > 2.0 GiB  → hard block ABORTED, comparable_result=False, no override
+      - swap > 1.0 GiB  → taint PASS_HARDWARE_CONSTRAINED with allow_high_swap override
+
+    For non-active profiles:
+      - swap > 1.0 GiB  → taint PASS_HARDWARE_CONSTRAINED (allow_high_swap softens to non-comparable)
+
+    Consistent between preflight/dry_run/live — same boundary and verdict.
+    """
+    active = _is_active_measurement_profile(profile)
+    hard_block_boundary = _ACTIVE_PROFILE_SWAP_HARD_BLOCK_GIB  # 2.0 GiB
+    soft_gate_threshold = _SWAP_GATE_THRESHOLD_GIB  # 1.0 GiB (from live_measurement_quality)
+
+    fired = False
+    if active and swap_gib > hard_block_boundary:
+        result.swap_gate_triggered = True
+        result.swap_policy_tier = "hard_block"
+        result.swap_gate_reason = (
+            f"swap={swap_gib:.2f}GiB > {hard_block_boundary:.1f}GiB hard-block boundary "
+            f"for active profile '{profile}' — restart required"
+        )
+        result.status = MeasurementStatus.ABORTED
+        result.comparable_result = False
+        result.taint_reason = "high_swap"
+        result.hardware_constrained = True
+        result.recommended_next_profile = "smoke180 or active300_after_restart"
+        result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+        result.run_quality_verdict = RunQualityVerdict.ABORTED_MEMORY_GATE.value
+        fired = True
+        logging.warning(
+            "[%s] [SWAP GATE] swap=%.2f GiB > %.1f GiB hard-block for active profile '%s' — ABORTED",
+            phase, swap_gib, hard_block_boundary, profile,
+        )
+    elif swap_gib >= soft_gate_threshold:
+        result.swap_gate_triggered = True
+        result.taint_reason = "high_swap"
+        result.hardware_constrained = True
+        result.recommended_next_profile = "smoke180 or active300_after_restart"
+        result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
+        if not allow_high_swap:
+            result.status = MeasurementStatus.ABORTED
+            result.comparable_result = False
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            result.swap_policy_tier = "hard_block"
+            result.swap_gate_reason = (
+                f"swap={swap_gib:.2f}GiB >= {soft_gate_threshold:.1f}GiB threshold "
+                f"for profile '{profile}' — aborting. Restart to clear swap."
+            )
+            result.error = (
+                f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {soft_gate_threshold:.1f} GiB "
+                f"threshold for active profile '{profile}' — aborting. "
+                f"Restart to clear swap, or use --allow-high-swap to run anyway "
+                f"(results non-comparable)."
+            )
+            fired = True
+            logging.error(
+                "[%s] [SWAP GATE] Aborted: swap=%.2f GiB >= %.1f GiB for profile '%s'",
+                phase, swap_gib, soft_gate_threshold, profile,
+            )
+        else:
+            result.comparable_result = False
+            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
+            result.swap_policy_tier = "diagnostic"
+            result.swap_gate_reason = (
+                f"swap={swap_gib:.2f}GiB >= {soft_gate_threshold:.1f}GiB — "
+                f"proceeding with --allow-high-swap (comparable_result=False)"
+            )
+            logging.warning(
+                "[%s] [SWAP GATE] swap=%.2f GiB >= %.1f GiB — proceeding with "
+                "--allow-high-swap (hardware_constrained=True, comparable_result=False)",
+                phase, swap_gib, soft_gate_threshold,
+            )
+    return fired
+
+
 def get_invocation_reality() -> dict:
     """
     Return a hermetic diagnostic dict about the invocation namespace.
@@ -335,15 +431,12 @@ async def _run_preflight() -> LiveMeasurementResult:
         else:
             result.swap_policy_tier = 'hard_block'
             result.swap_gate_reason = f'swap={swap_gib:.2f}GiB > 4.0GiB — restart required'
-        if swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
-            result.swap_gate_triggered = True
-            result.hardware_constrained = True
-            result.comparable_result = False
-            result.taint_reason = 'high_swap'
-            result.recommended_next_profile = 'smoke180 or active300_after_restart'
-            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
-            logging.warning('[PREFLIGHT] [SWAP GATE] swap=%.1f GiB >= %.1f GiB threshold — hardware_constrained=True, comparable_result=False', swap_gib, _SWAP_GATE_THRESHOLD_GIB)
+        # F235B2: unified swap gate — same logic for preflight and runtime
+        _apply_swap_gate(result, 'preflight', swap_gib, phase='PREFLIGHT', allow_high_swap=False)
+        if result.swap_gate_triggered and result.status != MeasurementStatus.ABORTED:
+            logging.warning('[PREFLIGHT] Memory state=%s — preflight OK (swap taint only)', result.uma_pre_state)
+        elif result.swap_gate_triggered and result.status == MeasurementStatus.ABORTED:
+            logging.warning('[PREFLIGHT] [SWAP GATE] swap=%.1f GiB — ABORTED', swap_gib)
         else:
             logging.info('[PREFLIGHT] Memory state=%s — preflight OK', result.uma_pre_state)
     return result
@@ -379,7 +472,7 @@ async def _run_dry_run(query: str, profile: str, duration_s: int, aggressive_mod
         else:
             logging.info('[DRY-RUN] [MEMORY GATE] Pre-state=%s — memory OK for live execution', result.uma_pre_state)
     swap_gib = result.uma_pre_swap_gib or 0
-    is_active_profile = profile in ('active300', 'active600')
+    is_active_profile = _is_active_measurement_profile(profile)
     if swap_gib <= 2.0:
         result.swap_policy_tier = 'clean'
         result.swap_gate_reason = f'swap={swap_gib:.2f}GiB <= 2.0GiB threshold'
@@ -389,28 +482,11 @@ async def _run_dry_run(query: str, profile: str, duration_s: int, aggressive_mod
     else:
         result.swap_policy_tier = 'hard_block'
         result.swap_gate_reason = f'swap={swap_gib:.2f}GiB > 4.0GiB — restart required'
-    if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
-        result.swap_gate_triggered = True
-        if not allow_high_swap:
-            result.status = MeasurementStatus.ABORTED
-            result.comparable_result = False
-            result.taint_reason = 'high_swap'
-            result.error = f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {_SWAP_GATE_THRESHOLD_GIB:.1f} GiB threshold for active profile '{profile}' — aborting dry-run. Restart to clear swap, or use --allow-high-swap to run anyway (results non-comparable)."
-            result.hardware_constrained = True
-            result.recommended_next_profile = 'smoke180 or active300_after_restart'
-            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
-            _stamp_profile_meta(result, profile)
-            logging.error('[DRY-RUN] [SWAP GATE] Aborted: %s', result.error)
-            return result
-        else:
-            result.hardware_constrained = True
-            result.comparable_result = False
-            result.taint_reason = 'high_swap'
-            result.recommended_next_profile = 'smoke180 or active300_after_restart'
-            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
-            logging.warning('[DRY-RUN] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True, comparable_result=False)', swap_gib, _SWAP_GATE_THRESHOLD_GIB)
+    # F235B2: unified swap gate — same logic for preflight and runtime
+    fired = _apply_swap_gate(result, profile, swap_gib, phase='DRY-RUN', allow_high_swap=allow_high_swap)
+    if fired:
+        _stamp_profile_meta(result, profile)
+        return result
     logging.info('[DRY-RUN] Planned command: %s', ' '.join(planned_cmd))
     for name, present in readiness.items():
         status_str = 'PRESENT' if present else 'MISSING'
@@ -462,7 +538,6 @@ async def _run_live_sprint(query: str, profile: str, duration_s: int, aggressive
             result.runtime_authority_evidence = {'sprint_id': harness_sprint_id, 'measurement_id': measurement_id, 'entry_via': 'benchmarks/live_sprint_measurement._run_live_sprint', 'aborted': True, 'abort_reason': 'memory_gate'}
             return result
     swap_gib = result.uma_pre_swap_gib or 0
-    is_active_profile = profile in ('active300', 'active600')
     if swap_gib <= 2.0:
         result.swap_policy_tier = 'clean'
         result.swap_gate_reason = f'swap={swap_gib:.2f}GiB <= 2.0GiB threshold'
@@ -472,34 +547,15 @@ async def _run_live_sprint(query: str, profile: str, duration_s: int, aggressive
     else:
         result.swap_policy_tier = 'hard_block'
         result.swap_gate_reason = f'swap={swap_gib:.2f}GiB > 4.0GiB — restart required'
-    if is_active_profile and swap_gib >= _SWAP_GATE_THRESHOLD_GIB:
-        result.swap_gate_triggered = True
-        if not allow_high_swap:
-            result.status = MeasurementStatus.ABORTED
-            result.end_time_iso = _now_iso()
-            result.comparable_result = False
-            result.taint_reason = 'high_swap'
-            result.error = f"[SWAP GATE] swap={swap_gib:.1f} GiB >= {_SWAP_GATE_THRESHOLD_GIB:.1f} GiB threshold for active profile '{profile}' — aborting. Restart to clear swap, or use --allow-high-swap to run anyway (results non-comparable)."
-            result.hardware_constrained = True
-            result.recommended_next_profile = 'smoke180 or active300_after_restart'
-            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
-            _stamp_profile_meta(result, profile)
-            logging.error('[LIVE] [SWAP GATE] Aborted: %s', result.error)
-            result.runtime_authority_path = 'canonical_core_run_sprint'
-            result.runtime_authority_module = 'hledac.universal.core.__main__'
-            result.runtime_authority_function = 'run_sprint'
-            result.runtime_authority_is_canonical = None
-            result.runtime_authority_evidence = {'sprint_id': harness_sprint_id, 'measurement_id': measurement_id, 'entry_via': 'benchmarks/live_sprint_measurement._run_live_sprint', 'aborted': True, 'abort_reason': 'swap_gate'}
-            return result
-        else:
-            result.hardware_constrained = True
-            result.comparable_result = False
-            result.taint_reason = 'high_swap'
-            result.recommended_next_profile = 'smoke180 or active300_after_restart'
-            result.recommended_operator_action = _SWAP_GATE_OPERATOR_ACTION
-            result.run_quality_verdict = RunQualityVerdict.PASS_HARDWARE_CONSTRAINED.value
-            logging.warning('[LIVE] [SWAP GATE] swap=%.1f GiB >= %.1f GiB — proceeding with --allow-high-swap (hardware_constrained=True, comparable_result=False)', swap_gib, _SWAP_GATE_THRESHOLD_GIB)
+    # F235B2: unified swap gate — same logic for preflight and runtime
+    fired = _apply_swap_gate(result, profile, swap_gib, phase='LIVE', allow_high_swap=allow_high_swap)
+    if fired:
+        result.runtime_authority_path = 'canonical_core_run_sprint'
+        result.runtime_authority_module = 'hledac.universal.core.__main__'
+        result.runtime_authority_function = 'run_sprint'
+        result.runtime_authority_is_canonical = None
+        result.runtime_authority_evidence = {'sprint_id': harness_sprint_id, 'measurement_id': measurement_id, 'entry_via': 'benchmarks/live_sprint_measurement._run_live_sprint', 'aborted': True, 'abort_reason': 'swap_gate'}
+        return result
     result.sprint_id = harness_sprint_id
     _original_make_sprint_id = core_main._make_sprint_id
     _patched_sprint_ids = [harness_sprint_id]

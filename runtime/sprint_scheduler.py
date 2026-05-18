@@ -6305,16 +6305,19 @@ class SprintScheduler:
         if lanes_timeout > 0:
             try:
                 async with asyncio.timeout(lanes_timeout):
-                    # [F222I] Build NonfeedSeedContext from pivot seeds extracted at plan time
+                    # [F222I] Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values (F235C)
                     _seed_ctx = None
-                    if (self._result.pivot_seed_domains or self._result.pivot_seed_ips
-                            or self._result.pivot_seed_urls):
+                    _pivot_has_seeds = (self._result.pivot_seed_domains or self._result.pivot_seed_ips
+                                        or self._result.pivot_seed_urls)
+                    _next_seeds_has_iocs = (self._result.next_seeds_ioc_domains or self._result.next_seeds_ioc_ips
+                                             or self._result.next_seeds_ioc_urls or self._result.next_seeds_ioc_hashes)
+                    if _pivot_has_seeds or _next_seeds_has_iocs:
                         _seed_ctx = NonfeedSeedContext(
-                            domains=tuple(self._result.pivot_seed_domains or ()),
-                            ips=tuple(self._result.pivot_seed_ips or ()),
-                            urls=tuple(self._result.pivot_seed_urls or ()),
-                            hashes=tuple(self._result.pivot_seed_hashes or ()),
-                            cves=tuple(self._result.pivot_seed_cves or ()),
+                            domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),
+                            ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
+                            urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
+                            hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
+                            cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
                         )
                     _outcomes = await run_enabled_acquisition_lanes(
                         snapshot=self._acquisition_plan,

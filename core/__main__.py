@@ -740,6 +740,18 @@ def _scheduler_result_acquisition_payload(
                 "nonfeed_prelude_duration_s": float(getattr(result, "nonfeed_prelude_duration_s", 0.0)),
                 "nonfeed_prelude_feed_blocked_until_complete": getattr(result, "nonfeed_prelude_feed_blocked_until_complete", False),
             }
+            # F233C: next_sprint_seeds consumption telemetry
+            _acq_report["next_seeds_consumed_count"] = getattr(result, "next_seeds_consumed_count", 0)
+            _acq_report["next_seeds_seed_source"] = getattr(result, "next_seeds_seed_source", "") or ""
+            _acq_report["next_seeds_provider_yield"] = getattr(result, "next_seeds_provider_yield", False)
+            _acq_report["next_seeds_pivot_deepening"] = getattr(result, "next_seeds_pivot_deepening", False)
+            _acq_report["next_seeds_query_suggestions"] = list(getattr(result, "next_seeds_query_suggestions", ()) or ())
+            _acq_report["next_seeds_skip_reason"] = getattr(result, "next_seeds_skip_reason", "") or ""
+            _acq_report["next_seeds_ioc_domains"] = list(getattr(result, "next_seeds_ioc_domains", ()) or ())
+            _acq_report["next_seeds_ioc_ips"] = list(getattr(result, "next_seeds_ioc_ips", ()) or ())
+            _acq_report["next_seeds_ioc_urls"] = list(getattr(result, "next_seeds_ioc_urls", ()) or ())
+            _acq_report["next_seeds_ioc_hashes"] = list(getattr(result, "next_seeds_ioc_hashes", ()) or ())
+            _acq_report["next_seeds_ioc_cves"] = list(getattr(result, "next_seeds_ioc_cves", ()) or ())
             # F226G: Reconcile lane detail fields from source_family_outcomes in fallback path
             _acq_report = reconcile_lane_detail_fields(_acq_report)
             # F231B: Complete source_family_outcomes from lane detail fields in fallback path
