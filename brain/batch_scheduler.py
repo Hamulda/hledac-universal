@@ -79,7 +79,7 @@ class BatchScheduler:
 
         # Queue state
         self._batch_queue: Optional[asyncio.PriorityQueue] = None
-        self._tie_breaker: Optional[itertools.count] = None
+        self._batch_tie_breaker: Optional[itertools.count] = None
         self._worker_task: Optional[asyncio.Task] = None
         self._worker_shutting_down = False
 
@@ -92,7 +92,6 @@ class BatchScheduler:
 
         # EMA telemetry
         self._telemetry_ema = {
-            'enqueue_to_dispatch_ms': 0.0,
             'dispatch_to_result_ms': 0.0,
             'batch_size': 0,
             'queue_depth': 0,
@@ -449,7 +448,10 @@ class BatchScheduler:
         Age-bump: improve priority of waiting items by 1 without O(n) rebuild.
 
         Extract all items, re-enqueue with bumped priority (max 0).
+        Guard: skip if shutting down to avoid racing with queue cleanup.
         """
+        if self._worker_shutting_down:
+            return
         if self._batch_queue is None or self._batch_queue.empty():
             return
 
