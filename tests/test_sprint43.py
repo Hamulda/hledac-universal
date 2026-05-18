@@ -16,10 +16,12 @@ import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import lmdb
 import numpy as np
 import psutil
 import pytest
+
+pytest.importorskip("lmdb")
+import lmdb
 
 from hledac.universal.autonomous_orchestrator import FullyAutonomousOrchestrator
 from hledac.universal.layers.communication_layer import CommunicationLayer

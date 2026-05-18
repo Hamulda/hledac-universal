@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
+pytest.importorskip("mlx")
 import mlx.core as mx
 
 from hledac.universal.core.resource_governor import ResourceGovernor
