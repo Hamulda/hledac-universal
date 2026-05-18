@@ -623,7 +623,7 @@ class SynthesisRunner:
             try:
                 from knowledge.graph_rag import GraphRAGOrchestrator
                 # GraphRAGOrchestrator vyžaduje knowledge_layer — zkusíme najít
-                from knowledge.persistent_layer import PersistentKnowledgeLayer
+                from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
                 kl = PersistentKnowledgeLayer()
                 _grag = GraphRAGOrchestrator(kl)
                 # Sprint 8VA: GraphRAGOrchestrator.find_connections() — ne extract_subgraph/verbalize
