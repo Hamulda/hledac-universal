@@ -4836,10 +4836,6 @@ class TestSourceReputation:
         """Test reputation score is bounded 0-1."""
         from hledac.universal.tool_registry import SourceReputation
 
-        # Rebuild the model to fix pydantic issue
-        SourceReputation.model_rebuild()
-
-        # Test SourceReputation directly
         rep = SourceReputation(domain="test.com")
         rep.total_claims = 10
         rep.corroborated_count = 8
@@ -4854,8 +4850,6 @@ class TestSourceReputation:
     async def test_reputation_formula_components(self):
         """Test reputation formula with known values."""
         from hledac.universal.tool_registry import SourceReputation
-
-        SourceReputation.model_rebuild()
 
         # High corroboration, few issues
         rep = SourceReputation(domain="trusted.com")
@@ -4884,8 +4878,6 @@ class TestSourceReputation:
     async def test_reputation_to_dict_includes_all_fields(self):
         """Test that to_dict includes all required fields."""
         from hledac.universal.tool_registry import SourceReputation
-
-        SourceReputation.model_rebuild()
 
         rep = SourceReputation(domain="test.com")
         rep.total_claims = 10
