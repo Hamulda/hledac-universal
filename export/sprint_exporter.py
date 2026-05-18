@@ -1011,10 +1011,109 @@ def _build_product_value_summary(
         "should_recommend_nonfeed_diagnostic": should_recommend_nonfeed_diagnostic,
         # DERIVED — computed from facts (prefix _ = classification, not raw fact)
         "_signal_quality_classification": _signal_quality,
+        # F229B: Lane corroboration score from src_family_outcomes
+        "corroboration_score": _corroboration_score_value(scorecard),
+        "corroborating_families": _corroborating_families(scorecard),
+        "corroboration_reason": _corroboration_reason_str(scorecard),
+        "corroboration_penalties": _corroboration_penalties_list(scorecard),
     }
 
     # Remove None fields for cleaner output (keep 0 as valid)
     return {k: v for k, v in summary.items() if v is not None}
+
+
+# ---------------------------------------------------------------------------
+# F229B: Lane corroboration score helpers
+# ---------------------------------------------------------------------------
+
+def _corroboration_score_value(scorecard: dict) -> float:
+    """Compute corroboration score (0.0–1.0) from src_family_outcomes."""
+    from runtime.corroboration_score import score_from_result
+    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+
+    class _Result:
+        __slots__ = ("src_family_outcomes", "seed_context_available")
+        def __init__(self, outcomes):
+            self.src_family_outcomes = outcomes
+            self.seed_context_available = False
+
+    result = _Result(outcomes)
+    try:
+        sc = score_from_result(result)
+        return sc.corroboration_score
+    except Exception:
+        return 0.0
+
+
+def _corroborating_families(scorecard: dict) -> tuple:
+    """Return tuple of families that contributed to corroboration."""
+    from runtime.corroboration_score import score_from_result
+    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+
+    class _Result:
+        __slots__ = ("src_family_outcomes", "seed_context_available")
+        def __init__(self, outcomes):
+            self.src_family_outcomes = outcomes
+            self.seed_context_available = False
+
+    result = _Result(outcomes)
+    try:
+        sc = score_from_result(result)
+        return sc.corroborating_families
+    except Exception:
+        return ()
+
+
+def _corroboration_reason_str(scorecard: dict) -> str:
+    """Return human-readable corroboration reason."""
+    from runtime.corroboration_score import score_from_result
+    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+
+    class _Result:
+        __slots__ = ("src_family_outcomes", "seed_context_available")
+        def __init__(self, outcomes):
+            self.src_family_outcomes = outcomes
+            self.seed_context_available = False
+
+    result = _Result(outcomes)
+    try:
+        sc = score_from_result(result)
+        return sc.corroboration_reason
+    except Exception:
+        return "corroboration unavailable"
+
+
+def _corroboration_penalties_list(scorecard: dict) -> list:
+    """Return list of active penalties."""
+    from runtime.corroboration_score import score_from_result, _NONFEED_FAMILIES, _TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS
+    outcomes: dict = scorecard.get("src_family_outcomes", {}) or {}
+    penalties: list = []
+
+    # Check nonfeed missing penalty
+    feed_present = bool(outcomes.get("feed", {}).get("accepted_count", 0) > 0)
+    nonfeed_terminals = sum(
+        1 for f in _NONFEED_FAMILIES
+        if outcomes.get(f, {}).get("terminal_state") in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
+    )
+    nonfeed_missed = all(
+        outcomes.get(f, {}).get("terminal_state") not in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
+        for f in _NONFEED_FAMILIES
+    )
+    if not feed_present and nonfeed_missed and nonfeed_terminals == 0:
+        penalties.append("nonfeed_expected_missing")
+
+    # Check feed-only penalty
+    if feed_present and nonfeed_terminals == 0:
+        ct_t = outcomes.get("ct", {}).get("terminal_state") not in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
+        doh_t = outcomes.get("doh", {}).get("terminal_state") not in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
+        if ct_t and doh_t:
+            penalties.append("feed_only_no_nonfeed")
+
+    # Check public zero-results penalty
+    if outcomes.get("public", {}).get("terminal_state") == _TERMINAL_NO_RESULTS:
+        penalties.append("public_zero_results")
+
+    return penalties
 
 
 def _derive_hypothesis_queries(

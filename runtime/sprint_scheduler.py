@@ -5172,10 +5172,9 @@ class SprintScheduler:
                         query,
                     )
                 )
-                if _is_domain_query and self._result.seed_context_skip_reason in (
-                    "",
-                    "no_seeds_extracted",
-                ):
+                # F228H2: unconditional direct domain fallback — seed_context_available is
+                # the canonical gate, not skip_reason strings
+                if _is_domain_query and not self._result.seed_context_available:
                     _domain = query.strip().lower()
                     self._result.pivot_seed_domains = (_domain,)
                     self._result.seed_context_available = True
