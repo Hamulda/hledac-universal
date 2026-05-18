@@ -53,7 +53,8 @@ REPORTS_DIR = UNIVERSAL_ROOT / "reports" / "benchmarks"
 
 assert UNIVERSAL_ROOT.name == "universal", f"UNIVERSAL_ROOT={UNIVERSAL_ROOT}"
 
-sys.path.insert(0, str(UNIVERSAL_ROOT))
+sys.path.insert(0, str(UNIVERSAL_ROOT))          # universal/ first → transport.*, utils.*
+sys.path.insert(0, str(UNIVERSAL_ROOT.parent))  # hledac/ parent → hledac.universal.*
 
 # ── optional deps ────────────────────────────────────────────────────────────
 _HAS_PSUTIL = False
@@ -399,13 +400,13 @@ def bench_msgspec_dto_serialization() -> dict[str, Any]:
     instance = FindingStruct(**FIXTURE_DATA)
 
     def encode_fn() -> bytes:
-        return msgspec.encode(instance)
+        return msgspec.json.encode(instance)
 
     def decode_fn(data: bytes) -> FindingStruct:
-        return msgspec.decode(data, type=FindingStruct)
+        return msgspec.json.decode(data, type=FindingStruct)
 
     enc_result = _time_it(encode_fn, runs=7, warmups=3)
-    encoded_bytes = msgspec.encode(instance)
+    encoded_bytes = msgspec.json.encode(instance)
     dec_result = _time_it(lambda: decode_fn(encoded_bytes), runs=7, warmups=3)
 
     return {
@@ -429,7 +430,7 @@ def bench_wal_manager_single_write_smoke() -> dict[str, Any]:
     Skips if imports fail due to missing deps (aiohttp, etc.).
     """
     try:
-        from knowledge.wal import WALManager
+        from hledac.universal.knowledge.wal import WALManager
     except ImportError as e:
         return {
             "name": "wal_manager_single_write_smoke",
