@@ -2,6 +2,7 @@
 Pure async helper for reading chunk streams with a hard byte cap.
 
 No transport layer coupling. No router involvement. No network I/O.
+Used by both curl_cffi and httpx transport lanes.
 """
 
 from __future__ import annotations
