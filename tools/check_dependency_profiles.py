@@ -77,7 +77,12 @@ SYNC_PROFILES: dict[str, ProfileCheck] = {
     "osint-html": ProfileCheck(
         name="osint-html",
         uv_sync_args=["--extra", "osint-html"],
-        import_smoke=["selectolax", "curl_cffi", "h2"],
+        import_smoke=["selectolax", "curl_cffi"],
+    ),
+    "transport": ProfileCheck(
+        name="transport",
+        uv_sync_args=["--extra", "transport"],
+        import_smoke=["h2"],
     ),
     "dev": ProfileCheck(
         name="dev",
