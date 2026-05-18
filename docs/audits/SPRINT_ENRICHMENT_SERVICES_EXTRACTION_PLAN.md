@@ -96,7 +96,7 @@ class EnrichmentServices:
 2. **All 6 internal methods (`_init_forensics`, `_init_multimodal`, `_flush_forensics`, `_flush_multimodal`, `_close_forensics`, `_close_multimodal`) moved verbatim** — no logic changes, fail-safe guards preserved.
 3. **`flush()` is a no-op** — both current implementations are pass; keep for API symmetry.
 4. **`enrich_ct_findings` and `enrich_findings_multimodal` rename public methods** — internal names unchanged, public names match the audit's read-site description. No behavior change.
-5. **`SprintScheduler` gets single `inject_enrichment_services(services)`** — replaces two injectors with one, but old injectors can remain as passthroughs for backward compatibility (or be removed as dead code after extraction).
+5. **`SprintScheduler` gets single `inject_enrichment_services(services)`** — replaces two injectors. Old `inject_forensics_enricher()` / `inject_multimodal_enricher()` are **removed entirely** from SprintScheduler (not kept as stubs). Tests must be migrated before extraction ships.
 6. **LMDB paths via `_get_forensics_lmdb_path()` / `_get_multimodal_lmdb_path()`** — already in sprint_scheduler, imported from `runtime.sprint_scheduler` or `paths`.
 
 ## `core/__main__.py` Wiring Changes
@@ -164,33 +164,53 @@ if self._enrichment_services:
 ### Old methods removed from SprintScheduler
 All `_init_forensics`, `_init_multimodal`, `_flush_forensics`, `_flush_multimodal`, `_close_forensics`, `_close_multimodal`, `_enrich_ct_findings_forensics`, `_enrich_findings_multimodal` — moved to `EnrichmentServices`.
 
-### Old injection methods — keep or deprecate
-`inject_forensics_enricher()` and `inject_multimodal_enricher()` remain as no-ops on `SprintScheduler` for backward compatibility (existing tests use them directly), OR are removed if all tests are updated.
+### Old injection methods — removed from SprintScheduler
+
+**Decision: Remove entirely.** Do NOT keep as passthroughs or no-ops.
+
+Rationale: Keeping `inject_forensics_enricher()` / `inject_multimodal_enricher()` as no-ops on `SprintScheduler` creates a silent failure mode: if any caller (test or production) uses the old injectors after extraction, they set fields on SprintScheduler that are no longer read by `sprint_ct_log_pipeline`. The check `if self._enrichment_services:` would silently skip enrichment. This is a non-obvious, hard-to-debug regression.
+
+**Migration path for tests:**
+- Old: `scheduler.inject_forensics_enricher(mock_enricher, mock_lmdb)`
+- New: `enrichment_services = EnrichmentServices(forensics_enricher=mock_enricher, forensics_lmdb_env=mock_lmdb); scheduler.inject_enrichment_services(enrichment_services)`
+- All 8 existing tests using old injectors must be rewritten before the extraction ships. No backward-compatibility stub.
 
 ## Tests to Update
 
-### Direct state access (tests setting private fields directly)
-| File | Lines | Action |
-|------|-------|--------|
-| `tests/test_forensics_enrichment.py` | 226, 235, 237, 284, 298, 323, 327, 336, 351, 362, 373, 383, 396, 404, 411, 422 | Update to use `EnrichmentServices` or inject via `inject_enrichment_services()` |
-| `tests/test_multimodal_analyzer.py` | 306, 315, 317, 363, 377, 402, 406, 415, 430, 441, 452, 462, 475, 490, 501 | Same |
-| `tests/test_ct_log_pipeline.py` | 94, 96, 203, 205 | Same |
-| `tests/test_forensics_enrichment.py::test_init_forensics_sets_enricher_to_none_on_failure` | 254–265 | Move to `tests/test_enrichment_services.py` |
-| `tests/test_forensics_enrichment.py::test_close_forensics_fail_safe_with_none` | 274–286 | Same |
-| `tests/test_forensics_enrichment.py::test_close_forensics_close_enricher` | 303–316 | Same |
-| `tests/test_multimodal_analyzer.py::test_init_multimodal_sets_enricher_to_none_on_failure` | 334–345 | Same |
-| `tests/test_multimodal_analyzer.py::test_close_multimodal_fail_safe_with_none` | 353–365 | Same |
-| `tests/test_multimodal_analyzer.py::test_close_multimodal_close_enricher` | 382–395 | Same |
+### Test refactoring strategy
 
-### New test file: `tests/test_enrichment_services.py`
+Two distinct patterns must be handled differently:
+
+**Pattern A — SprintScheduler delegation tests** (tests that instantiate `SprintScheduler` and check/set its private `_forensics_lmdb_env` / `_multimodal_lmdb_env` fields or call `inject_*` on the scheduler):
+- These tests must be **rewritten** to test `EnrichmentServices` directly.
+- The assertion shape shifts from "SprintScheduler has these attributes" to "SprintScheduler correctly delegates to `EnrichmentServices` via `inject_enrichment_services()`."
+- Strategy: construct `EnrichmentServices` with mocks, inject into scheduler, verify delegation.
+
+**Pattern B — Lifecycle tests** (`TestForensicsSchedulerLifecycle`, `TestMultimodalSchedulerLifecycle`):
+- These tests exercise the init/close/fail-safe behavior and must be **moved verbatim** to `tests/test_enrichment_services.py` with `SprintScheduler` replaced by `EnrichmentServices`.
+
+### Tests requiring rewrite (Pattern A)
+
+| Test class | What changes |
+|------------|--------------|
+| `TestForensicsSchedulerIntegration` | `hasattr(scheduler, "_forensics_lmdb_env")` → check `scheduler._enrichment_services` is set; `scheduler._forensics_lmdb_env = None` → inject via `inject_enrichment_services()` |
+| `TestEnrichCtFindingsForensics` | Construct `EnrichmentServices` directly with mocks instead of `scheduler._forensics_lmdb_env = mock`; call `enrich_ct_findings()` directly |
+| `TestMultimodalSchedulerIntegration` | Same as above for multimodal |
+| `TestEnrichFindingsMultimodal` | Same as above for multimodal |
+| `test_ct_log_pipeline.py` (2 tests) | Same injection pattern via `inject_enrichment_services()` |
+
+### Tests to move verbatim (Pattern B) — `tests/test_enrichment_services.py`
+
 ```
-TestEnrichmentServices:
-  - test_init_forensics_fail_safe (from test_forensics_enrichment::test_init_forensics_sets_enricher_to_none_on_failure)
-  - test_init_multimodal_fail_safe (from test_multimodal_analyzer::test_init_multimodal_sets_enricher_to_none_on_failure)
+TestEnrichmentServicesLifecycle:
+  - test_init_forensics_fail_safe (moved from test_forensics_enrichment::test_init_forensics_sets_enricher_to_none_on_failure)
+  - test_init_multimodal_fail_safe (moved from test_multimodal_analyzer::test_init_multimodal_sets_enricher_to_none_on_failure)
   - test_close_forensics_fail_safe
   - test_close_multimodal_fail_safe
   - test_close_forensics_calls_enricher_close
   - test_close_multimodal_calls_enricher_close
+
+TestEnrichmentServices:
   - test_enrich_ct_findings_empty
   - test_enrich_ct_findings_skips_when_enricher_none
   - test_enrich_ct_findings_skips_when_lmdb_none
@@ -203,7 +223,15 @@ TestEnrichmentServices:
   - test_enrich_findings_multimodal_fail_safe
   - test_inject_forensics_enricher
   - test_inject_multimodal_enricher
+
+TestSprintSchedulerDelegation:
+  - test_scheduler_inject_enrichment_services_wires_lifecycle
+  - test_scheduler_ct_log_pipeline_delegates_to_enrichment_services
 ```
+
+### No change required
+
+`TestForensicsEnricherUnit`, `TestForensicsEnricherAsync` — these test `ForensicsEnricher` directly, not `SprintScheduler`. Same for `TestMultimodalEnricherUnit`, `TestMultimodalEnricherAsync`.
 
 ## Verification After Implementation
 
