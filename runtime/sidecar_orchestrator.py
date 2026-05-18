@@ -20,10 +20,29 @@ Responsibilities NOT in this module:
   - All teardown advisory implementations → sprint_advisory_runner.py
   - Batch construction, empty guards, skipped sidecar tracking → sidecar_dispatcher.py
   - SidecarBus creation → sidecar_bus.py (create_sidecar_bus factory)
+  - Advisory implementation (3 methods below) → SprintScheduler via getattr seam
 
 Deletion test: if this module is deleted, the 4 public call sites above
 must reappear in SprintScheduler. No accepted-finding sidecar call site
 lives here — they all live in sidecar_bus.py / sidecar_dispatcher.py.
+
+ADVISORY CALLBACK SEAM (bounded, F226)
+──────────────────────────────────────
+SidecarOrchestrator owns scheduling and dispatch. SprintScheduler still owns
+the inline advisory implementations. One advisory crosses the scheduler facade
+via getattr; two are self-contained adapters. This is an explicit bounded seam:
+
+  1. _run_ct_to_passivedns_pivot_advisory  → getattr(scheduler, "_run_ct_to_passivedns_pivot_advisory")
+  2. _run_bgp_advisory_sidecar             → own BGPAdvisorAdapter (no getattr)
+  3. _run_wayback_cdx_deep_sidecar         → own WaybackCDXDeepAdapter (no getattr)
+
+These three callback names are the ONLY permitted scheduler advisory callbacks.
+No new `getattr(self._scheduler, "_run_*")` calls may be added without updating
+the seal test in tests/test_sidecar_orchestrator.py.
+
+Extraction trigger: if advisory logic exceeds ~50 lines OR gains external callers
+beyond these three methods, extract to a dedicated adapter class — do not grow
+the getattr seam.
 """
 
 from __future__ import annotations
