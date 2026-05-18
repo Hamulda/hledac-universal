@@ -4,7 +4,6 @@ Intelligent Resource Allocator
 Dynamic resource allocation and scaling system for Hledač automation
 """
 import asyncio
-import inspect
 import os
 import psutil
 import logging
@@ -814,94 +813,11 @@ class ResourceAwareScheduler:
         # Clean up registry
         self._tasks.clear()
 
-# Parallel execution optimizer
-class ParallelExecutionOptimizer:
-    """Optimizer for parallel task execution"""
-
-    def __init__(self, allocator: IntelligentResourceAllocator):
-        self.allocator = allocator
-        self.execution_history = []
-
-    async def optimize_parallel_execution(self,
-                                        tasks: List[tuple],
-                                        max_parallel_tasks: Optional[int] = None) -> List[Any]:
-        """Execute tasks in parallel with optimal resource allocation"""
-        if not max_parallel_tasks:
-            # Determine optimal parallelism based on available resources
-            capacity = await self.allocator.get_current_capacity()
-            max_parallel_tasks = min(
-                int(capacity.cpu_cores),
-                int(capacity.memory_gb / 2),  # Assume 2GB per task minimum
-                8  # Max parallelism limit
-            )
-
-        logger.info(f"Executing {len(tasks)} tasks with max parallelism: {max_parallel_tasks}")
-
-        # Create task batches
-        task_batches = [
-            tasks[i:i + max_parallel_tasks]
-            for i in range(0, len(tasks), max_parallel_tasks)
-        ]
-
-        results = []
-
-        for batch_idx, batch in enumerate(task_batches):
-            logger.info(f"Executing batch {batch_idx + 1}/{len(task_batches)} with {len(batch)} tasks")
-
-            # Create resource requests for batch
-            batch_tasks = []
-            for task_data in batch:
-                if isinstance(task_data, tuple) and len(task_data) == 2:
-                        task_func, task_args = task_data
-                        resource_request = ResourceRequest(
-                        task_id=f"batch_{batch_idx}_task_{len(batch_tasks)}",
-                        task_name=f"Batch {batch_idx} Task {len(batch_tasks)}",
-                        priority=Priority.MEDIUM,
-                        cpu_cores=1.0,
-                        memory_gb=2.0,
-                        estimated_duration=300
-                    )
-                        batch_tasks.append((task_func, task_args, resource_request))
-
-            # Execute batch in parallel
-            batch_results = await self._execute_parallel_batch(batch_tasks)
-            results.extend(batch_results)
-
-        return results
-
-    async def _execute_parallel_batch(self, batch_tasks: List[tuple]) -> List[Any]:
-        """Execute a batch of tasks in parallel"""
-        async def execute_single_task(task_func, task_args, resource_request):
-            # Request resources
-            if await self.allocator.request_resources(resource_request):
-                try:
-                    # Execute task
-                    if inspect.iscoroutinefunction(task_func):
-                        result = await task_func(task_args)
-                    else:
-                        result = task_func(task_args)
-                    return result
-                finally:
-                    # Release resources
-                    await self.allocator.release_resources(resource_request.task_id)
-            else:
-                    return None
-
-        # Execute all tasks in the batch concurrently
-        tasks = [
-            execute_single_task(task_func, task_args, resource_request)
-            for task_func, task_args, resource_request in batch_tasks
-        ]
-
-        return await asyncio.gather(*tasks, return_exceptions=True)
-
 # CLI interface
 async def main():
     """Main function for resource allocator testing"""
     allocator = IntelligentResourceAllocator()
     scheduler = ResourceAwareScheduler(allocator)
-    optimizer = ParallelExecutionOptimizer(allocator)
-
     # Start monitoring
     monitoring_task = asyncio.create_task(allocator.monitor_and_optimize(), name="resource_allocator:monitor")
 

@@ -119,7 +119,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         
         # Availability flags
         self._ghost_available = False
-        self._parallel_available = False
+        self._parallel_available = False  # Orphaned: hledac.tools.preserved_logic.parallel_execution_optimizer does not exist
         self._ray_available = False
         
         # Configuration
