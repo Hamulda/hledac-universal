@@ -1101,11 +1101,8 @@ dependencies = [
     { name = "aiohttp" },
     { name = "aiohttp-socks" },
     { name = "aiosqlite" },
-    { name = "beautifulsoup4" },
-    { name = "coremltools" },
     { name = "dnspython" },
     { name = "duckdb" },
-    { name = "duckduckgo-search" },
     { name = "flashrank" },
     { name = "httpx" },
     { name = "lancedb" },
@@ -1115,11 +1112,9 @@ dependencies = [
     { name = "psutil" },
     { name = "pyahocorasick" },
     { name = "pydantic" },
-    { name = "pyobjc-framework-coreml" },
     { name = "pyprobables" },
     { name = "pyyaml" },
     { name = "pyzipper" },
-    { name = "stem" },
     { name = "transformers" },
     { name = "xxhash" },
 ]
@@ -1130,11 +1125,14 @@ acceleration = [
 ]
 all = [
     { name = "aiohttp-socks" },
+    { name = "beautifulsoup4" },
     { name = "camoufox", extra = ["geoip"] },
+    { name = "coremltools" },
     { name = "cryptography" },
     { name = "curl-cffi" },
     { name = "datasketch" },
     { name = "duckdb" },
+    { name = "duckduckgo-search" },
     { name = "fast-langdetect" },
     { name = "flashrank" },
     { name = "h2" },
@@ -1150,7 +1148,9 @@ all = [
     { name = "pyarrow" },
     { name = "pygments" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-coreml", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
+    { name = "pytesseract" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1158,6 +1158,7 @@ all = [
     { name = "rapidfuzz" },
     { name = "ruff" },
     { name = "selectolax" },
+    { name = "stem" },
     { name = "uvloop", marker = "sys_platform == 'darwin'" },
     { name = "xxhash" },
 ]
@@ -1169,6 +1170,10 @@ apple-accel = [
 browser = [
     { name = "camoufox", extra = ["geoip"] },
     { name = "nodriver" },
+]
+coreml = [
+    { name = "coremltools" },
+    { name = "pyobjc-framework-coreml", marker = "sys_platform == 'darwin'" },
 ]
 dev = [
     { name = "iniconfig" },
@@ -1187,6 +1192,12 @@ graph-storage = [
     { name = "lancedb" },
     { name = "polars" },
     { name = "pyarrow" },
+]
+graph-truth = [
+    { name = "kuzu" },
+]
+legacy-html = [
+    { name = "beautifulsoup4" },
 ]
 light = [
     { name = "datasketch" },
@@ -1222,8 +1233,14 @@ osint-html = [
 rerank = [
     { name = "flashrank" },
 ]
+search = [
+    { name = "duckduckgo-search" },
+]
 security = [
     { name = "cryptography" },
+]
+tor = [
+    { name = "stem" },
 ]
 torch = [
     { name = "torch" },
@@ -1245,16 +1262,16 @@ requires-dist = [
     { name = "aiohttp-socks", specifier = ">=0.8.0" },
     { name = "aiohttp-socks", marker = "extra == 'transport'", specifier = ">=0.8.0" },
     { name = "aiosqlite", specifier = ">=0.19.0" },
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "beautifulsoup4", marker = "extra == 'legacy-html'", specifier = ">=4.12.0" },
     { name = "camoufox", extras = ["geoip"], marker = "extra == 'browser'", specifier = ">=0.4.0" },
-    { name = "coremltools", specifier = "==8.2" },
+    { name = "coremltools", marker = "extra == 'coreml'", specifier = "==8.2" },
     { name = "cryptography", marker = "extra == 'security'", specifier = ">=48.0.0" },
     { name = "curl-cffi", marker = "extra == 'osint-html'", specifier = ">=0.7.0" },
     { name = "datasketch", marker = "extra == 'light'", specifier = ">=1.6.0" },
     { name = "dnspython", specifier = ">=2.4.0" },
     { name = "duckdb", specifier = ">=1.2.0" },
     { name = "duckdb", marker = "extra == 'graph-storage'", specifier = ">=1.2.0" },
-    { name = "duckduckgo-search", specifier = ">=8.0.0" },
+    { name = "duckduckgo-search", marker = "extra == 'search'", specifier = ">=8.0.0" },
     { name = "fast-langdetect", marker = "extra == 'light'", specifier = ">=1.0.0" },
     { name = "fast-langdetect", marker = "extra == 'nlp'", specifier = ">=1.0.0" },
     { name = "flashrank", specifier = ">=0.2.10" },
@@ -1262,9 +1279,10 @@ requires-dist = [
     { name = "h2", marker = "extra == 'osint-html'", specifier = ">=4.1.0" },
     { name = "h2", marker = "extra == 'transport'", specifier = ">=4.1.0" },
     { name = "hledac-universal", extras = ["apple-accel", "osint-html", "graph-storage", "acceleration", "transport"], marker = "extra == 'm1-local'" },
-    { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport", "m1-local"], marker = "extra == 'all'" },
+    { name = "hledac-universal", extras = ["light", "apple-accel", "osint-html", "graph-storage", "dev", "acceleration", "nlp", "rerank", "browser", "webkit", "security", "transport", "ocr", "coreml", "search", "tor", "legacy-html", "m1-local"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
+    { name = "kuzu", marker = "extra == 'graph-truth'", specifier = ">=0.6.0" },
     { name = "lancedb", specifier = ">=0.2.5" },
     { name = "lancedb", marker = "extra == 'graph-storage'", specifier = ">=0.2.5" },
     { name = "lmdb", specifier = ">=2.2.0,<3.0.0" },
@@ -1283,7 +1301,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pygments", marker = "extra == 'dev'", specifier = ">=2.15.0" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'webkit'", specifier = ">=12.0" },
-    { name = "pyobjc-framework-coreml", specifier = ">=12.1" },
+    { name = "pyobjc-framework-coreml", marker = "sys_platform == 'darwin' and extra == 'coreml'", specifier = ">=12.1" },
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'webkit'", specifier = ">=12.0" },
     { name = "pyprobables", specifier = ">=0.7.0,<0.8.0" },
     { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.10" },
@@ -1296,7 +1314,7 @@ requires-dist = [
     { name = "rapidfuzz", marker = "extra == 'acceleration'", specifier = ">=3.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "selectolax", marker = "extra == 'osint-html'", specifier = ">=0.3.21" },
-    { name = "stem", specifier = ">=1.8.0" },
+    { name = "stem", marker = "extra == 'tor'", specifier = ">=1.8.0" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.1.0" },
     { name = "torchvision", marker = "extra == 'torch'", specifier = ">=0.16.0" },
     { name = "transformers", specifier = ">=5.8.0" },
@@ -1304,7 +1322,7 @@ requires-dist = [
     { name = "xxhash", specifier = ">=3.6.0,<4.0.0" },
     { name = "xxhash", marker = "extra == 'osint-html'", specifier = ">=3.4.0" },
 ]
-provides-extras = ["light", "nlp", "apple-accel", "osint-html", "graph-storage", "torch", "dev", "acceleration", "ocr", "rerank", "browser", "webkit", "security", "transport", "m1-local", "all"]
+provides-extras = ["light", "nlp", "apple-accel", "osint-html", "graph-storage", "torch", "dev", "acceleration", "ocr", "coreml", "search", "tor", "legacy-html", "rerank", "browser", "webkit", "security", "transport", "graph-truth", "m1-local", "all"]
 
 [[package]]
 name = "hpack"
@@ -1400,6 +1418,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115, upload-time = "2025-03-05T20:05:02.478Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
+]
+
+[[package]]
+name = "kuzu"
+version = "0.11.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/0c/f141a81485729a072dc527b474e7580d5632309c68ad1a5aa6ed9ac45387/kuzu-0.11.3.tar.gz", hash = "sha256:e7bea3ca30c4bb462792eedcaa7f2125c800b243bb4a872e1eedc16917c1967a", size = 19430620, upload-time = "2025-10-10T13:36:54.984Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/e4/2c0e222a9b0605745234fec2774a25dd2e472699931f683f15d28ab8c076/kuzu-0.11.3-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e20ab3e3b20ccf75219872feb86582f959e313eeb59f51131adf4c91ebfabe30", size = 4093664, upload-time = "2025-10-10T13:36:13.116Z" },
+    { url = "https://files.pythonhosted.org/packages/88/05/3020ed9a0a7b492597f211f805233b77ef37266a23c27efc40bb7cb37402/kuzu-0.11.3-cp313-cp313-macosx_11_0_x86_64.whl", hash = "sha256:054479d3ce71410b8af2f5fa6aa37883db7fea5b25606af8d3bd7cf717aa5395", size = 4520498, upload-time = "2025-10-10T13:36:14.933Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/66/1a502700a7f2863f8f60621a412a7074d7eda9e92f18fd1d8d86905aa4d3/kuzu-0.11.3-cp313-cp313-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:143a37f1ae38b6b4337ccfcf42fa4f779a897223fff9c6c29f1a5a5a86911300", size = 6795804, upload-time = "2025-10-10T13:36:16.55Z" },
+    { url = "https://files.pythonhosted.org/packages/79/c2/1ea8cdc05946cb5906a7ebb451d7268e501ebb51ebecc0437969f8c07450/kuzu-0.11.3-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:548bfb3045d89bce1fbe89f4a890d636789671abfa80cbde2054c671e6069133", size = 7615668, upload-time = "2025-10-10T13:36:18.882Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/c3/336d6181f8f50126cf3d7186b3c5479f9f49d973145f79bed45cf87a9bb7/kuzu-0.11.3-cp313-cp313-win_amd64.whl", hash = "sha256:87bf6c369f182a59e5b8a38b3ca288b90fab2827577d9b0d2170a202c42bc8f5", size = 4714372, upload-time = "2025-10-10T13:36:20.877Z" },
+    { url = "https://files.pythonhosted.org/packages/94/db/e7e6cada6dc924eb8939bd35c5f724f5de4fc430a64d6d9e71b75cd0c271/kuzu-0.11.3-cp313-cp313t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:eb5c165bc5838059e498e8325939fc6bac075e1941157e8df6ebdd710135d43b", size = 6798556, upload-time = "2025-10-10T13:36:22.472Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/68/a0fa02134cb255c80b5ed5bb5f6130fbbc75a8ae8be4fd6ea6eb6bc8014b/kuzu-0.11.3-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:88c73dfd3d6a1fb374031050b725236fa9dd9a95424b09b20086a3d274bed51f", size = 7620378, upload-time = "2025-10-10T13:36:24.453Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/b7/2a4569984995f09476dbf1ef2e0a7298aa9fdb8896f2e8195d80e11786f4/kuzu-0.11.3-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9d2752a9e37adda6aef3bf041932ae3a1cf74ca7e893bbbacdd5e62b3ac6f8c2", size = 6795649, upload-time = "2025-10-10T13:36:26.15Z" },
+    { url = "https://files.pythonhosted.org/packages/77/13/df6e06a7d7506743c3a6cfbe50ee3f9d3fc58228e2a2fcbe7e74e7c17b00/kuzu-0.11.3-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:86be7d113e4e2c6761b1701079af8aeffc04c6981517f2d6aa393e883cc46036", size = 7615882, upload-time = "2025-10-10T13:36:28.215Z" },
+    { url = "https://files.pythonhosted.org/packages/32/85/c52c3b167edcc67da3b8788a20a2fb5b4f045060cbe1aed6121ce3ce83d3/kuzu-0.11.3-cp314-cp314t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d72ebd88e231b562e7a60ff88d200825d53e78a681bddd7f8d77b78126a5060c", size = 6798657, upload-time = "2025-10-10T13:36:29.935Z" },
+    { url = "https://files.pythonhosted.org/packages/06/be/5b4ff168718165c2ff5848ab79e22ecce72ad00522afee6820d390cb0753/kuzu-0.11.3-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:64c7ec822906bdee154eb38d93e64f184d8f94b30bbeaceaa252725f2b9efab3", size = 7620394, upload-time = "2025-10-10T13:36:31.69Z" },
 ]
 
 [[package]]
@@ -2922,7 +2959,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core" },
+    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -2937,8 +2974,8 @@ name = "pyobjc-framework-coreml"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core" },
-    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/30/2d/baa9ea02cbb1c200683cb7273b69b4bee5070e86f2060b77e6a27c2a9d7e/pyobjc_framework_coreml-12.1.tar.gz", hash = "sha256:0d1a4216891a18775c9e0170d908714c18e4f53f9dc79fb0f5263b2aa81609ba", size = 40465, upload-time = "2025-11-14T10:14:02.265Z" }
 wheels = [
