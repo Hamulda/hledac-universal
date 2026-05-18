@@ -1119,6 +1119,10 @@ def _build_product_value_summary(
         "corroborating_families": _corroborating_families(scorecard),
         "corroboration_reason": _corroboration_reason_str(scorecard),
         "corroboration_penalties": _corroboration_penalties_list(scorecard),
+        # F231A: Terminal coverage (distinct from positive corroboration)
+        "lane_terminal_coverage_score": _terminal_coverage_score(scorecard),
+        "terminal_families": _terminal_families(scorecard),
+        "terminal_coverage_reason": _terminal_coverage_reason_str(scorecard),
     }
 
     # Remove None fields for cleaner output (keep 0 as valid)
@@ -1219,7 +1223,7 @@ def _corroboration_reason_str(scorecard: dict) -> str:
     result = _Result(outcomes)
     try:
         sc = score_from_result(result)
-        return sc.corrobation_reason
+        return sc.corroboration_reason
     except Exception:
         return "corroboration unavailable"
 
@@ -1253,6 +1257,44 @@ def _corroboration_penalties_list(scorecard: dict) -> list:
 
     return penalties
 
+
+# F231A: Terminal coverage helpers (distinct from positive corroboration)
+def _terminal_coverage_score(scorecard: dict) -> float:
+    """Compute terminal coverage score (0.0–1.0) from lane outcomes.
+
+    Terminal coverage counts ATTEMPTED_ERROR / ATTEMPTED_TIMEOUT as "covered"
+    because the lane was planned and attempted — it is not absent/silent.
+    This is separate from corroboration_score which only rewards positive outcomes.
+    """
+    from runtime.corroboration_score import compute_terminal_coverage
+    outcomes = _get_corrob_outcomes(scorecard)
+    try:
+        tc = compute_terminal_coverage(outcomes)
+        return tc.terminal_coverage_score
+    except Exception:
+        return 0.0
+
+
+def _terminal_families(scorecard: dict) -> tuple:
+    """Return families that reached terminal/attempted state."""
+    from runtime.corroboration_score import compute_terminal_coverage
+    outcomes = _get_corrob_outcomes(scorecard)
+    try:
+        tc = compute_terminal_coverage(outcomes)
+        return tc.terminal_families
+    except Exception:
+        return ()
+
+
+def _terminal_coverage_reason_str(scorecard: dict) -> str:
+    """Return human-readable terminal coverage reason."""
+    from runtime.corroboration_score import compute_terminal_coverage
+    outcomes = _get_corrob_outcomes(scorecard)
+    try:
+        tc = compute_terminal_coverage(outcomes)
+        return tc.terminal_coverage_reason
+    except Exception:
+        return "terminal coverage unavailable"
 
 
 def _derive_hypothesis_queries(
@@ -2447,9 +2489,20 @@ def _build_capability_synthesis(
     # ── 4. Corroboration summary (F230C: use F229B corroboration_score) ───────
     # F230C: Derive corroboration_summary from pvs.lane_corroboration_score
     # rather than research_depth.depth_signals (which is a different signal).
+    # F231A: Terminal coverage is distinct from positive corroboration.
+    #   - corroboration_score < 0.3 with terminal coverage but no positive families
+    #     → "nonfeed_attempted_no_positive_evidence" (not "feed_only")
+    _terminal_coverage_score = pvs.get("lane_terminal_coverage_score", 0.0) if pvs else 0.0
+    _terminal_families = pvs.get("terminal_families", ()) if pvs else ()
+    _has_terminal_nonfeed = bool({"ct", "doh", "wayback", "passive_dns"} & set(_terminal_families))
+
     corroboration = "none"
     if _corrob_score >= 0.75:
         corroboration = "corroborated"
+    elif _corrob_score < 0.3 and _terminal_coverage_score > 0 and _has_terminal_nonfeed:
+        # F231A: Nonfeed lanes were planned/attempted (terminal coverage exists)
+        # but no positive corroboration — distinct from pure feed_only
+        corroboration = "nonfeed_attempted_no_positive_evidence"
     elif _corrob_score < 0.3:
         corroboration = "noisy" if _corrob_score > 0 else "feed_only"
     elif "campaign_hint" in _corrob_families:
@@ -2481,12 +2534,18 @@ def _build_capability_synthesis(
 
     # ── 7. Next engineering action (deterministic, no ML) ───────────────────
     # F230C: Influence engineering action from F229B corroboration score
+    # F231A: Handle nonfeed_attempted_no_positive_evidence before feed_heavy check
+    # because lanes were already planned/attempted — yield/quality fix not lane boost.
     if verdict == "invalid_capability":
         next_engineering_action = "fix_terminality_before_capacity_expansion"
     elif hardware_constrained:
         next_engineering_action = "address_m1_memory_pressure_before_scale"
     elif not terminality_satisfied:
         next_engineering_action = "resolve_terminality_gaps_first"
+    elif corroboration == "nonfeed_attempted_no_positive_evidence":
+        # F231A: Lanes were planned and reached terminal state but yielded no
+        # positive evidence — improve yield/provider quality, not lane scheduling
+        next_engineering_action = "improve_nonfeed_yield_or_provider_quality"
     elif feed_heavy and not useful_evidence:
         next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
     elif _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:

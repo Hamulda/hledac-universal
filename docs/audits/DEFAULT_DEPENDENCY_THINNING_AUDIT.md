@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-18
 **Author:** Claude Code
-**Status:** DRAFT — first-safe move TBD
+**Status:** COMPLETE — Phase 2 done
 
 ## Context
 

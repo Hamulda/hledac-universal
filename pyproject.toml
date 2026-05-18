@@ -61,15 +61,16 @@ dependencies = [
     # Browser binary is bundled with camoufox — NOT a separate chromium dep.
     # Fails soft if missing (nodriver fallback in public_fetcher).
     # MOVED_TO_OPTIONAL_BROWSER_BY_CP314_CLEANUP: "camoufox[geoip]",
-    # Web search
-    "duckduckgo-search>=8.0.0",
-    # Parsing
-    "beautifulsoup4>=4.12.0",
+    # Web search — MOVED_TO search extra (lazy import, ddgs primary)
+    # duckduckgo-search>=8.0.0
+    # Parsing — beautifulsoup4 MOVED_TO legacy-html extra (selectolax is primary)
+    # beautifulsoup4>=4.12.0
     # OCR — pytesseract is a lazy-import fallback; primary OCR path uses vision pipeline
     # "pytesseract>=0.3.10",  # MOVED_TO ocr extra
     # Networking
     "dnspython>=2.4.0",
-    "stem>=1.8.0",
+    # stem MOVED_TO tor extra (lazy import, fail-soft)
+    # "stem>=1.8.0",
     # DISABLED_BY_CP314_CLEANUP: "aiobtcdht>=0.1.0",  # likely typo/dead package; investigate aiobtdht GitHub source
     # Core models
     "pydantic>=2.0.0",
@@ -83,8 +84,9 @@ dependencies = [
     "lmdb>=2.2.0,<3.0.0",
     # Fallback browser (nodriver — camoufox is primary)
     # MOVED_TO_BROWSER_EXTRA_BY_F214AD: "nodriver>=0.1.0",
-    "coremltools==8.2",
-    "pyobjc-framework-coreml>=12.1",
+    # coremltools + pyobjc-framework-coreml MOVED_TO coreml extra (lazy import, fail-soft)
+    # "coremltools==8.2",
+    # "pyobjc-framework-coreml>=12.1",
     "flashrank>=0.2.10",
     "transformers>=5.8.0",
     "aiofiles>=25.1.0",
@@ -166,6 +168,30 @@ ocr = [
     "pytesseract>=0.3.10",
 ]
 
+# --- coreml: Apple CoreML / ANE for vision tasks (lazy import, fail-soft) ---
+# Only needed when VisionEncoder or ANE-capable models are used.
+# Platform-guarded: pyobjc only on Darwin.
+coreml = [
+    "coremltools==8.2",
+    "pyobjc-framework-coreml>=12.1; sys_platform == 'darwin'",
+]
+
+# --- search: web search (DuckDuckGo primary, fail-soft) ---
+search = [
+    "duckduckgo-search>=8.0.0",
+]
+
+# --- tor: Tor control (lazy import, fail-soft) ---
+tor = [
+    "stem>=1.8.0",
+]
+
+# --- legacy-html: BeautifulSoup4 fallback (lazy import) ---
+# Primary HTML parser is selectolax (osint-html); BS4 is only a fallback.
+legacy-html = [
+    "beautifulsoup4>=4.12.0",
+]
+
 # --- rerank: neural reranking ---
 rerank = [
     "flashrank>=0.2.0",        # neural rerank; import: flashrank
@@ -198,6 +224,15 @@ transport = [
     "aiohttp-socks>=0.8.0",     # SOCKS5 proxy support for aiohttp
 ]
 
+# --- graph-truth: Kuzu IOC graph backend (optional, for truth store) ---
+# Kuzu has no cp314 arm64 wheel — install from source or use kuzu-graph extra.
+# IOCGraph (Kuzu) is the truth store. DuckPGQGraph (DuckDB) is the canonical
+# analytics backend and is always available in default/m1-local.
+# Default/m1-local: NO kuzu dependency.
+graph-truth = [
+    "kuzu>=0.6.0",
+]
+
 # --- m1-local: ergonomic default for MacBook Air M1 8GB (no torch, no browser, no heavy OCR) ---
 # Recommended for routine local use on Apple Silicon:
 #   uv sync --extra m1-local --extra dev
@@ -206,7 +241,7 @@ m1-local = [
 ]
 # --- all: everything except torch (torch is too heavy for routine dev) ---
 all = [
-    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,m1-local]",
+    "hledac-universal[light,apple-accel,osint-html,graph-storage,dev,acceleration,nlp,rerank,browser,webkit,security,transport,ocr,coreml,search,tor,legacy-html,m1-local]",
 ]
 
 [project.scripts]

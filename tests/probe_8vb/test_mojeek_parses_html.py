@@ -1,4 +1,11 @@
-from bs4 import BeautifulSoup
+import pytest
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    pytest.skip("beautifulsoup4 not installed (legacy-html extra required)", allow_module_level=True)
 
 def test_mojeek_parses_html():
     html = ('<ul class="results-standard">'

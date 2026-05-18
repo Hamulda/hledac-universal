@@ -30,7 +30,22 @@ from typing import Any, Optional
 
 import xxhash
 
-import kuzu
+# Kuzu lazy import — fail-soft backend. kuzu is NOT in default deps or m1-local.
+# Install via: pip install hledac-universal[kuzu-graph]
+# Canonical write path: DuckPGQGraph (DuckDB). IOCGraph is opt-in truth store only.
+_KUZU_AVAILABLE: bool = False
+_kuzu = None
+
+try:
+    import kuzu as _kuzu
+    _KUZU_AVAILABLE = True
+except ImportError:
+    _kuzu = None
+
+
+class GraphBackendUnavailable(Exception):
+    """Raised when a required graph backend (kuzu) is not installed."""
+    pass
 
 # Kuzu single-thread executor — Kuzu itself is not thread-safe for concurrent queries
 _DB_EXECUTOR: ThreadPoolExecutor = ThreadPoolExecutor(
@@ -120,12 +135,16 @@ class IOCGraph:
     """
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
+        if not _KUZU_AVAILABLE:
+            raise GraphBackendUnavailable(
+                "kuzu is not installed. Install via: pip install hledac-universal[kuzu-graph]"
+            )
         if db_path is None:
             _KUZU_DB_ROOT.mkdir(parents=True, exist_ok=True)
             db_path = _KUZU_DB_ROOT / _IOC_GRAPH_FILENAME
         self._db_path: Path = Path(db_path)
-        self._db: Optional[kuzu.Database] = None
-        self._conn: Optional[kuzu.Connection] = None
+        self._db: Optional[Any] = None
+        self._conn: Optional[Any] = None
         self._executor: ThreadPoolExecutor = _DB_EXECUTOR
         self._closed: bool = False
 
@@ -240,8 +259,8 @@ class IOCGraph:
 
     def _init_schema_sync(self) -> None:
         """Synchronous schema init — runs on _executor thread."""
-        self._db = kuzu.Database(str(self._db_path))
-        self._conn = kuzu.Connection(self._db)
+        self._db = _kuzu.Database(str(self._db_path))
+        self._conn = _kuzu.Connection(self._db)
 
         try:
             self._conn.execute(

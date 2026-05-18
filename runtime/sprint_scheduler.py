@@ -10204,13 +10204,6 @@ class SprintScheduler:
                 "PIVOT_EXECUTOR": "pivot_executor",
                 "DOH": "doh",
             }
-            _surf_wayback = _sfo_by_family.get("wayback", {})
-            _surf_pdns = _sfo_by_family.get("passive_dns", {})
-            # F227A: If wayback/passive_dns eligible but not surfaced, set explicit terminal state
-            if (not _surf_wayback or not _surf_wayback.get("terminal_state")) and "WAYBACK" in _missing:
-                _surf_wayback = {"terminal_state": "not_scheduled"}
-            if (not _surf_pdns or not _surf_pdns.get("terminal_state")) and "PASSIVE_DNS" in _missing:
-                _surf_pdns = {"terminal_state": "not_scheduled"}
             _surf_ct = _sfo_by_family.get("ct", {})
             _surf_public = _sfo_by_family.get("public", {})
             # A lane is "surfaced" if it was attempted OR explicitly skipped (not absent)
@@ -10220,12 +10213,20 @@ class SprintScheduler:
                 if entry.get("attempted") or entry.get("skipped")
             }
             _missing = [e for e in _expected if _FAM_MAP.get(e, e.lower()) not in _surfaced_lower]
-            # F227A: Also mark eligible-but-not-surfaced lanes as missing
+            # F231A: Also mark eligible-but-not-surfaced lanes as missing (case-insensitive)
+            _elig = getattr(self._result, "nonfeed_lane_eligibility", {}) or {}
             for _lane_el in ("DOH", "WAYBACK", "PASSIVE_DNS"):
                 _fam_key = _FAM_MAP.get(_lane_el, _lane_el.lower())
                 if (_fam_key not in _surfaced_lower and
-                    getattr(self._result, "nonfeed_lane_eligibility", {}).get(_lane_el, False)):
+                    _elig.get(_lane_el.lower()) or _elig.get(_lane_el, False)):
                     _missing.append(_lane_el)
+            # F227A/F231A: If wayback/passive_dns eligible+missing, set explicit terminal state
+            _surf_wayback = _sfo_by_family.get("wayback", {})
+            _surf_pdns = _sfo_by_family.get("passive_dns", {})
+            if (not _surf_wayback or not _surf_wayback.get("terminal_state")) and "WAYBACK" in _missing:
+                _surf_wayback = {"terminal_state": "not_scheduled"}
+            if (not _surf_pdns or not _surf_pdns.get("terminal_state")) and "PASSIVE_DNS" in _missing:
+                _surf_pdns = {"terminal_state": "not_scheduled"}
             _surf_complete = len(_missing) == 0
 
             # Sprint F229A: Extract bootstrap ordering telemetry from public outcome

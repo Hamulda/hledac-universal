@@ -25,6 +25,18 @@ _NONFEED_FAMILIES = {_CT, _DOH, _WAYBACK, _PASSIVE_DNS}
 
 _TERMINAL_COMPLETED = "COMPLETED"
 _TERMINAL_NO_RESULTS = "ATTEMPTED_NO_RESULTS"
+_TERMINAL_ATTEMPTED_STATES = frozenset({
+    "COMPLETED",
+    "ATTEMPTED_NO_RESULTS",
+    "ATTEMPTED_EMPTY",
+    "ATTEMPTED_ERROR",
+    "ATTEMPTED_TIMEOUT",
+    "attempted_empty",
+    "request_timeout",
+    "error",
+    "not_scheduled",
+    "dependency_missing",
+})
 
 _MAX_SCORE = 1.0
 _MIN_SCORE = 0.0
@@ -50,6 +62,29 @@ class LaneCorroborationScore:
     corroboration_score: float
     corroborating_families: tuple[str, ...]
     corroboration_reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class LaneTerminalCoverage:
+    """Terminal coverage — did lanes attempt/complete (regardless of outcome quality).
+
+    Unlike corroboration_score, this counts ATTEMPTED_ERROR and ATTEMPTED_TIMEOUT
+    as coverage evidence. A lane that was planned, attempted, and failed explicitly
+    is still "covered" — it is not silent/absent.
+
+    Attributes
+    ----------
+    terminal_coverage_score : float
+        0.0–1.0, ratio of terminal nonfeed families to expected.
+    terminal_families : tuple[str, ...]
+        Families that reached a terminal/attempted state.
+    terminal_coverage_reason : str
+        Human-readable summary.
+    """
+
+    terminal_coverage_score: float
+    terminal_families: tuple[str, ...]
+    terminal_coverage_reason: str
 
 
 # ----------------------------------------------------------------------
@@ -218,4 +253,71 @@ def score_from_result(result: object) -> LaneCorroborationScore:
         seed_context_available=getattr(result, "seed_context_available", False),
         nonfeed_terminal_count=nonfeed_terminals,
         public_discovery_zero_results=bool(public_zero),
+    )
+
+
+# ----------------------------------------------------------------------
+# Terminal coverage (F231A): distinct from positive corroboration
+# ----------------------------------------------------------------------
+def _terminal_coverage_ok(state: str | None) -> bool:
+    """True when the lane terminal state counts as terminal coverage (attempted)."""
+    return state in _TERMINAL_ATTEMPTED_STATES
+
+
+def _nonfeed_has_terminal_coverage(family: str, outcomes: dict) -> bool:
+    """True when a nonfeed family reached any terminal/attempted state."""
+    fam_data = outcomes.get(family, {})
+    ts = fam_data.get("terminal_state")
+    return _terminal_coverage_ok(ts)
+
+
+def compute_terminal_coverage(
+    outcomes: dict,
+    expected_families: tuple[str, ...] | None = None,
+) -> LaneTerminalCoverage:
+    """Compute terminal coverage from lane outcomes.
+
+    Terminal coverage = lane was planned, attempted, and has an explicit result
+    (COMPLETED / ATTEMPTED_NO_RESULTS / ATTEMPTED_ERROR / ATTEMPTED_TIMEOUT /
+     attempted_empty / request_timeout / error / not_scheduled / dependency_missing).
+
+    This is separate from positive corroboration — a lane that timed out still
+    provides terminal coverage evidence; it just doesn't contribute positive score.
+    """
+    # Determine expected families from outcomes if not provided
+    if expected_families:
+        expected_set = set(expected_families)
+    else:
+        expected_set = set(outcomes.keys())
+
+    # Find nonfeed families present in outcomes
+    nonfeed_in_outcomes = expected_set & _NONFEED_FAMILIES
+    if not nonfeed_in_outcomes:
+        nonfeed_in_outcomes = {f for f in outcomes if f in _NONFEED_FAMILIES}
+
+    terminal_families: list[str] = []
+    for fam in nonfeed_in_outcomes:
+        if _nonfeed_has_terminal_coverage(fam, outcomes):
+            terminal_families.append(fam)
+
+    expected_count = len(nonfeed_in_outcomes)
+    terminal_count = len(terminal_families)
+
+    if expected_count > 0:
+        coverage_score = round(terminal_count / expected_count, 2)
+    else:
+        coverage_score = 0.0
+
+    # Build reason
+    if terminal_count == 0:
+        reason = "no nonfeed lanes reached terminal state"
+    elif terminal_count == expected_count:
+        reason = f"all {terminal_count} nonfeed families covered"
+    else:
+        reason = f"{terminal_count}/{expected_count} nonfeed families covered"
+
+    return LaneTerminalCoverage(
+        terminal_coverage_score=coverage_score,
+        terminal_families=tuple(terminal_families),
+        terminal_coverage_reason=reason,
     )

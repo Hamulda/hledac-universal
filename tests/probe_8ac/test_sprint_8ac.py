@@ -514,7 +514,10 @@ class TestTimeoutPath:
 class TestRatelimitFailSoft:
     @pytest.mark.asyncio
     async def test_ratelimit_exception_returns_fail_soft(self):
-        from duckduckgo_search.exceptions import RatelimitException
+        try:
+            from duckduckgo_search.exceptions import RatelimitException
+        except ImportError:
+            pytest.skip("duckduckgo-search not installed (search extra required)")
 
         async def fake_ratelimited(*args, **kwargs):
             raise RatelimitException("rate limited")

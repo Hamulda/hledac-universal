@@ -43,6 +43,57 @@ uv run python -c "import mlx, selectolax, duckdb, pyarrow, rapidfuzz; print('m1-
 ```
 
 Includes: `apple-accel`, `osint-html`, `graph-storage`, `acceleration`, `transport`.
+Does NOT include: `coreml`, `tor`, `search`, `legacy-html`, `ocr` (keeps m1-local lean).
+
+### search
+Web search via DuckDuckGo (ddgs v9+ primary, duckduckgo-search v8.x fallback).
+
+```bash
+uv sync --extra search
+uv run python -c "from duckduckgo_search import DDGS; print('search OK')"
+```
+
+Lazy import — DuckDuckGoAdapter only loads on demand.
+
+### tor
+Tor control via Stem (lazy import, fail-soft).
+
+```bash
+uv sync --extra tor
+uv run python -c "import stem.control; print('tor OK')"
+```
+
+Used by `public_fetcher.py` and `tor_transport.py` — only active when Tor is running.
+
+### legacy-html
+BeautifulSoup4 fallback for HTML parsing (lazy import).
+
+```bash
+uv sync --extra legacy-html
+uv run python -c "from bs4 import BeautifulSoup; print('legacy-html OK')"
+```
+
+Primary parser is selectolax (osint-html). BS4 is only a fallback when selectolax is unavailable.
+
+### coreml
+Apple CoreML / ANE for vision tasks (lazy import, fail-soft).
+
+```bash
+uv sync --extra coreml
+uv run python -c "import coremltools; print('coreml OK')"
+```
+
+Platform-guarded: pyobjc only on Darwin. VisionEncoder and ANE-capable models use this.
+
+### ocr
+Optical character recognition for captcha solving.
+
+```bash
+uv sync --extra ocr
+uv run python -c "import pytesseract; print('ocr OK')"
+```
+
+Lazy import — captcha_solver.py already has try/except ImportError. Primary OCR uses vision pipeline.
 
 ### browser
 Full JS rendering stack (import smoke only, no browser launch).
