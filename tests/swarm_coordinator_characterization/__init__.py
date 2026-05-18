@@ -1,0 +1,1 @@
+# Tests for swarm_coordinator types — characterization only, no behavior change.
