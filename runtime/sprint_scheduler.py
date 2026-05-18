@@ -1591,6 +1591,8 @@ class SprintResult:
     seed_context_skip_reason: str = ""
 
     # F233C: next_sprint_seeds consumption telemetry
+    next_seeds_consumed_count: int = 0
+    next_seeds_seed_source: str = ""
     next_seeds_provider_yield: bool = False
     next_seeds_pivot_deepening: bool = False
     next_seeds_query_suggestions: tuple[str, ...] = ()
@@ -2610,6 +2612,11 @@ class SprintScheduler:
                     self._result.next_seeds_query_suggestions = (
                         _next_seeds_diagnostics.query_suggestions
                         if _next_seeds_diagnostics else ()
+                    )
+                    self._result.next_seeds_consumed_count = len(_next_seeds_ioc_seeds)
+                    self._result.next_seeds_seed_source = (
+                        f"predecessor:{self._config.predecessor_sprint_id}"
+                        if self._config.predecessor_sprint_id else "none"
                     )
                     self._result.next_seeds_skip_reason = _next_seeds_skip_reason
                     # F233C: Extract IOC values from ioc_followup seeds for NonfeedSeedContext
@@ -5301,16 +5308,19 @@ class SprintScheduler:
                     _nonfeed_expected.append(_lane)
 
             # Sprint F233D: Run nonfeed prelude lanes via extracted class methods
-            # F228A: Build NonfeedSeedContext from pivot seeds so prelude lanes can shape queries.
+            # F228A / F235C: Build NonfeedSeedContext from pivot seeds + next_seeds_ioc values.
             _seed_ctx: Optional[NonfeedSeedContext] = None
-            if (self._result.pivot_seed_domains or self._result.pivot_seed_ips
-                    or self._result.pivot_seed_urls):
+            _pivot_has_seeds = (self._result.pivot_seed_domains or self._result.pivot_seed_ips
+                                or self._result.pivot_seed_urls)
+            _next_seeds_has_iocs = (self._result.next_seeds_ioc_domains or self._result.next_seeds_ioc_ips
+                                    or self._result.next_seeds_ioc_urls or self._result.next_seeds_ioc_hashes)
+            if _pivot_has_seeds or _next_seeds_has_iocs:
                 _seed_ctx = NonfeedSeedContext(
-                    domains=tuple(self._result.pivot_seed_domains or ()),
-                    ips=tuple(self._result.pivot_seed_ips or ()),
-                    urls=tuple(self._result.pivot_seed_urls or ()),
-                    hashes=tuple(self._result.pivot_seed_hashes or ()),
-                    cves=tuple(self._result.pivot_seed_cves or ()),
+                    domains=tuple((self._result.pivot_seed_domains or ()) + (self._result.next_seeds_ioc_domains or ())),
+                    ips=tuple((self._result.pivot_seed_ips or ()) + (self._result.next_seeds_ioc_ips or ())),
+                    urls=tuple((self._result.pivot_seed_urls or ()) + (self._result.next_seeds_ioc_urls or ())),
+                    hashes=tuple((self._result.pivot_seed_hashes or ()) + (self._result.next_seeds_ioc_hashes or ())),
+                    cves=tuple((self._result.pivot_seed_cves or ()) + (self._result.next_seeds_ioc_cves or ())),
                 )
 
             await self._run_nonfeed_prelude_gather(

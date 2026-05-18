@@ -270,7 +270,7 @@ def consume_next_sprint_seeds(
         elif task_type in QUERY_SEED_TYPES:
             if len(query_suggestions) >= MAX_QUERY_SUGGESTIONS:
                 continue
-            value = seed.get("value")
+            value = seed.get("val")
             if value and isinstance(value, str) and value.strip():
                 query_suggestions.append(value.strip())
 

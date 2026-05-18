@@ -1,30 +1,58 @@
 import asyncio
 import logging
 from typing import Optional, List
-import numpy as np
 
-import mlx.core as mx
+import numpy as np
 
 from hledac.universal.core.resource_governor import ResourceGovernor, Priority
 
 logger = logging.getLogger(__name__)
 
-try:
-    import coremltools as ct
-    from coremltools.models import MLModel
-    COREML_AVAILABLE = True
-except ImportError:
-    COREML_AVAILABLE = False
-    ct = None
-    MLModel = None
+# Lazy MLX/CoreML accessors
+_mlx_core_mod = None
+_MLX_CORE_AVAILABLE = False
+_coremltools_mod = None
+_COREML_AVAILABLE = False
+_MLModel = None
+
+
+def _get_mlx_core():
+    global _mlx_core_mod, _MLX_CORE_AVAILABLE
+    if _mlx_core_mod is None:
+        try:
+            import mlx.core as _mlx_core_mod
+            _MLX_CORE_AVAILABLE = True
+        except ImportError:
+            _mlx_core_mod = None
+            _MLX_CORE_AVAILABLE = False
+    return _mlx_core_mod
+
+
+def _get_coremltools():
+    global _coremltools_mod, _COREML_AVAILABLE, _MLModel
+    if _coremltools_mod is None:
+        try:
+            import coremltools as _coremltools_mod
+            from coremltools.models import MLModel as _MLModel
+            _COREML_AVAILABLE = True
+        except ImportError:
+            _coremltools_mod = None
+            _COREML_AVAILABLE = False
+            _MLModel = None
+    return _coremltools_mod, _MLModel
+
+
+COREML_AVAILABLE = False
 
 
 class VisionEncoder:
     """
     CoreML Vision encoder (ANE best-effort).
+
     - CI-safe fallback: pokud CoreML není, vrací náhodné embeddingy stabilní dimenze.
     - Batchování: encode_batch(list[bytes]) -> list[mx.array]
     """
+
     def __init__(
         self,
         governor: ResourceGovernor,
@@ -38,14 +66,14 @@ class VisionEncoder:
         self.embedding_dim = embedding_dim
         self.batch_size = batch_size
         self.quant_4bit = quant_4bit
-
         self._model = None
         self._input_name: Optional[str] = None
         self._output_name: Optional[str] = None
 
     async def load(self) -> None:
+        ct_mod, MLModel = _get_coremltools()
         async with self.governor.reserve({"ram_mb": 200, "gpu": True}, Priority.HIGH):
-            if not COREML_AVAILABLE or MLModel is None:
+            if not _COREML_AVAILABLE or MLModel is None:
                 logger.warning("CoreML not available; VisionEncoder will run in dummy mode.")
                 self._model = None
                 return
@@ -55,34 +83,31 @@ class VisionEncoder:
                 self._model = None
                 return
 
-            loop = asyncio.get_running_loop()
+            loop = asyncio.get_run_loop()
 
             def _load_model():
-                # Best-effort: compute_units=ALL (ANE/CPU/GPU)
-                return MLModel(self.model_path, compute_units=ct.ComputeUnit.ALL)
+                return MLModel(self.model_path, compute_units=ct_mod.ComputeUnit.ALL)
 
             self._model = await loop.run_in_executor(None, _load_model)
-
             # Discover IO names
             spec = self._model.get_spec()
-            self._input_name = spec.description.input[0].name
-            self._output_name = spec.description.output[0].name
+            self._input_name = spec.desc.input[0].name
+            self._output_name = spec.desc.output[0].name
 
             # Best-effort quantization: NEPOUŽÍVEJ neověřené API
-            # (jen logujeme – skutečná quantizace je out-of-scope/unstable v CI)
             if self.quant_4bit:
-                logger.info("quant_4bit requested; best-effort only (no hard dependency / no crash).")
+                logger.info("quant_4bit requested; best-effort only (no hard dep / no crash).")
 
-    async def encode_batch(self, images: List[bytes]) -> List[mx.array]:
+    async def encode_batch(self, images: List[bytes]) -> List:
+        mx_mod = _get_mlx_core()
         async with self.governor.reserve({"ram_mb": max(50, 20 * self.batch_size), "gpu": True}, Priority.NORMAL):
-            if not self._model:
-                return [mx.random.normal(shape=(self.embedding_dim,)) for _ in images]
+            if not self._model or mx_mod is None:
+                return [mx_mod.random.normal(shape=(self.embedding_dim,)) for _ in images]
 
-            # Reálné preprocess/predict je projektově specifické → zde CI-safe stub.
-            # Implementátor může doplnit, ale nesmí rozbít CI.
-            results: List[mx.array] = []
+            # Real preprocess/predict would go here — stub for CI safety
+            results = []
             for i in range(0, len(images), self.batch_size):
                 batch = images[i:i + self.batch_size]
                 for _ in batch:
-                    results.append(mx.random.normal(shape=(self.embedding_dim,)))
+                    results.append(mx_mod.random.normal(shape=(self.embedding_dim,)))
             return results
