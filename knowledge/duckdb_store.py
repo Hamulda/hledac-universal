@@ -54,7 +54,54 @@ ASYNC API SURFACE
 - async_query_recent_findings(limit=10)  — query findings
 - async_healthcheck()      — returns True if healthy
 - aclose()            — async idempotent shutdown
-"""
+
+    DELEGATE BOUNDARIES (Sprint F216G–F233A extraction)
+    ==================================================
+    DuckDBShadowStore is the canonical write core. Persistence concerns have been
+    extracted into specialized managers that DuckDBShadowStore orchestrates. The store
+    itself owns NO LMDB handles — all such handles are owned by the delegate managers.
+
+    WAL Boundary:
+        Pending sync markers, deadletters, WAL replay state → WALManager (wal.py)
+
+    Dedup Boundary:
+        Persistent LMDB, hot cache, semantic dedup cache → DedupManager (dedup.py)
+
+    Semantic Buffering Boundary:
+        FastEmbed + LanceDB batch embedding pipeline → SemanticStoreBuffer (buffer.py)
+
+    Graph Attachment Boundary:
+        IOCGraph injection, STIX, truth-write, graph queries → GraphAttachmentStore (graph_attachment.py)
+
+    Quality Assessment Boundary:
+        Entropy, dedup fingerprint, rejection ledger → QualityAssessmentState (quality_assessment.py)
+
+    CANONICAL WRITE PATH (unchanged since Sprint F216G):
+        async_ingest_findings_batch()
+          → quality gate (per-finding: entropy, dedup fp, URL normalization)
+          → accept/reject decision (QualityAssessmentState)
+          → async_record_canonical_findings_batch()
+              → WALManager.append()          [write-ahead log, crash safety]
+              → DedupManager.check()         [duplicate detection]
+              → DuckDB insert (sprint_delta, shadow_findings)
+              → SemanticStoreBuffer.buffer()  [async FastEmbed + LanceDB index]
+              → GraphAttachmentStore (optional, post-accumulation)
+              → WALManager.flush()            [sync marker, allows replay]
+
+    READ / QUERY METHODS:
+        async_query_recent_findings(), async_query_sprint_deltas(),
+        async_query_source_hit_log(), get_runtime_status(),
+        get_dedup_runtime_status(), get_wal_runtime_status(),
+        get_semantic_buffer_status(), get_graph_stats()
+
+    WHY NO StoreProtocol:
+        Only one real adapter (DuckDBShadowStore) existed across all sprints.
+        The delegate managers each have their own interfaces; no abstraction layer
+        was needed since DuckDBShadowStore is the sole canonical store. If a second
+        adapter is added in the future (e.g., SQLite fallback), a protocol can be
+        introduced at that time. Until then, a protocol would add indirection
+        without benefit.
+    """
 
 from __future__ import annotations
 

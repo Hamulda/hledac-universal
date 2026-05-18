@@ -14,6 +14,47 @@ Features:
 - Allocation tracking with eviction callbacks
 - Memory pressure monitoring with callbacks
 - Thread-safe operations
+
+Class Index
+-----------
+**Neuromorphic / STDP Layer** (lines 138-655):
+  - ``NeuromorphicMemoryZone`` — Enum: ZONE_A (active), ZONE_B (consolidation), ZONE_C (dormant)
+  - ``MemoryPattern`` — dataclass: temporal pattern with timestamp, intensity, frequency
+  - ``STDPParameters`` — dataclass: spike-timing-dependent plasticity config (A_plus, A_minus, tau)
+  - ``NeuromorphicMemoryManager`` — STDP-based neuromorphic memory with zone transitions
+
+**Memory Allocation & Zones** (lines 656-728):
+  - ``MemoryPressureLevel`` — Enum: NORMAL, WARNING, CRITICAL, EMERGENCY
+  - ``ThermalState`` — IntEnum: COLD, COOL, NOMINAL, WARM, HOT
+  - ``MemoryZone`` — Enum: CRITICAL, HIGH, MEDIUM, LOW (priority-based memory zones)
+  - ``MemoryAllocation`` — dataclass: per-zone allocation entry with used/peak/frag
+  - ``MemoryStatistics`` — dataclass: global memory stats
+  - ``ZoneStatistics`` — dataclass: per-zone memory stats
+
+**Core Coordinator** (lines 729-1915):
+  - ``UniversalMemoryCoordinator`` — main facade; thread-safe zone management, MLX coupling is lazy/fail-soft
+
+**Context Optimization** (lines 1917-2335):
+  - ``ContextPriority`` — Enum: CRITICAL, HIGH, MEDIUM, LOW, BACKGROUND
+  - ``ResearchPhase`` — Enum: DISCOVERY, ACQUISITION, ANALYSIS, SYNTHESIS, REPORTING
+  - ``ContextItem`` — dataclass: priority + metadata for one context entry
+  - ``CompressedContext`` — dataclass: compressed representation with ratio
+  - ``ContextOptimizationManager`` — LANCEDB reranking integration; narrow seam ``get_reranking_context()`` for thermal/battery-aware reranking
+
+**Multi-Level Cache** (lines 2337-2820):
+  - ``CacheType`` — Enum: L1 (hot), L2 (warm), L3 (cold)
+  - ``CacheLocation`` — Enum: RAM, DISK, LMDB
+  - ``CacheEntry`` — dataclass: cached item with key, data, size, access metadata
+  - ``MultiLevelContextCache`` — LRU cache with L1/L2/L3 tiers and RAM pressure gating
+
+**Memory Pressure Polling** (lines 2822-end):
+  - ``MemoryPressurePoller`` — background poller with callbacks on pressure transitions
+
+Notes
+-----
+- MLX memory coupling is lazy and fail-soft: MLX is not loaded or initialized by this module
+- Neuromorphic subsystem is optional, controlled by ``enable_neuromorphic`` parameter on ``UniversalMemoryCoordinator``
+- ``get_reranking_context()`` is the narrow seam for Lancedb/reranking with thermal/battery awareness
 """
 
 from __future__ import annotations
