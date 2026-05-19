@@ -79,7 +79,8 @@ class SprintGraphAccumulator:
             if not fid:
                 continue
             src_type = getattr(finding, "source_type", "unknown") or "unknown"
-            confidence = getattr(finding, "confidence", 0.5) or 0.5
+            raw_confidence = getattr(finding, "confidence", 0.5) or 0.5
+            confidence = max(0.0, min(1.0, float(raw_confidence)))
             rows.append((fid, src_type, confidence, sprint_id or ""))
 
         if not rows:
@@ -93,3 +94,51 @@ class SprintGraphAccumulator:
             # Fail-soft: graph must never block sprint
             logger.warning("[GraphAccumulator] upsert_ioc_batch failed, returning 0")
             return 0
+
+    def buffer_pivot_relation(
+        self, ioc_value: str, ioc_type: str, confidence: float
+    ) -> None:
+        """
+        Buffer a pivot relation into the DuckPGQ graph.
+
+        Args:
+            ioc_value: IOC value (URL or raw IOC string).
+            ioc_type:  IOC type (e.g. "domain", "ip", "url").
+            confidence: Confidence score [0..1].
+
+        Behavior:
+          - Lazy-init DuckPGQGraph on first call.
+          - URL ioc_value → target domain via urlparse().netloc.
+          - Non-URL → target = ioc_value.
+          - Calls graph.add_relation(ioc_value, target, rel_type="pivot", evidence="pivot").
+          - Fail-soft: exceptions from graph construction and add_relation are swallowed.
+          - This method does NOT interact with pivot queues or _pivot_ioc_graph.
+        """
+        try:
+            from urllib.parse import urlparse
+
+            # Lazy init DuckPGQGraph
+            if not hasattr(self, "_ioc_graph"):
+                from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+
+                self._ioc_graph = DuckPGQGraph()
+
+            # Determine target: URL → domain, otherwise raw ioc_value
+            target = ioc_value
+            try:
+                parsed = urlparse(ioc_value)
+                if parsed.netloc:
+                    target = parsed.netloc
+            except Exception:
+                pass
+
+            self._ioc_graph.add_relation(
+                ioc_value,
+                target,
+                rel_type="pivot",
+                evidence="pivot",
+            )
+        except Exception:
+            # Fail-soft: graph errors must never block pivot processing
+            logger.warning("[GraphAccumulator] buffer_pivot_relation failed, swallowing")
+            pass

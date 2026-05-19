@@ -292,3 +292,50 @@ class TestAccumulatorNoneFallbacks:
         acc.accumulate_findings([ConfNoneFinding()], sprint_id="s1")
         rows = gs.upsert_ioc_batch.call_args[0][0]
         assert rows[0][2] == 0.5
+
+
+# ------------------------------------------------------------------
+# Test: confidence clamping [0.0, 1.0] — F239A
+# ------------------------------------------------------------------
+
+class TestConfidenceClampF239A:
+    def test_confidence_above_1_clamped_to_1(self):
+        """confidence > 1.0 is clamped to 1.0."""
+        gs = MagicMock()
+        acc = SprintGraphAccumulator(gs)
+        f = _make_finding("fid-high", "ct_log", 1.5)
+        acc.accumulate_findings([f], sprint_id="s1")
+        rows = gs.upsert_ioc_batch.call_args[0][0]
+        assert rows[0][2] == 1.0
+
+    def test_confidence_below_0_clamped_to_0(self):
+        """confidence < 0.0 is clamped to 0.0."""
+        gs = MagicMock()
+        acc = SprintGraphAccumulator(gs)
+        f = _make_finding("fid-low", "ct_log", -0.3)
+        acc.accumulate_findings([f], sprint_id="s1")
+        rows = gs.upsert_ioc_batch.call_args[0][0]
+        assert rows[0][2] == 0.0
+
+    def test_confidence_085_unchanged(self):
+        """confidence 0.85 passes through unchanged."""
+        gs = MagicMock()
+        acc = SprintGraphAccumulator(gs)
+        f = _make_finding("fid-085", "ct_log", 0.85)
+        acc.accumulate_findings([f], sprint_id="s1")
+        rows = gs.upsert_ioc_batch.call_args[0][0]
+        assert rows[0][2] == 0.85
+
+    def test_confidence_string_cast_to_float(self):
+        """confidence as numeric string (e.g. '0.9') is cast to float and clamped."""
+        gs = MagicMock()
+        acc = SprintGraphAccumulator(gs)
+
+        class StringConfidence:
+            finding_id = "fid-str"
+            source_type = "feed"
+            confidence = "0.9"  # string, not float
+
+        acc.accumulate_findings([StringConfidence()], sprint_id="s1")
+        rows = gs.upsert_ioc_batch.call_args[0][0]
+        assert rows[0][2] == 0.9

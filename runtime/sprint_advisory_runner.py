@@ -239,12 +239,27 @@ class SprintAdvisoryRunner:
 
                 stats = graph_service.graph_stats()
                 if stats:
+                    # F238D: also collect top nodes for node_degrees and domains
+                    node_degrees: dict[str, int] = {}
+                    domains: list[str] = []
+                    try:
+                        summary = graph_service.graph_analytics_summary(top_k=500)
+                        if summary.get("analytics_available"):
+                            for entity in summary.get("top_central_entities", [])[:500]:
+                                val = entity.get("value", "")
+                                deg = entity.get("degree", 0)
+                                if val and deg > 0:
+                                    domains.append(val)
+                                    node_degrees[val] = deg
+                    except Exception:
+                        pass
+
                     graph_stats = {
                         "nodes": stats.get("nodes", 0),
                         "edges": stats.get("edges", 0),
-                        "domains": [],
+                        "domains": domains,
                         "connected_iocs": set(),
-                        "node_degrees": {},
+                        "node_degrees": node_degrees,
                     }
             except Exception:
                 pass  # Fail-soft: graph stats are optional

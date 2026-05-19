@@ -1292,6 +1292,9 @@ class SprintSchedulerResult:
     acquisition_plan_enabled_lanes_for_prelude: tuple[str, ...] = ()
     acquisition_plan_profile_for_prelude: str = ""
     acquisition_plan_build_error_for_prelude: str = ""
+    # F238E Phase A: Sprint timer — fail-soft wall-time instrumentation (bounded maxlen=500)
+    timer_events: list[dict] | None = None
+
     # F226A: Seed context telemetry
     seed_context_available: bool = False
     seed_context_propagated: bool = False
@@ -1628,6 +1631,11 @@ class SprintResult:
     nonfeed_prelude_error_by_lane: dict[str, str] = field(default_factory=dict)
     nonfeed_prelude_duration_s: float = 0.0
     nonfeed_prelude_feed_blocked_until_complete: bool = False
+
+    # F238D: Pivot graph stats proof fields
+    pivot_graph_stats_used: bool = False  # True when graph_stats was non-empty
+    pivot_graph_stats_keys: tuple[str, ...] = ()  # Keys present in graph_stats
+    graph_aware_pivot_count: int = 0  # Pivots scored with graph-aware degree penalty
 
 
 @dataclass(slots=True)
@@ -2116,6 +2124,9 @@ class SprintScheduler:
         # Sprint F205H: Metrics registry for sprint reporting (fail-soft)
         self._metrics_registry: Any = None
         self._metrics_initialized: bool = False
+        # F238E Phase A: Sprint timer — fail-soft, no file/network/model I/O in hot path
+        from hledac.universal.runtime.sprint_timer import SprintTimer
+        self._timer: SprintTimer = SprintTimer()
         # Sprint F215D: Override for _finalize_result_truth exit path — set in except block
         self._run_exit_path_override: str | None = None
         # Sprint F218E: Cache duckdb_store capability to avoid repeated hasattr checks
@@ -2713,17 +2724,26 @@ class SprintScheduler:
             self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
             # F216F: Generate pivot candidates from query and fill telemetry
             # F226A: Pass mission_intent for mission-aware scoring
+            # F238D: Pass graph_stats for degree-penalty and novelty scoring
             if self._result.nonfeed_plan_debug is not None:
                 try:
                     _nd = self._result.nonfeed_plan_debug
+                    _graph_stats = self._get_pivot_graph_stats_for_planning()
                     _pivot_candidates = generate_pivot_candidates_from_query(
-                        query, mission_intent=_nd.mission_intent
+                        query,
+                        mission_intent=_nd.mission_intent,
+                        graph_stats=_graph_stats,
                     )
                     _nd.pivot_candidates_count = len(_pivot_candidates)
                     _nd.pivot_candidate_types = tuple(set(p.pivot_type for p in _pivot_candidates))
                     _nd.pivot_scheduled_lanes = ()
                     _nd.pivot_skip_reason = None
                     _nd.pivot_errors = ()
+                    # F238D: populate proof fields
+                    if _graph_stats and _graph_stats.get("nodes", 0) > 0:
+                        self._result.pivot_graph_stats_used = True
+                        self._result.pivot_graph_stats_keys = tuple(_graph_stats.keys())
+                        self._result.graph_aware_pivot_count = len(_pivot_candidates)
                 except Exception:
                     pass  # Fail-soft
             # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
@@ -2745,9 +2765,14 @@ class SprintScheduler:
 
         # Sprint F209A: Run Mandatory Acquisition Prelude BEFORE main feed cycle loop
         # This establishes early terminal state for PUBLIC/CT before feed cycles dominate runtime
-        await self._run_mandatory_acquisition_prelude(
-            self._result, query, duckdb_store, self._ct_log_client
-        )
+        # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
+        try:
+            self._timer.phase("prelude_start")
+            await self._run_mandatory_acquisition_prelude(
+                self._result, query, duckdb_store, self._ct_log_client
+            )
+        finally:
+            self._timer.phase("prelude_end")
         # Sprint F214: Only record prelude_complete if prelude actually ran.
         # Guard: non-domain query with default/nonfeed profile returns early with
         # acquisition_prelude_ran=False; must NOT emit false prelude_complete telemetry.
@@ -3143,7 +3168,12 @@ class SprintScheduler:
         # Sprint F206C: Delegated to runner.teardown()
         self._runner.teardown()
         if self._config.export_enabled:
-            await self._run_export(lifecycle)
+            # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
+            try:
+                self._timer.phase("export_start")
+                await self._run_export(lifecycle)
+            finally:
+                self._timer.phase("export_end")
 
         self._result.final_phase = self._runner.current_phase
 
@@ -3316,6 +3346,11 @@ class SprintScheduler:
                 exit_phase="TEARDOWN",
                 query=query,
             )
+        # F238E Phase A: Attach timer events to result before returning (fail-soft)
+        try:
+            self._result.timer_events = self._timer.events
+        except Exception:
+            self._result.timer_events = None
         return self._result
 
     async def _record_scheduler_exit(
@@ -5541,8 +5576,10 @@ class SprintScheduler:
                             )
                         elif _lane_name == "PIVOT_EXECUTOR":
                             # PIVOT_EXECUTOR: inline (already structured)
+                            # F238D: Pass graph_stats for degree-penalty and novelty scoring
                             from hledac.universal.runtime.pivot_planner import generate_pivot_candidates_from_query
-                            _pivots = generate_pivot_candidates_from_query(query)
+                            _gs = self._get_pivot_graph_stats_for_planning()
+                            _pivots = generate_pivot_candidates_from_query(query, graph_stats=_gs)
                             if _pivots:
                                 nonfeed_prelude_attempted.append("PIVOT_EXECUTOR")
                                 nonfeed_prelude_terminal.append("PIVOT_EXECUTOR")
@@ -7304,7 +7341,12 @@ class SprintScheduler:
                     await self._enrichment_services.enrich_ct_findings(findings, self._result)
                     await self._enrichment_services.enrich_findings_multimodal(findings, self._result)
                 # Sprint F198A: Accumulate findings to cross-sprint graph (fail-soft)
-                self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
+                # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
+                try:
+                    self._timer.phase("graph_accum_start")
+                    self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
+                finally:
+                    self._timer.phase("graph_accum_end")
                 # F232: ct_storage_attempted — storage was attempted
                 self._result.ct_storage_attempted = True
                 results = await store.async_ingest_findings_batch(findings)
@@ -8690,6 +8732,62 @@ class SprintScheduler:
         except Exception:
             pass
         return {}
+
+    # ── F238D: Graph stats for pivot planning ─────────────────────────────────
+
+    MAX_PIVOT_GRAPH_STATS_NODES: int = 500  # bound: max domains to collect
+
+    def _get_pivot_graph_stats_for_planning(self) -> dict:
+        """
+        F238D: Build structured graph_stats dict for PivotPlanner scoring.
+
+        Called during nonfeed prelude (before advisory runner) to populate
+        graph_stats with {nodes, edges, domains, connected_iocs, node_degrees}
+        so that _score_pivot_domain and _score_pivot_graph can apply degree penalties
+        and novelty checks.
+
+        Returns empty dict (fail-soft) if graph unavailable or query fails.
+        No network, no model, no DuckDB heavy scans — only bounded in-memory
+        aggregation over already-persisted graph data.
+
+        GHOST_INVARIANTS:
+        - No asyncio.run() or loop.run_until_complete()
+        - No model/MLX imports
+        - No network calls
+        - Bounded: MAX_PIVOT_GRAPH_STATS_NODES=500
+        """
+        try:
+            from hledac.universal.knowledge import graph_service
+
+            stats = graph_service.graph_stats()
+            nodes = stats.get("nodes", 0) if stats else 0
+            edges = stats.get("edges", 0) if stats else 0
+
+            domains: list[str] = []
+            node_degrees: dict[str, int] = {}
+            try:
+                # top_k=500 to collect all domains that appear in top-k by degree
+                # (DuckPGQGraph.get_top_nodes_by_degree uses LIMIT n internally)
+                summary = graph_service.graph_analytics_summary(top_k=500)
+                if summary.get("analytics_available"):
+                    for entity in summary.get("top_central_entities", [])[:500]:
+                        val = entity.get("value", "")
+                        deg = entity.get("degree", 0)
+                        if val and deg > 0:
+                            domains.append(val)
+                            node_degrees[val] = deg
+            except Exception:
+                pass
+
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "domains": domains,
+                "connected_iocs": set(),
+                "node_degrees": node_degrees,
+            }
+        except Exception:
+            return {}
 
     # Sprint F206E: Windup scorecard — read-only extraction from dormant windup_engine.py donor
     # MAX bound: no more than 32 scorecard keys regardless of data availability
@@ -10931,27 +11029,17 @@ class SprintScheduler:
         self, ioc_type: str, ioc_value: str, confidence: float
     ) -> None:
         """Wrapper: buffer IOC to graph and enqueue for further pivoting."""
-        # Sprint 8VE B.3: Lazy IOC graph init
+        # Sprint 8VE B.3: Lazy IOC graph init (for backward compat with existing callers)
         if not hasattr(self, "_ioc_graph"):
             from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
             self._ioc_graph = DuckPGQGraph()
 
-        entry = {"ioc": ioc_value, "ioc_type": ioc_type, "source": "pivot"}
-        domain = None
-        try:
-            from urllib.parse import urlparse
-            domain = urlparse(ioc_value).netloc
-        except Exception:
-            pass
-        if domain:
-            entry["domain"] = domain
-            entry["rel_type"] = "seen_at"
-        if entry.get("ioc"):
-            self._ioc_graph.add_relation(
-                entry["ioc"], domain or ioc_value,
-                rel_type=entry.get("rel_type", "pivot"),
-                evidence=entry.get("source", "")
-            )
+        # Sprint F238E Phase B: extract relation write to graph_accumulator
+        if self._graph_accumulator is None:
+            from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
+            self._graph_accumulator = SprintGraphAccumulator()
+
+        self._graph_accumulator.buffer_pivot_relation(ioc_value, ioc_type, confidence)
 
         # Also buffer to pivot_ioc_graph if set
         if self._pivot_ioc_graph is not None:

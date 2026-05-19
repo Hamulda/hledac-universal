@@ -185,4 +185,3 @@ register_source_adapter(
         acquisition_lane="passive_dns",
     ),
 )
-"
