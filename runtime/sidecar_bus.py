@@ -852,7 +852,7 @@ async def _rir_correlator_runner(
 
     try:
         adapter = create_rir_correlator_adapter()
-        derived_findings = adapter.correlate(findings, query)
+        derived_findings = await adapter.async_correlate(findings, query)
         if not derived_findings:
             return
 

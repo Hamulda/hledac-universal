@@ -566,6 +566,31 @@ class RIRCorrelatorAdapter:
     def __init__(self) -> None:
         self._stats_snapshot: dict[str, int] = {}
 
+    async def async_correlate(
+        self,
+        findings: list,
+        query: str = "",
+    ) -> list["CanonicalFinding"]:
+        """
+        Correlate RIR signals from findings (async path, preferred).
+
+        Returns CanonicalFinding list with source_type="rir_correlation".
+        Stats snapshot updated after correlation run.
+        CancelledError propagates.
+        """
+        try:
+            result = await correlate_rir_signals(findings, query)
+            self._stats_snapshot = {
+                "lookups_performed": result.queried_count,
+                "cache_hits": result.cache_hits,
+                "correlations_produced": len(result.correlations),
+            }
+            return to_canonical_findings(list(result.correlations), query)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return []
+
     def correlate(
         self,
         findings: list,
@@ -576,10 +601,19 @@ class RIRCorrelatorAdapter:
 
         Returns CanonicalFinding list with source_type="rir_correlation".
         Stats snapshot updated after correlation run.
+        Uses get_running_loop + run_until_complete, falls back to new_event_loop
+        only when no loop is running (GHOST_INVARIANTS compliant).
+        CancelledError propagates.
         """
         import asyncio
 
         try:
+            loop = asyncio.get_running_loop()
+            result = loop.run_until_complete(
+                correlate_rir_signals(findings, query)
+            )
+        except RuntimeError:
+            # No running loop — create one (fallback for sync callers)
             loop = asyncio.new_event_loop()
             try:
                 result = loop.run_until_complete(
@@ -587,15 +621,15 @@ class RIRCorrelatorAdapter:
                 )
             finally:
                 loop.close()
+        except asyncio.CancelledError:
+            raise
 
-            self._stats_snapshot = {
-                "lookups_performed": result.queried_count,
-                "cache_hits": result.cache_hits,
-                "correlations_produced": len(result.correlations),
-            }
-            return to_canonical_findings(list(result.correlations), query)
-        except Exception:
-            return []
+        self._stats_snapshot = {
+            "lookups_performed": result.queried_count,
+            "cache_hits": result.cache_hits,
+            "correlations_produced": len(result.correlations),
+        }
+        return to_canonical_findings(list(result.correlations), query)
 
     def get_stats(self) -> dict[str, int]:
         """Return last correlation run stats snapshot."""

@@ -42,10 +42,12 @@ __all__ = [
     "ct_results_to_findings",
     "wayback_results_to_findings",
     "passive_dns_results_to_findings",
+    "rdap_result_to_findings",
     "summarize_bridge_conversion",
     "summarize_ct_conversion",
     "summarize_wayback_conversion",
     "summarize_passive_dns_conversion",
+    "summarize_rdap_conversion",
     "Rejection",
     "RejectionReason",
     "REJECTION_MISSING_DOMAIN",
@@ -1758,6 +1760,463 @@ def summarize_doh_conversion(
 
 
 # ── R9: Academic → CanonicalFinding ─────────────────────────────────────────
+
+
+_RDAP_SOURCE_TYPE = "rdap_enrichment"
+_RDAP_BASE_CONFIDENCE = 0.70
+
+
+def rdap_result_to_findings(
+    target: str,
+    rdap_result: dict,
+    *,
+    trigger_confidence: float | None = None,
+    max_findings: int = 32,
+) -> tuple[tuple[Any, ...], tuple[Any, ...], dict[str, Any]]:
+    """
+    F242A: Convert RDAP lookup result to CanonicalFinding candidates.
+
+    Extracts structured fields into separate bounded findings:
+    - nameservers (max 16)
+    - statuses (max 16)
+    - events (max 12)
+    - entities (max 8)
+    - network/autnum if present
+
+    Args:
+        target: The domain or IP that was queried.
+        rdap_result: Dict with keys "rdap" (raw JSON), "source", "target".
+        trigger_confidence: Optional confidence of the triggering finding.
+            When provided, confidence = max(0.55, min(0.90, trigger_confidence * 0.90)).
+            Default base confidence is 0.70.
+        max_findings: Hard cap on total findings returned (default 32).
+
+    Returns (findings, rejections, telemetry) where:
+      - findings: tuple of CanonicalFinding (or dicts) for extracted fields
+      - rejections: tuple of rejection reason strings
+      - telemetry: dict with extraction counts
+
+    Rejection reasons:
+        missing_domain   — target is absent/empty
+        low_information  — RDAP result has no extractable fields
+
+    Payload text is structured short text (max 2000 chars per finding).
+    No raw RDAP JSON blob is stored.
+
+    Pure function — no network, no MLX.
+    """
+    findings: list[Any] = []
+    rejections: list[Any] = []
+
+    if not target or not isinstance(target, str) or not target.strip():
+        rejections.append(REJECTION_MISSING_DOMAIN)
+        return (), (REJECTION_MISSING_DOMAIN,), {
+            "rdap_target": "",
+            "rdap_built": 0,
+            "rdap_ns_count": 0,
+            "rdap_status_count": 0,
+            "rdap_event_count": 0,
+            "rdap_entity_count": 0,
+            "rdap_network_count": 0,
+            "rdap_securedns": False,
+            "rdap_rejection_count": 1,
+        }
+
+    rdap_data: dict[str, Any] = {}
+    if isinstance(rdap_result, dict):
+        rdap_data = rdap_result.get("rdap", {}) or {}
+
+    if not rdap_data:
+        rejections.append(REJECTION_LOW_INFORMATION)
+        return (), (REJECTION_LOW_INFORMATION,), {
+            "rdap_target": target,
+            "rdap_built": 0,
+            "rdap_ns_count": 0,
+            "rdap_status_count": 0,
+            "rdap_event_count": 0,
+            "rdap_entity_count": 0,
+            "rdap_network_count": 0,
+            "rdap_securedns": False,
+            "rdap_rejection_count": 1,
+        }
+
+    # Compute confidence
+    if trigger_confidence is not None:
+        confidence = max(0.55, min(0.90, float(trigger_confidence) * 0.90))
+    else:
+        confidence = _RDAP_BASE_CONFIDENCE
+
+    now = time.time()
+    sprint_id = ""  # caller fills this if needed
+
+    # Track per-category counts for telemetry
+    ns_count = 0
+    status_count = 0
+    event_count = 0
+    entity_count = 0
+    network_count = 0
+    securedns_found = False
+
+    def _make_rdap_finding(
+        finding_id: str,
+        sub_type: str,
+        payload_text: str,
+        provenance: Tuple[str, ...],
+    ) -> Any:
+        return _canonical_finding(
+            finding_id=finding_id,
+            source_type=_RDAP_SOURCE_TYPE,
+            query=target,
+            confidence=confidence,
+            ts=now,
+            provenance=provenance,
+            payload_text=payload_text,
+        )
+
+    # --- Domain / registrar -------------------------------------------------
+    domain_name = rdap_data.get("name", "") or rdap_data.get("ldhName", "") or ""
+    if domain_name:
+        registrar_name = ""
+        try:
+            registrar_list = rdap_data.get("registrar", [])
+            if isinstance(registrar_list, list) and registrar_list:
+                reg = registrar_list[0]
+                registrar_name = getattr(reg, "name", "") or getattr(reg, "fullName", "") or str(reg)
+            elif isinstance(registrar_list, dict):
+                registrar_name = registrar_list.get("name", "") or registrar_list.get("fullName", "")
+            elif registrar_list:
+                registrar_name = str(registrar_list)
+        except Exception:
+            pass
+
+        ns_list = []
+        try:
+            ns_wrapper = rdap_data.get("nameservers", [])
+            if isinstance(ns_wrapper, list):
+                for ns in ns_wrapper:
+                    ns_name = getattr(ns, "ldhName", "") or getattr(ns, "name", "") or ""
+                    if ns_name:
+                        ns_list.append(ns_name)
+                    else:
+                        ns_str = str(ns)
+                        if ns_str:
+                            ns_list.append(ns_str)
+        except Exception:
+            pass
+
+        status_list = []
+        try:
+            status_raw = rdap_data.get("status", [])
+            if isinstance(status_raw, list):
+                for s in status_raw:
+                    status_list.append(str(s))
+            elif status_raw:
+                status_list.append(str(status_raw))
+        except Exception:
+            pass
+
+        event_list = []
+        try:
+            events_raw = rdap_data.get("events", [])
+            if isinstance(events_raw, list):
+                for ev in events_raw:
+                    if isinstance(ev, dict):
+                        ev_a = ev.get("action", "") or ""
+                        ev_d = ev.get("date", "") or ""
+                        ev_a_r = ev.get("actor", "") or ""
+                    else:
+                        ev_a = getattr(ev, "action", "") or ""
+                        ev_d = getattr(ev, "date", "") or ""
+                        ev_a_r = getattr(ev, "actor", "") or ""
+                    if ev_d:
+                        event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
+        except Exception:
+            pass
+
+        # Build structured payload for domain/registrar
+        reg_provenance: Tuple[str, ...] = (
+            f"source_family:rdap_enrichment",
+            f"domain:{domain_name}",
+            f"sprint:{sprint_id[:16]}",
+        )
+        reg_payload_parts = [f"domain: {domain_name}"]
+        if registrar_name:
+            reg_payload_parts.append(f"registrar: {registrar_name}")
+        if status_list:
+            reg_payload_parts.append(f"status: {', '.join(status_list[:16])}")
+        if event_list:
+            reg_payload_parts.append(f"events: {' | '.join(event_list[:12])}")
+        reg_payload = "\n".join(reg_payload_parts)
+
+        blake2_id = _make_blake2b_hex(domain_name, "rdapdomain")
+        fid = f"rdap-dom-{blake2_id[:16]}"
+        f = _make_rdap_finding(fid, "domain_registrar", reg_payload, reg_provenance)
+        if f is not None:
+            findings.append(f)
+
+    # --- Nameservers --------------------------------------------------------
+    ns_wrapper: Any = rdap_data.get("nameservers")
+    ns_list_raw: list[Any] = []
+    if isinstance(ns_wrapper, list):
+        ns_list_raw = ns_wrapper
+
+    for ns_obj in ns_list_raw[:16]:
+        ns_name = getattr(ns_obj, "ldhName", "") or getattr(ns_obj, "name", "") or ""
+        if not ns_name:
+            try:
+                ns_name = str(ns_obj)
+            except Exception:
+                continue
+        if ns_count >= 16:
+            break
+        blake2_id = _make_blake2b_hex(ns_name, "rdapns")
+        fid = f"rdap-ns-{blake2_id[:16]}"
+        ns_provenance: Tuple[str, ...] = (
+            f"source_family:rdap_enrichment",
+            f"nameserver:{ns_name}",
+            f"sprint:{sprint_id[:16]}",
+        )
+        ns_payload = f"nameserver: {ns_name}"
+        f = _make_rdap_finding(fid, "nameserver", ns_payload, ns_provenance)
+        if f is not None:
+            findings.append(f)
+            ns_count += 1
+
+    # --- Statuses -----------------------------------------------------------
+    status_raw: Any = rdap_data.get("status")
+    if isinstance(status_raw, list):
+        for s in status_raw[:16]:
+            s_str = str(s)
+            if not s_str or s_str == "None":
+                continue
+            blake2_id = _make_blake2b_hex(s_str, "rdapstatus")
+            fid = f"rdap-stat-{blake2_id[:16]}"
+            st_provenance: Tuple[str, ...] = (
+                f"source_family:rdap_enrichment",
+                f"status:{s_str}",
+                f"sprint:{sprint_id[:16]}",
+            )
+            st_payload = f"rdap_status: {s_str}"
+            f = _make_rdap_finding(fid, "status", st_payload, st_provenance)
+            if f is not None:
+                findings.append(f)
+                status_count += 1
+
+    # --- Events -----------------------------------------------------------
+    events_raw: Any = rdap_data.get("events")
+    if isinstance(events_raw, list):
+        for ev in events_raw[:12]:
+            # RDAP events can be objects (MockRDAPData) or dicts
+            if isinstance(ev, dict):
+                action = ev.get("action", "") or ""
+                date = ev.get("date", "") or ""
+                actor = ev.get("actor", "") or ""
+            else:
+                action = getattr(ev, "action", "") or ""
+                date = getattr(ev, "date", "") or ""
+                actor = getattr(ev, "actor", "") or ""
+            if not date and not action:
+                continue
+            ev_str = f"{action}:{date}" + (f":{actor}" if actor else "")
+            blake2_id = _make_blake2b_hex(ev_str, "rdapevent")
+            fid = f"rdap-ev-{blake2_id[:16]}"
+            ev_provenance: Tuple[str, ...] = (
+                f"source_family:rdap_enrichment",
+                f"event:{ev_str}",
+                f"sprint:{sprint_id[:16]}",
+            )
+            ev_payload = f"rdap_event: {ev_str}"
+            f = _make_rdap_finding(fid, "event", ev_payload, ev_provenance)
+            if f is not None:
+                findings.append(f)
+                event_count += 1
+
+    # --- SecureDNS ---------------------------------------------------------
+    securedns: Any = rdap_data.get("secureDNS")
+    if securedns and isinstance(securedns, dict):
+        securedns_found = True
+        ds_data = getattr(securedns, "delegationSigned", None)
+        if ds_data is not None:
+            blake2_id = _make_blake2b_hex("dnssec", "rdapdnssec")
+            fid = f"rdap-dnssec-{blake2_id[:16]}"
+            dnssec_provenance: Tuple[str, ...] = (
+                f"source_family:rdap_enrichment",
+                f"dnssec:delegation_signed",
+                f"sprint:{sprint_id[:16]}",
+            )
+            dnssec_payload = f"dnssec: delegation_signed={ds_data}"
+            f = _make_rdap_finding(fid, "securedns", dnssec_payload, dnssec_provenance)
+            if f is not None:
+                findings.append(f)
+
+    # --- Entities ----------------------------------------------------------
+    entities_raw: Any = rdap_data.get("entities")
+    if isinstance(entities_raw, list):
+        for ent in entities_raw[:8]:
+            roles: list[str] = []
+            try:
+                if isinstance(ent, dict):
+                    roles = list(ent.get("roles", []) or [])
+                else:
+                    roles = list(getattr(ent, "roles", []) or [])
+            except Exception:
+                pass
+            if isinstance(ent, dict):
+                org_name = ent.get("fullName", "") or ent.get("name", "") or ""
+                if not org_name:
+                    handle = ent.get("handle", "") or ""
+                    if handle:
+                        org_name = handle
+            else:
+                org_name = getattr(ent, "fullName", "") or getattr(ent, "name", "") or ""
+                if not org_name:
+                    try:
+                        handle = getattr(ent, "handle", "") or ""
+                        if handle:
+                            org_name = handle
+                    except Exception:
+                        pass
+            if not org_name:
+                continue
+            roles_str = ",".join(roles) if roles else "unknown"
+            blake2_id = _make_blake2b_hex(org_name, "rdapentity")
+            fid = f"rdap-ent-{blake2_id[:16]}"
+            ent_provenance: Tuple[str, ...] = (
+                f"source_family:rdap_enrichment",
+                f"entity:{org_name}",
+                f"roles:{roles_str}",
+                f"sprint:{sprint_id[:16]}",
+            )
+            ent_payload = f"entity: {org_name}\nroles: {roles_str}"
+            f = _make_rdap_finding(fid, "entity", ent_payload, ent_provenance)
+            if f is not None:
+                findings.append(f)
+                entity_count += 1
+
+    # --- Network / Autnum --------------------------------------------------
+    network: Any = rdap_data.get("network")
+    if network and isinstance(network, dict):
+        if isinstance(network, dict):
+            net_name = network.get("name", "") or network.get("cidr0", "") or ""
+            net_handle = network.get("handle", "") or ""
+        else:
+            net_name = getattr(network, "name", "") or getattr(network, "cidr0", "") or ""
+            net_handle = getattr(network, "handle", "") or ""
+        if not net_name and not net_handle:
+            try:
+                net_name = rdap_data.get("name", "") or rdap_data.get("startAddress", "") or ""
+            except Exception:
+                pass
+        if net_name or net_handle:
+            net_key = net_name or net_handle
+            blake2_id = _make_blake2b_hex(net_key, "rdapnet")
+            fid = f"rdap-net-{blake2_id[:16]}"
+            net_provenance: Tuple[str, ...] = (
+                f"source_family:rdap_enrichment",
+                f"network:{net_key}",
+                f"sprint:{sprint_id[:16]}",
+            )
+            net_payload = f"network: {net_name}" + (f" ({net_handle})" if net_handle and net_handle != net_name else "")
+            f = _make_rdap_finding(fid, "network", net_payload, net_provenance)
+            if f is not None:
+                findings.append(f)
+                network_count += 1
+
+    # Autnum (AS numbers)
+    autnum_raw: Any = rdap_data.get("autnums")
+    if isinstance(autnum_raw, list):
+        for autnum in autnum_raw[:4]:
+            if isinstance(autnum, dict):
+                asn = autnum.get("id", "") or ""
+            else:
+                asn = getattr(autnum, "id", "") or ""
+            if not asn:
+                continue
+            blake2_id = _make_blake2b_hex(str(asn), "rdapautnum")
+            fid = f"rdap-as-{blake2_id[:16]}"
+            aut_provenance: Tuple[str, ...] = (
+                f"source_family:rdap_enrichment",
+                f"autnum:{asn}",
+                f"sprint:{sprint_id[:16]}",
+            )
+            aut_payload = f"autnum: {asn}"
+            f = _make_rdap_finding(fid, "autnum", aut_payload, aut_provenance)
+            if f is not None:
+                findings.append(f)
+                network_count += 1
+
+    # --- Cap total findings ------------------------------------------------
+    capped = findings[:max_findings]
+
+    telemetry = {
+        "rdap_target": target,
+        "rdap_built": len(capped),
+        "rdap_ns_count": min(ns_count, 16),
+        "rdap_status_count": min(status_count, 16),
+        "rdap_event_count": min(event_count, 12),
+        "rdap_entity_count": min(entity_count, 8),
+        "rdap_network_count": network_count,
+        "rdap_securedns": securedns_found,
+        "rdap_rejection_count": len(rejections),
+    }
+    return tuple(capped), tuple(rejections), telemetry
+
+
+def summarize_rdap_conversion(
+    findings: list[Any],
+    rejections: list[Any],
+    telemetry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    F242A: Summarize RDAP bridge conversion.
+
+    Produces advisory_evidence_summary with:
+    - family: "rdap_enrichment"
+    - attempted: True if RDAP data was processed
+    - raw_count: total fields extracted (ns + status + events + entities + network)
+    - accepted_count: len(findings) (cappedCanonicalFinding candidates)
+    - advisory_clues_count: nameservers + statuses + events + entities (signal richness)
+    - dnssec_found: whether secureDNS/delegationSigned was present
+    - derived_intel: ns_count, status_count, event_count, entity_count, network_count
+
+    Pure function — no network, no MLX.
+    """
+    t = telemetry or {}
+    ns_c = t.get("rdap_ns_count", 0)
+    st_c = t.get("rdap_status_count", 0)
+    ev_c = t.get("rdap_event_count", 0)
+    en_c = t.get("rdap_entity_count", 0)
+    net_c = t.get("rdap_network_count", 0)
+
+    rejection_counts: dict[str, int] = {}
+    for reason in rejections:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    all_rejection_reasons = dict(sorted(
+        rejection_counts.items(),
+        key=lambda x: (-x[1], x[0]),
+    )[:20])
+
+    advisory_clues = ns_c + st_c + ev_c + en_c + net_c
+
+    return {
+        "family": "rdap_enrichment",
+        "attempted": t.get("rdap_target", "") != "",
+        "raw_count": ns_c + st_c + ev_c + en_c + net_c,
+        "accepted_count": len(findings),
+        "advisory_clues_count": advisory_clues,
+        "skipped": 0,
+        "error": rejection_counts.get(REJECTION_UNSUPPORTED_SHAPE, 0),
+        "all_rejection_reasons": all_rejection_reasons,
+        "derived_intel": {
+            "nameservers": ns_c,
+            "statuses": st_c,
+            "events": ev_c,
+            "entities": en_c,
+            "networks": net_c,
+        },
+        "dnssec_found": t.get("rdap_securedns", False),
+    }
 
 
 def academic_results_to_findings(

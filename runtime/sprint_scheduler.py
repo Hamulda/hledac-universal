@@ -5338,6 +5338,7 @@ class SprintScheduler:
                     duckdb_store=duckdb_store,
                     nonfeed_diagnostic_active=_pivot_profile_active,
                     existing_findings=None,  # prelude phase: no accepted findings yet
+                    acquisition_profile=self._config.acquisition_profile or "default",
                 )
                 self._result.pivot_seed_domains = _pivot_result.get("pivot_seed_domains", ())
                 self._result.pivot_seed_ips = _pivot_result.get("pivot_seed_ips", ())
@@ -5351,6 +5352,14 @@ class SprintScheduler:
                 )
                 self._result.seed_context_skip_reason = _pivot_result.get("seed_context_skip_reason", "")
                 self._result.seed_context_source = _pivot_result.get("seed_context_source", "")  # F227A
+                # F241B: seed quality telemetry
+                self._result.seed_quality_checked = _pivot_result.get("seed_quality_checked", False)
+                self._result.seed_quality_keep_count = _pivot_result.get("seed_quality_keep_count", 0)
+                self._result.seed_quality_drop_count = _pivot_result.get("seed_quality_drop_count", 0)
+                self._result.seed_quality_drop_reasons = _pivot_result.get("seed_quality_drop_reasons", {})
+                self._result.seed_quality_kept_sample = _pivot_result.get("seed_quality_kept_sample", [])
+                self._result.seed_quality_dropped_sample = _pivot_result.get("seed_quality_dropped_sample", [])
+                self._result.seed_quality_bypass_reason = _pivot_result.get("seed_quality_bypass_reason", "")
             except Exception as _exc:
                 log.debug("[F223A] Runtime pivot prelude error: %s", _exc)
                 self._result.seed_context_skip_reason = "prelude_error"
@@ -5371,16 +5380,72 @@ class SprintScheduler:
                 )
                 # F228H2: unconditional direct domain fallback — seed_context_available is
                 # the canonical gate, not skip_reason strings
+                # F241B: quality gate for deep_osint_m1 — classify the domain before injecting
                 if _is_domain_query and not self._result.seed_context_available:
+                    from hledac.universal.runtime.nonfeed_seed_runtime import (
+                        _ACQUISITION_PROFILE,
+                        _should_allow_low_quality_seed_for_profile,
+                        _classify_and_filter_seeds,
+                        classify_seed_quality,
+                    )
                     _domain = query.strip().lower()
-                    self._result.pivot_seed_domains = (_domain,)
-                    self._result.seed_context_available = True
-                    self._result.seed_context_propagated = True
-                    self._result.lanes_unlocked_by_seed_context = [
-                        "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
-                    ]
-                    self._result.seed_context_skip_reason = ""
-                    self._result.seed_context_source = "domain_query_fallback"
+                    _is_low_quality = (
+                        not _should_allow_low_quality_seed_for_profile()
+                    )
+                    if _is_low_quality:
+                        # Classify the domain — if DROP, do NOT inject it for deep_osint_m1
+                        from hledac.universal.runtime.nonfeed_seed_extractor import NonfeedSeed
+                        _fake_seed = NonfeedSeed(
+                            value=_domain,
+                            kind="domain",
+                            source="query",
+                            confidence=1.0,
+                            reason="domain_query_fallback",
+                        )
+                        _quality = classify_seed_quality(_fake_seed, query=query, context="")
+                        if _quality.decision == "drop":
+                            # F241B: quality gate blocks domain fallback for deep_osint_m1
+                            log.debug(
+                                "[F241B] domain fallback blocked by quality gate: "
+                                "domain=%s reason=%s",
+                                _domain,
+                                _quality.reason,
+                            )
+                            self._result.seed_quality_drop_count = (
+                                getattr(self._result, "seed_quality_drop_count", 0) + 1
+                            )
+                            _existing_drop_reasons = getattr(
+                                self._result, "seed_quality_drop_reasons", {}
+                            )
+                            _reason_key = _quality.reason or "domain_fallback_dropped"
+                            _existing_drop_reasons[_reason_key] = (
+                                _existing_drop_reasons.get(_reason_key, 0) + 1
+                            )
+                            self._result.seed_quality_drop_reasons = _existing_drop_reasons
+                            self._result.seed_quality_bypass_reason = ""
+                        else:
+                            self._result.pivot_seed_domains = (_domain,)
+                            self._result.seed_context_available = True
+                            self._result.seed_context_propagated = True
+                            self._result.lanes_unlocked_by_seed_context = [
+                                "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
+                            ]
+                            self._result.seed_context_skip_reason = ""
+                            self._result.seed_context_source = "domain_query_fallback"
+                            self._result.seed_quality_keep_count = (
+                                getattr(self._result, "seed_quality_keep_count", 0) + 1
+                            )
+                    else:
+                        # nonfeed_diagnostic: bypass quality gate, inject domain
+                        self._result.pivot_seed_domains = (_domain,)
+                        self._result.seed_context_available = True
+                        self._result.seed_context_propagated = True
+                        self._result.lanes_unlocked_by_seed_context = [
+                            "CT", "DOH", "WAYBACK", "PASSIVE_DNS"
+                        ]
+                        self._result.seed_context_skip_reason = ""
+                        self._result.seed_context_source = "domain_query_fallback"
+                        self._result.seed_quality_bypass_reason = "diagnostic_profile"
 
             # F237B: Add planner_action IOCs to seed context so they flow into NonfeedSeedContext
             # These were extracted from predecessor's investigation_packet.planner_actions
