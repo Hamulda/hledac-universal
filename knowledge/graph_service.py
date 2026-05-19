@@ -299,18 +299,39 @@ class GraphService:
             raw_top = graph.get_top_nodes_by_degree(
                 n=min(top_k, MAX_GRAPH_ANALYTICS_NODES)
             )
+            # F239B: Also read confidence stats per node — uses existing confidence
+            # column in ioc_nodes table, MAX is cheap (single aggregation query)
+            try:
+                node_conf_raw = graph.get_node_confidence_summary(
+                    n=min(top_k, MAX_GRAPH_ANALYTICS_NODES)
+                )
+                confidence_by_node: dict[str, float] = {}
+                for row in node_conf_raw:
+                    v = row.get("value", "")
+                    c = row.get("max_confidence", 0.5)
+                    if v:
+                        confidence_by_node[v] = max(0.0, min(1.0, c))
+            except Exception:
+                confidence_by_node = {}
+
             entities = []
             for row in raw_top[:top_k]:
                 val = row.get("value", "")
                 ioc = row.get("ioc_type", "unknown")
                 deg = int(row.get("degree", 0))
                 if val:
-                    entities.append({"value": val, "ioc_type": ioc, "degree": deg})
+                    entities.append({
+                        "value": val,
+                        "ioc_type": ioc,
+                        "degree": deg,
+                        "max_confidence": confidence_by_node.get(val, 0.5),
+                    })
 
             community_count = _estimate_community_count(graph)
 
             return {
                 "top_central_entities": entities,
+                "confidence_by_node": confidence_by_node,
                 "community_count": community_count,
                 "analytics_available": True,
                 "skipped_reason": None,
@@ -319,6 +340,7 @@ class GraphService:
             logger.warning(f"[GraphService] graph_analytics_summary failed: {e}")
             return {
                 "top_central_entities": [],
+                "confidence_by_node": {},
                 "community_count": 0,
                 "analytics_available": False,
                 "skipped_reason": str(e),

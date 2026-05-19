@@ -4104,6 +4104,45 @@ def _build_sprint_summary(pvs: dict[str, Any], seeds_count: int) -> dict[str, An
     }
 
 
+# Sprint F238E Phase C: Optional runtime_timing section in JSON export
+_MAX_RUNTIME_TIMING_EVENTS = 500  # mirror of _MAX_TELEMETRY_EVENTS in sprint_timer.py
+
+
+def _extract_runtime_timing(handoff: Any) -> dict | None:
+    """
+    Extract optional runtime_timing section from ExportHandoff.
+
+    Fail-soft:
+      - timer_events missing/None → returns None (no section in output)
+      - individual event not serializable → converted to str
+      - more than _MAX_RUNTIME_TIMING_EVENTS → last N events kept
+
+    Returns None when timer_events absent so caller skips the section entirely.
+    """
+    try:
+        timer_events = getattr(handoff, "timer_events", None)
+        if not timer_events:
+            return None
+        if not isinstance(timer_events, (list, tuple)):
+            return None
+
+        events = timer_events[-_MAX_RUNTIME_TIMING_EVENTS:]
+        serialized: list[dict] = []
+        for ev in events:
+            try:
+                if isinstance(ev, dict):
+                    serialized.append(_make_serializable(ev))
+                else:
+                    serialized.append({"value": str(ev)})
+            except Exception:
+                # malformed event — skip rather than crash
+                pass
+
+        return {"events": serialized}
+    except Exception:
+        return None
+
+
 def _make_serializable(obj: Any) -> Any:
     """Rekurzivně převede objekt na JSON-serializovatelný dict."""
     if isinstance(obj, (str, int, float, bool, type(None))):

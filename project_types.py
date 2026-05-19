@@ -1634,6 +1634,8 @@ class ExportHandoff:
     sprint_verdict: Optional[Dict[str, Any]] = None
     # Sprint F204E: Analyst brief — model-free sprint summary at teardown
     analyst_brief: Optional[Dict[str, Any]] = None
+    # Sprint F238E Phase C: Optional timer events for runtime timing debug
+    timer_events: Optional[List[Dict[str, Any]]] = None
 
     @classmethod
     def from_windup(

@@ -248,6 +248,11 @@ class JSONFormatter(ExportFormatter):
                     sanitized_obj["canonical_run_summary"] = eh.canonical_run_summary
                     if "timing_truth" in eh.canonical_run_summary:
                         sanitized_obj["timing_truth"] = eh.canonical_run_summary["timing_truth"]
+                # Sprint F238E Phase C: Optional runtime_timing section (timer events)
+                from hledac.universal.export.sprint_exporter import _extract_runtime_timing
+                _rt = _extract_runtime_timing(eh)
+                if _rt is not None:
+                    sanitized_obj["runtime_timing"] = _rt
                 if eh.runtime_truth:
                     sanitized_obj["runtime_truth"] = eh.runtime_truth
                 acq_truth = _get_acquisition_truth(eh)

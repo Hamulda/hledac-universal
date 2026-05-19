@@ -1980,6 +1980,8 @@ async def run_sprint(
                 sprint_verdict=intel.get("sprint_verdict"),
                 # Sprint F204E: Analyst brief from sprint teardown
                 analyst_brief=scheduler.get_analyst_brief(),
+                # Sprint F238E Phase C: Runtime timer events for optional debug export
+                timer_events=getattr(result, "timer_events", None),
             )
 
             # Sprint F155: Log enrichment level

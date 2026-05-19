@@ -247,6 +247,30 @@ def _cheap_score_finding(finding: Any, envelope: Optional[dict]) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _graph_stats_available(graph_stats: Optional[dict]) -> bool:
+    """
+    F238F: Check if graph_stats represents an explicitly available graph.
+
+    graph_stats is None  → graph unavailable (fail-soft fallback)
+    graph_stats == {}    → graph unavailable (fail-soft fallback)
+    graph_stats has keys → graph explicitly available (even if values are empty)
+
+    Examples:
+        None                    → False (graph unavailable)
+        {}                      → False (graph unavailable)
+        {"domains": set()}      → True  (explicitly empty graph)
+        {"domains": {"x.com"}}  → True  (graph with data)
+    """
+    if not graph_stats:
+        return False
+    return bool(
+        "domains" in graph_stats
+        or "node_degrees" in graph_stats
+        or "connected_iocs" in graph_stats
+        or "existing_domains" in graph_stats
+    )
+
+
 def _score_pivot_domain(
     domain: str,
     confidence: float,
@@ -260,20 +284,47 @@ def _score_pivot_domain(
     F238A: Uses normalize_source_quality to interpret heterogeneous
     source_quality_score values (0-90 int, 0-1 float, or None).
     Applies degree-weighted noise penalty to high-degree generic domains.
+
+    F238F: Graph bonuses/penalties only apply when graph_stats is explicitly
+    available. None and {} both mean "graph unavailable" → no novelty bonus,
+    no seen-before penalty, no degree penalty.
     """
     norm = normalize_source_quality(source_quality_score)
     score = norm * 0.6 + confidence * 0.4  # Weighted blend of source quality + finding confidence
 
-    # Graph signal: nodes with this domain already in graph reduce novelty
-    existing_domains = graph_stats.get("domains", [])
-    if domain not in existing_domains:
-        score += 0.2  # Novelty bonus
-    else:
-        score -= 0.05  # Already-pivoted domain — slight deprioritization
+    # F238F: Only apply graph-aware scoring when graph is explicitly available
+    if _graph_stats_available(graph_stats):
+        # Graph signal: nodes with this domain already in graph reduce novelty
+        existing_domains = graph_stats.get("domains", [])
+        if domain not in existing_domains:
+            score += 0.2  # Novelty bonus — domain not in known graph
+        else:
+            score -= 0.05  # Already-pivoted domain — slight deprioritization
 
-    # Degree penalty: high-degree domains (CDNs, registrars) are noisy
-    node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
-    score -= min(0.15, node_degree * 0.01)
+        # Degree penalty: high-degree domains (CDNs, registrars) are noisy
+        node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
+        score -= min(0.15, node_degree * 0.01)
+
+        # F239B: Confidence-aware refinement — distinguish high-confidence repeated IOC
+        # from generic high-degree noise. Boost high-confidence moderate-degree,
+        # penalize low-confidence high-degree. Do NOT over-penalize suspicious/ransomware.
+        conf_by_node = graph_stats.get("confidence_by_node", {})
+        domain_conf = conf_by_node.get(domain, 0.5)
+
+        # Suspicious/ransomware-looking domains: skip confidence penalty (intelligence-rich)
+        suspicious_patterns = ("lockbit", "ransomware", "apt", "emotet", "icedid", "qakbot")
+        is_suspicious = any(p in domain.lower() for p in suspicious_patterns)
+
+        if not is_suspicious:
+            if domain_conf >= 0.75 and node_degree < 50:
+                # High-confidence repeated IOC — small boost, not noise
+                score += 0.07
+            elif domain_conf <= 0.35 and node_degree > 10:
+                # Low-confidence high-degree — generic noise, small penalty
+                score -= 0.07
+        # High-degree generic domains (CDN/parking) still penalized by degree above;
+        # confidence signal only modulates that penalty, never cancels it entirely.
+    # else: graph unavailable → no novelty bonus, no seen penalty, no degree penalty
 
     # Envelope signal_facets boost
     if envelope and isinstance(envelope, dict):
@@ -331,33 +382,36 @@ def _score_pivot_archive(
     F238A: Applies degree-weighted noise penalty — high-degree generic domains
     (CDN, registrar, parking) get reduced archive value since their historical
     records are noisy. Suspicious/ransomware-looking domains are NOT penalized.
+
+    F238F: Degree penalty only applies when graph_stats is explicitly available.
+    None and {} both mean "graph unavailable" → no degree penalty.
     """
     score = confidence * 0.4
 
-    if graph_stats is None:
-        graph_stats = {}
+    # F238F: Only apply degree penalty when graph is explicitly available
+    if graph_stats is not None and _graph_stats_available(graph_stats):
+        # Degree penalty: popular/generic domains have noisy archives
+        node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
+        score -= min(0.15, node_degree * 0.01)
 
-    # Degree penalty: popular/generic domains have noisy archives
-    node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
-    score -= min(0.15, node_degree * 0.01)
-
-    # Generic / high-degree domain pattern — additional noise penalty
-    # These domains add noise to archive pivots without intelligence value
-    generic_patterns = (
-        "dyndns.", "no-ip.", "freedns.", "duckdns.",
-        "changeip.", "hopto.", "servegame.", "mydns.",
-        "afraid.org",
-    )
-    if any(domain.endswith(f".{g}") or g in domain for g in generic_patterns):
-        score -= 0.10
-    # CDN / parking / registrar domains — very high degree means very noisy
-    if node_degree > 20 and any(x in domain for x in [
-        "cloudfront", "akamai", "fastly", "cloudflare", "azureedge",
-        "googleusercontent", "googlehosted", "appspot",
-        "parking", "sedo", "namecheap", "godaddy",
-        "registrar", "forwarded", "redirect",
-    ]):
-        score -= 0.10
+        # Generic / high-degree domain pattern — additional noise penalty
+        # These domains add noise to archive pivots without intelligence value
+        generic_patterns = (
+            "dyndns.", "no-ip.", "freedns.", "duckdns.",
+            "changeip.", "hopto.", "servegame.", "mydns.",
+            "afraid.org",
+        )
+        if any(domain.endswith(f".{g}") or g in domain for g in generic_patterns):
+            score -= 0.10
+        # CDN / parking / registrar domains — very high degree means very noisy
+        if node_degree > 20 and any(x in domain for x in [
+            "cloudfront", "akamai", "fastly", "cloudflare", "azureedge",
+            "googleusercontent", "googlehosted", "appspot",
+            "parking", "sedo", "namecheap", "godaddy",
+            "registrar", "forwarded", "redirect",
+        ]):
+            score -= 0.10
+    # else: graph unavailable → no degree penalty, no pattern penalty
 
     return min(1.0, max(0.0, score))
 
@@ -368,18 +422,26 @@ def _score_pivot_graph(
     confidence: float,
     graph_stats: dict,
 ) -> float:
-    """Score a graph traversal pivot."""
+    """
+    Score a graph traversal pivot.
+
+    F238F: Graph bonuses only apply when graph_stats is explicitly available.
+    None and {} both mean "graph unavailable" → no novelty bonus, no degree bonus.
+    """
     score = confidence * 0.5
 
-    # Check if IOC is already well-connected in graph
-    connected_iocs = graph_stats.get("connected_iocs", set())
-    if ioc_value not in connected_iocs:
-        score += 0.2  # Novel node
+    # F238F: Only apply graph-aware scoring when graph is explicitly available
+    if _graph_stats_available(graph_stats):
+        # Check if IOC is already well-connected in graph
+        connected_iocs = graph_stats.get("connected_iocs", set())
+        if ioc_value not in connected_iocs:
+            score += 0.2  # Novel node
 
-    # High-degree nodes are more valuable for graph traversal
-    node_degree = graph_stats.get("node_degrees", {}).get(ioc_value, 0)
-    if node_degree > 5:
-        score += 0.15
+        # High-degree nodes are more valuable for graph traversal
+        node_degree = graph_stats.get("node_degrees", {}).get(ioc_value, 0)
+        if node_degree > 5:
+            score += 0.15
+    # else: graph unavailable → no bonus
 
     return min(1.0, max(0.0, score))
 
@@ -952,8 +1014,12 @@ def _query_domain_score(domain: str, base_score: float, graph_stats: Optional[di
 
     High-degree generic domains (CDN, registrar, parking, dynamic DNS) are noisy.
     Ransomwar/malware-looking keywords are NOT penalized (suspicious = interesting).
+
+    F238F: All penalties/bonuses only apply when graph_stats is explicitly
+    available. None and {} both mean "graph unavailable" → return base_score.
     """
-    if graph_stats is None:
+    # F238F: Graph unavailable → no graph-aware scoring
+    if not _graph_stats_available(graph_stats):
         return base_score
 
     gs = graph_stats

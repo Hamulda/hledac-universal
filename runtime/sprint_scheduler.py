@@ -2556,6 +2556,13 @@ class SprintScheduler:
         if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
             self._result.pre_loop_blocker_reason = "dedup_preload"
 
+        # F240A: Timer instrumentation — memory_preflight and profile_reality_check
+        try:
+            self._timer.phase("memory_preflight")
+            # (empty — dedup preload above is the cost center)
+        finally:
+            self._timer.phase("memory_preflight_end")
+
         # P12: Hermes prewarm — explicit policy by mode (bounded M1 8GB lifecycle)
         # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
         # Stable mode: current safe behavior via ModelManager memory guards
@@ -2563,10 +2570,13 @@ class SprintScheduler:
         self._hermes_engine = None
         self._memory_manager = None
         try:
+            self._timer.phase("profile_reality_check_start")
             await self._prewarm_hermes_for_sprint()
         except Exception as e:
             log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
             self._hermes_engine = None
+        finally:
+            self._timer.phase("profile_reality_check_end")
 
         # Sprint 8SA: Source scoring — order sources by priority at start of ACTIVE
         _DEFAULT_SOURCE_TYPES = [
@@ -2611,6 +2621,8 @@ class SprintScheduler:
                 _swap_detected = uma.swap_detected
             # Sprint F233C: Consume predecessor's next_sprint_seeds for acquisition planning
             # Fail-soft: missing predecessor or seeds file → empty diagnostics
+            # F240A: runtime_pivot_seed_extraction phase
+            self._timer.phase("runtime_pivot_seed_extraction_start")
             _next_seeds_ioc_seeds: list = []
             _next_seeds_diagnostics: Any = None
             _next_seeds_skip_reason = ""
@@ -2663,7 +2675,10 @@ class SprintScheduler:
                 except Exception as _exc:
                     log.debug("[F233C] next_sprint_seeds consumption failed (fail-soft): %s", _exc)
                     _next_seeds_skip_reason = "consumption_error"
+            self._timer.phase("runtime_pivot_seed_extraction_end")
 
+            # F240A: planner_actions_consumption phase
+            self._timer.phase("planner_actions_consumption_start")
             # Sprint F237B: Load predecessor report and consume investigation_packet.planner_actions
             _planner_seed_iocs: dict = {}
             _planner_lanes: list[str] = []
@@ -2703,7 +2718,10 @@ class SprintScheduler:
                 except Exception as _exc:
                     log.debug("[F237B] planner_actions consumption failed (fail-soft): %s", _exc)
                     _planner_skip_reason = "consumption_error"
+            self._timer.phase("planner_actions_consumption_end")
 
+            # F240A: acquisition_plan_build phase
+            self._timer.phase("acquisition_plan_build_start")
             self._acquisition_plan = build_acquisition_plan(
                 query=query,
                 duration_s=self._config.sprint_duration_s,
@@ -2715,6 +2733,7 @@ class SprintScheduler:
                 # F223A: Explicit acquisition profile override from config
                 acquisition_profile=self._config.acquisition_profile,
             )
+            self._timer.phase("acquisition_plan_build_end")
             # F232: ct_planned — CT was in the acquisition plan (enabled)
             from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
             self._result.ct_planned = is_lane_enabled(self._acquisition_plan, "CT")
@@ -8765,6 +8784,8 @@ class SprintScheduler:
 
             domains: list[str] = []
             node_degrees: dict[str, int] = {}
+            confidence_by_node: dict[str, float] = {}
+            source_count_by_node: dict[str, int] = {}
             try:
                 # top_k=500 to collect all domains that appear in top-k by degree
                 # (DuckPGQGraph.get_top_nodes_by_degree uses LIMIT n internally)
@@ -8773,9 +8794,19 @@ class SprintScheduler:
                     for entity in summary.get("top_central_entities", [])[:500]:
                         val = entity.get("value", "")
                         deg = entity.get("degree", 0)
+                        conf = entity.get("max_confidence", 0.5)
                         if val and deg > 0:
                             domains.append(val)
                             node_degrees[val] = deg
+                            confidence_by_node[val] = max(0.0, min(1.0, conf))
+                    # F239B: source_count_by_node from top_central_entities ioc_type counts
+                    # (reuse the same aggregation — source_count is just len of entities per value)
+                    _conf_src: dict[str, int] = {}
+                    for entity in summary.get("top_central_entities", [])[:500]:
+                        val = entity.get("value", "")
+                        if val:
+                            _conf_src[val] = _conf_src.get(val, 0) + 1
+                    source_count_by_node = _conf_src
             except Exception:
                 pass
 
@@ -8785,6 +8816,8 @@ class SprintScheduler:
                 "domains": domains,
                 "connected_iocs": set(),
                 "node_degrees": node_degrees,
+                "confidence_by_node": confidence_by_node,
+                "source_count_by_node": source_count_by_node,
             }
         except Exception:
             return {}
@@ -10349,6 +10382,22 @@ class SprintScheduler:
         report["windup_guard_not_applicable"] = (
             _wg_last_reason.lower() in _wg_irrelevant
         )
+
+        # Sprint F240A: Attach runtime_loop_telemetry from timer events (fail-soft)
+        try:
+            from hledac.universal.runtime.sprint_timer import (
+                compute_runtime_loop_telemetry,
+            )
+            _timer_ev = getattr(self._result, "timer_events", None) or []
+            report["runtime_loop_telemetry"] = compute_runtime_loop_telemetry(_timer_ev)
+        except Exception:
+            report["runtime_loop_telemetry"] = {
+                "events": [],
+                "phase_totals_s": {},
+                "slowest_phases": [],
+                "lane_timings": {},
+                "timer_event_count": 0,
+            }
 
         # Sprint F208F: Canonical acquisition_report — wired using build_acquisition_report()
         # so live_sprint_measurement.py can find it at report["acquisition_report"] first
