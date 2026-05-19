@@ -61,6 +61,8 @@ def _safe_payload_json(obj: Any) -> str:
     # Last resort: str
     return str(obj)
 
+logger = logging.getLogger(__name__)
+
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MAX_SIDECAR_FINDINGS: int = 500
 MAX_SIDECAR_RESULT_RECORDS: int = 32
@@ -81,6 +83,50 @@ _ACTIVE_NETWORK_SIDECARS: frozenset[str] = frozenset({
     "banner_grab",
     "ipv6_recon",
 })
+
+
+# F247C: Explicit sidecar network-classification map.
+# Covers every sidecar name registered in DEFAULT_SIDECAR_RUNNERS.
+# - active_network: performs live TCP/HTTP/network operations
+# - core: passive processing, no live network beyond the finding source
+# - duplicate_compat: compatibility/derived runners with no independent canonical output
+SIDECAR_NETWORK_CLASS: dict[str, str] = {
+    # active_network — live TCP/HTTP/network
+    "leak_sentinel": "active_network",
+    "network_intel": "active_network",
+    "banner_grab": "active_network",
+    "ipv6_recon": "active_network",
+    "rir_correlator": "active_network",
+    "wayback_diff": "active_network",
+    "social_identity_surface": "active_network",
+    # core — passive processing
+    "passive_fingerprint": "core",
+    "passive_tech_stack": "core",
+    "evidence_triage": "core",
+    "temporal_archaeology": "core",
+    "exposure_correlator": "core",
+    "identity_stitching": "core",
+    "sprint_diff": "core",
+    "kill_chain_tagging": "core",
+    # duplicate_compat — derived, no independent canonical output
+    "embedding": "duplicate_compat",
+}
+
+
+def classify_sidecar_network(sidecar_name: str) -> str:
+    """
+    Classify a sidecar by its network I/O behaviour.
+
+    Returns one of:
+      - "active_network" — live TCP/HTTP/network operations
+      - "core"            — passive processing, no live network beyond finding source
+      - "duplicate_compat" — compatibility/derived, no independent canonical output
+      - "unknown"         — sidecar not in the classification map
+
+    Fail-open: unknown sidecars are treated as "active_network" to avoid
+    accidentally enabling undiscovered live-network sidecars in passive profiles.
+    """
+    return SIDECAR_NETWORK_CLASS.get(sidecar_name, "unknown")
 
 
 def _sidecar_profile_allows(name: str, profile: str | None) -> tuple[bool, str]:
@@ -137,6 +183,72 @@ SIDECAR_STAGES: tuple[tuple[str, ...], ...] = (
     ("kill_chain_tagging", "embedding"),
 )
 
+# F245B: Canonical sidecar → source_family mapping.
+# Skips: wayback_diff (canonical owner is Wayback lane), passive_tech_stack
+# (duplicate of passive_fingerprint), embedding (vector side-effect only, no
+# CanonicalFinding output), evidence_triage (stats counter only, no new signal).
+SIDECAR_FAMILY_MAP: dict[str, str] = {
+    "kill_chain_tagging": "killchain_tag",
+    "sprint_diff": "sprint_diff",
+    "identity_stitching": "identity_stitching",
+    "exposure_correlator": "exposure_correlator",
+    "social_identity_surface": "social_identity_surface",
+    "passive_fingerprint": "passive_fingerprint",
+    "rir_correlator": "rir_correlation",
+    "leak_sentinel": "leak_sentinel",
+    "temporal_archaeology": "temporal_archaeology",
+    "network_intel": "network_intel",
+}
+
+
+def sidecar_results_to_source_family_outcomes(
+    results: list["SidecarRunResult"],
+) -> tuple[dict, ...]:
+    """
+    Convert SidecarRunResult list to normalized source_family_outcomes entries.
+
+    Only canonical/non-duplicate sidecars are mapped (per SIDECAR_FAMILY_MAP).
+    Skipped heavy sidecars are included with terminal_state="no_results".
+
+    Entry shape:
+        {
+            "family": family,           # normalized family name
+            "accepted_count": sr.stored_count,
+            "raw_count": sr.produced_count,
+            "built_count": sr.produced_count,
+            "attempted": sr.attempted,
+            "terminal_state": "completed" if sr.stored_count > 0 else "no_results",
+            "skipped": not sr.attempted,
+            "skip_reason": sr.skipped_reason,
+            "lane": f"sidecar:{sr.sidecar_name}",
+            "duration_s": sr.elapsed_ms / 1000,
+        }
+
+    Deduplication: append-only, caller is responsible for dedup by (family, lane)
+    if dispatch runs multiple times per sprint.
+    """
+    outcomes: list[dict] = []
+    for sr in results:
+        family = SIDECAR_FAMILY_MAP.get(sr.sidecar_name)
+        if family is None:
+            # Not a canonical sidecar — skip (wayback_diff, passive_tech_stack,
+            # embedding, evidence_triage, etc.)
+            continue
+        outcomes.append({
+            "family": family,
+            "accepted_count": sr.stored_count,
+            "raw_count": sr.produced_count,
+            "built_count": sr.produced_count,
+            "attempted": sr.attempted,
+            "terminal_state": "completed" if sr.stored_count > 0 else "no_results",
+            "skipped": not sr.attempted,
+            "skip_reason": sr.skipped_reason,
+            "lane": f"sidecar:{sr.sidecar_name}",
+            "duration_s": sr.elapsed_ms / 1000,
+        })
+    return tuple(outcomes)
+
+
 # F204J: Import constants from resource_governor
 try:
     from hledac.universal.runtime.resource_governor import SIDECAR_DEFAULT_ESTIMATE_MB
@@ -169,7 +281,7 @@ class SidecarRunResult:
 
 
 # ── Sidecar Runner Signature ───────────────────────────────────────────────────
-# Each runner: async def (findings: list, store: DuckDBShadowStore, query: str) -> None
+# Each runner: async def (findings: list, store: DuckDBShadowStore, query: str) -> int | None
 SidecarRunner = Callable[[list, "DuckDBShadowStore", str], Any]
 
 
@@ -1024,31 +1136,74 @@ async def _network_intel_runner(
     findings: list,
     store: "DuckDBShadowStore",
     query: str,
-) -> None:
-    """F214 network intelligence — unified passive DNS, fingerprint, BGP."""
+) -> int | None:
+    """
+    F247B: Active network reconnaissance via NetworkReconnaissance + bridge.
+
+    Extracts domain/IP targets from accepted findings, runs recon_target() on each
+    (max 5), converts via network_recon_result_to_findings(), stores findings.
+
+    Profile gate: _sidecar_profile_allows("network_intel", profile) is checked
+    by the bus before calling this runner. Returns stored count (0 if no findings).
+    """
+    # Bounds
+    MAX_RECON_TARGETS = 5
+
     if not findings or store is None:
-        return
+        return None
+
+    # F247B: Extract domain/IP targets from findings
+    targets: list[str] = []
+    for f in findings:
+        ioc_value = getattr(f, "ioc_value", "") or ""
+        ioc_type = getattr(f, "ioc_type", "") or ""
+        if ioc_type in ("domain", "ipv4", "ipv6", "ip") and ioc_value:
+            if ioc_value not in targets:
+                targets.append(ioc_value)
+    if not targets:
+        return None
+    targets = targets[:MAX_RECON_TARGETS]
+
+    # F247B: Import NetworkReconnaissance and bridge (lazy, fail-open)
     try:
-        from hledac.universal.network import NETWORK_INTEL_AVAILABLE
-        if not NETWORK_INTEL_AVAILABLE:
-            return
-        from hledac.universal.network.network_intelligence import NetworkIntelAdapter
+        from hledac.universal.intelligence.network_reconnaissance import (
+            NetworkReconnaissance,
+        )
+        from hledac.universal.runtime.source_finding_bridge import (
+            network_recon_result_to_findings,
+        )
     except Exception:
-        return
+        return None
+
+    # F247B: Fail-soft per target, CancelledError propagates
+    all_findings: list = []
+    for target in targets:
+        try:
+            recon = NetworkReconnaissance()
+            host_info = await recon.recon_target(target)
+            conv_findings, _, _ = network_recon_result_to_findings(
+                target,
+                host_info,
+                max_findings=16,
+            )
+            all_findings.extend(conv_findings)
+        except asyncio.CancelledError:
+            raise  # Propagate — do not swallow
+        except Exception:
+            pass  # Fail-soft per target
+
+    if not all_findings:
+        return 0
 
     try:
-        adapter = NetworkIntelAdapter()
-        try:
-            derived_findings = await adapter.async_query(query)
-            if not derived_findings:
-                return
-            results = await store.async_ingest_findings_batch(derived_findings)
-            stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
-            return stored
-        finally:
-            await adapter.close()
-    except Exception:
-        pass  # Fail-soft
+        results = await store.async_ingest_findings_batch(all_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("network_intel async_ingest_findings_batch failed: %s", exc)
+        return None
 
 
 async def _banner_grab_runner(

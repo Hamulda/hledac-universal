@@ -151,6 +151,22 @@ class SidecarOrchestrator:
                 for s in outcome.sidecars_skipped:
                     if s not in seen:
                         existing.append(s)
+
+        # F245B: Propagate source_family_outcomes to result sink if the attr exists.
+        # Attribute name is source_family_outcomes_list on SprintSchedulerResult.
+        if outcome.source_family_outcomes and hasattr(self._result, "source_family_outcomes_list"):
+            existing = getattr(self._result, "source_family_outcomes_list", [])
+            if isinstance(existing, list):
+                for entry in outcome.source_family_outcomes:
+                    # Deduplicate by (family, lane) before appending
+                    duplicate = any(
+                        e.get("family") == entry.get("family") and e.get("lane") == entry.get("lane")
+                        for e in existing
+                    )
+                    if not duplicate:
+                        existing.append(entry)
+                self._result.source_family_outcomes_list = existing
+
         return outcome
 
     async def run_advisory_runner(self) -> None:
