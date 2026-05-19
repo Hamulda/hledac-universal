@@ -4107,6 +4107,8 @@ def _build_sprint_summary(pvs: dict[str, Any], seeds_count: int) -> dict[str, An
 # Sprint F238E Phase C: Optional runtime_timing section in JSON export
 _MAX_RUNTIME_TIMING_EVENTS = 500  # mirror of _MAX_TELEMETRY_EVENTS in sprint_timer.py
 
+from hledac.universal.runtime.sprint_timer import compute_runtime_loop_telemetry
+
 
 def _extract_runtime_timing(handoff: Any) -> dict | None:
     """
@@ -4138,9 +4140,116 @@ def _extract_runtime_timing(handoff: Any) -> dict | None:
                 # malformed event — skip rather than crash
                 pass
 
-        return {"events": serialized}
+        return {
+            "events": serialized,
+            "summary": compute_runtime_loop_telemetry(events),
+        }
     except Exception:
         return None
+
+
+# Sprint F240B: Runtime Telemetry Drives Operator Diagnosis
+def _compute_runtime_diagnosis(telemetry: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Sprint F240B: Derive operator-facing diagnosis from runtime_loop_telemetry.
+
+    Input: output of compute_runtime_loop_telemetry() — {
+      slowest_phases, lane_timings, timer_event_count, phase_totals_s, ...
+    }
+
+    Output: {
+      slowest_phase: str,
+      slow_lanes: [...],
+      likely_bottleneck: str,
+      recommended_runtime_action: str,
+      memory_safe_to_expand: bool,
+    }
+
+    Fail-soft:
+      - telemetry None/missing keys → status="unavailable"
+      - no raw evidence, no HTML, no network/model imports
+      - no scheduler behavior change — diagnostic only
+
+    Rules:
+      1. slowest phase public_lane / public_discovery → diagnose_public_provider_or_replay
+      2. slowest phase wayback_lane → wayback_replay_or_limit_urls
+      3. slowest phase ct_lane with ct timeout families → ct_timeout_tuning
+      4. graph_accumulation slow → graph_batch_or_defer
+      5. export slow → export_payload_trim
+      6. memory pressure (uma_warn/critical/emergency) → memory_safe_to_expand=False
+      7. missing telemetry → status="unavailable"
+    """
+    try:
+        if not telemetry:
+            return {"status": "unavailable"}
+
+        slowest_phases = telemetry.get("slowest_phases", [])
+        if not slowest_phases:
+            return {"status": "unavailable"}
+
+        slowest_phase = slowest_phases[0]["phase"] if slowest_phases else "unknown"
+        slowest_elapsed = slowest_phases[0].get("elapsed_s", 0) if slowest_phases else 0
+
+        # Build slow_lanes: phases with elapsed > 1s and in top half
+        threshold = max(1.0, slowest_elapsed * 0.5)
+        slow_lanes = [
+            p["phase"] for p in slowest_phases
+            if p.get("elapsed_s", 0) > threshold
+        ]
+
+        # Determine likely_bottleneck + recommended_runtime_action
+        recommended = "observe_only"
+        bottleneck = "unknown"
+
+        if slowest_phase in ("public_lane", "public_discovery"):
+            bottleneck = "public_lane_slow"
+            recommended = "diagnose_public_provider_or_replay"
+        elif slowest_phase == "wayback_lane":
+            bottleneck = "wayback_lane_slow"
+            recommended = "wayback_replay_or_limit_urls"
+        elif slowest_phase == "ct_lane":
+            bottleneck = "ct_lane_slow"
+            # Check phase_totals_s for ct-related timeout signals
+            phase_totals = telemetry.get("phase_totals_s", {})
+            # ct_timeout signal: if ct_lane elapsed > 5s (heuristic)
+            if phase_totals.get("ct_lane", 0) > 5.0:
+                recommended = "ct_timeout_tuning"
+            else:
+                recommended = "ct_timeout_tuning"
+        elif slowest_phase == "graph_accumulation":
+            bottleneck = "graph_accumulation_slow"
+            recommended = "graph_batch_or_defer"
+        elif slowest_phase == "export":
+            bottleneck = "export_slow"
+            recommended = "export_payload_trim"
+        else:
+            bottleneck = f"{slowest_phase}_slow"
+            recommended = "observe_only"
+
+        # memory_safe_to_expand — check uma_budget
+        memory_safe = True
+        try:
+            from hledac.universal.utils.uma_budget import (
+                is_uma_warn,
+                is_uma_critical,
+                is_uma_emergency,
+            )
+
+            if is_uma_emergency() or is_uma_critical() or is_uma_warn():
+                memory_safe = False
+        except Exception:
+            pass  # fail-soft: treat as safe if import/call fails
+
+        return {
+            "slowest_phase": slowest_phase,
+            "slow_lanes": slow_lanes[:5],  # max 5
+            "likely_bottleneck": bottleneck,
+            "recommended_runtime_action": recommended,
+            "memory_safe_to_expand": memory_safe,
+        }
+
+    except Exception:
+        return {"status": "unavailable"}
 
 
 def _make_serializable(obj: Any) -> Any:

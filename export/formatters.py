@@ -253,6 +253,11 @@ class JSONFormatter(ExportFormatter):
                 _rt = _extract_runtime_timing(eh)
                 if _rt is not None:
                     sanitized_obj["runtime_timing"] = _rt
+                    # Sprint F240B: runtime_diagnosis derived from telemetry
+                    from hledac.universal.export.sprint_exporter import _compute_runtime_diagnosis
+                    _diag = _compute_runtime_diagnosis(_rt.get("summary"))
+                    if _diag:
+                        sanitized_obj["runtime_diagnosis"] = _diag
                 if eh.runtime_truth:
                     sanitized_obj["runtime_truth"] = eh.runtime_truth
                 acq_truth = _get_acquisition_truth(eh)
