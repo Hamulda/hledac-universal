@@ -1224,31 +1224,11 @@ async def _query_rdap(target: str) -> dict:
     """RDAP — structured WHOIS successor, free without key.
     COMPAT: Tato funkce je dočasný compat wrapper.
     AUTHORITY: registry/rdap_lookup() je search-shaped canonical.
-    REMOVAL CONDITION: po přechodu všech call-sites na registry/rdap_lookup()."""
-    is_ip = target.replace(".", "").isdigit() or ":" in target
-    base  = "https://rdap.org"
-    endpoint = f"{base}/ip/{target}" if is_ip else f"{base}/domain/{target}"
-    try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                endpoint,
-                timeout=aiohttp.ClientTimeout(total=10),
-                failure_kind="rdap",
-            )
-            if err:
-                logger.debug(f"[RDAP] {err}")
-                return {}
-            if resp.status == 200:
-                data = await resp.json()
-                return {
-                    "target": target,
-                    "rdap":   data,
-                    "source": "rdap_org"
-                }
-    except Exception as e:
-        logger.debug(f"[RDAP] {e}")
-    return {}
+    REMOVAL CONDITION: po přechodu všech call-sites na registry/rdap_lookup().
+    Přesměrováno na canonical ti_feed_adapter.query_rdap() pro odstranění duplicity."""
+    from hledac.universal.discovery.ti_feed_adapter import query_rdap
+
+    return await query_rdap(target)
 
 
 async def _search_commoncrawl_domain(

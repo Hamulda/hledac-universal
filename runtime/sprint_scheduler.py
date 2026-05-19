@@ -1052,6 +1052,12 @@ class SprintSchedulerResult:
     # Sprint F193B: CommonCrawl + academic discovery additive truth
     cc_archive_injected: int = 0
     academic_findings_count: int = 0
+    # Sprint F242C: RDAP runtime integration telemetry
+    rdap_enrichment_attempted: int = 0
+    rdap_enrichment_findings_built: int = 0
+    rdap_enrichment_findings_stored: int = 0
+    rdap_enrichment_rejections: int = 0
+    rdap_enrichment_error: str | None = None
     # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
     acquisition_lane_outcomes: tuple = ()  # tuple[AcquisitionLaneOutcome, ...]
     # Sprint F207J-A: Lane verdict accumulators for signal_path and branch_mix truth

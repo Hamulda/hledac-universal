@@ -29,6 +29,12 @@ from hledac.universal.transport.circuit_breaker import (
 
 import msgspec
 
+from hledac.universal.tools.discovery_replay import (
+    read_cassette,
+    replay_enabled,
+    write_cassette,
+)
+
 if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult
 
@@ -935,7 +941,16 @@ async def query_rdap(target: str) -> dict:
     """
     RDAP — WHOIS successor, structured REST API, no key required.
     Automatically detects domain vs IP.
+
+    F239A: Discovery replay — read from cassette if available, write on success.
     """
+    # F239A: Replay — read from cassette if available
+    if replay_enabled():
+        cached = read_cassette("rdap_org", target)
+        if cached is not None:
+            logger.debug(f"[RDAP] replay hit for {target}")
+            return cached
+
     is_ip = (
         target.replace(".", "").isdigit() or ":" in target
     )
@@ -956,11 +971,15 @@ async def query_rdap(target: str) -> dict:
                 logger.debug(f"[RDAP] {err}")
                 return {}
             data = await resp.json()
-            return {
+            result = {
                 "target": target,
                 "rdap":   data,
                 "source": "rdap_org"
             }
+        # F239A: Record successful response for replay (outside session scope)
+        if replay_enabled():
+            write_cassette("rdap_org", target, result)
+        return result
     except Exception as e:
         logger.debug(f"[RDAP] {e}")
     return {}
@@ -1183,9 +1202,69 @@ async def _handle_shodan_enrich(task, scheduler):
 @register_task("rdap_lookup")
 async def _handle_rdap_lookup(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import query_rdap
-    r = await query_rdap(task.ioc_value)
-    if r:
-        await scheduler._buffer_ioc_pivot("domain", task.ioc_value, 0.75)
+
+    # Sprint F242C: wire rdap_result_to_findings → canonical store
+    from hledac.universal.runtime.source_finding_bridge import rdap_result_to_findings
+
+    rdap_telemetry: dict[str, Any] = {}
+    try:
+        r = await query_rdap(task.ioc_value)
+        if r:
+            findings, rejections, telemetry = rdap_result_to_findings(
+                target=task.ioc_value,
+                rdap_result=r,
+                trigger_confidence=getattr(task, "confidence", None),
+                max_findings=32,
+            )
+            rdap_telemetry = telemetry
+
+            # F242C: telemetry
+            rdap_telemetry["rdap_enrichment_attempted"] = True
+            rdap_telemetry["rdap_enrichment_findings_built"] = len(findings)
+            rdap_telemetry["rdap_enrichment_rejections"] = len(rejections)
+
+            if findings and scheduler._duckdb_store is not None:
+                try:
+                    stored = await scheduler._duckdb_store.async_ingest_findings_batch(list(findings))
+                    rdap_telemetry["rdap_enrichment_findings_stored"] = stored
+                except Exception as exc:
+                    rdap_telemetry["rdap_enrichment_error"] = str(exc)
+                    # fail-soft: RDAP failure never crashes sprint
+            else:
+                rdap_telemetry["rdap_enrichment_findings_stored"] = 0
+
+            # F242C: no raw RDAP JSON stored — already enforced by rdap_result_to_findings
+            # Buffer pivot for further discovery
+            await scheduler._buffer_ioc_pivot("domain", task.ioc_value, 0.75)
+        else:
+            rdap_telemetry["rdap_enrichment_attempted"] = True
+            rdap_telemetry["rdap_enrichment_findings_built"] = 0
+            rdap_telemetry["rdap_enrichment_findings_stored"] = 0
+            rdap_telemetry["rdap_enrichment_rejections"] = 1
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # fail-soft: RDAP failure never crashes sprint
+        rdap_telemetry.setdefault("rdap_enrichment_error", str(exc))
+        rdap_telemetry["rdap_enrichment_attempted"] = True
+        rdap_telemetry["rdap_enrichment_findings_built"] = 0
+        rdap_telemetry["rdap_enrichment_findings_stored"] = 0
+        rdap_telemetry["rdap_enrichment_rejections"] = 0
+
+    # F242C: surface telemetry on scheduler result if rdap_telemetry accumulated
+    if rdap_telemetry and hasattr(scheduler, "_result") and scheduler._result is not None:
+        if not hasattr(scheduler._result, "rdap_enrichment_attempted"):
+            scheduler._result.rdap_enrichment_attempted = 0
+            scheduler._result.rdap_enrichment_findings_built = 0
+            scheduler._result.rdap_enrichment_findings_stored = 0
+            scheduler._result.rdap_enrichment_rejections = 0
+            scheduler._result.rdap_enrichment_error = None
+        scheduler._result.rdap_enrichment_attempted += rdap_telemetry.get("rdap_enrichment_attempted", 0)
+        scheduler._result.rdap_enrichment_findings_built += rdap_telemetry.get("rdap_enrichment_findings_built", 0)
+        scheduler._result.rdap_enrichment_findings_stored += rdap_telemetry.get("rdap_enrichment_findings_stored", 0)
+        scheduler._result.rdap_enrichment_rejections += rdap_telemetry.get("rdap_enrichment_rejections", 0)
+        if rdap_telemetry.get("rdap_enrichment_error"):
+            scheduler._result.rdap_enrichment_error = rdap_telemetry["rdap_enrichment_error"]
 
 
 @register_task("ahmia_search")
