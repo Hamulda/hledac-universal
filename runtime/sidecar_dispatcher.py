@@ -29,6 +29,7 @@ from typing import Any
 from hledac.universal.runtime.sidecar_bus import (
     SidecarBatch,
     classify_sidecar_network,
+    classify_sidecar_risk,
     sidecar_results_to_source_family_outcomes,
 )
 
@@ -61,6 +62,11 @@ class DispatchOutcome:
     active_network_sidecars_skipped: int = 0
     core_sidecars_attempted: int = 0
     duplicate_compat_sidecars_attempted: int = 0
+    # F248C telemetry — network-risk sub-classification
+    active_target_sidecars_attempted: int = 0
+    active_target_sidecars_skipped: int = 0
+    third_party_provider_sidecars_attempted: int = 0
+    third_party_provider_sidecars_skipped: int = 0
 
 
 # ── Sidecar Dispatcher ────────────────────────────────────────────────────────
@@ -156,6 +162,11 @@ class SidecarDispatcher:
         an_skipped = 0
         core_attempted = 0
         dup_attempted = 0
+        # F248C: Network-risk sub-classification telemetry
+        at_attempted = 0
+        at_skipped = 0
+        tpp_attempted = 0
+        tpp_skipped = 0
 
         try:
             sidecar_results = await self._bus.run_all_sidecars(batch, store)
@@ -180,6 +191,18 @@ class SidecarDispatcher:
                 elif cls == "duplicate_compat":
                     if sr.attempted:
                         dup_attempted += 1
+                # F248C: Network-risk sub-classification
+                risk = classify_sidecar_risk(sr.sidecar_name)
+                if risk == "active_target":
+                    if sr.attempted:
+                        at_attempted += 1
+                    else:
+                        at_skipped += 1
+                elif risk == "third_party_provider":
+                    if sr.attempted:
+                        tpp_attempted += 1
+                    else:
+                        tpp_skipped += 1
             # F245B: Convert sidecar results to source_family_outcomes entries
             outcomes = sidecar_results_to_source_family_outcomes(sidecar_results)
 
@@ -199,6 +222,10 @@ class SidecarDispatcher:
             active_network_sidecars_skipped=an_skipped,
             core_sidecars_attempted=core_attempted,
             duplicate_compat_sidecars_attempted=dup_attempted,
+            active_target_sidecars_attempted=at_attempted,
+            active_target_sidecars_skipped=at_skipped,
+            third_party_provider_sidecars_attempted=tpp_attempted,
+            third_party_provider_sidecars_skipped=tpp_skipped,
         )
 
     def reset(self) -> None:

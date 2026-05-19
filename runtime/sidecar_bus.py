@@ -129,6 +129,38 @@ def classify_sidecar_network(sidecar_name: str) -> str:
     return SIDECAR_NETWORK_CLASS.get(sidecar_name, "unknown")
 
 
+# F248C: Explicit network-risk taxonomy for policy and telemetry clarity.
+# Subdivides network-active sidecars into:
+# - active_target: performs direct TCP/HTTP connection to the investigation target
+# - third_party_provider: calls third-party APIs/providers, not the target itself
+SIDECAR_NETWORK_RISK: dict[str, str] = {
+    # active_target — direct connection to target (investigation subject)
+    "banner_grab": "active_target",
+    "ipv6_recon": "active_target",
+    # third_party_provider — external API/provider calls, not target scanning
+    "network_intel": "third_party_provider",
+    "leak_sentinel": "third_party_provider",
+    "rir_correlator": "third_party_provider",
+    "social_identity_surface": "third_party_provider",
+    "wayback_diff": "third_party_provider",
+}
+
+
+def classify_sidecar_risk(sidecar_name: str) -> str:
+    """
+    Classify a sidecar by its network risk posture (F248C).
+
+    Returns one of:
+      - "active_target"         — direct TCP/HTTP connection to the target
+      - "third_party_provider"  — third-party API/provider calls
+      - "passive"               — no live network operations
+      - "unknown"               — sidecar not in the risk map
+
+    Used for telemetry and policy logging. Does NOT gate execution.
+    """
+    return SIDECAR_NETWORK_RISK.get(sidecar_name, "unknown")
+
+
 def _sidecar_profile_allows(name: str, profile: str | None) -> tuple[bool, str]:
     """
     Return (allowed, skip_reason) for active-network sidecars.

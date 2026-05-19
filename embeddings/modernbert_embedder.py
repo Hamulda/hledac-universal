@@ -136,6 +136,25 @@ class ModernBERTEmbedder:
         """True if model is loaded and ready."""
         return self._is_loaded
 
+    def encode(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+        """
+        Compatibility adapter: .encode() interface expected by EmbeddingRouter.
+
+        Delegates to embed_batch() (list) or embed() (single string), applying
+        the same fail-soft/lazy-load semantics as the underlying methods.
+        No model load at import time — deferred to first call.
+
+        Args:
+            texts: Single text or list of texts.
+            **kwargs: Passed through to embed()/embed_batch().
+                Supported: task (default "search_document").
+        Returns:
+            np.ndarray embedding matrix (N, 768) for list, (768,) for single.
+        """
+        if isinstance(texts, str):
+            return self.embed(texts, **kwargs)
+        return self.embed_batch(texts, **kwargs)
+
     def embed(self, text: str, task: str = "search_document") -> np.ndarray:
         """
         Encode a single text to embedding vector.

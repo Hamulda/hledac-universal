@@ -1321,6 +1321,7 @@ class SprintSchedulerResult:
     # F233C: IOC values from ioc_followup seeds (wired into NonfeedSeedContext)
     next_seeds_query_suggestions: tuple[str, ...] = ()
     next_seeds_skip_reason: str = ""
+    planner_action_skip_reason: str = ""  # F237B: consumption skip reason
     next_seeds_ioc_domains: tuple[str, ...] = ()
     next_seeds_ioc_ips: tuple[str, ...] = ()
     next_seeds_ioc_urls: tuple[str, ...] = ()
@@ -1626,7 +1627,7 @@ class SprintResult:
     planner_actions_consumed_count: int = 0
     planner_action_lanes_requested: list[str] = field(default_factory=list)
     planner_action_seed_source: str = ""
-    planner_action_skip_reason: str = ""
+    planner_action_skip_reason: str | None = None
 
     # Nonfeed prelude
     nonfeed_prelude_expected_lanes: tuple[str, ...] = ()
@@ -5464,7 +5465,7 @@ class SprintScheduler:
             # These were extracted from predecessor's investigation_packet.planner_actions
             # F245A: read from instance field, not local — avoids NameError when predecessor is absent
             _planner_seed_iocs: dict = getattr(self, "_planner_seed_iocs", {}) or {}
-            if _planner_seed_iocs and self._result.planner_action_skip_reason in ("", "no_iocs_extracted"):
+            if _planner_seed_iocs and self._result.planner_action_skip_reason in ("", "no_iocs_extracted", None):
                 _pa_doms: tuple = _planner_seed_iocs.get("domains", ())
                 _pa_ips: tuple = _planner_seed_iocs.get("ips", ())
                 _pa_urls: tuple = _planner_seed_iocs.get("urls", ())

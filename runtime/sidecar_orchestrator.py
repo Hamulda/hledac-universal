@@ -135,11 +135,11 @@ class SidecarOrchestrator:
         """
         # query is passed through to SidecarBatch in the dispatcher
         outcome = await self._dispatcher.dispatch(
-            src_br=source_branch,
-            findings=findings,
-            store=store,
-            query=query,
-            sprint_id=sprint_id,
+            source_branch,
+            findings,
+            store,
+            query,
+            sprint_id,
         )
         # Propagate skipped sidecars to result sink if the attribute exists
         if outcome.sidecars_skipped and hasattr(self._result, "sidecars_skipped"):
