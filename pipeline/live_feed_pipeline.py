@@ -53,6 +53,7 @@ from hledac.universal.pipeline.scoring import (
     _entry_payload_text,
     _strip_html_tags_from_text,
 )
+from hledac.universal.utils.confidence import clamp_confidence
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import (
@@ -1015,6 +1016,10 @@ def _pattern_hit_to_finding(
     ts = time.time()
     query = query_context or feed_url
 
+    # F238B: propagate hit confidence if available (clamped to [0.0, 1.0])
+    hit_conf = getattr(hit, "confidence", None)
+    confidence = clamp_confidence(hit_conf, default=0.8) if hit_conf is not None else 0.8
+
     payload_text = _extract_payload_context(
         clean_text,
         hit.start,
@@ -1027,7 +1032,7 @@ def _pattern_hit_to_finding(
         ),
         "query": query,
         "source_type": "rss_atom_pipeline",
-        "confidence": 0.8,
+        "confidence": confidence,
         "ts": ts,
         "provenance": ("rss_atom", feed_url, entry_url, f"pattern:{label}"),
         "payload_text": payload_text,

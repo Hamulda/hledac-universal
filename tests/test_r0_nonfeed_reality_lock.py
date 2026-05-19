@@ -185,7 +185,79 @@ class TestSourceFindingBridge:
             sprint_id="test-sprint",
         )
         assert isinstance(result, tuple), "passive_dns_results_to_findings must return tuple"
-        assert len(result) == 2, "passive_dns_results_to_findings must return (findings, rejections)"
+        assert len(result) == 3, "passive_dns_results_to_findings must return (findings, rejections, telemetry)"
+
+    def test_passive_dns_results_to_findings_trigger_confidence_inheritance(self):
+        """Sprint F229: trigger_confidence propagates to PDNS finding confidence.
+
+        Rules:
+        - None trigger → flat 0.5
+        - trigger_confidence=0.8 → inherited > 0.5
+        - trigger_confidence=1.0 → cap at 0.85
+        - trigger_confidence=0.2 → floor at 0.5 (max baseline)
+        """
+        from unittest.mock import MagicMock
+
+        from hledac.universal.runtime.source_finding_bridge import (
+            passive_dns_results_to_findings,
+        )
+
+        # Case: None trigger — flat 0.5
+        result_none = passive_dns_results_to_findings(
+            ips=["8.8.8.8"],
+            _outcome=MagicMock(),
+            query="example.com",
+            sprint_id="test-sprint",
+            trigger_confidence=None,
+        )
+        findings_none, _, _ = result_none
+        assert len(findings_none) == 1
+        assert findings_none[0].confidence == 0.5, "None trigger → flat 0.5"
+
+        # Case: trigger=0.8 → > 0.5
+        result_08 = passive_dns_results_to_findings(
+            ips=["8.8.8.8"],
+            _outcome=MagicMock(),
+            query="example.com",
+            sprint_id="test-sprint",
+            trigger_confidence=0.8,
+        )
+        findings_08, _, _ = result_08
+        assert findings_08[0].confidence > 0.5, "trigger=0.8 → inherited > 0.5"
+        assert findings_08[0].confidence <= 0.85, "trigger=0.8 → capped at 0.85"
+
+        # Case: trigger=1.0 → cap at 0.85
+        result_10 = passive_dns_results_to_findings(
+            ips=["8.8.8.8"],
+            _outcome=MagicMock(),
+            query="example.com",
+            sprint_id="test-sprint",
+            trigger_confidence=1.0,
+        )
+        findings_10, _, _ = result_10
+        assert findings_10[0].confidence == 0.85, "trigger=1.0 → cap 0.85"
+
+        # Case: trigger=0.2 → floor at 0.5 (max baseline)
+        result_02 = passive_dns_results_to_findings(
+            ips=["8.8.8.8"],
+            _outcome=MagicMock(),
+            query="example.com",
+            sprint_id="test-sprint",
+            trigger_confidence=0.2,
+        )
+        findings_02, _, _ = result_02
+        assert findings_02[0].confidence == 0.5, "trigger=0.2 → floor at 0.5"
+
+        # Case: invalid/negative → clamp to [0,1] range
+        result_neg = passive_dns_results_to_findings(
+            ips=["8.8.8.8"],
+            _outcome=MagicMock(),
+            query="example.com",
+            sprint_id="test-sprint",
+            trigger_confidence=-0.5,
+        )
+        findings_neg, _, _ = result_neg
+        assert findings_neg[0].confidence >= 0.0, "negative → clamped to >= 0"
 
     def test_rejection_constants_defined(self):
         from hledac.universal.runtime.source_finding_bridge import (

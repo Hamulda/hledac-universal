@@ -502,6 +502,170 @@ async def export_sprint(
     )
 
 
+def _action_to_seed(action: dict) -> dict | None:
+    """
+    Sprint F238A: Map a single planner_action dict to a seed dict.
+
+    action keys: action, target, priority, reason, lane
+    seed keys: seed_type, action, lane, target, ioc_type, priority, reason, source
+
+    Bounds:
+      max 12 total seeds (enforced by caller)
+      stable ordering: priority desc, then action order
+      dedupe by (action, lane, target) — caller dedupes via _dedup_seeds
+      no raw HTML, no raw evidence, no model imports, no network
+
+    Returns None when action has no meaningful seed (e.g. stop_enough_evidence
+    or synthesize_with_llm or plain query text that is not an IOC target).
+    """
+    act = action.get("action", "") or ""
+    target = action.get("target", "") or ""
+    priority = float(action.get("priority", 0.5))
+    reason = action.get("reason", "") or ""
+
+    match act:
+        case "run_doh_on_domain":
+            return {
+                "seed_type": "lane_action",
+                "action": "run_doh_on_domain",
+                "lane": "DOH",
+                "target": target,
+                "ioc_type": "domain",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "run_ct_on_domain":
+            return {
+                "seed_type": "lane_action",
+                "action": "run_ct_on_domain",
+                "lane": "CT",
+                "target": target,
+                "ioc_type": "domain",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "run_wayback_on_url":
+            # target may be "https://example.com" — pass as-is, lane knows it's URL
+            return {
+                "seed_type": "lane_action",
+                "action": "run_wayback_on_url",
+                "lane": "WAYBACK",
+                "target": target,
+                "ioc_type": "url",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "run_passivedns_on_domain_or_ip":
+            # Determine ioc_type from target shape; pass target as-is
+            ioc_type = "domain"
+            if target and target[0].isdigit() and target.count(".") == 3:
+                ioc_type = "ip"
+            return {
+                "seed_type": "lane_action",
+                "action": "run_passivedns_on_domain_or_ip",
+                "lane": "PASSIVE_DNS",
+                "target": target,
+                "ioc_type": ioc_type,
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "public_bootstrap_from_seed":
+            # target is plain query text — NOT an IOC. Do not fabricate ioc_type.
+            return {
+                "seed_type": "public_bootstrap_seed",
+                "action": "public_bootstrap_from_seed",
+                "lane": "PUBLIC",
+                "target": target,
+                "ioc_type": "",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "extract_more_seeds_from_duckdb":
+            return {
+                "seed_type": "diagnostic_action",
+                "action": "extract_more_seeds_from_duckdb",
+                "lane": "public",
+                "target": target,
+                "ioc_type": "",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "synthesize_with_llm":
+            return {
+                "seed_type": "synthesis_action",
+                "action": "synthesize_with_llm",
+                "lane": "synthesis",
+                "target": target,
+                "ioc_type": "",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case "stop_enough_evidence":
+            return {
+                "seed_type": "stop_action",
+                "action": "stop_enough_evidence",
+                "lane": "stop",
+                "target": target,
+                "ioc_type": "",
+                "priority": priority,
+                "reason": reason,
+                "source": "investigation_packet.planner_actions",
+            }
+        case _:
+            return None
+
+
+def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], str]:
+    """
+    Sprint F238A: Convert planner_actions to seeds using _action_to_seed.
+
+    Returns (seeds, next_seeds_source):
+      - "investigation_packet.planner_actions" when planner_actions is non-empty
+      - "legacy_fallback" when planner_actions is empty or None
+
+    Bounds: max 12 seeds, stable priority-desc sort, dedupe by (action, lane, target).
+    No model imports, no network calls, no raw HTML/evidence.
+    """
+    if not planner_actions:
+        return [], "legacy_fallback"
+
+    seeds: list[dict] = []
+    for idx, action in enumerate(planner_actions):
+        seed = _action_to_seed(action)
+        if seed is not None:
+            seed["_orig_idx"] = idx
+            seeds.append(seed)
+
+    if not seeds:
+        return [], "legacy_fallback"
+
+    # Stable sort: priority desc, then insertion order (action order from planner)
+    seeds.sort(key=lambda s: (-s["priority"], s["_orig_idx"]))
+
+    # Dedup by (action, lane, target)
+    seen: set[tuple[str, str, str]] = set()
+    deduped: list[dict] = []
+    for s in seeds:
+        key = (s["action"], s["lane"], s["target"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(s)
+
+    # Enforce max 12
+    MAX_NEXT_SEEDS = 12
+    if len(deduped) > MAX_NEXT_SEEDS:
+        deduped = deduped[:MAX_NEXT_SEEDS]
+
+    return deduped, "investigation_packet.planner_actions"
+
+
 def _generate_next_sprint_seeds(
     top_nodes: list,
     sprint_id: str,
@@ -512,18 +676,24 @@ def _generate_next_sprint_seeds(
     export_mode: str = "slim",
     capability_synthesis: dict[str, Any] | None = None,
     analyst_brief: dict[str, Any] | None = None,
+    investigation_packet: dict[str, Any] | None = None,
 ) -> pathlib.Path:
     """
     Sprint F150J: Enhanced seed derivation driven by product_value_summary.
     Sprint F226D: Enhanced with capability_synthesis + analyst_brief for active seed shaping.
+    Sprint F238A: investigation_packet.planner_actions is canonical next-sprint-seeds source.
 
-    4 seed categories derived from pvs:
+    Seed source priority (Sprint F238A):
+      1. investigation_packet.planner_actions → canonical, high-fidelity
+      2. Legacy heuristics (top_nodes, pvs, branch_value, ...) → fallback only
+
+    4 legacy seed categories derived from pvs:
       1. ioc_followup — top graph nodes (existing _type_aware_seeds logic)
       2. query_suggestion — based on signal_quality + reject_breakdown
       3. source_revisit — circuit-breaker open domains + depleted signal
       4. low_signal_recommendation — when sprint found almost nothing
 
-    Bounded: max ~10 seeds total. No combinatorial explosion.
+    Bounded: max ~12 seeds total. No combinatorial explosion.
 
     Canonical next-seeds path (Sprint F500D):
       - Primary: get_sprint_next_seeds_path(sprint_id) z paths.py
@@ -537,123 +707,138 @@ def _generate_next_sprint_seeds(
     # Sprint F229 §1: Use get_sprint_next_seeds_path() — same canonical pattern as
     # get_sprint_json_report_path() used for report_path. This ensures the test's
     # patch on get_sprint_next_seeds_path is respected in _generate_next_sprint_seeds.
-    # Prior approach used report_path.parent / f"{sprint_id}_next_seeds.json" which
-    # bypassed the patch. Seeds colocate with report (F500D).
     if report_path is not None:
         seeds_path = get_sprint_next_seeds_path(sprint_id)
     else:
         seeds_path = SPRINT_STORE_ROOT.parent / "reports" / f"{sprint_id}_next_seeds.json"
         seeds_path.parent.mkdir(parents=True, exist_ok=True)
     seeds: list[dict[str, Any]] = []
+    next_seeds_source = "legacy_fallback"
 
     try:
-        # 1. IOC follow-up seeds from top_nodes (existing logic, now with reason tag)
-        for node in top_nodes:
-            try:
-                if isinstance(node, dict):
-                    ioc_value = str(node.get("value", "")) if node else ""
-                    ioc_type = str(node.get("ioc_type", "unknown")) if node else "unknown"
-                elif isinstance(node, (list, tuple)) and len(node) >= 2:
-                    ioc_value = str(node[0]) if node[0] else ""
-                    ioc_type = str(node[1]) if node[1] else "unknown"
-                elif isinstance(node, (list, tuple)) and len(node) == 1:
-                    ioc_value = str(node[0]) if node[0] else ""
-                    ioc_type = "unknown"
-                elif isinstance(node, str):
-                    ioc_value = node
-                    ioc_type = "unknown"
-                elif isinstance(node, (int, float)):
-                    ioc_value = str(node)
-                    ioc_type = "unknown"
-                else:
+        # Sprint F238A: Canonical path — use planner_actions from investigation_packet
+        planner_actions = None
+        if investigation_packet and isinstance(investigation_packet, dict):
+            pa = investigation_packet.get("planner_actions")
+            if pa and isinstance(pa, list) and len(pa) > 0:
+                planner_actions = pa
+
+        if planner_actions:
+            # Canonical: planner_actions are the primary next-sprint-seeds source
+            planner_seeds, next_seeds_source = _planner_actions_to_seeds(planner_actions)
+            seeds.extend(planner_seeds)
+        else:
+            # Legacy fallback: gather from top_nodes and pvs heuristics
+            next_seeds_source = "legacy_fallback"
+
+            # 1. IOC follow-up seeds from top_nodes (existing logic)
+            for node in top_nodes:
+                try:
+                    if isinstance(node, dict):
+                        ioc_value = str(node.get("value", "")) if node else ""
+                        ioc_type = str(node.get("ioc_type", "unknown")) if node else "unknown"
+                    elif isinstance(node, (list, tuple)) and len(node) >= 2:
+                        ioc_value = str(node[0]) if node[0] else ""
+                        ioc_type = str(node[1]) if node[1] else "unknown"
+                    elif isinstance(node, (list, tuple)) and len(node) == 1:
+                        ioc_value = str(node[0]) if node[0] else ""
+                        ioc_type = "unknown"
+                    elif isinstance(node, str):
+                        ioc_value = node
+                        ioc_type = "unknown"
+                    elif isinstance(node, (int, float)):
+                        ioc_value = str(node)
+                        ioc_type = "unknown"
+                    else:
+                        continue
+                except Exception:
                     continue
-            except Exception:
-                continue
 
-            if not ioc_value or len(ioc_value) < 3:
-                continue
+                if not ioc_value or len(ioc_value) < 3:
+                    continue
 
-            node_seeds = _type_aware_seeds(ioc_value, ioc_type, reason="ioc_followup")
-            seeds.extend(node_seeds)
+                node_seeds = _type_aware_seeds(ioc_value, ioc_type, reason="ioc_followup")
+                seeds.extend(node_seeds)
 
-        # 2. Sprint F150J: query_suggestion — derive next queries from sprint signal
-        if pvs:
-            query_seeds = _derive_query_seeds(pvs)
-            seeds.extend(query_seeds)
+            # 2. Sprint F150J: query_suggestion — derive next queries from sprint signal
+            if pvs:
+                query_seeds = _derive_query_seeds(pvs)
+                seeds.extend(query_seeds)
 
-        # 3. Sprint F150J: source_revisit — circuit breaker + depleted signal
-        if pvs:
-            revisit_seeds = _derive_source_revisit_seeds(pvs)
-            seeds.extend(revisit_seeds)
+            # 3. Sprint F150J: source_revisit — circuit breaker + depleted signal
+            if pvs:
+                revisit_seeds = _derive_source_revisit_seeds(pvs)
+                seeds.extend(revisit_seeds)
 
-        # 4. Sprint F150J: low_signal_recommendation — when sprint was nearly empty
-        if pvs:
-            low_signal_seeds = _derive_low_signal_seeds(pvs)
-            seeds.extend(low_signal_seeds)
+            # 4. Sprint F150J: low_signal_recommendation — when sprint was nearly empty
+            if pvs:
+                low_signal_seeds = _derive_low_signal_seeds(pvs)
+                seeds.extend(low_signal_seeds)
 
-        # 5. Sprint F150K: hypothesis_engine.suggest_next_queries() seam
-        # Sprint F207H: gated behind export_mode — numpy/mlx is heavy on M1
-        if pvs and export_mode == "full":
-            hyp_queries = _derive_hypothesis_queries(pvs, max_queries=2)
-            seeds.extend(hyp_queries)
+            # 5. Sprint F207H: hypothesis_engine.suggest_next_queries() seam
+            if pvs and export_mode == "full":
+                hyp_queries = _derive_hypothesis_queries(pvs, max_queries=2)
+                seeds.extend(hyp_queries)
 
-        # 6. Sprint F150K: focus/expand recommendations
-        if pvs:
-            focus_expand = _derive_focus_expand(pvs)
-            seeds.extend(focus_expand)
+            # 6. Sprint F150K: focus/expand recommendations
+            if pvs:
+                focus_expand = _derive_focus_expand(pvs)
+                seeds.extend(focus_expand)
 
-        # 7. Sprint F150L: branch_value-driven seeds — which branch to expand
-        if branch_value:
-            branch_seeds = _derive_branch_seeds(branch_value)
-            seeds.extend(branch_seeds)
+            # 7. Sprint F150L: branch_value-driven seeds
+            if branch_value:
+                branch_seeds = _derive_branch_seeds(branch_value)
+                seeds.extend(branch_seeds)
 
-        # 8. Sprint F150L: sprint_trend-driven seeds — what worked in recent sprints
-        if sprint_trend:
-            trend_seeds = _derive_trend_seeds(sprint_trend)
-            seeds.extend(trend_seeds)
+            # 8. Sprint F150L: sprint_trend-driven seeds
+            if sprint_trend:
+                trend_seeds = _derive_trend_seeds(sprint_trend)
+                seeds.extend(trend_seeds)
 
-        # 9. Sprint F226D: capability_synthesis-driven seeds — use synthesis signals
-        if capability_synthesis:
-            cap_seeds = _derive_capability_seeds(capability_synthesis)
-            seeds.extend(cap_seeds)
+            # 9. Sprint F226D: capability_synthesis-driven seeds
+            if capability_synthesis:
+                cap_seeds = _derive_capability_seeds(capability_synthesis)
+                seeds.extend(cap_seeds)
 
-        # 10. Sprint F226D: analyst_brief-driven seeds — pivot recommendations, gaps
-        if analyst_brief:
-            brief_seeds = _derive_analyst_brief_seeds(analyst_brief)
-            seeds.extend(brief_seeds)
+            # 10. Sprint F226D: analyst_brief-driven seeds
+            if analyst_brief:
+                brief_seeds = _derive_analyst_brief_seeds(analyst_brief)
+                seeds.extend(brief_seeds)
 
-        # Sprint F226D: dedup before cap — same (task_type, value, reason) collapses
-        seeds = _dedup_seeds(seeds)
+            # Sprint F226D: dedup before cap
+            seeds = _dedup_seeds(seeds)
 
-        # Bounded output — keep total seed count manageable
-        MAX_SEEDS = 15
-        if len(seeds) > MAX_SEEDS:
-            # Sort by priority descending, keep top N
-            seeds.sort(key=lambda s: s.get("priority", 0.5), reverse=True)
-            seeds = seeds[:MAX_SEEDS]
+            # Bounded output — keep total seed count manageable
+            MAX_SEEDS = 15
+            if len(seeds) > MAX_SEEDS:
+                seeds.sort(key=lambda s: s.get("priority", 0.5), reverse=True)
+                seeds = seeds[:MAX_SEEDS]
 
-        # Sprint F228D §2: Wrap seeds list in {seeds: [...], capability_synthesis: {...}}
+        # Surface next_seeds_source in the wrapper
         _seeds_wrapper = {
             "seeds": seeds,
+            "next_seeds_source": next_seeds_source,
             "capability_synthesis": capability_synthesis,
         }
         _seeds_text = json.dumps(_seeds_wrapper, indent=2, default=str)
         _seeds_bytes = _seeds_text.encode("utf-8")
-        # F214ZSTD2: write optional zstd sidecar (4.8% ratio, 1.98x faster decomp)
-        # Written as NEW sidecar (.json.zst) — existing .json untouched for backward compat
+        # F214ZSTD2: write optional zstd sidecar
         try:
             import compression.zstd
             seeds_zst = seeds_path.with_suffix(".json.zst")
             seeds_zst.write_bytes(compression.zstd.compress(_seeds_bytes, level=3))
-            logger.info(f"[EXPORT] {len(seeds)} enhanced seeds → {seeds_zst} (zstd sidecar)")
+            logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
         except ImportError:
             logger.warning("[EXPORT] zstd unavailable, plain JSON only")
         seeds_path.write_text(_seeds_text, encoding="utf-8")
-        logger.info(f"[EXPORT] {len(seeds)} enhanced seeds ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")
+        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}")
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
-        # Sprint F228D §2: empty wrapper fallback (not bare list)
-        _empty_wrapper = {"seeds": [], "capability_synthesis": capability_synthesis}
+        _empty_wrapper = {
+            "seeds": [],
+            "next_seeds_source": next_seeds_source,
+            "capability_synthesis": capability_synthesis,
+        }
         _empty_text = json.dumps(_empty_wrapper, indent=2)
         try:
             import compression.zstd

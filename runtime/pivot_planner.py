@@ -33,6 +33,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from hledac.universal.utils.confidence import normalize_source_quality
+
 __all__ = [
     "Pivot",
     "PivotType",
@@ -250,14 +252,28 @@ def _score_pivot_domain(
     confidence: float,
     envelope: Optional[dict],
     graph_stats: dict,
+    source_quality_score: Optional[float] = None,
 ) -> float:
-    """Score a domain pivot based on multiple signals."""
-    score = confidence * 0.6
+    """
+    Score a domain pivot based on multiple signals.
+
+    F238A: Uses normalize_source_quality to interpret heterogeneous
+    source_quality_score values (0-90 int, 0-1 float, or None).
+    Applies degree-weighted noise penalty to high-degree generic domains.
+    """
+    norm = normalize_source_quality(source_quality_score)
+    score = norm * 0.6 + confidence * 0.4  # Weighted blend of source quality + finding confidence
 
     # Graph signal: nodes with this domain already in graph reduce novelty
     existing_domains = graph_stats.get("domains", [])
     if domain not in existing_domains:
         score += 0.2  # Novelty bonus
+    else:
+        score -= 0.05  # Already-pivoted domain — slight deprioritization
+
+    # Degree penalty: high-degree domains (CDNs, registrars) are noisy
+    node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
+    score -= min(0.15, node_degree * 0.01)
 
     # Envelope signal_facets boost
     if envelope and isinstance(envelope, dict):
@@ -305,12 +321,45 @@ def _score_pivot_leak(
 
 
 def _score_pivot_archive(
-    _domain: str,
+    domain: str,
     confidence: float,
+    graph_stats: Optional[dict] = None,
 ) -> float:
-    """Score an archive pivot."""
-    # Archive is supplementary, medium value
-    return confidence * 0.4
+    """
+    Score an archive pivot.
+
+    F238A: Applies degree-weighted noise penalty — high-degree generic domains
+    (CDN, registrar, parking) get reduced archive value since their historical
+    records are noisy. Suspicious/ransomware-looking domains are NOT penalized.
+    """
+    score = confidence * 0.4
+
+    if graph_stats is None:
+        graph_stats = {}
+
+    # Degree penalty: popular/generic domains have noisy archives
+    node_degree = graph_stats.get("node_degrees", {}).get(domain, 0)
+    score -= min(0.15, node_degree * 0.01)
+
+    # Generic / high-degree domain pattern — additional noise penalty
+    # These domains add noise to archive pivots without intelligence value
+    generic_patterns = (
+        "dyndns.", "no-ip.", "freedns.", "duckdns.",
+        "changeip.", "hopto.", "servegame.", "mydns.",
+        "afraid.org",
+    )
+    if any(domain.endswith(f".{g}") or g in domain for g in generic_patterns):
+        score -= 0.10
+    # CDN / parking / registrar domains — very high degree means very noisy
+    if node_degree > 20 and any(x in domain for x in [
+        "cloudfront", "akamai", "fastly", "cloudflare", "azureedge",
+        "googleusercontent", "googlehosted", "appspot",
+        "parking", "sedo", "namecheap", "godaddy",
+        "registrar", "forwarded", "redirect",
+    ]):
+        score -= 0.10
+
+    return min(1.0, max(0.0, score))
 
 
 def _score_pivot_graph(
@@ -627,7 +676,8 @@ class PivotPlanner:
         # Domain pivots
         if ioc_type == "domain" or self._looks_like_domain(ioc_value):
             domain = ioc_value if ioc_type == "domain" else ioc_value
-            score = _score_pivot_domain(domain, base_score, envelope, graph_stats)
+            sqs = getattr(finding, "source_quality_score", None)
+            score = _score_pivot_domain(domain, base_score, envelope, graph_stats, sqs)
             penalty = self._get_feedback_penalty(PivotType.DOMAIN, "domain", feedback_summary)
             score = score * penalty
             pivots.append(Pivot(
@@ -643,7 +693,7 @@ class PivotPlanner:
             ))
 
             # Archive pivot for domain
-            archive_score = _score_pivot_archive(domain, base_score)
+            archive_score = _score_pivot_archive(domain, base_score, graph_stats)
             archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, "domain", feedback_summary)
             archive_score = archive_score * archive_penalty
             pivots.append(Pivot(
@@ -765,7 +815,7 @@ class PivotPlanner:
                 ))
 
             # Archive pivot for URL
-            archive_score = _score_pivot_archive(ioc_value, base_score * 0.5)
+            archive_score = _score_pivot_archive(ioc_value, base_score * 0.5, graph_stats)
             archive_penalty = self._get_feedback_penalty(PivotType.ARCHIVE, "url", feedback_summary)
             archive_score = archive_score * archive_penalty
             pivots.append(Pivot(
@@ -896,10 +946,56 @@ def _extract_root_domain(domain: str) -> str:
     return '.'.join(parts[-2:])
 
 
+def _query_domain_score(domain: str, base_score: float, graph_stats: Optional[dict]) -> float:
+    """
+    F238A: Apply degree-weighted penalty to a query-level domain pivot score.
+
+    High-degree generic domains (CDN, registrar, parking, dynamic DNS) are noisy.
+    Ransomwar/malware-looking keywords are NOT penalized (suspicious = interesting).
+    """
+    if graph_stats is None:
+        return base_score
+
+    gs = graph_stats
+    node_degree = gs.get("node_degrees", {}).get(domain, 0)
+    existing_domains = gs.get("domains", [])
+
+    score = base_score
+
+    # Degree penalty: per audit spec, -0.01 * incident_count, cap -0.15
+    score -= min(0.15, node_degree * 0.01)
+
+    # If already in graph, slightly deprioritize
+    if domain in existing_domains:
+        score -= 0.05
+
+    # Generic / high-degree domain patterns: CDN, parking, registrar, dynamic DNS
+    # These add noise to pivots without intelligence value
+    generic_patterns = (
+        "dyndns.", "no-ip.", "freedns.", "duckdns.",
+        "changeip.", "hopto.", "servegame.", "mydns.", "afraid.org",
+        "cloudfront", "akamai", "fastly", "cloudflare", "azureedge",
+        "googleusercontent", "googlehosted", "appspot",
+        "parking", "sedo", "namecheap", "godaddy",
+        "forwarded", "redirect",
+    )
+    if any(p in domain for p in generic_patterns) and node_degree > 5:
+        score -= 0.10
+
+    # Ransomware / malware-looking keywords: do NOT over-penalize
+    # These domains from APT/ransomware campaigns are intelligence-rich
+    suspicious_patterns = ("lockbit", "ransomware", "APT", "emotet", "icedid", "qakbot")
+    if any(p.lower() in domain.lower() for p in suspicious_patterns):
+        score += 0.05  # slight bonus — suspicious-looking is often interesting
+
+    return min(1.0, max(0.0, score))
+
+
 def generate_pivot_candidates_from_query(
     query: str,
     max_candidates: int = MAX_PIVOT_CANDIDATES,
     mission_intent: Optional[str] = None,
+    graph_stats: Optional[dict] = None,
 ) -> list[Pivot]:
     """
     [F216F] Generate bounded pivot candidates from a query string.
@@ -994,14 +1090,15 @@ def generate_pivot_candidates_from_query(
     if ioc_type == "domain":
         # Root domain pivot
         root_domain = _extract_root_domain(ioc_value)
+        root_score = _query_domain_score(root_domain, 0.9, graph_stats)
         candidates.append(Pivot(
-            priority=-0.9,
+            priority=-root_score,
             pivot_id=f"{pivot_id_base}-root",
             pivot_type=PivotType.DOMAIN,
             ioc_value=root_domain,
             ioc_type="domain",
             reason="Root domain extracted from query",
-            expected_value=0.9,
+            expected_value=root_score,
             source_hint=source_hint,
             evidence_pointers=(),
         ))
@@ -1010,14 +1107,15 @@ def generate_pivot_candidates_from_query(
         if ioc_value != root_domain:
             # Try www.{root_domain}
             www_domain = f"www.{root_domain}"
+            www_score = _query_domain_score(www_domain, 0.7, graph_stats)
             candidates.append(Pivot(
-                priority=-0.7,
+                priority=-www_score,
                 pivot_id=f"{pivot_id_base}-www",
                 pivot_type=PivotType.DOMAIN,
                 ioc_value=www_domain,
                 ioc_type="domain",
                 reason="Common www prefix variant",
-                expected_value=0.7,
+                expected_value=www_score,
                 source_hint=source_hint,
                 evidence_pointers=(),
             ))

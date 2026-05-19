@@ -280,9 +280,11 @@ class JSONFormatter(ExportFormatter):
 
         branch_value = _get_branch_value(eh)
         sprint_trend = await _get_sprint_trend(store, last_n=3)
+        investigation_packet = sanitized_obj.get("investigation_packet") if isinstance(sanitized_obj, dict) else None
         seeds_path = _generate_next_sprint_seeds(
             top_nodes, _sprint_id, report_path, pvs, branch_value, sprint_trend,
             export_mode=export_mode, capability_synthesis=capability_synthesis, analyst_brief=eh.analyst_brief,
+            investigation_packet=investigation_packet,
         )
 
         # Sprint F150K: sprint_summary

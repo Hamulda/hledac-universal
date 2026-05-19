@@ -199,17 +199,17 @@ class IdentityMatch:
     profile_b: str
     match_score: float
     match_signals: Dict[str, float] = field(default_factory=dict)
-    confidence: str = "low"  # high, medium, low
+    confidence: float = 0.35  # numeric [0.0, 1.0]: high=0.85, medium=0.60, low=0.35
     evidence: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         # Determine confidence level based on score
         if self.match_score >= 0.85:
-            self.confidence = "high"
+            self.confidence = 0.85
         elif self.match_score >= 0.6:
-            self.confidence = "medium"
+            self.confidence = 0.60
         else:
-            self.confidence = "low"
+            self.confidence = 0.35
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert match to dictionary."""

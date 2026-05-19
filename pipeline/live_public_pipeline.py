@@ -1531,6 +1531,7 @@ async def _extract_live_public_findings_from_page(
     hit_start: int,
     hit_end: int,
     page_text: str,
+    discovery_score: float | None = None,
 ) -> tuple:  # CanonicalFinding — imported lazily to satisfy runtime
     """
     Construct CanonicalFinding for a single PatternHit.
@@ -1555,11 +1556,17 @@ async def _extract_live_public_findings_from_page(
     # provenance: (source_family, source, url, hit_label, hit_pattern)
     provenance: tuple[str, ...] = ("source_family:public", "duckduckgo", url, hit_label or "", hit_pattern)
 
+    # F234: propagate discovery_score as finding confidence if available
+    if discovery_score is not None:
+        confidence = float(max(0.0, min(1.0, discovery_score)))
+    else:
+        confidence = _DEFAULT_CONFIDENCE
+
     finding = CanonicalFinding(
         finding_id=finding_id,
         query=query,
         source_type=_SOURCE_TYPE,
-        confidence=_DEFAULT_CONFIDENCE,
+        confidence=confidence,
         ts=time.time(),
         provenance=provenance,
         payload_text=context,
@@ -2103,6 +2110,7 @@ async def _fetch_and_process_page(
                 hit_start=hit.start,
                 hit_end=hit.end,
                 page_text=extracted_text,
+                discovery_score=discovery_score,
             )
             unique_findings.append(findings_tuple[0])
 

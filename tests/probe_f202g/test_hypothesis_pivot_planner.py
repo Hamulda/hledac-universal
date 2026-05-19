@@ -468,5 +468,82 @@ class TestIntegration:
         assert len(pivot_types) >= 2, f"Expected at least 2 pivot types, got: {pivot_types}"
 
 
+class TestDegreeWeightedNoveltyPenalty:
+    """Test degree-weighted novelty penalty for domain pivots (F229A)."""
+
+    def test_low_degree_unseen_domain_gets_novelty_bonus(self):
+        """F229A: Low-degree unseen domain receives novelty bonus."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        # Domain not in graph, degree=0
+        graph_stats = {"domains": [], "node_degrees": {}}
+        score = _score_pivot_domain("new.example.com", 0.5, None, graph_stats)
+        # Base: 0.5 * 0.6 = 0.3; novelty bonus +0.2 = 0.5; degree penalty 0
+        assert score >= 0.4  # novelty bonus applied
+
+    def test_high_degree_domain_gets_penalty(self):
+        """F229A: High-degree domain gets degree penalty."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        graph_stats = {"domains": [], "node_degrees": {"cdn.provider.com": 50}}
+        score = _score_pivot_domain("cdn.provider.com", 0.5, None, graph_stats)
+        # Base: 0.5 * 0.6 = 0.3; novelty +0.2 = 0.5; penalty min(0.15, 50*0.01)=0.15
+        assert score < 0.4  # penalty reduces score
+
+    def test_degree_penalty_cap_at_0_15(self):
+        """F229A: Degree penalty capped at 0.15."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        # degree=99 → min(0.15, 0.99) = 0.15
+        graph_stats = {"domains": [], "node_degrees": {"massivecdn.com": 99}}
+        score = _score_pivot_domain("massivecdn.com", 0.5, None, graph_stats)
+        # Base: 0.3 + 0.2 - 0.15 = 0.35
+        assert score >= 0.30  # penalty doesn't exceed cap
+
+    def test_existing_domain_gets_mild_deprioritization(self):
+        """F229A: Existing domain gets -0.05 deprioritization."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        graph_stats = {"domains": ["already.seen.com"], "node_degrees": {"already.seen.com": 5}}
+        score = _score_pivot_domain("already.seen.com", 0.5, None, graph_stats)
+        # Base: 0.3; no novelty bonus; -0.05 existing penalty; degree 5*0.01=0.05 penalty
+        assert score < 0.3  # existing domain penalized
+
+    def test_score_never_exceeds_1_0(self):
+        """F229A: Score clamped to [0.0, 1.0] upper bound."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        graph_stats = {"domains": [], "node_degrees": {}}
+        score = _score_pivot_domain("any.example.com", 1.0, None, graph_stats)
+        assert score <= 1.0
+
+    def test_score_never_below_0_0(self):
+        """F229A: Score clamped to [0.0, 1.0] lower bound."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        graph_stats = {"domains": [], "node_degrees": {"highdegree.example.com": 200}}
+        score = _score_pivot_domain("highdegree.example.com", 0.01, None, graph_stats)
+        assert score >= 0.0
+
+    def test_sort_order_reflects_degree_penalty(self):
+        """F229A: Degree penalty penalizes high-degree domains in raw scoring."""
+        from hledac.universal.runtime.pivot_planner import _score_pivot_domain
+
+        # Low-degree new domain vs high-degree existing domain
+        graph_stats = {
+            "domains": ["cdn.cloudprovider.com"],
+            "node_degrees": {"rare.example.com": 2, "cdn.cloudprovider.com": 50},
+        }
+
+        # Raw score: low-degree novel domain should score higher
+        rare_score = _score_pivot_domain("rare.example.com", 0.8, None, graph_stats)
+        cdn_score = _score_pivot_domain("cdn.cloudprovider.com", 0.8, None, graph_stats)
+
+        # rare.example.com: base=0.48, novelty=+0.2, degree_penalty=-0.02 → 0.66
+        # cdn.cloudprovider.com: base=0.48, existing=-0.05, degree_penalty=-0.15 → 0.28
+        assert rare_score > cdn_score, \
+            f"Low-degree novel domain (0.66) should score higher than high-degree existing (0.28), got {rare_score} vs {cdn_score}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

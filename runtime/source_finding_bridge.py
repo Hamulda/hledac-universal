@@ -1060,13 +1060,21 @@ def passive_dns_results_to_findings(
     _outcome: Any,
     query: str,
     sprint_id: str,
+    *,
+    trigger_confidence: float | None = None,
 ) -> Tuple[List[Any], List[RejectionReason], dict[str, Any]]:
     """
     Convert PassiveDNS IP list + PassiveDNSOutcome to finding candidates.
 
     Each IP becomes one CanonicalFinding with:
         source_type = "passive_dns"
-        confidence  = 0.5
+        confidence  = 0.5  (or inherited from trigger CT finding if provided)
+
+    Args:
+        trigger_confidence: Optional confidence of the CT/candidate finding that
+            triggered this PDNS lookup. When provided, PDNS confidence is computed as
+            max(_PDNS_CONFIDENCE, min(0.85, trigger_confidence * 0.85)) — PDNS is a
+            child signal capped at 0.85. When None, uses flat _PDNS_CONFIDENCE (0.5).
 
     Returns (findings, rejection_reasons, telemetry).
     Findings are capped at MAX_BRIDGE_OUTPUT.
@@ -1084,6 +1092,13 @@ def passive_dns_results_to_findings(
         low_information  — IP looks like a private/reserved address
         duplicate_candidate — same (query, ip) pair already seen
     """
+    # Compute inherited confidence from trigger CT finding, if provided.
+    # PDNS is a derived/child signal — never exceeds 0.85, minimum baseline 0.5.
+    if trigger_confidence is not None:
+        inherited = max(_PDNS_CONFIDENCE, min(0.85, float(trigger_confidence) * 0.85))
+        inherited = max(0.0, min(1.0, inherited))
+    else:
+        inherited = _PDNS_CONFIDENCE
     findings: List[Any] = []
     rejections: List[RejectionReason] = []
 
@@ -1165,7 +1180,7 @@ def passive_dns_results_to_findings(
             finding_id=finding_id,
             source_type=_PDNS_SOURCE_TYPE,
             query=query,
-            confidence=_PDNS_CONFIDENCE,
+            confidence=inherited,
             ts=now,
             provenance=provenance,
             payload_text=payload_text,
