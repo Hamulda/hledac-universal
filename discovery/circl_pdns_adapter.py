@@ -28,6 +28,12 @@ from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.security.passive_dns import parse_circl_pdns_text
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
+from hledac.universal.tools.discovery_replay import (
+    read_cassette,
+    replay_enabled,
+    write_cassette,
+)
+
 from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
 
 __all__ = [
@@ -445,6 +451,30 @@ async def call_circl_pdns(
         )
         return result, outcome
 
+    # F239A: Replay — read from cassette if available
+    if replay_enabled():
+        cached = read_cassette("circl_pdns", domain_norm)
+        if cached is not None:
+            cached_hits = cached.get("hits", ())
+            elapsed = time.monotonic() - start
+            outcome = PDNSOutcome(
+                attempted=True,
+                query=domain_norm,
+                result_count=len(cached_hits),
+                error=None,
+                duration_s=elapsed,
+            )
+            result = DiscoveryBatchResult(
+                hits=tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits,
+                error=None,
+                error_type="replay_hit",
+                provider_name="circl_pdns",
+                provider_chain=("circl_pdns",),
+                source_family="pdns",
+                elapsed_s=elapsed,
+            )
+            return result, outcome
+
     # Rate limit sleep
     await asyncio.sleep(_RATE_LIMIT_SLEEP_S)
 
@@ -594,6 +624,18 @@ async def call_circl_pdns(
             return result, outcome
 
         _clear_cooldown(domain_norm)
+
+        # F239A: Record successful response for replay
+        if replay_enabled():
+            import msgspec
+
+            # Convert msgspec.Struct hits to JSON-serializable dicts
+            hits_data = [msgspec.json.decode(msgspec.json.encode(h)) for h in hits]
+            write_cassette(
+                "circl_pdns",
+                domain_norm,
+                {"hits": hits_data},
+            )
 
         outcome = PDNSOutcome(
             attempted=True,
