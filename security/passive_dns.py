@@ -31,11 +31,87 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import aiohttp
+import orjson
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared CIRCL PDNS parser (used by both DoH and discovery adapters)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CIRCLPDNSRecord:
+    """Parsed CIRCL PDNS record — F207F."""
+
+    ip: str
+    rrname: str
+    rrtype: str
+
+
+def parse_circl_pdns_text(text: str, max_results: int = 50) -> list[CIRCLPDNSRecord]:
+    """
+    Parse CIRCL PDNS text response into structured records.
+
+    Handles:
+      - NDJSON (canonical CIRCL format): {"rrname":"...","rrtype":"A","rdata":"1.2.3.4"}
+      - Legacy plain IP-per-line
+      - CSV "ip,rrname,rrtype" fallback
+
+    Skips:
+      - Empty lines
+      - Private/loopback IPs
+      - Malformed JSON (fallback to plain IP)
+
+    Args:
+        text: Raw response text from CIRCL PDNS endpoint.
+        max_results: Hard cap on records returned (default 50).
+
+    Returns:
+        List of CIRCLPDNSRecord, deduplicated by IP.
+    """
+    records: list[CIRCLPDNSRecord] = []
+    seen_ips: set[str] = set()
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        ip: Optional[str] = None
+        rrname = ""
+        rrtype = ""
+
+        # Try NDJSON first (canonical CIRCL format)
+        try:
+            record = orjson.loads(line)
+            rdata = record.get("rdata", "")
+            rrname = str(record.get("rrname", "")).strip()
+            rrtype = str(record.get("rrtype", "")).strip()
+            if rdata:
+                ip = str(rdata).strip()
+        except Exception:
+            # Fallback: old plain IP-per-line or CSV "ip,rrname,rrtype"
+            parts = line.split(",")
+            candidate = parts[0].strip() if parts else ""
+            if candidate:
+                ip = candidate
+
+        if not ip or _is_private_ip(ip):
+            continue
+        if ip in seen_ips:
+            continue
+        if len(records) >= max_results:
+            break
+
+        seen_ips.add(ip)
+        records.append(CIRCLPDNSRecord(ip=ip, rrname=rrname, rrtype=rrtype))
+
+    return records
 
 
 # F207F: PassiveDNS outcome schema
@@ -74,6 +150,29 @@ CIRCL_RATE_LIMIT_SLEEP: float = 2.0  # 30 req/min → 2s between requests
 # "local_fallback" = uses canonical circuit breaker check then local aiohttp
 # "bypass_legacy" = uses internal ephemeral sessions (original behavior)
 transport_policy: str = "bypass_legacy"
+
+# F229: Private IP filter — aligned with discovery/circl_pdns_adapter.py
+_RFC1918_RE = re.compile(r"^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)")
+_LOCALHOST_RE = re.compile(r"^(127\.|::1|fe80:|localhost$)")
+_LINKLOCAL_RE = re.compile(r"^(169\.254\.|fe80:)")
+
+
+def _is_private_ip(ip: str) -> bool:
+    """Return True if IP is private, loopback, or link-local."""
+    if not ip:
+        return True
+    ip_stripped = ip.strip()
+    if not ip_stripped:
+        return True
+    ip_lower = ip_stripped.lower()
+    if _RFC1918_RE.match(ip_lower):
+        return True
+    if _LOCALHOST_RE.match(ip_lower):
+        return True
+    if _LINKLOCAL_RE.match(ip_lower):
+        return True
+    return False
+
 
 # F206AW: Circuit breaker — lazily imported to avoid import-time side effects
 _circuit_breaker_check: Optional[Callable[[str], Any]] = None
@@ -224,100 +323,22 @@ async def lookup_passive_dns(
     fetch_func: Optional[Callable[..., Any]] = None,
 ) -> list[str]:
     """
-    Lookup passive DNS records via CIRCL PDNS API (keyless, rate-limited).
+    Legacy compatibility wrapper for CIRCL PDNS lookup.
 
-    Args:
-        domain: Domain to query (e.g. "example.com")
-        session_provider: Optional pre-configured aiohttp.ClientSession.
-            When provided, takes precedence over internal ephemeral session.
-            Enables canonical transport seam (shared session, circuit breaker).
-        fetch_func: Optional async fetch(url) -> str (plain text).
-            When provided along with session_provider, uses both for fetch.
-
-    Returns:
-        List of IP addresses seen for this domain, or [] if unavailable.
-
-    Anti-patterns prevented:
-      - CIRCL is free but rate-limited: 30 req/min → sleep between calls
-      - Never blocks pipeline: returns [] if CIRCL is down
-      - Non-blocking aiohttp
-      - Graceful degradation: [] return with WARNING on any failure
+    Prefer call_lookup_passive_dns() for runtime code because it returns
+    PassiveDNSOutcome telemetry. This wrapper preserves the old list[str]
+    contract.
     """
-    global transport_policy
-
-    url = f"{CIRCL_PDNS_URL}/{domain}"
-    timeout = aiohttp.ClientTimeout(total=15)
-    ips: list[str] = []
-    seen: set[str] = set()
-
-    # F206AW: Circuit breaker preflight
-    circuit_decision = _try_domain_breaker_check(domain)
-    if circuit_decision is not None and not circuit_decision.allowed:
-        logger.debug(
-            f"CIRCL PDNS circuit breaker blocked {domain}: "
-            f"{circuit_decision.reason} (retry in {circuit_decision.retry_after_s:.1f}s)"
-        )
-        return []
-
-    # F206AW: Determine transport policy
-    if session_provider is not None or fetch_func is not None:
-        transport_policy = "injected"
-    else:
-        transport_policy = "local_fallback"
-
-    try:
-        if fetch_func is not None:
-            # Use injected fetch function (expects plain text like CIRCL response)
-            text = await fetch_func(url)
-        elif session_provider is not None:
-            # Use injected session
-            async with session_provider.get(url) as resp:
-                if resp.status == 404:
-                    return []
-                if resp.status != 200:
-                    logger.warning(f"CIRCL PDNS returned HTTP {resp.status} for {domain}")
-                    return []
-                text = await resp.text()
-        else:
-            # Local fallback: ephemeral session
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
-                    if resp.status == 404:
-                        # Domain not in PDNS — not an error, just empty
-                        return []
-                    if resp.status != 200:
-                        logger.warning(
-                            f"CIRCL PDNS returned HTTP {resp.status} for {domain}"
-                        )
-                        return []
-
-                    # CIRCL returns one IP per line, plain text
-                    text = await resp.text()
-
-        # Parse plain text response (used by both injected and local paths)
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # Each line is an IP address (possibly with timestamp suffix)
-            # Format: ipaddress[,timestamp]
-            parts = line.split(",")
-            ip = parts[0].strip()
-            if ip and ip not in seen:
-                seen.add(ip)
-                ips.append(ip)
-
-        if not ips:
-            logger.debug(f"CIRCL PDNS returned no records for {domain}")
-
-    except asyncio.TimeoutError:
-        logger.warning(f"CIRCL PDNS timeout for {domain}")
-    except Exception as e:
-        logger.warning(f"CIRCL PDNS lookup error for {domain}: {e}")
-
-    # Rate limiting: sleep before returning
-    await asyncio.sleep(CIRCL_RATE_LIMIT_SLEEP)
+    ips, _ = await call_lookup_passive_dns(
+        domain,
+        session_provider=session_provider,
+        fetch_func=fetch_func,
+    )
     return ips
+
+
+# F229: CIRCL PDNS record (legacy alias for CIRCLPDNSRecord)
+CirclPdnsRecord = CIRCLPDNSRecord
 
 
 def _is_ip_address(value: str) -> bool:
@@ -398,9 +419,7 @@ async def call_lookup_passive_dns(
         return [], outcome
 
     url = f"{CIRCL_PDNS_URL}/{domain_stripped}"
-    timeout = aiohttp.ClientTimeout(total=15)
     ips: list[str] = []
-    seen: set[str] = set()
 
     # F206AW: Circuit breaker preflight
     circuit_decision = _try_domain_breaker_check(domain_stripped)
@@ -503,16 +522,9 @@ async def call_lookup_passive_dns(
                 return [], outcome
             text = await resp.text()
 
-        # Parse plain text response
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split(",")
-            ip = parts[0].strip()
-            if ip and ip not in seen:
-                seen.add(ip)
-                ips.append(ip)
+        # F229: Parse NDJSON CIRCL response using shared parser
+        records = parse_circl_pdns_text(text, max_results=50)
+        ips = [record.ip for record in records]
 
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
@@ -555,6 +567,8 @@ __all__ = [
     "lookup_passive_dns",
     "call_lookup_passive_dns",
     "PassiveDNSOutcome",
+    "CirclPdnsRecord",
+    "parse_circl_pdns_text",
     "DOH_ENDPOINTS",
     "transport_policy",
 ]

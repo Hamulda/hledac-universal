@@ -356,3 +356,124 @@ def extract_ioc_values_from_seeds(
         "hashes": tuple(hashes[:MAX_PER_TYPE]),
         "cves": tuple(cves[:MAX_PER_TYPE]),
     }
+
+
+# ── F237B: Planner Actions consumption ──────────────────────────────────────
+
+# Action type → IOC kind + lane hint
+_ACTION_LANE_HINTS: dict[str, str] = {
+    "run_doh_on_domain": "DOH",
+    "run_ct_on_domain": "CT",
+    "run_wayback_on_url": "WAYBACK",
+    "run_passivedns_on_domain_or_ip": "PASSIVE_DNS",
+    "public_bootstrap_from_seed": "PUBLIC",
+    "extract_more_seeds_from_duckdb": "DIAGNOSTIC",
+    "synthesize_with_llm": "REPORT_ONLY",
+    "stop_enough_evidence": "STOP",
+}
+
+
+def consume_planner_actions(
+    planner_actions: list[dict],
+) -> tuple[
+    dict[str, tuple[str, ...]],  # seed_context IOCs: domains, ips, urls
+    list[str],  # lanes requested (unique, ordered by first-seen)
+    str,  # seed_source label
+    str,  # skip_reason
+]:
+    """
+    F237B: Extract seed IOCs and lane requests from investigation_packet.planner_actions.
+
+    Action mapping:
+      run_doh_on_domain             → domains + DOH lane
+      run_ct_on_domain              → domains + CT lane
+      run_wayback_on_url            → urls + WAYBACK lane
+      run_passivedns_on_domain_or_ip → domains/ips + PASSIVE_DNS lane
+      extract_more_seeds_from_duckdb → DIAGNOSTIC flag (no fake IOC)
+      synthesize_with_llm           → REPORT_ONLY flag (no model load)
+      stop_enough_evidence          → STOP flag (suppress expansion)
+      public_bootstrap_from_seed    → PUBLIC lane only
+
+    Bounds:
+      MAX_ACTION_SEEDS = 20  (max IOCs extracted from actions)
+      MAX_LANES = 8          (unique lane requests)
+
+    Fail-soft: on any error returns empty results with skip_reason.
+
+    Returns:
+      Tuple of:
+        - seed_iocs: dict with keys domains/ips/urls (tuples, capped at 10 each)
+        - lanes_requested: ordered list of unique lane strings
+        - seed_source: "planner_actions"
+        - skip_reason: empty if consumed, reason if skipped
+    """
+    if not planner_actions:
+        return {"domains": (), "ips": (), "urls": ()}, [], "planner_actions", "no_actions"
+
+    domains: list[str] = []
+    ips: list[str] = []
+    urls: list[str] = []
+    lanes: list[str] = []
+    seen_lanes: set[str] = set()
+
+    # Regex once (compiled module-level for efficiency)
+    domain_re = _re.compile(
+        r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
+    )
+    ip_re = _re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+
+    for action in planner_actions[:20]:  # bound: max 20 actions
+        if not isinstance(action, dict):
+            continue
+
+        action_type = action.get("action", "")
+        target = (action.get("target") or "").strip()
+        lane_hint = _ACTION_LANE_HINTS.get(action_type, "")
+
+        # Track unique lanes
+        if lane_hint and lane_hint not in ("STOP", "REPORT_ONLY", "DIAGNOSTIC"):
+            if lane_hint not in seen_lanes:
+                seen_lanes.add(lane_hint)
+                lanes.append(lane_hint)
+
+        # Extract IOCs from target string
+        if not target:
+            continue
+
+        # run_wayback_on_url — URL goes to urls
+        if action_type == "run_wayback_on_url":
+            if target.startswith(("http://", "https://")):
+                if target not in urls:
+                    urls.append(target)
+            continue
+
+        # run_passivedns_on_domain_or_ip — could be domain or IP
+        if action_type == "run_passivedns_on_domain_or_ip":
+            if ip_re.match(target):
+                if target not in ips:
+                    ips.append(target)
+            elif domain_re.match(target):
+                if target not in domains:
+                    domains.append(target)
+            continue
+
+        # run_doh_on_domain / run_ct_on_domain — domain only
+        if action_type in ("run_doh_on_domain", "run_ct_on_domain"):
+            if domain_re.match(target):
+                if target not in domains:
+                    domains.append(target)
+            continue
+
+    # Enforce caps
+    MAX_PER_TYPE = 10
+    seed_iocs = {
+        "domains": tuple(domains[:MAX_PER_TYPE]),
+        "ips": tuple(ips[:MAX_PER_TYPE]),
+        "urls": tuple(urls[:MAX_PER_TYPE]),
+    }
+    lanes = lanes[:8]  # MAX_LANES
+
+    if not seed_iocs["domains"] and not seed_iocs["ips"] and not seed_iocs["urls"]:
+        return seed_iocs, lanes, "planner_actions", "no_iocs_extracted"
+
+    return seed_iocs, lanes, "planner_actions", ""

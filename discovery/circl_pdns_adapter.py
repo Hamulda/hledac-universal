@@ -18,15 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 import aiohttp
 
 from hledac.universal.network.session_runtime import async_get_aiohttp_session
+from hledac.universal.security.passive_dns import parse_circl_pdns_text
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 
 from .duckduckgo_adapter import DiscoveryBatchResult, DiscoveryHit
@@ -97,32 +96,35 @@ _MAX_HITS = 50
 _COOLDOWN_DEFAULT_S = 300.0
 _MAX_COOLDOWN_KEYS = 64
 
-# ---------------------------------------------------------------------------
-# Private address ranges to filter
-# ---------------------------------------------------------------------------
-
-_RFC1918_RE = re.compile(
-    r"^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)"
+# Re-exported from security.passive_dns for backward compatibility with existing tests
+from hledac.universal.security.passive_dns import (  # noqa: E402, F401
+    _is_private_ip,
 )
-_LOCALHOST_RE = re.compile(r"^(127\.|::1|fe80:|localhost$)")
-_LINKLOCAL_RE = re.compile(r"^(169\.254\.|fe80:)")
 
 
-def _is_private_ip(ip: str) -> bool:
-    """Return True if IP is private, loopback, or link-local."""
-    if not ip:
-        return True
-    ip_stripped = ip.strip()
-    if not ip_stripped:
-        return True
-    ip_lower = ip_stripped.lower()
-    if _RFC1918_RE.match(ip_lower):
-        return True
-    if _LOCALHOST_RE.match(ip_lower):
-        return True
-    if _LINKLOCAL_RE.match(ip_lower):
-        return True
-    return False
+def _parse_pdns_line(line: str):
+    """
+    Parse a single CIRCL PDNS JSON line (for backward compatibility).
+
+    Returns (ip, rrname, rrtype) or None if unparseable.
+    CIRCL format: {"rrname":"...", "rrtype":"A", "rdata":"1.2.3.4", ...}
+    Strict: returns None for plain text, empty rrname, or missing rdata.
+    """
+    import orjson
+
+    try:
+        record = orjson.loads(line)
+    except Exception:
+        return None
+
+    rrname = record.get("rrname", "")
+    rrtype = record.get("rrtype", "")
+    rdata = record.get("rdata", "")
+
+    if not rrname or not rdata:
+        return None
+
+    return str(rdata).strip(), str(rrname).strip(), str(rrtype).strip()
 
 
 def _normalize_domain(domain: str) -> str:
@@ -163,35 +165,6 @@ def _check_cooldown(domain: str, now: float) -> tuple[bool, float, str]:
 def _clear_cooldown(domain: str) -> None:
     """Clear cooldown for a domain on provider success."""
     _pdns_cooldown.pop(_normalize_domain(domain), None)
-
-
-# ---------------------------------------------------------------------------
-# IP parsing from CIRCL response lines
-# ---------------------------------------------------------------------------
-
-
-def _parse_pdns_line(line: str) -> Optional[tuple[str, str, str]]:
-    """
-    Parse a single CIRCL PDNS JSON line.
-
-    Returns (ip, rrname, rrtype) or None if unparseable.
-    CIRCL format: {"rrname":"...", "rrtype":"A", "rdata":"1.2.3.4", ...}
-    """
-    import orjson
-
-    try:
-        record = orjson.loads(line)
-    except Exception:
-        return None
-
-    rrname = record.get("rrname", "")
-    rrtype = record.get("rrtype", "")
-    rdata = record.get("rdata", "")
-
-    if not rrname or not rdata:
-        return None
-
-    return str(rdata).strip(), str(rrname).strip(), str(rrtype).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -325,42 +298,27 @@ async def async_search_circl_pdns(
 
         text = await resp.text()
         now_ts = time.time()
+
+        records = parse_circl_pdns_text(text, max_results=max_results)
         hits: list[DiscoveryHit] = []
-        seen_ips: set[str] = set()
 
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            parsed = _parse_pdns_line(line)
-            if parsed is None:
-                continue
-
-            ip, rrname, rrtype = parsed
-
-            # Filter private/empty/duplicate IPs
-            if not ip or _is_private_ip(ip):
-                continue
-            if ip in seen_ips:
-                continue
-
+        for record in records:
             if len(hits) >= max_results:
                 break
 
-            seen_ips.add(ip)
-            snippet = f"CIRCL PDNS: {rrname} → {ip} ({rrtype})"
+            reason = "pdns_aaaa_record" if record.rrtype.upper() == "AAAA" else "pdns_a_record"
+            snippet = f"CIRCL PDNS: {record.rrname} → {record.ip} ({record.rrtype})"
             hits.append(
                 DiscoveryHit(
                     query=domain,
-                    title=f"PDNS: {ip}",
-                    url=f"https://{rrname}/",
+                    title=f"PDNS: {record.ip}",
+                    url=f"https://{record.rrname}/",
                     snippet=snippet,
                     source="circl_pdns",
                     rank=len(hits),
                     retrieved_ts=now_ts,
                     score=1.0 - (len(hits) / _MAX_HITS),
-                    reason="pdns_a_record",
+                    reason=reason,
                 )
             )
 
@@ -587,42 +545,29 @@ async def call_circl_pdns(
 
         text = await resp.text()
         now_ts = time.time()
+
+        records = parse_circl_pdns_text(text, max_results=_MAX_HITS)
         hits: list[DiscoveryHit] = []
-        seen_ips: set[str] = set()
+        raw_count = 0
 
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            parsed = _parse_pdns_line(line)
-            if parsed is None:
-                continue
-
-            ip, rrname, rrtype = parsed
+        for record in records:
             raw_count += 1
-
-            if not ip or _is_private_ip(ip):
-                continue
-            if ip in seen_ips:
-                continue
-
             if len(hits) >= _MAX_HITS:
                 break
 
-            seen_ips.add(ip)
-            snippet = f"CIRCL PDNS: {rrname} → {ip} ({rrtype})"
+            reason = "pdns_aaaa_record" if record.rrtype.upper() == "AAAA" else "pdns_a_record"
+            snippet = f"CIRCL PDNS: {record.rrname} → {record.ip} ({record.rrtype})"
             hits.append(
                 DiscoveryHit(
                     query=domain,
-                    title=f"PDNS: {ip}",
-                    url=f"https://{rrname}/",
+                    title=f"PDNS: {record.ip}",
+                    url=f"https://{record.rrname}/",
                     snippet=snippet,
                     source="circl_pdns",
                     rank=len(hits),
                     retrieved_ts=now_ts,
                     score=1.0 - (len(hits) / _MAX_HITS),
-                    reason="pdns_a_record",
+                    reason=reason,
                 )
             )
 

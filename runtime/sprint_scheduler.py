@@ -1613,6 +1613,12 @@ class SprintResult:
     next_seeds_ioc_hashes: tuple[str, ...] = ()
     next_seeds_ioc_cves: tuple[str, ...] = ()
 
+    # F237B: planner_actions consumption telemetry (from investigation_packet)
+    planner_actions_consumed_count: int = 0
+    planner_action_lanes_requested: list[str] = field(default_factory=list)
+    planner_action_seed_source: str = ""
+    planner_action_skip_reason: str = ""
+
     # Nonfeed prelude
     nonfeed_prelude_expected_lanes: tuple[str, ...] = ()
     nonfeed_prelude_attempted_lanes: tuple[str, ...] = ()
@@ -2646,6 +2652,46 @@ class SprintScheduler:
                 except Exception as _exc:
                     log.debug("[F233C] next_sprint_seeds consumption failed (fail-soft): %s", _exc)
                     _next_seeds_skip_reason = "consumption_error"
+
+            # Sprint F237B: Load predecessor report and consume investigation_packet.planner_actions
+            _planner_seed_iocs: dict = {}
+            _planner_lanes: list[str] = []
+            _planner_skip_reason = "no_predecessor"
+            if self._config.predecessor_sprint_id:
+                try:
+                    from hledac.universal.paths import get_sprint_json_report_path
+                    _pred_report_path = get_sprint_json_report_path(self._config.predecessor_sprint_id)
+                    if _pred_report_path.exists():
+                        import orjson
+
+                        _pred_raw = _pred_report_path.read_bytes()
+                        _pred_data: dict = orjson.loads(_pred_raw)
+                        _inv_packet = _pred_data.get("investigation_packet") or {}
+                        _planner_actions = _inv_packet.get("planner_actions") or []
+
+                        if _planner_actions:
+                            from hledac.universal.runtime.next_seeds_consumption import (
+                                consume_planner_actions,
+                            )
+                            (
+                                _planner_seed_iocs,
+                                _planner_lanes,
+                                _planner_seed_source,
+                                _planner_skip_reason,
+                            ) = consume_planner_actions(_planner_actions)
+                            self._result.planner_actions_consumed_count = len(_planner_actions)
+                            self._result.planner_action_lanes_requested = _planner_lanes
+                            self._result.planner_action_seed_source = _planner_seed_source
+                            self._result.planner_action_skip_reason = _planner_skip_reason
+                            log.debug(
+                                "[F237B] consumed %d planner_actions: lanes=%s, iocs=%s",
+                                len(_planner_actions),
+                                _planner_lanes,
+                                _planner_seed_iocs,
+                            )
+                except Exception as _exc:
+                    log.debug("[F237B] planner_actions consumption failed (fail-soft): %s", _exc)
+                    _planner_skip_reason = "consumption_error"
 
             self._acquisition_plan = build_acquisition_plan(
                 query=query,
@@ -5282,11 +5328,40 @@ class SprintScheduler:
                     self._result.seed_context_skip_reason = ""
                     self._result.seed_context_source = "domain_query_fallback"
 
+            # F237B: Add planner_action IOCs to seed context so they flow into NonfeedSeedContext
+            # These were extracted from predecessor's investigation_packet.planner_actions
+            if _planner_seed_iocs and self._result.planner_action_skip_reason in ("", "no_iocs_extracted"):
+                _pa_doms: tuple = _planner_seed_iocs.get("domains", ())
+                _pa_ips: tuple = _planner_seed_iocs.get("ips", ())
+                _pa_urls: tuple = _planner_seed_iocs.get("urls", ())
+                if _pa_doms or _pa_ips or _pa_urls:
+                    # Merge with existing pivot seeds
+                    _existing_doms = getattr(self._result, "pivot_seed_domains", ()) or ()
+                    _existing_ips = getattr(self._result, "pivot_seed_ips", ()) or ()
+                    _existing_urls = getattr(self._result, "pivot_seed_urls", ()) or ()
+                    _combined_doms = tuple(_existing_doms) + _pa_doms
+                    _combined_ips = tuple(_existing_ips) + _pa_ips
+                    _combined_urls = tuple(_existing_urls) + _pa_urls
+                    self._result.pivot_seed_domains = _combined_doms[:10]
+                    self._result.pivot_seed_ips = _combined_ips[:10]
+                    self._result.pivot_seed_urls = _combined_urls[:10]
+                    self._result.seed_context_available = True
+                    self._result.seed_context_propagated = True
+                    log.debug(
+                        "[F237B] planner_action seeds merged: domains=%s, ips=%s, urls=%s",
+                        _pa_doms, _pa_ips, _pa_urls,
+                    )
+
             # F227B: Seed-Unlocked Lanes Bridge — after domain fallback, before prelude gather.
             # Propagate lanes_unlocked_by_seed_context into _nonfeed_lanes_to_run so they
             # run in the current sprint instead of waiting for the next query-derived run.
             self._result.nonfeed_profile_expected_lanes = getattr(self._result, "nonfeed_profile_expected_lanes", ()) or ()
             _unlocked: list[str] = getattr(self._result, "lanes_unlocked_by_seed_context", []) or []
+            # F237B: Merge planner_action_lanes_requested into seed-unlocked set
+            _planner_lanes_result: list[str] = getattr(self._result, "planner_action_lanes_requested", []) or []
+            for _pl in _planner_lanes_result:
+                if _pl not in _unlocked:
+                    _unlocked.append(_pl)
             if _unlocked and self._result.seed_context_available:
                 _existing: set[str] = {lane for lane, *_ in _nonfeed_lanes_to_run}
                 _expected: set[str] = set(self._result.nonfeed_profile_expected_lanes)
