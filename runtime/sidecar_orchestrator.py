@@ -106,7 +106,8 @@ class SidecarOrchestrator:
         self._result = result_sink
         self._governor = governor
         self._scheduler = scheduler
-        self._bus = create_sidecar_bus(governor=governor)
+        _profile = getattr(getattr(scheduler, "_config", None), "acquisition_profile", None) if scheduler else None
+        self._bus = create_sidecar_bus(governor=governor, acquisition_profile=_profile)
         self._dispatcher = SidecarDispatcher(
             bus=self._bus,
             governor=governor,

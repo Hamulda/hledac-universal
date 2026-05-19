@@ -65,6 +65,8 @@ __all__ = [
     "academic_results_to_findings",
     "doh_results_to_findings",
     "summarize_doh_conversion",
+    "network_recon_result_to_findings",
+    "summarize_network_recon_conversion",
 ]
 
 # ---------------------------------------------------------------------------
@@ -2339,7 +2341,7 @@ def academic_results_to_findings(
                 source_type="academic_search",
                 confidence=0.75,
                 query=query[:256] if query else "",
-                ts=_time.time(),
+                ts=time.time(),
                 payload_text=payload_text if 'payload_text' in dir() else "",
                 provenance=(
                     f"source:{source}",
@@ -2353,3 +2355,488 @@ def academic_results_to_findings(
             continue
 
     return tuple(candidates), tuple(rejections), {}
+
+
+# ---------------------------------------------------------------------------
+# F246A: Network Reconnaissance CanonicalFinding Bridge
+# ---------------------------------------------------------------------------
+
+
+def network_recon_result_to_findings(
+    target: str,
+    recon_result: Any,
+    *,
+    trigger_confidence: float | None = None,
+    max_findings: int = 32,
+) -> tuple[tuple[Any, ...], tuple[Any, ...], dict[str, Any]]:
+    """
+    F246A: Convert network reconnaissance output to CanonicalFinding candidates.
+
+    Supports HostInfo, WHOISData, SSLCertificate dataclasses and dict equivalents.
+
+    Extracted fields (no raw blobs):
+    - Resolved IPs (max 16)
+    - ASN/org if present
+    - WHOIS registrar/org/country if present
+    - SSL issuer/subject/SAN/validity if present
+    - Passive service/banner info only if already present in object
+    - No raw WHOIS dump, no raw cert blob
+
+    Args:
+        target: The domain or IP that was queried.
+        recon_result: HostInfo, WHOISData, SSLCertificate, or dict equivalent.
+        trigger_confidence: Optional confidence of the triggering finding.
+            When provided, confidence = max(0.50, min(0.85, trigger_confidence * 0.85)).
+            Default base confidence is 0.65.
+        max_findings: Hard cap on total findings returned (default 32).
+
+    Returns (findings, rejections, telemetry) where:
+      - findings: tuple of CanonicalFinding (or dicts) for extracted fields
+      - rejections: tuple of rejection reason strings
+      - telemetry: dict with extraction counts
+
+    Rejection reasons:
+        missing_domain   — target is absent/empty
+        low_information  — result has no extractable fields
+        unsupported_shape — input structure does not match expected schema
+
+    Payload text is structured short text (max 2000 chars per finding).
+    No raw WHOIS/cert blob is stored.
+
+    Pure function — no network, no MLX.
+    """
+    findings: list[Any] = []
+    rejections: list[Any] = []
+
+    if not target or not isinstance(target, str) or not target.strip():
+        rejections.append(REJECTION_MISSING_DOMAIN)
+        return (), (REJECTION_MISSING_DOMAIN,), {
+            "network_recon_target": "",
+            "network_recon_built": 0,
+            "network_recon_rejected": 1,
+            "network_recon_hostinfo": 0,
+            "network_recon_whois": 0,
+            "network_recon_ssl": 0,
+            "network_recon_ips": 0,
+            "network_recon_asn": 0,
+        }
+
+    # Base confidence
+    base_confidence = 0.65
+    if trigger_confidence is not None:
+        effective_confidence = max(0.50, min(0.85, trigger_confidence * 0.85))
+    else:
+        effective_confidence = base_confidence
+
+    try:
+        result_dict: dict[str, Any]
+        result_kind: str
+
+        # Determine input type and normalize to dict
+        if hasattr(recon_result, "__dataclass_fields__"):
+            # Dataclass instance (HostInfo, WHOISData, SSLCertificate)
+            result_dict = _dataclass_to_dict(recon_result)
+            result_kind = type(recon_result).__name__
+        elif isinstance(recon_result, dict):
+            result_dict = recon_result
+            result_kind = result_dict.get("__kind__", "dict")
+        else:
+            rejections.append(REJECTION_UNSUPPORTED_SHAPE)
+            return (), (REJECTION_UNSUPPORTED_SHAPE,), {
+                "network_recon_target": target,
+                "network_recon_built": 0,
+                "network_recon_rejected": 1,
+                "network_recon_hostinfo": 0,
+                "network_recon_whois": 0,
+                "network_recon_ssl": 0,
+                "network_recon_ips": 0,
+                "network_recon_asn": 0,
+            }
+
+        built = 0
+        rejected = 0
+
+        # ── HostInfo ────────────────────────────────────────────────────────
+        if result_kind == "HostInfo" or "ip_addresses" in result_dict:
+            ips = _safe_list(result_dict.get("ip_addresses", []))[:16]
+            asn_info = result_dict.get("asn_info") or {}
+            reverse_dns = _safe_list(result_dict.get("reverse_dns", []))
+
+            # IP findings
+            for ip in ips[:max_findings]:
+                if ip and isinstance(ip, str) and ip.strip():
+                    finding = _make_network_recon_finding(
+                        source_type="network_recon",
+                        query=target,
+                        target=target,
+                        field_name="ip_address",
+                        field_value=ip,
+                        confidence=effective_confidence,
+                        extra={
+                            "reverse_dns": reverse_dns[:4] if reverse_dns else [],
+                            "asn_org": asn_info.get("org") or asn_info.get("name") or None,
+                            "asn_number": asn_info.get("asn") or asn_info.get("number") or None,
+                        },
+                        payload_text=f"host:{target} ip:{ip}",
+                    )
+                    findings.append(finding)
+                    built += 1
+
+            # ASN/org summary finding
+            if asn_info:
+                org = asn_info.get("org") or asn_info.get("name")
+                asn_num = asn_info.get("asn") or asn_info.get("number")
+                if org or asn_num:
+                    if built < max_findings:
+                        extra: dict[str, Any] = {}
+                        if org:
+                            extra["org"] = org[:128]
+                        if asn_num:
+                            extra["asn"] = str(asn_num)[:32]
+                        finding = _make_network_recon_finding(
+                            source_type="network_recon",
+                            query=target,
+                            target=target,
+                            field_name="asn_info",
+                            field_value=f"{org or ''} ({asn_num or 'N/A'})".strip(),
+                            confidence=effective_confidence,
+                            extra=extra,
+                            payload_text=f"host:{target} asn:{org or 'N/A'} {asn_num or ''}".strip()[:2000],
+                        )
+                        findings.append(finding)
+                        built += 1
+
+            # Geolocation
+            geo = result_dict.get("geolocation")
+            if geo and built < max_findings:
+                country = geo.get("country") or geo.get("country_code")
+                city = geo.get("city")
+                if country:
+                    extra = {}
+                    if city:
+                        extra["city"] = str(city)[:64]
+                    finding = _make_network_recon_finding(
+                        source_type="network_recon",
+                        query=target,
+                        target=target,
+                        field_name="geolocation",
+                        field_value=str(country)[:64],
+                        confidence=effective_confidence,
+                        extra=extra,
+                        payload_text=f"host:{target} location:{city or ''} {country}".strip()[:2000],
+                    )
+                    findings.append(finding)
+                    built += 1
+
+        # ── WHOISData ──────────────────────────────────────────────────────
+        whois_dict: dict[str, Any] | None = None
+        # Check top-level kind OR nested whois_data field
+        nested_whois = result_dict.get("whois_data") or result_dict.get("whois")
+        if result_kind in ("WHOISData", "MockWHOISData"):
+            whois_dict = result_dict
+        elif isinstance(nested_whois, dict):
+            # HostInfo with nested WHOISData dict
+            if nested_whois.get("registrar") or nested_whois.get("creation_date"):
+                whois_dict = nested_whois
+        elif result_dict.get("registrar") or result_dict.get("creation_date"):
+            whois_dict = result_dict
+
+        if whois_dict and built < max_findings:
+            registrar = _safe_str(whois_dict.get("registrar"))
+            registrant_org = _safe_str(whois_dict.get("registrant_org"))
+            registrant_name = _safe_str(whois_dict.get("registrant_name"))
+            tech_org = _safe_str(whois_dict.get("tech_name"))
+            admin_org = _safe_str(whois_dict.get("admin_name"))
+            status_list = _safe_list(whois_dict.get("status", []))
+            name_servers = _safe_list(whois_dict.get("name_servers", []))[:16]
+            dnssec = whois_dict.get("dnssec")
+
+            # Registrar
+            if registrar and built < max_findings:
+                finding = _make_network_recon_finding(
+                    source_type="network_recon",
+                    query=target,
+                    target=target,
+                    field_name="whois_registrar",
+                    field_value=registrar[:256],
+                    confidence=effective_confidence,
+                    extra={"registrar": registrar[:256]},
+                    payload_text=f"domain:{target} registrar:{registrar}".strip()[:2000],
+                )
+                findings.append(finding)
+                built += 1
+
+            # Registrant org
+            if registrant_org and built < max_findings:
+                finding = _make_network_recon_finding(
+                    source_type="network_recon",
+                    query=target,
+                    target=target,
+                    field_name="whois_registrant_org",
+                    field_value=registrant_org[:256],
+                    confidence=effective_confidence,
+                    extra={"registrant_org": registrant_org[:256]},
+                    payload_text=f"domain:{target} registrant:{registrant_org}".strip()[:2000],
+                )
+                findings.append(finding)
+                built += 1
+
+            # Name servers
+            for ns in name_servers[:8]:
+                if built >= max_findings:
+                    break
+                if ns and isinstance(ns, str) and ns.strip():
+                    finding = _make_network_recon_finding(
+                        source_type="network_recon",
+                        query=target,
+                        target=target,
+                        field_name="whois_nameserver",
+                        field_value=ns[:256],
+                        confidence=effective_confidence,
+                        extra={"nameserver": ns[:256]},
+                        payload_text=f"domain:{target} ns:{ns}".strip()[:2000],
+                    )
+                    findings.append(finding)
+                    built += 1
+
+            # DNSSEC status
+            if dnssec is not None and built < max_findings:
+                finding = _make_network_recon_finding(
+                    source_type="network_recon",
+                    query=target,
+                    target=target,
+                    field_name="whois_dnssec",
+                    field_value=str(dnssec),
+                    confidence=effective_confidence,
+                    extra={"dnssec": bool(dnssec)},
+                    payload_text=f"domain:{target} dnssec:{dnssec}".strip()[:2000],
+                )
+                findings.append(finding)
+                built += 1
+
+        # ── SSLCertificate ──────────────────────────────────────────────────
+        ssl_dict: dict[str, Any] | None = None
+        # Check top-level kind OR nested ssl_cert field
+        nested_ssl = result_dict.get("ssl_cert") or result_dict.get("ssl")
+        if result_kind in ("SSLCertificate", "MockSSLCertificate"):
+            ssl_dict = result_dict
+        elif isinstance(nested_ssl, dict):
+            # HostInfo with nested SSLCertificate dict
+            if nested_ssl.get("issuer") or nested_ssl.get("san_domains"):
+                ssl_dict = nested_ssl
+        elif result_dict.get("issuer") or result_dict.get("san_domains"):
+            ssl_dict = result_dict
+
+        if ssl_dict and built < max_findings:
+            issuer = _safe_dict_str(ssl_dict.get("issuer", {}), "O") or _safe_dict_str(ssl_dict.get("issuer", {}), "CN")
+            subject = _safe_dict_str(ssl_dict.get("subject", {}), "O") or _safe_dict_str(ssl_dict.get("subject", {}), "CN")
+            san_domains = _safe_list(ssl_dict.get("san_domains", []))[:16]
+            is_valid = ssl_dict.get("is_valid", True)
+            days_until_expiry = ssl_dict.get("days_until_expiry")
+            not_after = ssl_dict.get("not_after")
+
+            # Issuer
+            if issuer and built < max_findings:
+                finding = _make_network_recon_finding(
+                    source_type="network_recon",
+                    query=target,
+                    target=target,
+                    field_name="ssl_issuer",
+                    field_value=issuer[:256],
+                    confidence=effective_confidence,
+                    extra={"ssl_issuer": issuer[:256]},
+                    payload_text=f"host:{target} ssl_issuer:{issuer}".strip()[:2000],
+                )
+                findings.append(finding)
+                built += 1
+
+            # Subject org
+            if subject and built < max_findings:
+                finding = _make_network_recon_finding(
+                    source_type="network_recon",
+                    query=target,
+                    target=target,
+                    field_name="ssl_subject",
+                    field_value=subject[:256],
+                    confidence=effective_confidence,
+                    extra={"ssl_subject": subject[:256]},
+                    payload_text=f"host:{target} ssl_subject:{subject}".strip()[:2000],
+                )
+                findings.append(finding)
+                built += 1
+
+            # SAN domains
+            for san in san_domains:
+                if built >= max_findings:
+                    break
+                if san and isinstance(san, str) and san.strip():
+                    finding = _make_network_recon_finding(
+                        source_type="network_recon",
+                        query=target,
+                        target=target,
+                        field_name="ssl_san",
+                        field_value=san[:256],
+                        confidence=effective_confidence,
+                        extra={"san": san[:256], "ssl_valid": is_valid},
+                        payload_text=f"host:{target} san:{san} valid:{is_valid}".strip()[:2000],
+                    )
+                    findings.append(finding)
+                    built += 1
+
+            # SSL validity/expiry
+            if days_until_expiry is not None and built < max_findings:
+                expiry_str = f"expires_in:{days_until_expiry}d"
+                finding = _make_network_recon_finding(
+                    source_type="network_recon",
+                    query=target,
+                    target=target,
+                    field_name="ssl_validity",
+                    field_value=expiry_str[:64],
+                    confidence=effective_confidence,
+                    extra={"ssl_days_until_expiry": days_until_expiry, "ssl_valid": is_valid},
+                    payload_text=f"host:{target} ssl:{expiry_str} valid:{is_valid}".strip()[:2000],
+                )
+                findings.append(finding)
+                built += 1
+
+        # Cap at max_findings
+        findings = findings[:max_findings]
+
+        # Low information check
+        if built == 0 and len(rejections) == 0:
+            rejections.append(REJECTION_LOW_INFORMATION)
+            rejected = 1
+
+        return tuple(findings), tuple(rejections), {
+            "network_recon_target": target,
+            "network_recon_built": built,
+            "network_recon_rejected": rejected,
+            "network_recon_hostinfo": 1 if result_kind == "HostInfo" or "ip_addresses" in result_dict else 0,
+            "network_recon_whois": 1 if result_kind == "WHOISData" or whois_dict is not None else 0,
+            "network_recon_ssl": 1 if result_kind == "SSLCertificate" or ssl_dict is not None else 0,
+            "network_recon_ips": built,
+            "network_recon_asn": 1 if result_kind == "HostInfo" and result_dict.get("asn_info") else 0,
+        }
+
+    except Exception:
+        # Fail-soft: return empty on any unexpected error
+        return tuple(findings), tuple(rejections), {
+            "network_recon_target": target,
+            "network_recon_built": len(findings),
+            "network_recon_rejected": len(rejections) + 1,
+            "network_recon_hostinfo": 0,
+            "network_recon_whois": 0,
+            "network_recon_ssl": 0,
+            "network_recon_ips": 0,
+            "network_recon_asn": 0,
+        }
+
+
+def _make_network_recon_finding(
+    source_type: str,
+    query: str,
+    target: str,
+    field_name: str,
+    field_value: str,
+    confidence: float,
+    extra: dict[str, Any],
+    payload_text: str,
+) -> Any:
+    """Build a single CanonicalFinding (or dict) for network recon output."""
+    finding_id = _make_finding_id(f"{source_type}:{target}:{field_name}:{field_value[:64]}")
+    if CanonicalFinding is not None:
+        return CanonicalFinding(
+            finding_id=finding_id,
+            query=query[:512] if query else target[:512],
+            source_type=source_type,
+            confidence=confidence,
+            ts=time.time(),
+            provenance=(
+                f"target:{target[:128]}",
+                f"field:{field_name}",
+            ),
+            payload_text=payload_text[:2000] if payload_text else None,
+        )
+    # Fallback dict when CanonicalFinding unavailable
+    return {
+        "finding_id": finding_id,
+        "query": query[:512] if query else target[:512],
+        "source_type": source_type,
+        "confidence": confidence,
+        "ts": time.time(),
+        "provenance": (f"target:{target[:128]}", f"field:{field_name}"),
+        "payload_text": payload_text[:2000] if payload_text else None,
+    }
+
+
+def _make_finding_id(key: str) -> str:
+    """Generate a stable finding ID from a key string using blake2b."""
+    return hashlib.blake2b(key.encode("utf-8"), digest_size=16).hexdigest()
+
+
+def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
+    """Convert a dataclass instance to dict, handling nested dataclasses."""
+    if hasattr(obj, "__dataclass_fields__"):
+        result: dict[str, Any] = {}
+        for name in obj.__dataclass_fields__:
+            val = getattr(obj, name, None)
+            if val is None:
+                continue
+            if hasattr(val, "__dataclass_fields__"):
+                result[name] = _dataclass_to_dict(val)
+            elif isinstance(val, list):
+                result[name] = [
+                    _dataclass_to_dict(v) if hasattr(v, "__dataclass_fields__") else v
+                    for v in val
+                ]
+            else:
+                result[name] = val
+        result["__kind__"] = type(obj).__name__
+        return result
+    return dict(obj) if isinstance(obj, dict) else {"__value__": obj}
+
+
+def _safe_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s if s else None
+
+
+def _safe_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple, set)):
+        return [value] if value else []
+    return list(value)
+
+
+def _safe_dict_str(d: Any, key: str) -> str | None:
+    if not isinstance(d, dict):
+        return None
+    return _safe_str(d.get(key))
+
+
+def summarize_network_recon_conversion(
+    findings: list[Any],
+    rejections: list[RejectionReason],
+    telemetry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    F246A: Summarize network recon bridge conversion results.
+
+    Returns derived intel extraction metrics derived from telemetry.
+    """
+    tel = telemetry or {}
+    return {
+        "network_recon_target": tel.get("network_recon_target", ""),
+        "network_recon_built": tel.get("network_recon_built", len(findings)),
+        "network_recon_rejected": tel.get("network_recon_rejected", len(rejections)),
+        "network_recon_hostinfo": tel.get("network_recon_hostinfo", 0),
+        "network_recon_whois": tel.get("network_recon_whois", 0),
+        "network_recon_ssl": tel.get("network_recon_ssl", 0),
+        "network_recon_ips": tel.get("network_recon_ips", 0),
+        "network_recon_asn": tel.get("network_recon_asn", 0),
+        "total_processed": min(len(findings) + len(rejections), MAX_BRIDGE_OUTPUT),
+        "rejections": list(rejections),
+    }

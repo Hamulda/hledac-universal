@@ -22,6 +22,7 @@ import urllib.parse
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.network.session_runtime import async_get_aiohttp_session
 from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
     checked_aiohttp_post,
@@ -464,28 +465,28 @@ logger = logging.getLogger(__name__)
 async def fetch_urlhaus(max_items: int = 100) -> list[dict]:
     """URLhaus — live malware URL feed, public API, no key required."""
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                "https://urlhaus-api.abuse.ch/v1/urls/recent/",
-                timeout=aiohttp.ClientTimeout(total=15),
-                failure_kind="urlhaus",
-            )
-            if err:
-                logger.debug(f"[URLhaus] {err}")
-                return []
-            data = await resp.json()
-            return [
-                {
-                    "ioc":         e.get("url"),
-                    "ioc_type":    "url",
-                    "threat_type": e.get("threat"),
-                    "title":       f"URLhaus: {e.get('threat','malware')}",
-                    "source":      "urlhaus"
-                }
-                for e in data.get("urls", [])[:max_items]
-                if e.get("url_status") == "online"
-            ]
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            "https://urlhaus-api.abuse.ch/v1/urls/recent/",
+            timeout=aiohttp.ClientTimeout(total=15),
+            failure_kind="urlhaus",
+        )
+        if err:
+            logger.debug(f"[URLhaus] {err}")
+            return []
+        data = await resp.json()
+        return [
+            {
+                "ioc":         e.get("url"),
+                "ioc_type":    "url",
+                "threat_type": e.get("threat"),
+                "title":       f"URLhaus: {e.get('threat','malware')}",
+                "source":      "urlhaus"
+            }
+            for e in data.get("urls", [])[:max_items]
+            if e.get("url_status") == "online"
+        ]
     except Exception as e:
         logger.debug(f"[URLhaus] {e}")
     return []
@@ -494,29 +495,29 @@ async def fetch_urlhaus(max_items: int = 100) -> list[dict]:
 async def fetch_threatfox(days: int = 1) -> list[dict]:
     """ThreatFox IOC feed — public API, no key required."""
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_post(
-                s,
-                "https://threatfox-api.abuse.ch/api/v1/",
-                json={"query": "get_iocs", "days": days},
-                timeout=aiohttp.ClientTimeout(total=20),
-                failure_kind="threatfox",
-            )
-            if err:
-                logger.debug(f"[ThreatFox] {err}")
-                return []
-            data = await resp.json()
-            return [
-                {
-                    "ioc":        i.get("ioc_value"),
-                    "ioc_type":   i.get("ioc_type"),
-                    "malware":    i.get("malware"),
-                    "confidence": i.get("confidence_level", 50) / 100,
-                    "title":      f"ThreatFox: {i.get('malware','?')}",
-                    "source":     "threatfox"
-                }
-                for i in data.get("data", [])
-            ]
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_post(
+            s,
+            "https://threatfox-api.abuse.ch/api/v1/",
+            json={"query": "get_iocs", "days": days},
+            timeout=aiohttp.ClientTimeout(total=20),
+            failure_kind="threatfox",
+        )
+        if err:
+            logger.debug(f"[ThreatFox] {err}")
+            return []
+        data = await resp.json()
+        return [
+            {
+                "ioc":        i.get("ioc_value"),
+                "ioc_type":   i.get("ioc_type"),
+                "malware":    i.get("malware"),
+                "confidence": i.get("confidence_level", 50) / 100,
+                "title":      f"ThreatFox: {i.get('malware','?')}",
+                "source":     "threatfox"
+            }
+            for i in data.get("data", [])
+        ]
     except Exception as e:
         logger.debug(f"[ThreatFox] {e}")
     return []
@@ -525,27 +526,27 @@ async def fetch_threatfox(days: int = 1) -> list[dict]:
 async def fetch_feodo_c2() -> list[dict]:
     """Feodo Tracker C2 blocklist — public JSON, no key required."""
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                "https://feodotracker.abuse.ch/downloads/ipblocklist.json",
-                timeout=aiohttp.ClientTimeout(total=15),
-                failure_kind="feodo",
-            )
-            if err:
-                logger.debug(f"[Feodo] {err}")
-                return []
-            return [
-                {
-                    "ioc":      e.get("ip_address"),
-                    "ioc_type": "ip",
-                    "malware":  e.get("malware"),
-                    "port":     e.get("port"),
-                    "title":    f"Feodo C2: {e.get('ip_address')}",
-                    "source":   "feodo_tracker"
-                }
-                for e in await resp.json(content_type=None)
-            ]
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            "https://feodotracker.abuse.ch/downloads/ipblocklist.json",
+            timeout=aiohttp.ClientTimeout(total=15),
+            failure_kind="feodo",
+        )
+        if err:
+            logger.debug(f"[Feodo] {err}")
+            return []
+        return [
+            {
+                "ioc":      e.get("ip_address"),
+                "ioc_type": "ip",
+                "malware":  e.get("malware"),
+                "port":     e.get("port"),
+                "title":    f"Feodo C2: {e.get('ip_address')}",
+                "source":   "feodo_tracker"
+            }
+            for e in await resp.json(content_type=None)
+        ]
     except Exception as e:
         logger.debug(f"[Feodo] {e}")
     return []
@@ -559,33 +560,33 @@ async def query_circl_pdns(
     """CIRCL Passive DNS — community free tier, no authentication."""
     import json as _json
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                f"https://www.circl.lu/pdns/query/{domain}",
-                timeout=aiohttp.ClientTimeout(total=15),
-                failure_kind="circl_pdns",
-            )
-            if err:
-                logger.debug(f"[CIRCL pDNS] {err}")
-                return []
-            if resp.status != 200:
-                return []
-            results = []
-            for line in (await resp.text()).strip().split("\n")[:max_results]:
-                try:
-                    rec = _json.loads(line)
-                    results.append({
-                        "ioc":        rec.get("rrvalue", ""),
-                        "ioc_type":   rec.get("rrtype", "A").lower(),
-                        "domain":     rec.get("rrname", ""),
-                        "first_seen": rec.get("time_first", ""),
-                        "last_seen":  rec.get("time_last", ""),
-                        "source":     "circl_pdns"
-                    })
-                except Exception as e:
-                    logger.debug(f"[CIRCL pDNS] JSON parse error for line: {e}")
-            return results
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            f"https://www.circl.lu/pdns/query/{domain}",
+            timeout=aiohttp.ClientTimeout(total=15),
+            failure_kind="circl_pdns",
+        )
+        if err:
+            logger.debug(f"[CIRCL pDNS] {err}")
+            return []
+        if resp.status != 200:
+            return []
+        results = []
+        for line in (await resp.text()).strip().split("\n")[:max_results]:
+            try:
+                rec = _json.loads(line)
+                results.append({
+                    "ioc":        rec.get("rrvalue", ""),
+                    "ioc_type":   rec.get("rrtype", "A").lower(),
+                    "domain":     rec.get("rrname", ""),
+                    "first_seen": rec.get("time_first", ""),
+                    "last_seen":  rec.get("time_last", ""),
+                    "source":     "circl_pdns"
+                })
+            except Exception as e:
+                logger.debug(f"[CIRCL pDNS] JSON parse error for line: {e}")
+        return results
     except Exception as e:
         logger.debug(f"[CIRCL pDNS] {e}")
     return []
@@ -598,35 +599,35 @@ async def search_crtsh(
 ) -> list[dict]:
     """crt.sh Certificate Transparency search — no key required."""
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                "https://crt.sh/",
-                params={"q": f"%.{domain}", "output": "json"},
-                timeout=aiohttp.ClientTimeout(total=20),
-                failure_kind="crtsh",
-            )
-            if err:
-                logger.warning(f"[crt.sh] {err}")
-                return []
-            if resp.status != 200:
-                return []
-            data = await resp.json(content_type=None)
-            results: list[dict] = []
-            seen:   set[str]    = set()
-            for cert in data[:max_results]:
-                for sub in cert.get("name_value", "").split("\n"):
-                    sub = sub.strip()
-                    if sub and sub not in seen:
-                        seen.add(sub)
-                        results.append({
-                            "ioc":     sub,
-                            "ioc_type":"domain",
-                            "issuer":  cert.get("issuer_name", ""),
-                            "title":   f"CT cert: {sub}",
-                            "source":  "crtsh"
-                        })
-            return results
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            "https://crt.sh/",
+            params={"q": f"%.{domain}", "output": "json"},
+            timeout=aiohttp.ClientTimeout(total=20),
+            failure_kind="crtsh",
+        )
+        if err:
+            logger.warning(f"[crt.sh] {err}")
+            return []
+        if resp.status != 200:
+            return []
+        data = await resp.json(content_type=None)
+        results: list[dict] = []
+        seen:   set[str]    = set()
+        for cert in data[:max_results]:
+            for sub in cert.get("name_value", "").split("\n"):
+                sub = sub.strip()
+                if sub and sub not in seen:
+                    seen.add(sub)
+                    results.append({
+                        "ioc":     sub,
+                        "ioc_type":"domain",
+                        "issuer":  cert.get("issuer_name", ""),
+                        "title":   f"CT cert: {sub}",
+                        "source":  "crtsh"
+                    })
+        return results
     except Exception as e:
         logger.warning(f"[crt.sh] {e}")
     return []
@@ -688,26 +689,26 @@ async def enrich_ip_internetdb(ip: str) -> dict:
     Free, no API key, ARM64 native. ~1MB RAM.
     """
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                f"https://internetdb.shodan.io/{ip}",
-                timeout=aiohttp.ClientTimeout(total=8),
-                failure_kind="shodan_internetdb",
-            )
-            if err:
-                logger.debug(f"[ShodanInternetDB] {err}")
-                return {}
-            if resp.status == 200:
-                data = await resp.json()
-                return {
-                    "ip":        ip,
-                    "ports":     data.get("ports", []),
-                    "cves":      data.get("cves", []),
-                    "hostnames": data.get("hostnames", []),
-                    "tags":      data.get("tags", []),
-                    "source":    "shodan_internetdb"
-                }
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            f"https://internetdb.shodan.io/{ip}",
+            timeout=aiohttp.ClientTimeout(total=8),
+            failure_kind="shodan_internetdb",
+        )
+        if err:
+            logger.debug(f"[ShodanInternetDB] {err}")
+            return {}
+        if resp.status == 200:
+            data = await resp.json()
+            return {
+                "ip":        ip,
+                "ports":     data.get("ports", []),
+                "cves":      data.get("cves", []),
+                "hostnames": data.get("hostnames", []),
+                "tags":      data.get("tags", []),
+                "source":    "shodan_internetdb"
+            }
     except Exception as e:
         logger.debug(f"[ShodanInternetDB] {e}")
     return {}
@@ -726,53 +727,53 @@ async def scrape_pastebin_for_keyword(
     results: list[dict] = []
     _UA = "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) AppleWebKit/605.1.15"
     try:
-        async with aiohttp.ClientSession() as s:
-            # Circuit-breaker protected archive page fetch
-            resp, err = await checked_aiohttp_get(
-                s,
-                "https://pastebin.com/archive",
-                timeout=aiohttp.ClientTimeout(total=10),
-                failure_kind="pastebin_archive",
-            )
-            if err:
-                logger.debug(f"[Pastebin archive] {err}")
-                return []
-            if resp.status != 200:
-                return []
-            soup = BeautifulSoup(await resp.text(), "html.parser")
-            paste_urls = [
-                f"https://pastebin.com/raw{a['href']}"
-                for tr in soup.select("table.maintable tr")[1:21]
-                for a in tr.select("td a")[:1]
-                if a.get("href")
-            ]
-            for raw_url in paste_urls[:max_pastes]:
-                await asyncio.sleep(1.0)  # ← FIXED: await (was bug)
-                try:
-                    # Individual paste fetches — use circuit breaker too
-                    pr, pr_err = await checked_aiohttp_get(
-                        s,
-                        raw_url,
-                        timeout=aiohttp.ClientTimeout(total=8),
-                        failure_kind="pastebin_paste",
-                    )
-                    if pr_err:
-                        logger.debug(f"[Pastebin] Paste fetch error for {raw_url}: {pr_err}")
-                        continue
-                    if pr.status == 200:
-                        content = await pr.text()
-                        if keyword.lower() in content.lower():
-                            results.append({
-                                "url":          raw_url,
-                                "content":      content[:2000],
-                                "content_hash": hashlib.sha256(
-                                    content.encode()
-                                ).hexdigest()[:16],
-                                "title":  f"Pastebin hit: {keyword}",
-                                "source": "pastebin_scrape"
-                            })
-                except Exception as e:
-                    logger.debug(f"[Pastebin] Paste fetch error for {raw_url}: {e}")
+        s = await async_get_aiohttp_session()
+        # Circuit-breaker protected archive page fetch
+        resp, err = await checked_aiohttp_get(
+            s,
+            "https://pastebin.com/archive",
+            timeout=aiohttp.ClientTimeout(total=10),
+            failure_kind="pastebin_archive",
+        )
+        if err:
+            logger.debug(f"[Pastebin archive] {err}")
+            return []
+        if resp.status != 200:
+            return []
+        soup = BeautifulSoup(await resp.text(), "html.parser")
+        paste_urls = [
+            f"https://pastebin.com/raw{a['href']}"
+            for tr in soup.select("table.maintable tr")[1:21]
+            for a in tr.select("td a")[:1]
+            if a.get("href")
+        ]
+        for raw_url in paste_urls[:max_pastes]:
+            await asyncio.sleep(1.0)  # <- FIXED: await (was bug)
+            try:
+                # Individual paste fetches — use circuit breaker too
+                pr, pr_err = await checked_aiohttp_get(
+                    s,
+                    raw_url,
+                    timeout=aiohttp.ClientTimeout(total=8),
+                    failure_kind="pastebin_paste",
+                )
+                if pr_err:
+                    logger.debug(f"[Pastebin] Paste fetch error for {raw_url}: {pr_err}")
+                    continue
+                if pr.status == 200:
+                    content = await pr.text()
+                    if keyword.lower() in content.lower():
+                        results.append({
+                            "url":          raw_url,
+                            "content":      content[:2000],
+                            "content_hash": hashlib.sha256(
+                                content.encode()
+                            ).hexdigest()[:16],
+                            "title":  f"Pastebin hit: {keyword}",
+                            "source": "pastebin_scrape"
+                        })
+            except Exception as e:
+                logger.debug(f"[Pastebin] Paste fetch error for {raw_url}: {e}")
     except Exception as e:
         logger.debug(f"[Pastebin] {e}")
     return results
@@ -785,30 +786,30 @@ async def search_github_gists(
     from bs4 import BeautifulSoup
     results: list[dict] = []
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                "https://gist.github.com/search",
-                params={"q": keyword, "s": "updated"},
-                timeout=aiohttp.ClientTimeout(total=12),
-                failure_kind="github_gist",
-            )
-            if err:
-                logger.debug(f"[GitHub Gist] {err}")
-                return []
-            if resp.status != 200:
-                return []
-            soup = BeautifulSoup(await resp.text(), "html.parser")
-            for item in soup.select(".gist-snippet")[:max_results]:
-                a = item.select_one(".gist-snippet-meta a")
-                p = item.select_one(".gist-snippet-body")
-                if a and a.get("href"):
-                    results.append({
-                        "url":     f"https://gist.github.com{a['href']}",
-                        "title":   a.get_text(strip=True),
-                        "snippet": p.get_text(strip=True)[:200] if p else "",
-                        "source":  "github_gist_search"
-                    })
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            "https://gist.github.com/search",
+            params={"q": keyword, "s": "updated"},
+            timeout=aiohttp.ClientTimeout(total=12),
+            failure_kind="github_gist",
+        )
+        if err:
+            logger.debug(f"[GitHub Gist] {err}")
+            return []
+        if resp.status != 200:
+            return []
+        soup = BeautifulSoup(await resp.text(), "html.parser")
+        for item in soup.select(".gist-snippet")[:max_results]:
+            a = item.select_one(".gist-snippet-meta a")
+            p = item.select_one(".gist-snippet-body")
+            if a and a.get("href"):
+                results.append({
+                    "url":     f"https://gist.github.com{a['href']}",
+                    "title":   a.get_text(strip=True),
+                    "snippet": p.get_text(strip=True)[:200] if p else "",
+                    "source":  "github_gist_search"
+                })
     except Exception as e:
         logger.debug(f"[GitHub Gist] {e}")
     return results
@@ -848,31 +849,31 @@ async def github_dork(
         dork_type, _GH_DORK_TEMPLATES["ioc_in_code"]
     ).format(v=value)
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                "https://api.github.com/search/code",
-                params={"q": query, "per_page": min(max_results, 30)},
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=15),
-                failure_kind="github_dork",
-            )
-            if err:
-                logger.debug(f"[GitHub dork] {err}")
-                return []
-            if resp.status == 200:
-                data = await resp.json()
-                return [
-                    {
-                        "title":   i["name"],
-                        "url":     i["html_url"],
-                        "snippet": i["repository"]["full_name"],
-                        "source":  "github_dork"
-                    }
-                    for i in data.get("items", [])
-                ]
-            elif resp.status == 403:
-                logger.debug("[GitHub dork] rate limited — set GITHUB_TOKEN")
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            "https://api.github.com/search/code",
+            params={"q": query, "per_page": min(max_results, 30)},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+            failure_kind="github_dork",
+        )
+        if err:
+            logger.debug(f"[GitHub dork] {err}")
+            return []
+        if resp.status == 200:
+            data = await resp.json()
+            return [
+                {
+                    "title":   i["name"],
+                    "url":     i["html_url"],
+                    "snippet": i["repository"]["full_name"],
+                    "source":  "github_dork"
+                }
+                for i in data.get("items", [])
+            ]
+        elif resp.status == 403:
+            logger.debug("[GitHub dork] rate limited — set GITHUB_TOKEN")
     except Exception as e:
         logger.debug(f"[GitHub dork] {e}")
     return []
@@ -900,21 +901,21 @@ async def search_ahmia(
     base = AHMIA_ONION if use_onion else AHMIA_CLEARNET
     html = ""
     try:
-        async with aiohttp.ClientSession() as s:
-            url = f"{base}?q={query}" if use_onion else base
-            params = None if use_onion else {"q": query}
-            resp, err = await checked_aiohttp_get(
-                s,
-                url,
-                params=params,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=aiohttp.ClientTimeout(total=15),
-                failure_kind="ahmia_onion" if use_onion else "ahmia_clearnet",
-            )
-            if err:
-                logger.debug(f"[Ahmia] fetch failed: {err}")
-                return []
-            html = await resp.text()
+        s = await async_get_aiohttp_session()
+        url = f"{base}?q={query}" if use_onion else base
+        params = None if use_onion else {"q": query}
+        resp, err = await checked_aiohttp_get(
+            s,
+            url,
+            params=params,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=aiohttp.ClientTimeout(total=15),
+            failure_kind="ahmia_onion" if use_onion else "ahmia_clearnet",
+        )
+        if err:
+            logger.debug(f"[Ahmia] fetch failed: {err}")
+            return []
+        html = await resp.text()
         if not html:
             return []
         soup = BeautifulSoup(html, "html.parser")
@@ -960,22 +961,22 @@ async def query_rdap(target: str) -> dict:
         else f"{base}/domain/{target}"
     )
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_get(
-                s,
-                endpoint,
-                timeout=aiohttp.ClientTimeout(total=10),
-                failure_kind="rdap",
-            )
-            if err:
-                logger.debug(f"[RDAP] {err}")
-                return {}
-            data = await resp.json()
-            result = {
-                "target": target,
-                "rdap":   data,
-                "source": "rdap_org"
-            }
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_get(
+            s,
+            endpoint,
+            timeout=aiohttp.ClientTimeout(total=10),
+            failure_kind="rdap",
+        )
+        if err:
+            logger.debug(f"[RDAP] {err}")
+            return {}
+        data = await resp.json()
+        result = {
+            "target": target,
+            "rdap":   data,
+            "source": "rdap_org"
+        }
         # F239A: Record successful response for replay (outside session scope)
         if replay_enabled():
             write_cassette("rdap_org", target, result)
@@ -1899,32 +1900,32 @@ async def fetch_malwarebazaar_recent(tag: str | None = None,
     if tag:
         payload = {"query": "get_taginfo", "tag": tag, "limit": max_items}
     try:
-        async with aiohttp.ClientSession() as s:
-            resp, err = await checked_aiohttp_post(
-                s,
-                "https://mb-api.abuse.ch/api/v1/",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=20),
-                failure_kind="malwarebazaar_recent",
-            )
-            if err:
-                logger.debug(f"[MalwareBazaar] {err}")
-                return []
-            data = await resp.json()
-            return [
-                {
-                    "sha256":         e.get("sha256_hash", ""),
-                    "malware_family": e.get("signature", ""),
-                    "file_type":      e.get("file_type", ""),
-                    "first_seen":     e.get("first_seen", ""),
-                    "tags":           e.get("tags", []),
-                    "ioc":            e.get("sha256_hash", ""),
-                    "ioc_type":       "sha256",
-                    "title":          f"MalwareBazaar: {e.get('signature','?')}",
-                    "source":         "malwarebazaar",
-                }
-                for e in data.get("data", [])[:max_items]
-            ]
+        s = await async_get_aiohttp_session()
+        resp, err = await checked_aiohttp_post(
+            s,
+            "https://mb-api.abuse.ch/api/v1/",
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=20),
+            failure_kind="malwarebazaar_recent",
+        )
+        if err:
+            logger.debug(f"[MalwareBazaar] {err}")
+            return []
+        data = await resp.json()
+        return [
+            {
+                "sha256":         e.get("sha256_hash", ""),
+                "malware_family": e.get("signature", ""),
+                "file_type":      e.get("file_type", ""),
+                "first_seen":     e.get("first_seen", ""),
+                "tags":           e.get("tags", []),
+                "ioc":            e.get("sha256_hash", ""),
+                "ioc_type":       "sha256",
+                "title":          f"MalwareBazaar: {e.get('signature','?')}",
+                "source":         "malwarebazaar",
+            }
+            for e in data.get("data", [])[:max_items]
+        ]
     except Exception as e:
         logger.debug(f"[MalwareBazaar] {e}")
     return []
@@ -1937,20 +1938,20 @@ async def _handle_malwarebazaar_search(task, scheduler):
     # Pokud 64-char hex → SHA256 hash lookup
     if len(ioc) == 64 and all(c in "0123456789abcdefABCDEF" for c in ioc):
         try:
-            async with aiohttp.ClientSession() as s:
-                resp, err = await checked_aiohttp_post(
-                    s,
-                    "https://mb-api.abuse.ch/api/v1/",
-                    json={"query": "get_info", "hash": ioc},
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    failure_kind="malwarebazaar_info",
-                )
-                if err:
-                    logger.debug(f"[MalwareBazaar hash] {err}")
-                    return
-                data = await resp.json()
-                if data.get("data"):
-                    await scheduler._buffer_ioc_pivot("sha256", ioc, 0.85)
+            s = await async_get_aiohttp_session()
+            resp, err = await checked_aiohttp_post(
+                s,
+                "https://mb-api.abuse.ch/api/v1/",
+                json={"query": "get_info", "hash": ioc},
+                timeout=aiohttp.ClientTimeout(total=15),
+                failure_kind="malwarebazaar_info",
+            )
+            if err:
+                logger.debug(f"[MalwareBazaar hash] {err}")
+                return
+            data = await resp.json()
+            if data.get("data"):
+                await scheduler._buffer_ioc_pivot("sha256", ioc, 0.85)
         except Exception as e:
             logger.debug(f"[MalwareBazaar hash] {e}")
     else:

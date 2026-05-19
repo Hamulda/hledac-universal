@@ -2092,6 +2092,10 @@ class SprintScheduler:
         self._lane_outcomes: tuple = ()
         # Sprint F207K-A: Rejection tracking for non-feed bridge outcomes
         self._lane_rejections: list[dict] = []
+        # Sprint F245A: Planner action IOC scope fix — instance fields for cross-phase access
+        # Written at planner_actions_consumption phase (line ~2689), read at _run_mandatory_acquisition_prelude (line ~5458)
+        self._planner_seed_iocs: dict[str, tuple[str, ...]] = {}
+        self._planner_lanes: list[str] = []
         # Sprint F218D: Lane rejection counters
         self._lane_rejections_total_seen: int = 0
         self._lane_rejections_dropped: int = 0
@@ -2715,6 +2719,9 @@ class SprintScheduler:
                             self._result.planner_action_lanes_requested = _planner_lanes
                             self._result.planner_action_seed_source = _planner_seed_source
                             self._result.planner_action_skip_reason = _planner_skip_reason
+                            # F245A: persist to instance fields for cross-phase access (read at ~5458)
+                            self._planner_seed_iocs = _planner_seed_iocs or {}
+                            self._planner_lanes = _planner_lanes or []
                             log.debug(
                                 "[F237B] consumed %d planner_actions: lanes=%s, iocs=%s",
                                 len(_planner_actions),
@@ -5455,6 +5462,8 @@ class SprintScheduler:
 
             # F237B: Add planner_action IOCs to seed context so they flow into NonfeedSeedContext
             # These were extracted from predecessor's investigation_packet.planner_actions
+            # F245A: read from instance field, not local — avoids NameError when predecessor is absent
+            _planner_seed_iocs: dict = getattr(self, "_planner_seed_iocs", {}) or {}
             if _planner_seed_iocs and self._result.planner_action_skip_reason in ("", "no_iocs_extracted"):
                 _pa_doms: tuple = _planner_seed_iocs.get("domains", ())
                 _pa_ips: tuple = _planner_seed_iocs.get("ips", ())
@@ -10378,6 +10387,30 @@ class SprintScheduler:
             _sfo[_fam] = normalize_source_family_outcome(_fam, _raw)
         # Academic is always skipped unless explicitly enabled
         _sfo["academic"] = normalize_source_family_outcome("academic", None)
+
+        # Sprint F245B: RDAP enrichment — synthesize from scheduler result telemetry
+        if hasattr(self._result, "rdap_enrichment_attempted") and self._result.rdap_enrichment_attempted:
+            _rdap_raw = {
+                "attempted": True,
+                "accepted_count": getattr(self._result, "rdap_enrichment_findings_stored", 0) or 0,
+                "raw_count": getattr(self._result, "rdap_enrichment_findings_built", 0) or 0,
+                "error": getattr(self._result, "rdap_enrichment_error", None),
+                "terminal_state": "ATTEMPTED_ERROR" if getattr(self._result, "rdap_enrichment_error", None)
+                    else ("ATTEMPTED_ACCEPTED" if getattr(self._result, "rdap_enrichment_findings_stored", 0) else "ATTEMPTED_NO_RESULTS"),
+            }
+            _sfo["rdap_enrichment"] = normalize_source_family_outcome("rdap_enrichment", _rdap_raw)
+
+        # Sprint F245B: RIR correlation — synthesize from scheduler result telemetry
+        if hasattr(self._result, "rir_correlation_produced") and self._result.rir_correlation_produced > 0:
+            _rir_raw = {
+                "attempted": True,
+                "accepted_count": self._result.rir_correlation_produced or 0,
+                "raw_count": self._result.rir_correlation_produced or 0,
+                "error": None,
+                "terminal_state": "ATTEMPTED_ACCEPTED",
+            }
+            _sfo["rir_correlation"] = normalize_source_family_outcome("rir_correlation", _rir_raw)
+
         report["source_family_outcomes"] = _sfo
 
         # Sprint F210A: Terminality SSOT — recompute from canonical source family outcomes.

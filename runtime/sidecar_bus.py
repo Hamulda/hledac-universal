@@ -75,6 +75,39 @@ _HEAVY_SIDECARS: frozenset[str] = frozenset({
     "ipv6_recon",
 })
 
+# F240A: Active-network sidecars — require explicit active/aggressive profile
+_ACTIVE_NETWORK_SIDECARS: frozenset[str] = frozenset({
+    "network_intel",
+    "banner_grab",
+    "ipv6_recon",
+})
+
+
+def _sidecar_profile_allows(name: str, profile: str | None) -> tuple[bool, str]:
+    """
+    Return (allowed, skip_reason) for active-network sidecars.
+
+    Rules:
+    - banner_grab / ipv6_recon: disabled unless profile is "active" or "aggressive"
+    - network_intel: disabled unless profile is "active", "aggressive", or "network_recon"
+    - Unknown profile: allow (fail-open for safety)
+    """
+    if name not in _ACTIVE_NETWORK_SIDECARS:
+        return (True, "")
+    if not profile:
+        return (False, "profile_disallows_active_network_sidecar")
+    p = profile.lower()
+    if name == "network_intel":
+        if p in ("active", "aggressive", "network_recon"):
+            return (True, "")
+        return (False, "profile_disallows_active_network_sidecar")
+    else:
+        # banner_grab, ipv6_recon — require active or aggressive
+        if p in ("active", "aggressive"):
+            return (True, "")
+        return (False, "profile_disallows_active_network_sidecar")
+
+
 # F205B: Explicit staged ordering guarantee
 # Stage 1 (light extraction): runs first, no dependencies on other sidecars
 # Stage 2 (correlation): runs after stage 1, depends on signals produced by stage 1
@@ -159,8 +192,9 @@ class FindingSidecarBus:
     not propagate or crash the sprint. Stage N failure does not stop stage N+1.
     """
 
-    def __init__(self, governor: Any = None) -> None:
+    def __init__(self, governor: Any = None, acquisition_profile: str | None = None) -> None:
         self._governor = governor
+        self._acquisition_profile = acquisition_profile
         self._runners: dict[str, SidecarRunner] = {}
         self._results: list[SidecarRunResult] = []
 
@@ -189,6 +223,18 @@ class FindingSidecarBus:
             return (not admission.allowed, admission.reason)
         except Exception:
             return (False, "")  # Fail-soft: allow heavy sidecars if governor errors
+
+    def _is_active_network_blocked(self, name: str) -> tuple[bool, str]:
+        """
+        Return (blocked, reason) if an active-network sidecar should be skipped
+        due to acquisition profile.
+
+        F240A: Active network sidecars (network_intel, banner_grab, ipv6_recon)
+        require explicit active/aggressive profile and must not run in default or
+        nonfeed_diagnostic profiles on M1.
+        """
+        allowed, reason = _sidecar_profile_allows(name, self._acquisition_profile)
+        return (not allowed, reason)
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -260,6 +306,19 @@ class FindingSidecarBus:
                     produced_count=0,
                     stored_count=0,
                     skipped_reason=reason or "ram_governor_critical",
+                    elapsed_ms=elapsed_ms,
+                )
+
+            # F240A: Active-network sidecar profile gating
+            blocked, reason = self._is_active_network_blocked(name)
+            if blocked:
+                elapsed_ms = (_time.monotonic() - t0) * 1000
+                return SidecarRunResult(
+                    sidecar_name=name,
+                    attempted=False,
+                    produced_count=0,
+                    stored_count=0,
+                    skipped_reason=reason or "profile_disallows_active_network_sidecar",
                     elapsed_ms=elapsed_ms,
                 )
 
@@ -522,7 +581,20 @@ async def _evidence_triage_runner(
     store: "DuckDBShadowStore",
     query: str,
 ) -> None:
-    """F202I evidence triage — counts document findings with triage facets."""
+    """
+    F202I evidence triage — counts document findings with triage facets.
+
+    COMPATIBILITY/STATS runner — canonical document owner is
+    multimodal/analyzer.py::MultimodalEnricher (wired via
+    EnrichmentServices.enrich_findings_multimodal() in runtime/enrichment_services.py,
+    which wraps DocumentExtractor from multimodal/analyzer.py). This runner is
+    retained for stats parity and backwards-compatibility only. It does NOT
+    extract new signal — it just counts document findings that already carry
+    triage facets in their payload_text.
+
+    To promote this to a canonical capability requires an owner decision and
+    explicit allowlist entry in CORE_SIDECAR_ALLOWLIST (not yet defined).
+    """
     import json
 
     triage_count = 0
@@ -554,10 +626,17 @@ async def _sprint_diff_runner(
         return
 
     target_id = query[:128]
+    # Fail-soft: skip if store doesn't have the previous-findings method
+    if not hasattr(store, "async_get_previous_findings_for_target"):
+        return
     try:
         prev_findings_raw = await store.async_get_previous_findings_for_target(target_id, limit=1000)
     except Exception:
         prev_findings_raw = []
+
+    # No-op: no previous findings for this target — first-ever sprint
+    if not prev_findings_raw:
+        return
 
     current_findings: list[dict] = []
     for f in findings:
@@ -713,7 +792,19 @@ async def _wayback_diff_runner(
     store: "DuckDBShadowStore",
     query: str,
 ) -> None:
-    """F203F Wayback CDX diff mining."""
+    """
+    F203F Wayback CDX diff mining.
+
+    COMPATIBILITY runner — canonical owner is
+    intelligence/wayback_diff_miner.py::WaybackDiffMiner (wired as direct
+    SprintScheduler lane via _run_wayback_prelude_lane() at line ~5715 and
+    _run_acquisition_domain_lane() at line ~4408). The WaybackDiffMiner lane
+    is the authoritative source for CDX diff findings; this sidecar runner
+    is derived from it and produces no additional signal.
+
+    To promote this to a canonical capability requires an owner decision and
+    explicit allowlist entry in CORE_SIDECAR_ALLOWLIST (not yet defined).
+    """
     if not findings or store is None:
         return
     try:
@@ -891,7 +982,22 @@ async def _passive_tech_stack_runner(
     store: "DuckDBShadowStore",
     query: str,
 ) -> None:
-    """R11 passive tech-stack extraction — deterministic, no active scan."""
+    """
+    R11 passive tech-stack extraction — deterministic, no active scan.
+
+    COMPATIBILITY/DERIVED DUPLICATE — canonical owner is
+    intelligence/passive_fingerprint.py::create_passive_tech_stack_adapter().
+    This runner is a thin wrapper that calls the same underlying adapter;
+    the signal produced is identical to what passive_fingerprint already emits.
+
+    Unlike evidence_triage and wayback_diff (which are compatibility runners
+    wired to different canonical sources), this runner has no independent
+    canonical owner — it is purely derived from passive_fingerprint and
+    provides no additional coverage.
+
+    To promote this to a canonical capability requires an owner decision and
+    explicit allowlist entry in CORE_SIDECAR_ALLOWLIST (not yet defined).
+    """
     if not findings or store is None:
         return
     try:
@@ -1053,9 +1159,9 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
 ]
 
 
-def create_sidecar_bus(governor: Any = None) -> FindingSidecarBus:
+def create_sidecar_bus(governor: Any = None, acquisition_profile: str | None = None) -> FindingSidecarBus:
     """Factory: create a pre-registered FindingSidecarBus."""
-    bus = FindingSidecarBus(governor=governor)
+    bus = FindingSidecarBus(governor=governor, acquisition_profile=acquisition_profile)
     for name, runner in DEFAULT_SIDECAR_RUNNERS:
         bus.register(name, runner)
     return bus

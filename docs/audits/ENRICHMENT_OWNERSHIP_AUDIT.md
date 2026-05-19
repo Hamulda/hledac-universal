@@ -144,11 +144,42 @@ No mlx/torch/transformers at module import in sidecar_bus or source_finding_brid
 
 ## Recommendations
 
+### Duplicate Sidecar Seal (F243A)
+
+The following sidecar runners are marked as **compatibility/duplicate** — they are
+retained for stats parity or backwards-compatibility but MUST NOT be promoted to
+canonical capability without an explicit owner decision and `CORE_SIDECAR_ALLOWLIST`
+entry (not yet defined):
+
+| Sidecar Runner | Canonical Owner | Reason |
+|---|---|---|
+| `evidence_triage` | `multimodal/analyzer.py::MultimodalEnricher` (wired via `EnrichmentServices.enrich_findings_multimodal()` → `DocumentExtractor`) | Compatibility/stats counter — counts document findings with triage facets, no independent signal extraction |
+| `wayback_diff` | `intelligence/wayback_diff_miner.py::WaybackDiffMiner` (wired via `_run_wayback_prelude_lane()` ~line 5715 and `_run_acquisition_domain_lane()` ~line 4408) | Derived duplicate — WaybackDiffMiner lane is authoritative; this sidecar produces no additional coverage |
+| `passive_tech_stack` | `intelligence/passive_fingerprint.py::create_passive_tech_stack_adapter()` | Pure derived duplicate — thin wrapper with no independent canonical owner |
+| `security/digital_ghost_detector` | `forensics/digital_ghost_detector.py` (wired via `ForensicsEnricher`) | Duplicate file — security/ version is dormant, forensics/ version is canonical |
+
+**Seal test** (run to verify):
+```bash
+# Verify sidecar_bus.py compiles cleanly
+uv run python -m py_compile runtime/sidecar_bus.py
+
+# Verify duplicate runners are documented (grep for marker comments)
+rg "COMPATIBILITY" runtime/sidecar_bus.py --no-heading -A2
+
+# Verify none of the duplicate runners are in CORE_SIDECAR_ALLOWLIST
+# (allowlist does not yet exist — grep will return empty until defined)
+rg "CORE_SIDECAR_ALLOWLIST" runtime/sidecar_bus.py
+```
+
+No dedicated `sidecar_duplicate` test file exists yet. Until then, the
+seal is documentary: comments mark the runners, and the three commands above
+confirm the markers are present and no allowlist bypass has occurred.
+
 ### Immediately (P0)
 1. **Verify `exposure_correlator.py` and `rir_correlator.py` `new_event_loop` calls** — these are in correlation runners called from sidecar bus. Confirm whether they can be reached from an async context. If yes, these are M1 crash vectors.
-2. **Deprecate dormant sidecar runners**: `evidence_triage`, `wayback_diff`, `sprint_diff`, `kill_chain_tagging`, `embedding` from `DEFAULT_SIDECAR_RUNNERS` in `sidecar_bus.py`.
 
 ### Future (P1)
-3. **EnrichmentServices** (F350M): Consolidate forensics + multimodal lifecycle into unified layer per sprint comment.
-4. **Test seams** for network sidecars: `_network_intel_runner`, `_banner_grab_runner`, `_ipv6_recon_runner` need replay/test seams.
-5. **ForensicsEnricher** envelope persistence: currently stored in `finding.metadata["forensics"]` (inside payload_text). Consider explicit CanonicalFinding with `source_type="forensics"` for independent persistence.
+2. **EnrichmentServices** (F350M): Consolidate forensics + multimodal lifecycle into unified layer per sprint comment.
+3. **Test seams** for network sidecars: `_network_intel_runner`, `_banner_grab_runner`, `_ipv6_recon_runner` need replay/test seams.
+4. **ForensicsEnricher** envelope persistence: currently stored in `finding.metadata["forensics"]` (inside payload_text). Consider explicit CanonicalFinding with `source_type="forensics"` for independent persistence.
+5. **Deprecate dormant sidecar runners** (after seal test passes): `sprint_diff`, `kill_chain_tagging`, `embedding` from `DEFAULT_SIDECAR_RUNNERS` in `sidecar_bus.py` — these have no active lanes and no canonical owner.
