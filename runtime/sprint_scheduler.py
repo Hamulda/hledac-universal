@@ -4568,12 +4568,13 @@ class SprintScheduler:
         errors: dict[str, str] = {}
 
         # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
+        # [F250B] provider_cooldown/provider_unavailable count as terminal
         _ct_done = (
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
             or self._result.ct_request_timeout
             or self._result.ct_terminal_stage
-            in ("error", "skipped", "request_timeout", "no_candidates")
+            in ("error", "skipped", "request_timeout", "no_candidates", "provider_cooldown", "provider_unavailable")
         )
         _public_done = self._public_outcome is not None
 
@@ -6050,13 +6051,14 @@ class SprintScheduler:
 
         # [F228C] CT terminal if: ct_log_discovered > 0 or lane_ct_accepted_findings > 0,
         # OR ct_request_timeout (timeout counts as terminal even with zero findings),
-        # OR ct_terminal_stage in (error, skipped, request_timeout, no_candidates).
+        # OR ct_terminal_stage in (error, skipped, request_timeout, no_candidates, provider_cooldown, provider_unavailable).
+        # [F250B] provider_cooldown/provider_unavailable count as terminal even without findings.
         _ct_done = (
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
             or self._result.ct_request_timeout
             or self._result.ct_terminal_stage
-            in ("error", "skipped", "request_timeout", "no_candidates")
+            in ("error", "skipped", "request_timeout", "no_candidates", "provider_cooldown", "provider_unavailable")
         )
 
         # Check terminal state for each required lane using lane_is_terminal()
@@ -6150,12 +6152,13 @@ class SprintScheduler:
         # Re-check terminal state after attempted barrier
         _public_done = self._public_outcome is not None
         # [F228C] CT terminal: findings OR timeout OR explicit terminal stage
+        # [F250B] provider_cooldown/provider_unavailable count as terminal
         _ct_done = (
             self._result.ct_log_discovered > 0
             or self._result.lane_ct_accepted_findings > 0
             or self._result.ct_request_timeout
             or self._result.ct_terminal_stage
-            in ("error", "skipped", "request_timeout", "no_candidates")
+            in ("error", "skipped", "request_timeout", "no_candidates", "provider_cooldown", "provider_unavailable")
         )
 
         _still_unsatisfied: list[str] = []

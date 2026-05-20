@@ -1,6 +1,7 @@
 """
 Sprint F226G: Acquisition Telemetry SSOT Helper.
 Sprint F231B: Lane Detail to Source Family Outcome Bridge.
+Sprint F250A: Nonfeed Prelude to Source Family Outcome Bridge.
 
 ROLE: Reconcile lane detail fields with source_family_outcomes so reports
 never contradict the authoritative outcomes list.
@@ -14,6 +15,9 @@ RULES:
   - Do NOT overwrite richer non-default detail fields.
   - Preserve raw_count/accepted_count where possible.
   - No model/network imports.
+  - F250A: Nonfeed prelude lane names (WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR, DOH, CT)
+    are mapped to source_family_outcomes entries even when lane detail fields are blank,
+    as long as the lane appears in prelude expected/attempted/terminal/error/accepted sets.
 
 Apply reconcile_lane_detail_fields(report) before final report is
 returned/written.
@@ -21,13 +25,23 @@ returned/written.
 Sprint F231B: complete_source_family_outcomes_from_lane_details applies AFTER
 reconcile_lane_detail_fields to ensure lane detail telemetry creates missing
 source_family_outcomes entries (the reverse direction).
+
+Sprint F250A: complete_source_family_outcomes_from_prelude applies AFTER
+complete_source_family_outcomes_from_lane_details to fill source_family_outcomes
+from nonfeed prelude lane sets (expected/attempted/terminal/error/accepted)
+for WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR even when no corresponding lane detail
+fields exist in the report.
 """
 
 from __future__ import annotations
 
 import logging
 
-__all__ = ["reconcile_lane_detail_fields", "complete_source_family_outcomes_from_lane_details"]
+__all__ = [
+    "reconcile_lane_detail_fields",
+    "complete_source_family_outcomes_from_lane_details",
+    "complete_source_family_outcomes_from_prelude",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +53,7 @@ def _normalize_terminal_state(stage: str) -> str:
     if not stage:
         return ""
     _l = stage.lower()
-    if _l in ("attempted_accepted", "accepted"):
+    if _l in ("attempted_accepted", "accepted", "storage_accepted"):
         return "ATTEMPTED_ACCEPTED"
     if _l in ("attempted_empty", "no_candidates"):
         return "ATTEMPTED_NO_RESULTS"
@@ -53,6 +67,9 @@ def _normalize_terminal_state(stage: str) -> str:
         return "ATTEMPTED_NO_RESULTS"
     if "skipped" in _l:
         return "SKIPPED"
+    # [F250B] provider_cooldown/provider_unavailable → ATTEMPTED_ERROR
+    if _l in ("provider_cooldown", "provider_unavailable"):
+        return "ATTEMPTED_ERROR"
     return stage
 
 
@@ -250,6 +267,13 @@ def complete_source_family_outcomes_from_lane_details(report: dict) -> dict:
     _ct_stage = result.get("ct_terminal_stage", "") or ""
     _ct_raw = result.get("ct_raw_count", 0)
     _ct_accepted = result.get("ct_storage_accepted", False)
+    # [F250B] Derive ct_terminal_stage from ct_provider_status when stage is empty
+    if not _ct_stage:
+        _ct_provider_status = (result.get("ct_provider_status") or "").lower()
+        if "cooldown" in _ct_provider_status:
+            _ct_stage = "provider_cooldown"
+        elif "unavailable" in _ct_provider_status:
+            _ct_stage = "provider_unavailable"
 
     if (_ct_attempted or _ct_stage) and not _family_exists(sfo_list, "ct"):
         _err = None
@@ -257,6 +281,10 @@ def complete_source_family_outcomes_from_lane_details(report: dict) -> dict:
             _err = "timeout"
         elif _ct_stage == "attempted_error":
             _err = "attempted_error"
+        elif _ct_stage == "provider_cooldown":
+            _err = "cooldown_active"
+        elif _ct_stage == "provider_unavailable":
+            _err = "provider_unavailable"
         sfo_list = _add_outcome_if_missing(
             sfo_list,
             family="ct",
@@ -266,6 +294,156 @@ def complete_source_family_outcomes_from_lane_details(report: dict) -> dict:
             terminal_state=_ct_stage,
             timeout=_ct_stage == "request_timeout",
             error=_err,
+        )
+
+    result["source_family_outcomes"] = sfo_list
+    return result
+
+
+# ── Sprint F250A: Nonfeed Prelude → Source Family Outcomes ─────────────────────
+
+# Lane name (uppercase) → source family name (lowercase)
+_PRELUDE_LANE_TO_FAMILY: dict[str, str] = {
+    "CT": "ct",
+    "DOH": "doh",
+    "WAYBACK": "wayback",
+    "PASSIVE_DNS": "passive_dns",
+    "PIVOT_EXECUTOR": "pivot_executor",
+}
+
+
+def _prelude_to_sfo(
+    sfo_list: list[dict],
+    family: str,
+    expected_lanes: list[str],
+    attempted_lanes: list[str],
+    terminal_lanes: list[str],
+    error_by_lane: dict[str, str],
+    accepted_by_lane: dict[str, int],
+) -> list[dict]:
+    """Derive an SFO entry for one family from nonfeed prelude sets.
+
+    Rules:
+      - If family already exists in sfo_list with a richer entry, do not overwrite.
+      - attempted = lane in attempted_lanes or terminal_lanes or error_by_lane
+      - accepted_count = accepted_by_lane.get(lane, 0)
+      - raw_count/built_count = 0 when unknown
+      - error = error_by_lane.get(lane)
+      - terminal_state:
+          accepted_count > 0         → ATTEMPTED_ACCEPTED
+          lane in error_by_lane        → ATTEMPTED_ERROR
+          lane in terminal_lanes       → ATTEMPTED_NO_RESULTS
+          lane in expected but not in attempted → SKIPPED
+      - skip_reason:
+          lane in expected but not attempted → eligible_not_attempted
+          (only when lane is in expected set)
+    """
+    # Normalize lane name for lookup
+    lane_name = next(
+        (ln for ln, fam in _PRELUDE_LANE_TO_FAMILY.items() if fam == family),
+        None,
+    )
+    if lane_name is None:
+        return sfo_list
+
+    in_expected = lane_name in expected_lanes
+    in_attempted = lane_name in attempted_lanes
+    in_terminal = lane_name in terminal_lanes
+    has_error = lane_name in error_by_lane
+    accepted_count = accepted_by_lane.get(lane_name, 0)
+
+    # Determine if we should add an entry
+    if not (in_expected or in_attempted or in_terminal or has_error):
+        return sfo_list
+
+    attempted = in_attempted or in_terminal or has_error
+
+    # Compute terminal state
+    terminal_state = ""
+    skip_reason = None
+    error = error_by_lane.get(lane_name)
+    timeout = False
+
+    if accepted_count > 0:
+        terminal_state = "ATTEMPTED_ACCEPTED"
+    elif error is not None:
+        terminal_state = "ATTEMPTED_ERROR"
+    elif in_terminal:
+        terminal_state = "ATTEMPTED_NO_RESULTS"
+    elif in_expected and not attempted:
+        terminal_state = "SKIPPED"
+        skip_reason = "eligible_not_attempted"
+    elif attempted:
+        # Attempted but no accepted, no error, not in terminal_lanes
+        terminal_state = "ATTEMPTED_NO_RESULTS"
+
+    # Determine raw_count (0 when derived from prelude only)
+    raw_count = 0
+    built_count = 0
+
+    return _add_outcome_if_missing(
+        sfo_list,
+        family=family,
+        attempted=attempted,
+        raw_count=raw_count,
+        accepted_count=accepted_count,
+        terminal_state=terminal_state,
+        timeout=timeout,
+        error=error,
+        skip_reason=skip_reason,
+    )
+
+
+def complete_source_family_outcomes_from_prelude(report: dict) -> dict:
+    """
+    Sprint F250A: Complete source_family_outcomes from nonfeed prelude lane sets.
+
+    Nonfeed prelude collects lane names in sets:
+      - nonfeed_prelude_expected_lanes
+      - nonfeed_prelude_attempted_lanes
+      - nonfeed_prelude_terminal_lanes
+      - nonfeed_prelude_error_by_lane (lane → error str)
+      - nonfeed_prelude_accepted_by_lane (lane → accepted int count)
+
+    These sets may contain WAYBACK, PASSIVE_DNS, PIVOT_EXECUTOR, DOH, CT
+    that have no corresponding lane detail fields (wayback_terminal_state,
+    passive_dns_terminal_state, etc.) yet still represent real acquisition work.
+
+    This function maps each lane name in those sets to a source_family_outcomes
+    entry, following the same rules as complete_source_family_outcomes_from_lane_details:
+      - Preserve existing richer entries.
+      - Terminal-only lanes (no accepted, no error) → ATTEMPTED_NO_RESULTS.
+      - Zero accepted findings are valid terminal coverage.
+      - Skipped lanes get eligible_not_attempted skip_reason.
+
+    Apply after complete_source_family_outcomes_from_lane_details in the
+    report pipeline so that explicit lane detail fields take precedence.
+    """
+    result = dict(report)
+
+    sfo_list: list[dict] = result.get("source_family_outcomes") or []
+    if not isinstance(sfo_list, list):
+        sfo_list = []
+
+    expected = list(result.get("nonfeed_prelude_expected_lanes") or [])
+    attempted = list(result.get("nonfeed_prelude_attempted_lanes") or [])
+    terminal = list(result.get("nonfeed_prelude_terminal_lanes") or [])
+    errors = dict(result.get("nonfeed_prelude_error_by_lane") or {})
+    accepted = dict(result.get("nonfeed_prelude_accepted_by_lane") or {})
+
+    # Nothing to do if prelude fields are all empty
+    if not (expected or attempted or terminal or errors or accepted):
+        return result
+
+    for _family in _PRELUDE_LANE_TO_FAMILY.values():
+        sfo_list = _prelude_to_sfo(
+            sfo_list,
+            family=_family,
+            expected_lanes=expected,
+            attempted_lanes=attempted,
+            terminal_lanes=terminal,
+            error_by_lane=errors,
+            accepted_by_lane=accepted,
         )
 
     result["source_family_outcomes"] = sfo_list
@@ -310,7 +488,13 @@ def reconcile_lane_detail_fields(report: dict) -> dict:
             if _ct_outcome.get("timeout"):
                 result["ct_terminal_stage"] = "request_timeout"
             elif _err:
-                result["ct_terminal_stage"] = _err
+                # [F250B] Normalize SFO error → canonical stage
+                if _err == "cooldown_active":
+                    result["ct_terminal_stage"] = "provider_cooldown"
+                elif _err == "provider_unavailable":
+                    result["ct_terminal_stage"] = "provider_unavailable"
+                else:
+                    result["ct_terminal_stage"] = _err
             elif _attempted:
                 result["ct_terminal_stage"] = "attempted_error"
 

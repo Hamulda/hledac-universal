@@ -2325,6 +2325,80 @@ class DuckDBShadowStore:
         except Exception:
             return []
 
+    # ------------------------------------------------------------------
+    # F251A: Offline text query memory seed extraction
+    # ------------------------------------------------------------------
+
+    async def async_query_findings_by_text(
+        self,
+        like_pattern: str,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """
+        F251A: Read shadow_findings rows matching a text/keyword pattern.
+        Used by run_runtime_pivot_prelude() for offline memory seed extraction
+        when a text query has no direct IOC seeds.
+
+        Args:
+            like_pattern: Keyword to search in query/title/payload_text.
+            limit: Max rows to return (default 1000).
+
+        Returns:
+            list[dict] with keys: id, query, source_type, title, payload_text, ts.
+            Fail-soft: returns [] on any error.
+        """
+        if not self._initialized or self._closed:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_query_findings_by_text,
+                like_pattern,
+                limit,
+            )
+        except Exception:
+            return []
+
+    def _sync_query_findings_by_text(
+        self,
+        like_pattern: str,
+        limit: int,
+    ) -> list[dict]:
+        """Sync — MUST be called on worker thread."""
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return []
+            pattern = f"%{like_pattern}%"
+            rows = conn.execute(
+                """
+                SELECT id, query, source_type, title, payload_text, ts
+                FROM shadow_findings
+                WHERE query LIKE ?
+                   OR title LIKE ?
+                   OR payload_text LIKE ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                [pattern, pattern, pattern, limit],
+            ).fetchall()
+            if not rows:
+                return []
+            return [
+                {
+                    "id": r[0],
+                    "query": r[1],
+                    "source_type": r[2],
+                    "title": r[3] or "",
+                    "payload_text": r[4] or "",
+                    "ts": r[5],
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
     def _sync_query_recent_findings_by_sprint(
         self,
         sprint_id: str,

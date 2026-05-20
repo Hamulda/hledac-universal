@@ -72,6 +72,9 @@ from hledac.universal.runtime.acquisition_strategy import (
     complete_source_family_outcomes_from_lane_details,
     ACQUISITION_REPORT_SCHEMA_VERSION,
 )
+from hledac.universal.runtime.acquisition_telemetry_reconcile import (
+    complete_source_family_outcomes_from_prelude,
+)
 from hledac.universal.export.sprint_exporter import export_sprint
 
 logger = logging.getLogger(__name__)
@@ -565,6 +568,8 @@ def _scheduler_result_acquisition_payload(
         _acq_report = reconcile_lane_detail_fields(_acq_report)
         # F231B: Complete source_family_outcomes from lane detail fields
         _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
+        # F250A: Complete source_family_outcomes from nonfeed prelude lane sets
+        _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
         # F222L: Seed context — if pivot seeds exist but seed_context fields are absent,
         # derive explicit skip reason so the report is not silently blank.
         if not _acq_report.get("seed_context_available"):
@@ -756,6 +761,8 @@ def _scheduler_result_acquisition_payload(
             _acq_report = reconcile_lane_detail_fields(_acq_report)
             # F231B: Complete source_family_outcomes from lane detail fields in fallback path
             _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
+            # F250A: Complete source_family_outcomes from nonfeed prelude lane sets in fallback path
+            _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
             # F222L: Seed context skip reason in fallback path
             if not _acq_report.get("seed_context_available"):
                 _has_seeds = getattr(result, "pivot_seed_domains", ()) or getattr(result, "pivot_seed_ips", ()) or getattr(result, "pivot_seed_urls", ()) or getattr(result, "pivot_seed_hashes", ()) or getattr(result, "pivot_seed_cves", ())

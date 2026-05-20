@@ -269,6 +269,9 @@ class JSONFormatter(ExportFormatter):
                 # Sprint F232A: investigation_packet — report enrichment via existing owners
                 from hledac.universal.export.sprint_exporter import _build_investigation_packet
                 sanitized_obj["investigation_packet"] = _build_investigation_packet(sanitized_obj)
+                # Sprint F250C: provider yield diagnosis — surfaced alongside investigation_packet
+                from hledac.universal.export.sprint_exporter import _build_provider_yield_diagnosis
+                sanitized_obj["provider_yield_diagnosis"] = _build_provider_yield_diagnosis(sanitized_obj)
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 

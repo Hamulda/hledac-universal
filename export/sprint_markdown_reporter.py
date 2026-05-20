@@ -1101,6 +1101,31 @@ def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> s
         lines.append("_No significant gaps identified._")
     lines.append("")
 
+    # Sprint F250C: Provider Yield Diagnosis in analyst brief
+    pyd = scorecard.get("provider_yield_diagnosis") or investigation_packet.get("provider_yield_diagnosis") or {}
+    if pyd and isinstance(pyd, dict):
+        overall = pyd.get("overall", "unknown")
+        families = pyd.get("families", {}) or {}
+        lines.append("### Provider Yield Diagnosis")
+        lines.append("")
+        lines.append(f"**Overall:** {overall}")
+        lines.append("")
+        for fam_name, fam_diag in families.items():
+            if isinstance(fam_diag, dict):
+                status = fam_diag.get("status", "?")
+                reason = fam_diag.get("reason", "?")
+                action = fam_diag.get("action", "?")
+                if status not in ("skipped", "unknown") or reason not in ("not_attempted", "unknown"):
+                    action_str = f" → {action}" if action and action != "none" else ""
+                    lines.append(f"- **{fam_name}** [{status}]: {reason}{action_str}")
+        next_eng = pyd.get("recommended_next_engineering_action", "")
+        next_inv = pyd.get("recommended_next_investigation_action", "")
+        if next_eng and next_eng != "none":
+            lines.append(f"**Next engineering:** {next_eng}")
+        if next_inv and next_inv != "none":
+            lines.append(f"**Next investigation:** {next_inv}")
+        lines.append("")
+
     # ── Recommended Next Pivots ────────────────────────────────────────────
     next_pivots = investigation_packet.get("next_pivots") or []
     lines.append("### Recommended Next Pivots")

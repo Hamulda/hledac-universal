@@ -285,49 +285,18 @@ async def run_runtime_pivot_prelude(
                     _cves_q.add(s.value)
         elif duckdb_store is not None:
             try:
-                loop = asyncio.get_running_loop()
-
-                def _read() -> list[dict]:
-                    import duckdb
-
-                    conn = duckdb.connect(":memory:")
-                    try:
-                        conn.execute(
-                            "CREATE TABLE IF NOT EXISTS cf ("
-                            "  id VARCHAR, ts TIMESTAMP, query VARCHAR, "
-                            "  title VARCHAR, payload_text VARCHAR"
-                            ")"
-                        )
-                        try:
-                            conn.execute(
-                                "INSERT INTO cf "
-                                "SELECT id, ts, query, title, payload_text "
-                                "FROM shadow_findings "
-                                "ORDER BY ts DESC LIMIT ?",
-                                (_MAX_ROWS_FROM_DUCKDB,),
-                            )
-                        except Exception:
-                            pass
-                        rows = conn.execute(
-                            "SELECT id, ts, query, title, payload_text "
-                            "FROM cf "
-                            "ORDER BY ts DESC LIMIT ?",
-                            (_MAX_ROWS_FROM_DUCKDB,),
-                        ).fetchall()
-                        return [
-                            {
-                                "id": r[0],
-                                "ts": r[1],
-                                "query": r[2],
-                                "title": r[3],
-                                "payload_text": r[4],
-                            }
-                            for r in rows
-                        ]
-                    finally:
-                        conn.close()
-
-                rows = await loop.run_in_executor(None, _read)
+                # F251A: Use duckdb_store async method instead of inline :memory: connect.
+                # Search shadow_findings for rows matching the text query keyword.
+                # extract_nonfeed_seeds_from_findings() scans payload_text/title/query fields.
+                rows = await duckdb_store.async_query_findings_by_text(
+                    like_pattern=query,
+                    limit=_MAX_ROWS_FROM_DUCKDB,
+                )
+                # F251A: Explicit row-count check — no rows means offline memory had no seeds.
+                # Set skip reason so planner preserves diagnostic action (extract_more_seeds_from_duckdb).
+                if not rows:
+                    result["seed_context_skip_reason"] = "offline_memory_no_seeds"
+                    return result
                 if rows:
                     findings_seeds = extract_nonfeed_seeds_from_findings(
                         rows, max_seeds=_MAX_SEEDS_FROM_FINDINGS

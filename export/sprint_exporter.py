@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_lane_details,
+    complete_source_family_outcomes_from_prelude,
     reconcile_lane_detail_fields,
 )
 from hledac.universal.runtime.investigation_planner import (
@@ -114,6 +115,8 @@ def _build_investigation_packet(report: dict) -> dict:
         # 1. Reconcile lane detail fields first
         reconciled = reconcile_lane_detail_fields(dict(report))
         reconciled = complete_source_family_outcomes_from_lane_details(reconciled)
+        # F250A: Complete source_family_outcomes from nonfeed prelude lane sets
+        reconciled = complete_source_family_outcomes_from_prelude(reconciled)
 
         # 2. Build planner state
         planner_state = build_planner_state_from_report(reconciled)
@@ -241,6 +244,288 @@ def _build_investigation_packet(report: dict) -> dict:
             "gaps": ["investigation_packet_build_failed"],
             "planner_actions": [],
             "next_pivots": [],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Sprint F250C: Provider Yield Diagnosis Surface
+# Canonical reports show zero nonfeed yield with fragmented diagnostic signals.
+# This helper synthesizes a unified provider_yield_diagnosis dict from existing
+# report fields: source_family_outcomes, public_discovery_empty_reason,
+# ct_provider_status, doh_terminal_stage, wayback_terminal_state,
+# passive_dns_terminal_state, capability_synthesis.
+#
+# RULES:
+#   - source_family_outcomes is primary when available.
+#   - Detail fields (public_discovery_empty_reason, etc.) are fallback.
+#   - No raw HTML, no raw provider responses.
+#   - No network/model imports.
+#   - Fail-soft: returns partial diagnosis when fields are missing.
+#   - accepted nonfeed evidence changes overall status to partial_yield.
+# ---------------------------------------------------------------------------
+
+def _build_provider_yield_diagnosis(report: dict) -> dict:
+    """
+    Sprint F250C: Build provider_yield_diagnosis from a report dict.
+
+    Returns a compact diagnosis dict with keys:
+      - overall: no_positive_nonfeed_yield | partial_yield | nonfeed_successful
+      - families: {public: {status, reason, action}, ct: {...}, doh: {...}, wayback: {...}, passive_dns: {...}}
+      - recommended_next_engineering_action: str
+      - recommended_next_investigation_action: str
+
+    Bounds:
+      - status values: error_or_zero | cooldown | attempted_empty | successful | skipped | unknown
+      - action values: check_provider_selection_or_bootstrap | retry_later_or_use_cache |
+                       try_passive_dns_or_wayback | retry_with_fresh_seeds | none
+      - recommended_*_action: one of a bounded set of engineering/investigation directives
+    """
+    try:
+        # ── Source family outcomes lookup ─────────────────────────────────────
+        sfo_list: list[dict] = report.get("source_family_outcomes") or []
+        sfo_by_family: dict[str, dict] = {entry.get("family", "").lower(): entry for entry in sfo_list}
+
+        # ── Compute overall nonfeed yield ─────────────────────────────────────
+        nonfeed_accepted = 0
+        for fam, entry in sfo_by_family.items():
+            if fam in ("ct", "doh", "wayback", "passive_dns", "pivot_executor"):
+                nonfeed_accepted += entry.get("accepted_count", 0) or 0
+
+        if nonfeed_accepted > 0:
+            overall = "nonfeed_successful"
+        else:
+            overall = "no_positive_nonfeed_yield"
+
+        # ── PUBLIC diagnosis ───────────────────────────────────────────────────
+        # Primary: source_family_outcomes entry
+        public_outcome = sfo_by_family.get("public", {})
+        public_terminal = public_outcome.get("terminal_state", "") or ""
+        public_error = public_outcome.get("error", "") or ""
+        public_attempted = public_outcome.get("attempted", False)
+
+        # Fallback to detail fields
+        if not public_terminal:
+            public_terminal = report.get("public_terminal_stage", "") or ""
+        if not public_error:
+            public_error = report.get("public_discovery_empty_reason", "") or ""
+
+        # Determine public status and action
+        if public_terminal in ("DISCOVERY_ERROR", "FETCH_ERROR", "FETCH_TIMEOUT"):
+            if public_error in ("provider_returned_zero", "no_provider_selected",
+                                "provider_unavailable", "provider_timeout"):
+                pub_status = "error_or_zero"
+                pub_reason = public_error or "provider_returned_zero"
+                pub_action = "check_provider_selection_or_bootstrap"
+            else:
+                pub_status = "error_or_zero"
+                pub_reason = "DISCOVERY_ERROR"
+                pub_action = "check_provider_selection_or_bootstrap"
+        elif public_terminal in ("ATTEMPTED_NO_RESULTS", "TERMINAL_NO_RESULTS", "NO_CANDIDATES"):
+            pub_status = "attempted_empty"
+            pub_reason = public_error or "no_candidates"
+            pub_action = "retry_with_fresh_seeds"
+        elif not public_attempted and public_terminal in ("SKIPPED", "", None):
+            pub_status = "skipped"
+            pub_reason = "not_attempted"
+            pub_action = "none"
+        else:
+            pub_status = "unknown"
+            pub_reason = public_terminal or "unknown"
+            pub_action = "check_provider_selection_or_bootstrap"
+
+        public_diag = {
+            "status": pub_status,
+            "reason": pub_reason,
+            "action": pub_action,
+        }
+
+        # ── CT diagnosis ───────────────────────────────────────────────────────
+        ct_outcome = sfo_by_family.get("ct", {})
+        ct_terminal = ct_outcome.get("terminal_state", "") or ""
+        ct_error = ct_outcome.get("error", "") or ""
+        ct_attempted = ct_outcome.get("attempted", False)
+
+        if not ct_terminal:
+            ct_terminal = report.get("ct_terminal_stage", "") or ""
+        if not ct_error:
+            ct_error = report.get("ct_provider_status", "") or ""
+            # Strip prefix: "CTProviderStatus.COOLDOWN_ACTIVE" → "cooldown_active"
+            if ct_error.startswith("CTProviderStatus."):
+                ct_error = ct_error[len("CTProviderStatus."):].lower()
+
+        if ct_error in ("cooldown_active", "cooldown"):
+            ct_status = "cooldown"
+            ct_reason = "cooldown_active"
+            ct_action = "retry_later_or_use_cache"
+        elif ct_terminal in ("ATTEMPTED_NO_RESULTS", "no_candidates", "attempted_empty"):
+            ct_status = "attempted_empty"
+            ct_reason = ct_error or "no_candidates"
+            ct_action = "retry_later_or_use_cache"
+        elif ct_terminal in ("ATTEMPTED_ACCEPTED",) or (ct_outcome.get("accepted_count", 0) or 0) > 0:
+            ct_status = "successful"
+            ct_reason = ct_error or "accepted"
+            ct_action = "none"
+        elif not ct_attempted:
+            ct_status = "skipped"
+            ct_reason = "not_attempted"
+            ct_action = "none"
+        else:
+            ct_status = "error_or_zero"
+            ct_reason = ct_error or "unknown"
+            ct_action = "retry_later_or_use_cache"
+
+        ct_diag = {
+            "status": ct_status,
+            "reason": ct_reason,
+            "action": ct_action,
+        }
+
+        # ── DOH diagnosis ──────────────────────────────────────────────────────
+        doh_outcome = sfo_by_family.get("doh", {})
+        doh_terminal = doh_outcome.get("terminal_state", "") or ""
+        doh_error = doh_outcome.get("error", "") or ""
+        doh_attempted = doh_outcome.get("attempted", False)
+
+        if not doh_terminal:
+            doh_terminal = report.get("doh_terminal_stage", "") or ""
+        if not doh_error:
+            doh_error = report.get("doh_provider_errors", "")
+            if isinstance(doh_error, (list, tuple)) and doh_error:
+                doh_error = str(doh_error[0])
+            elif not isinstance(doh_error, str):
+                doh_error = ""
+
+        if doh_terminal in ("attempted_empty", "no_candidates"):
+            doh_status = "attempted_empty"
+            doh_reason = doh_error or "attempted_empty"
+            doh_action = "try_passive_dns_or_wayback"
+        elif doh_terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted") or (doh_outcome.get("accepted_count", 0) or 0) > 0:
+            doh_status = "successful"
+            doh_reason = doh_error or "accepted"
+            doh_action = "none"
+        elif not doh_attempted:
+            doh_status = "skipped"
+            doh_reason = "not_attempted"
+            doh_action = "none"
+        elif doh_terminal in ("timeout", "provider_error", "dependency_missing"):
+            doh_status = "error_or_zero"
+            doh_reason = doh_error or doh_terminal
+            doh_action = "try_passive_dns_or_wayback"
+        else:
+            doh_status = "attempted_empty"
+            doh_reason = doh_terminal or "unknown"
+            doh_action = "try_passive_dns_or_wayback"
+
+        doh_diag = {
+            "status": doh_status,
+            "reason": doh_reason,
+            "action": doh_action,
+        }
+
+        # ── Wayback diagnosis ─────────────────────────────────────────────────
+        wb_outcome = sfo_by_family.get("wayback", {})
+        wb_terminal = wb_outcome.get("terminal_state", "") or ""
+        wb_error = wb_outcome.get("error", "") or ""
+        wb_attempted = wb_outcome.get("attempted", False)
+
+        if not wb_terminal:
+            wb_terminal = report.get("wayback_terminal_state", "") or ""
+
+        if wb_terminal in ("no_terminal", "terminal_no_results", "wayback_unchanged_rejected"):
+            wb_status = "attempted_empty"
+            wb_reason = wb_error or wb_terminal or "no_terminal"
+            wb_action = "none"
+        elif not wb_attempted:
+            wb_status = "skipped"
+            wb_reason = "not_attempted"
+            wb_action = "none"
+        elif wb_outcome.get("accepted_count", 0) or 0 > 0:
+            wb_status = "successful"
+            wb_reason = wb_error or "accepted"
+            wb_action = "none"
+        else:
+            wb_status = "attempted_empty"
+            wb_reason = wb_terminal or "unknown"
+            wb_action = "none"
+
+        wayback_diag = {
+            "status": wb_status,
+            "reason": wb_reason,
+            "action": wb_action,
+        }
+
+        # ── PassiveDNS diagnosis ────────────────────────────────────────────────
+        pdns_outcome = sfo_by_family.get("passive_dns", {})
+        pdns_terminal = pdns_outcome.get("terminal_state", "") or ""
+        pdns_error = pdns_outcome.get("error", "") or ""
+        pdns_attempted = pdns_outcome.get("attempted", False)
+
+        if not pdns_terminal:
+            pdns_terminal = report.get("passive_dns_terminal_state", "") or ""
+
+        if pdns_terminal in ("no_terminal", "terminal_no_results"):
+            pdns_status = "attempted_empty"
+            pdns_reason = pdns_error or "no_terminal"
+            pdns_action = "none"
+        elif not pdns_attempted:
+            pdns_status = "skipped"
+            pdns_reason = "not_attempted"
+            pdns_action = "none"
+        elif pdns_outcome.get("accepted_count", 0) or 0 > 0:
+            pdns_status = "successful"
+            pdns_reason = pdns_error or "accepted"
+            pdns_action = "none"
+        else:
+            pdns_status = "attempted_empty"
+            pdns_reason = pdns_terminal or "unknown"
+            pdns_action = "none"
+
+        pdns_diag = {
+            "status": pdns_status,
+            "reason": pdns_reason,
+            "action": pdns_action,
+        }
+
+        # ── Engineering and investigation recommendations ────────────────────────
+        cap_synth = report.get("capability_synthesis") or {}
+        next_eng = cap_synth.get("next_engineering_action", "") or ""
+        next_inv = cap_synth.get("next_investigation_action", "") or ""
+
+        # Fallback recommendations based on overall status
+        if overall == "no_positive_nonfeed_yield":
+            if next_eng:
+                eng_action = next_eng
+            else:
+                eng_action = "improve_nonfeed_provider_yield"
+            if next_inv:
+                inv_action = next_inv
+            else:
+                inv_action = "use_planner_next_seeds"
+        else:
+            eng_action = next_eng or "none"
+            inv_action = next_inv or "none"
+
+        families: dict[str, dict] = {
+            "public": public_diag,
+            "ct": ct_diag,
+            "doh": doh_diag,
+            "wayback": wayback_diag,
+            "passive_dns": pdns_diag,
+        }
+
+        return {
+            "overall": overall,
+            "families": families,
+            "recommended_next_engineering_action": eng_action,
+            "recommended_next_investigation_action": inv_action,
+        }
+    except Exception as e:
+        logger.warning(f"[EXPORT] provider_yield_diagnosis build failed (fail-soft): {e}")
+        return {
+            "overall": "unknown",
+            "families": {},
+            "recommended_next_engineering_action": "check_provider_selection_or_bootstrap",
+            "recommended_next_investigation_action": "use_planner_next_seeds",
         }
 
 
