@@ -9171,22 +9171,22 @@ class SprintScheduler:
         try:
             semaphore = asyncio.Semaphore(3)
             loop = asyncio.get_running_loop()
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_mlt")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_mlt") as executor:
 
-            async def enrich_one(finding) -> None:
-                async with semaphore:
-                    try:
-                        fid, payload = await loop.run_in_executor(None, _sync_enrich_and_serialize, finding)
-                        with lmdb_env.begin(write=True) as txn:
-                            txn.put(fid.encode(), payload)
-                        self._result.multimodal_enriched_findings += 1
-                    except asyncio.CancelledError:
-                        raise  # Sprint F251C: propagate cancellation
-                    except Exception:
-                        pass  # Fail-safe: never crash
+                async def enrich_one(finding) -> None:
+                    async with semaphore:
+                        try:
+                            fid, payload = await loop.run_in_executor(executor, _sync_enrich_and_serialize, finding)
+                            with lmdb_env.begin(write=True) as txn:
+                                txn.put(fid.encode(), payload)
+                            self._result.multimodal_enriched_findings += 1
+                        except asyncio.CancelledError:
+                            raise  # Sprint F251C: propagate cancellation
+                        except Exception:
+                            pass  # Fail-safe: never crash
 
-            raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
-            _check_gathered(raw_results, log, "multimodal_enrichment")
+                raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
+                _check_gathered(raw_results, log, "multimodal_enrichment")
         except Exception:
             pass  # Fail-safe: never crash
 
@@ -9413,22 +9413,22 @@ class SprintScheduler:
         try:
             semaphore = asyncio.Semaphore(3)
             loop = asyncio.get_running_loop()
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_frn")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_frn") as executor:
 
-            async def enrich_one(finding) -> None:
-                async with semaphore:
-                    try:
-                        fid, payload = await loop.run_in_executor(None, _sync_enrich_and_serialize, finding)
-                        with lmdb_env.begin(write=True) as txn:
-                            txn.put(fid.encode(), payload)
-                        self._result.forensics_enriched_ct_findings += 1
-                    except asyncio.CancelledError:
-                        raise  # Sprint F251C: propagate cancellation
-                    except Exception:
-                        pass  # Fail-safe: never crash
+                async def enrich_one(finding) -> None:
+                    async with semaphore:
+                        try:
+                            fid, payload = await loop.run_in_executor(executor, _sync_enrich_and_serialize, finding)
+                            with lmdb_env.begin(write=True) as txn:
+                                txn.put(fid.encode(), payload)
+                            self._result.forensics_enriched_ct_findings += 1
+                        except asyncio.CancelledError:
+                            raise  # Sprint F251C: propagate cancellation
+                        except Exception:
+                            pass  # Fail-safe: never crash
 
-            raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
-            _check_gathered(raw_results, log, "forensics_enrichment")
+                raw_results = await asyncio.gather(*[enrich_one(f) for f in findings], return_exceptions=True)
+                _check_gathered(raw_results, log, "forensics_enrichment")
         except Exception:
             pass  # Fail-safe: never crash
 
@@ -10768,6 +10768,8 @@ class SprintScheduler:
                 seed_context_skip_reason=getattr(self._result, "seed_context_skip_reason", ""),
                 seed_context_source=getattr(self._result, "seed_context_source", ""),
                 lanes_unlocked_by_seed_context=getattr(self._result, "lanes_unlocked_by_seed_context", []) or [],
+                # F214-ACQ / F251B: Public provider selection debug — last-mile passthrough
+                public_provider_selection_debug=getattr(self._result, "public_provider_selection_debug", None) or {},
             )
         except Exception:
             pass  # fail-soft: acquisition_report is diagnostic only

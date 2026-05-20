@@ -30,6 +30,12 @@ from hledac.universal.transport.circuit_breaker import (
     checked_aiohttp_get,
 )
 
+from hledac.universal.tools.discovery_replay import (
+    read_cassette,
+    replay_enabled,
+    write_cassette,
+)
+
 # Backend: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
 # Both provide DDGS.text() — async via asyncio.to_thread compatibility wrapper
 if TYPE_CHECKING:
@@ -117,6 +123,8 @@ class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
     source_family: str | None = None
     elapsed_s: float | None = None
     error_type: str | None = None
+    # F234-FIX / F253B: provider selection debug context
+    provider_status_debug: list[dict] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +808,37 @@ async def async_search_public_web(
     except (TypeError, ValueError):
         max_results = DEFAULT_MAX_RESULTS
 
+    # ---- Sprint F253B: public discovery replay seam (read-first) ---------
+    if replay_enabled():
+        cassette = read_cassette("public_duckduckgo", trimmed)
+        if cassette is not None:
+            hits_list_cassette = [
+                DiscoveryHit(
+                    query=trimmed,
+                    title=h.get("title", ""),
+                    url=h.get("url", ""),
+                    snippet=h.get("snippet", ""),
+                    source=h.get("source", SOURCE_NAME),
+                    rank=i,
+                    retrieved_ts=h.get("retrieved_ts", time.time()),
+                    score=h.get("score", 0.0),
+                    reason=h.get("reason"),
+                )
+                for i, h in enumerate(cassette.get("hits", []))
+            ]
+            return DiscoveryBatchResult(
+                hits=tuple(hits_list_cassette),
+                error=cassette.get("error"),
+                fallback_triggered=cassette.get("fallback_triggered"),
+                cache_hit=False,
+                provider_name=cassette.get("provider_name", "duckduckgo"),
+                provider_chain=tuple(cassette.get("provider_chain", ["duckduckgo"])),
+                source_family=cassette.get("source_family", "search"),
+                elapsed_s=cassette.get("elapsed_s", 0.0),
+                error_type=cassette.get("error_type"),
+                provider_status_debug=cassette.get("provider_status_debug"),
+            )
+
     # ---- Sprint F213B: query variant expansion for domain-like queries ----
     variants = _build_query_variants(trimmed)
     if len(variants) > 1:
@@ -892,6 +931,25 @@ async def async_search_public_web(
         )
         _set_cached_discovery(trimmed, result)
         return result
+
+    # ---- Sprint F253B: Replay — read from cassette if available (before live call) ----
+    if replay_enabled():
+        cached = read_cassette("duckduckgo", trimmed)
+        if cached is not None:
+            cached_hits = cached.get("hits", ())
+            elapsed = time.monotonic() - start if "start" in dir() else 0.0
+            return DiscoveryBatchResult(
+                hits=tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits,
+                error=cached.get("error"),
+                fallback_triggered=cached.get("fallback_triggered"),
+                cache_hit=False,
+                provider_name=cached.get("provider_name", "duckduckgo"),
+                provider_chain=tuple(cached.get("provider_chain", ["duckduckgo"])),
+                source_family=cached.get("source_family", "search"),
+                elapsed_s=cached.get("elapsed_s", elapsed),
+                error_type=cached.get("error_type"),
+                provider_status_debug=cached.get("provider_status_debug"),
+            )
 
     # ---- per-run query cache check (F207I-A) ---------------------------------
     cached = _get_cached_discovery(trimmed)
@@ -1109,6 +1167,27 @@ async def async_search_public_web(
             }
         ],
     )
+    # Sprint F253B: write cassette after successful live result
+    if replay_enabled():
+        write_cassette("duckduckgo", trimmed, {
+            "hits": list(final_hits),
+            "error": None,
+            "fallback_triggered": None,
+            "cache_hit": False,
+            "provider_name": "duckduckgo",
+            "provider_chain": ["duckduckgo"],
+            "source_family": "search",
+            "elapsed_s": result.elapsed_s,
+            "error_type": None,
+            "provider_status_debug": [
+                {
+                    "provider": "ddg_mojeek",
+                    "state": "production",
+                    "selected": True,
+                    "reason": "primary_backend",
+                }
+            ],
+        })
     _set_cached_discovery(query, result)
     return result
 
