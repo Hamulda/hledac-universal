@@ -4413,7 +4413,7 @@ class SprintScheduler:
                     finally:
                         await miner.close()
                     candidates, rejections, wayback_telemetry = wayback_results_to_findings(
-                        result, str(_wayback_shaped), query,
+                        result, query,
                         sprint_id=f"predispatch-wb-{int(_time.time())}"
                     )
                     # Sprint F231C: Populate wayback advisory fields from bridge telemetry
@@ -5449,6 +5449,7 @@ class SprintScheduler:
                             self._result.seed_quality_keep_count = (
                                 getattr(self._result, "seed_quality_keep_count", 0) + 1
                             )
+                            self._result.seed_quality_checked = True
                     else:
                         # nonfeed_diagnostic: bypass quality gate, inject domain
                         self._result.pivot_seed_domains = (_domain,)
@@ -5656,7 +5657,7 @@ class SprintScheduler:
                             return await self._run_wayback_prelude_lane(
                                 query, duckdb_store, time_module,
                                 nonfeed_prelude_attempted, nonfeed_prelude_terminal,
-                                nonfeed_prelude_accepted,
+                                nonfeed_prelude_accepted, nonfeed_prelude_skipped,
                                 seed_context=seed_context,
                             )
                         elif _lane_name == "PASSIVE_DNS":
@@ -5721,6 +5722,7 @@ class SprintScheduler:
         nonfeed_prelude_attempted: list[str],
         nonfeed_prelude_terminal: list[str],
         nonfeed_prelude_accepted: dict[str, int],
+        nonfeed_prelude_skipped: dict[str, str],
         seed_context: Optional["NonfeedSeedContext"] = None,
     ) -> tuple[str, int]:
         """Sprint F233D / F228A: WAYBACK prelude lane — archive replay for pivot discovery.
@@ -5739,7 +5741,7 @@ class SprintScheduler:
             finally:
                 await _wb_miner.close()
             _wb_cands, _wb_rejs, _wb_tel = wayback_results_to_findings(
-                _wb_result, str(_wb_query), query,
+                _wb_result, query,
                 sprint_id=f"prelude-wb-{int(time_module.time())}"
             )
             if _wb_tel:
@@ -9962,6 +9964,7 @@ class SprintScheduler:
                 "is_meaningful": self._finding_count > 0,
                 "accepted_findings": self._finding_count,
                 "cycles_completed": self._result.cycles_completed,
+                "cycles_started": self._result.cycles_started,
                 "aggressive_mode": True,
             }
             scorecard = {

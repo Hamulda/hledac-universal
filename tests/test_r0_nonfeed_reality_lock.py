@@ -169,7 +169,7 @@ class TestSourceFindingBridge:
             sprint_id="test-sprint",
         )
         assert isinstance(result, tuple), "wayback_results_to_findings must return tuple"
-        assert len(result) == 2, "wayback_results_to_findings must return (findings, rejections)"
+        assert len(result) == 3, "wayback_results_to_findings must return (findings, rejections, telemetry)"
 
     def test_passive_dns_results_to_findings_returns_tuple(self):
         from unittest.mock import MagicMock

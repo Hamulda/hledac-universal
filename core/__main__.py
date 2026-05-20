@@ -1821,6 +1821,9 @@ async def run_sprint(
                 "effective_parallelism": len(live_feed_urls),
                 "effective_timeouts": {},
                 "active_iteration_count": active_iterations,
+                # [F235] cycles_started/completed mirror runtime truth from scheduler result
+                "cycles_started": result.cycles_started,
+                "cycles_completed": result.cycles_completed,
                 "pre_loop_elapsed_s": result.pre_loop_elapsed_s,
                 "pre_loop_blocker_reason": result.pre_loop_blocker_reason,
                 "pre_active_starvation": result.pre_active_starved,
