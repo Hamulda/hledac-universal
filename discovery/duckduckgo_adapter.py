@@ -883,7 +883,13 @@ async def async_search_public_web(
 
         # Determine error: if all variants failed, return error; otherwise None
         final_error = "|".join(variant_errors) if len(variant_errors) == len(variants) else None
-        result = DiscoveryBatchResult(hits=final_hits, error=final_error)
+        result = DiscoveryBatchResult(
+            hits=final_hits,
+            error=final_error,
+            provider_status_debug=[
+                {"provider": "ddg_mojeek", "state": "production", "selected": True, "reason": "multi_variant_search"},
+            ],
+        )
         _set_cached_discovery(trimmed, result)
         return result
 
@@ -900,6 +906,8 @@ async def async_search_public_web(
             elapsed_s=cached.elapsed_s,
             error_type=cached.error_type,
             cache_hit=True,
+            # F234-FIX: cache hit preserves provider selection context
+            provider_status_debug=getattr(cached, 'provider_status_debug', None),
         )
         return cached_cache_hit
 
@@ -915,7 +923,13 @@ async def async_search_public_web(
     except (asyncio.TimeoutError, TimeoutError):
         # asyncio.timeout raises TimeoutError from stdlib in __aexit__
         _last_error = "timeout"
-        return DiscoveryBatchResult(hits=(), error="timeout")
+        return DiscoveryBatchResult(
+            hits=(),
+            error="timeout",
+            provider_status_debug=[
+                {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "timeout"},
+            ],
+        )
     except Exception as e:
         # ---- fail-soft: classify into concrete error taxonomy (F206AB) ----
         err_str = str(e)
@@ -939,7 +953,14 @@ async def async_search_public_web(
         # ---- bounded fallback: backend_error variants / timeout only (NOT rate_limited) --
         _BACKEND_ERROR_TAGS = {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}
         if error_tag not in _BACKEND_ERROR_TAGS and error_tag != "timeout":
-            return DiscoveryBatchResult(hits=(), error=error_tag)
+            return DiscoveryBatchResult(
+            hits=(),
+            error=error_tag,
+            # F234-FIX: provider selected before failure occurred
+            provider_status_debug=[
+                {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": f"non_backend_error_{error_tag}"},
+            ],
+        )
 
         try:
             fallback_hits = await _scrape_mojeek(trimmed, n=max_results)
@@ -994,12 +1015,20 @@ async def async_search_public_web(
                 hits=final_hits,
                 error=error_tag,
                 fallback_triggered="primary_backend_failed_fallback_succeeded",
+                provider_status_debug=[
+                    {"provider": "ddg_mojeek", "state": "production", "selected": True, "reason": "fallback_succeeded"},
+                    {"provider": "mojeek_scrape", "state": "production", "selected": True, "reason": "fallback_primary"},
+                ],
             )
         else:
             return DiscoveryBatchResult(
                 hits=(),
                 error=error_tag,
                 fallback_triggered="primary_backend_failed_fallback_failed",
+                provider_status_debug=[
+                    {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},
+                    {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},
+                ],
             )
 
     # ---- noise filter + signal-based ranking ---------------------------------
@@ -1065,7 +1094,21 @@ async def async_search_public_web(
         for i, h in enumerate(hits_list[:max_results])
     )
 
-    result = DiscoveryBatchResult(hits=final_hits, error=None)
+    result = DiscoveryBatchResult(
+        hits=final_hits,
+        error=None,
+        # F234-FIX: provider_status_debug tells _extract_provider_surface which
+        # provider was selected so it does NOT fall through to "no_provider_selected"
+        # when the search actually ran and returned (even empty) results.
+        provider_status_debug=[
+            {
+                "provider": "ddg_mojeek",
+                "state": "production",
+                "selected": True,
+                "reason": "primary_backend",
+            }
+        ],
+    )
     _set_cached_discovery(query, result)
     return result
 

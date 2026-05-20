@@ -785,10 +785,16 @@ def _extract_provider_surface(
             if not empty_reason_out:
                 empty_reason_out.append("provider_returned_zero")
 
-    # If no providers selected at all
+    # If no providers selected at all — F234-FIX: preserve specific reason if already set
+    # Previously this would overwrite "provider_returned_zero" / "provider_timeout" etc.
     if not selected_out and not psd:
         if not empty_reason_out:
             empty_reason_out.append("no_provider_selected")
+        else:
+            # A specific reason (provider_timeout, provider_returned_zero, etc.) was
+            # already set by the error-handling above. Preserve it instead of overwriting
+            # with the generic "no_provider_selected". This provides better diagnostics.
+            pass
 
     # F232: When hits are empty and no specific reason set yet, set provider_returned_zero
     # This handles the case where provider returned zero without an error string
@@ -3246,6 +3252,9 @@ async def async_run_live_public_pipeline(
                         _pub_rescue_candidates_count = len(rescue_hits)
                         if rescue_hits:
                             _pub_rescue_order = "rescue_fallback"
+                            # F251B: Prepend rescue hits immediately so discovery stage has candidates
+                            bootstrap_hits = rescue_hits
+                            rescue_hits = []
                     except Exception:
                         _pub_rescue_candidates_count = 0
 
@@ -3308,6 +3317,18 @@ async def async_run_live_public_pipeline(
                     hits = tuple(rescue_hits) + tuple(hits)
                     _pub_rescue_fetch_attempted = len(rescue_hits)
 
+                # F251B: Track bootstrap order — rescue_fallback if rescue candidates used
+                if bootstrap_hits:
+                    if _pub_rescue_order == "rescue_fallback":
+                        _pub_bootstrap_order = "rescue_fallback"
+                    else:
+                        _pub_bootstrap_order = "before_discovery"
+                    _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
+                    _pub_bootstrap_first_fetch_attempted = True
+                    _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else ()
+                    if len(_disc_hits) == 0:
+                        _pub_bootstrap_prevented_discovery_timeout = True
+
                 err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
                 if err_val:
                     discovery_error = str(err_val)
@@ -3338,7 +3359,6 @@ async def async_run_live_public_pipeline(
 
             # Sprint F229A: Check for hits AFTER bootstrap prepend
             if not hits:
-                # Build zeroed telemetry for early return
                 discovery_telemetry = {
                     'discovery_result': None,
                     'public_stage_failure': 'discovery_empty',
@@ -3348,9 +3368,9 @@ async def async_run_live_public_pipeline(
                     'public_discovery_attempted': discovery_attempted,
                     'public_discovery_cache_hit': public_discovery_cache_hit,
                     'public_discovery_query_count': public_discovery_query_count,
-                    'public_bootstrap_order': 'disabled',
-                    'public_bootstrap_prevented_discovery_timeout': False,
-                    'public_bootstrap_first_fetch_attempted': False,
+                    'public_bootstrap_order': _pub_bootstrap_order if _pub_bootstrap_order else 'disabled',
+                    'public_bootstrap_prevented_discovery_timeout': _pub_bootstrap_prevented_discovery_timeout,
+                    'public_bootstrap_first_fetch_attempted': _pub_bootstrap_first_fetch_attempted,
                     'public_bootstrap_candidates_count': _pub_bootstrap_candidates_count,
                     'public_bootstrap_fetch_attempted': _pub_bootstrap_fetch_attempted,
                     # Sprint F220C: Rescue telemetry

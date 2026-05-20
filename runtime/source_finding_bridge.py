@@ -29,6 +29,7 @@ Verify:
 from __future__ import annotations
 
 import hashlib
+import heapq
 import re
 import time
 from typing import Any, List, Optional, Tuple
@@ -1236,12 +1237,8 @@ def summarize_bridge_conversion(
     for reason in rejections:
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
-    # Cap rejection reason entries
-    sorted_reasons = sorted(
-        rejection_counts.items(),
-        key=lambda x: (-x[1], x[0]),
-    )
-    top_rejections = dict(sorted_reasons[:10])
+    # Cap rejection reason entries — nlargest avoids full sort for small N
+    top_rejections = dict(heapq.nlargest(10, rejection_counts.items(), key=lambda x: (-x[1], x[0])))
 
     total = min(len(findings) + len(rejections), MAX_BRIDGE_OUTPUT)
 
@@ -1291,10 +1288,7 @@ def summarize_wayback_conversion(
     for reason in rejections:
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
-    all_rejection_reasons = dict(sorted(
-        rejection_counts.items(),
-        key=lambda x: (-x[1], x[0]),
-    )[:20])
+    all_rejection_reasons = dict(heapq.nlargest(20, rejection_counts.items(), key=lambda x: (-x[1], x[0])))
 
     # Build examples: up to 5 non-unchanged events as advisory clues
     examples: list[dict[str, str]] = []
@@ -1357,10 +1351,7 @@ def summarize_passive_dns_conversion(
     for reason in rejections:
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
-    all_rejection_reasons = dict(sorted(
-        rejection_counts.items(),
-        key=lambda x: (-x[1], x[0]),
-    )[:20])
+    all_rejection_reasons = dict(heapq.nlargest(20, rejection_counts.items(), key=lambda x: (-x[1], x[0])))
 
     # advisory_clues: private IPs tell us domain resolves to internal infra (useful signal)
     advisory_clues = private_rejected + ip_total
@@ -1458,11 +1449,7 @@ def summarize_ct_conversion(
     total_processed = min(raw_hits_count, MAX_BRIDGE_OUTPUT)
 
     # All unique reasons capped at 20
-    sorted_reasons = sorted(
-        rejection_counts.items(),
-        key=lambda x: (-x[1], x[0]),
-    )
-    all_rejection_reasons = dict(sorted_reasons[:20])
+    all_rejection_reasons = dict(heapq.nlargest(20, rejection_counts.items(), key=lambda x: (-x[1], x[0])))
 
     # F213A telemetry fields — sourced from telemetry dict when available
     ct_raw_entries = (telemetry or {}).get("ct_raw_entries", raw_hits_count)
@@ -1724,10 +1711,7 @@ def summarize_doh_conversion(
     for reason in rejections:
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
-    all_rejection_reasons = dict(sorted(
-        rejection_counts.items(),
-        key=lambda x: (-x[1], x[0]),
-    )[:20])
+    all_rejection_reasons = dict(heapq.nlargest(20, rejection_counts.items(), key=lambda x: (-x[1], x[0])))
 
     # Advisory clues: derived intel signals (useful even when accepted=0)
     advisory_clues = (
@@ -2194,10 +2178,7 @@ def summarize_rdap_conversion(
     for reason in rejections:
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
-    all_rejection_reasons = dict(sorted(
-        rejection_counts.items(),
-        key=lambda x: (-x[1], x[0]),
-    )[:20])
+    all_rejection_reasons = dict(heapq.nlargest(20, rejection_counts.items(), key=lambda x: (-x[1], x[0])))
 
     advisory_clues = ns_c + st_c + ev_c + en_c + net_c
 

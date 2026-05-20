@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
+import itertools
 
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
@@ -511,7 +512,7 @@ def render_investigation_packet_markdown(packet: dict | None) -> str:
     corr = packet.get("corroboration") or {}
     lines.append("### Corroboration")
     if corr:
-        for ioc, score in list(corr.items())[:20]:
+        for ioc, score in itertools.islice(corr.items(), 20):
             lines.append(f"- {ioc}: {round(float(score), 4) if score is not None else 0.0}")
     else:
         lines.append("- _No corroboration scores_")

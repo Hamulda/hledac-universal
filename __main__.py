@@ -240,8 +240,8 @@ def build_parser() -> "argparse.ArgumentParser":
         "--acquisition-profile",
         type=str,
         default="default",
-        choices=["default", "nonfeed_diagnostic"],
-        help="F216B: Acquisition runtime profile (default | nonfeed_diagnostic)",
+        choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
+        help="F216B/F251D: Acquisition runtime profile (default | nonfeed_diagnostic | deep_osint_m1)",
     )
     # Python 3.14 argparse settings
     try:

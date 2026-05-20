@@ -462,7 +462,10 @@ def _scheduler_result_acquisition_payload(
             acquisition_profile=_safe_config_get(_nd, "acquisition_profile", "default") if _nd else (_acq_effective or "default"),
             feed_cap_reason=_nd.get("feed_cap_reason") if _nd else None,
             nonfeed_priority_enabled=_nd.get("nonfeed_priority_enabled", False) if _nd else (_acq_effective == "nonfeed_diagnostic"),
-            nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else (["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"] if _acq_effective == "nonfeed_diagnostic" else []),
+            nonfeed_profile_expected_lanes=_nd.get("nonfeed_profile_expected_lanes", []) if _nd else (
+                ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
+                if _acq_effective in ("nonfeed_diagnostic", "deep_osint_m1") else []
+            ),
             # F217C: PUBLIC bootstrap telemetry
             public_terminal_stage=getattr(result, "public_terminal_stage", ""),
             public_stage_counters=getattr(result, "public_stage_counters", None),
@@ -1166,8 +1169,8 @@ async def run_sprint(
         _acq_normalized = True
     # Check _acq_effective (not _acq_input) since _acq_effective may have been
     # normalized by the alias check above — we only want to flag truly unknown values
-    if _acq_effective not in ("default", "nonfeed_diagnostic"):
-        if _acq_input is not None and _acq_input not in ("default", "nonfeed_diagnostic"):
+    if _acq_effective not in ("default", "nonfeed_diagnostic", "deep_osint_m1"):
+        if _acq_input is not None and _acq_input not in ("default", "nonfeed_diagnostic", "deep_osint_m1"):
             logger.warning(
                 "[F228A] Unknown acquisition_profile=%r normalized to 'default'",
                 _acq_input,
@@ -2217,8 +2220,8 @@ def main() -> None:
         "--acquisition-profile",
         type=str,
         default="default",
-        choices=["default", "nonfeed_diagnostic"],
-        help="F216B: Acquisition runtime profile (default | nonfeed_diagnostic)",
+        choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
+        help="F216B/F251D: Acquisition runtime profile (default | nonfeed_diagnostic | deep_osint_m1)",
     )
     args = parser.parse_args()
 

@@ -28,6 +28,7 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import gc
 import logging
 import os
@@ -9126,6 +9127,8 @@ class SprintScheduler:
 
     # ── Sprint F195C: Multimodal enrichment ─────────────────────────────────
 
+    # ── Sprint F251C: M1 Event Loop Offload for Enrichment ───────────────────
+    # Sprint F251C: offload CPU-heavy enrich+serialize to thread pool, keep event loop responsive
     async def _enrich_findings_multimodal(self, findings: list) -> None:
         """
         Enrich PDF/image findings with multimodal analysis before storage.
@@ -9140,21 +9143,45 @@ class SprintScheduler:
         if enricher is None or lmdb_env is None:
             return
 
+        # Sprint F251C: orjson available (requirements.txt line 27)
         try:
+            import orjson
+            _serialize = lambda r: orjson.dumps(r)
+        except ImportError:
             import json
+            _serialize = lambda r: json.dumps(r).encode()
+
+        def _sync_enrich_and_serialize(finding) -> tuple[str, bytes] | None:
+            """Sync wrapper: enrich + serialize in thread pool. Returns (fid, payload) or None."""
+            try:
+                # Run blocking enrich on thread (CPU-heavy, no event loop needed)
+                result = enricher.enrich(finding)
+                if result is not None:
+                    fid = getattr(finding, "finding_id", None)
+                    if fid:
+                        payload_bytes = _serialize(result)
+                        # Ensure bytes (orjson returns bytes directly; json returns str so encode)
+                        if isinstance(payload_bytes, str):
+                            payload_bytes = payload_bytes.encode()
+                        return (fid, payload_bytes)
+            except Exception:
+                pass
+            return None
+
+        try:
             semaphore = asyncio.Semaphore(3)
+            loop = asyncio.get_running_loop()
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_mlt")
 
             async def enrich_one(finding) -> None:
                 async with semaphore:
                     try:
-                        result = await enricher.enrich(finding)
-                        if result is not None:
-                            fid = getattr(finding, "finding_id", None)
-                            if fid:
-                                payload = json.dumps(result).encode()
-                                with lmdb_env.begin(write=True) as txn:
-                                    txn.put(fid.encode(), payload)
-                                self._result.multimodal_enriched_findings += 1
+                        fid, payload = await loop.run_in_executor(None, _sync_enrich_and_serialize, finding)
+                        with lmdb_env.begin(write=True) as txn:
+                            txn.put(fid.encode(), payload)
+                        self._result.multimodal_enriched_findings += 1
+                    except asyncio.CancelledError:
+                        raise  # Sprint F251C: propagate cancellation
                     except Exception:
                         pass  # Fail-safe: never crash
 
@@ -9345,6 +9372,7 @@ class SprintScheduler:
 
     # ── Sprint F195C: Forensics enrichment ─────────────────────────────────
 
+    # ── Sprint F251C: M1 Event Loop Offload for Enrichment ───────────────────
     async def _enrich_ct_findings_forensics(self, findings: list) -> None:
         """
         Enrich CT findings with forensics analysis before storage.
@@ -9359,21 +9387,43 @@ class SprintScheduler:
         if enricher is None or lmdb_env is None:
             return
 
+        # Sprint F251C: orjson available (requirements.txt line 27)
         try:
+            import orjson
+            _serialize = lambda r: orjson.dumps(r)
+        except ImportError:
             import json
+            _serialize = lambda r: json.dumps(r).encode()
+
+        def _sync_enrich_and_serialize(finding) -> tuple[str, bytes] | None:
+            """Sync wrapper: enrich + serialize in thread pool. Returns (fid, payload) or None."""
+            try:
+                result = enricher.enrich(finding)
+                if result is not None:
+                    fid = getattr(finding, "finding_id", None)
+                    if fid:
+                        payload_bytes = _serialize(result)
+                        if isinstance(payload_bytes, str):
+                            payload_bytes = payload_bytes.encode()
+                        return (fid, payload_bytes)
+            except Exception:
+                pass
+            return None
+
+        try:
             semaphore = asyncio.Semaphore(3)
+            loop = asyncio.get_running_loop()
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="f251c_frn")
 
             async def enrich_one(finding) -> None:
                 async with semaphore:
                     try:
-                        result = await enricher.enrich(finding)
-                        if result is not None:
-                            fid = getattr(finding, "finding_id", None)
-                            if fid:
-                                payload = json.dumps(result).encode()
-                                with lmdb_env.begin(write=True) as txn:
-                                    txn.put(fid.encode(), payload)
-                                self._result.forensics_enriched_ct_findings += 1
+                        fid, payload = await loop.run_in_executor(None, _sync_enrich_and_serialize, finding)
+                        with lmdb_env.begin(write=True) as txn:
+                            txn.put(fid.encode(), payload)
+                        self._result.forensics_enriched_ct_findings += 1
+                    except asyncio.CancelledError:
+                        raise  # Sprint F251C: propagate cancellation
                     except Exception:
                         pass  # Fail-safe: never crash
 

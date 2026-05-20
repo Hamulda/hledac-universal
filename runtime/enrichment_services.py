@@ -123,8 +123,6 @@ class EnrichmentServices:
             return
 
         try:
-            import json
-
             semaphore = asyncio.Semaphore(3)
 
             async def enrich_one(finding) -> None:
@@ -134,7 +132,13 @@ class EnrichmentServices:
                         if res is not None:
                             fid = getattr(finding, "finding_id", None)
                             if fid:
-                                payload = json.dumps(res).encode()
+                                # Sprint F251C: orjson available (requirements.txt line 27)
+                                try:
+                                    import orjson
+                                    payload = orjson.dumps(res)
+                                except ImportError:
+                                    import json
+                                    payload = json.dumps(res).encode()
                                 with lmdb_env.begin(write=True) as txn:
                                     txn.put(fid.encode(), payload)
                                 if result is not None:
@@ -166,8 +170,6 @@ class EnrichmentServices:
             return
 
         try:
-            import json
-
             semaphore = asyncio.Semaphore(3)
 
             async def enrich_one(finding) -> None:
@@ -177,7 +179,13 @@ class EnrichmentServices:
                         if res is not None:
                             fid = getattr(finding, "finding_id", None)
                             if fid:
-                                payload = json.dumps(res).encode()
+                                # Sprint F251C: orjson available (requirements.txt line 27)
+                                try:
+                                    import orjson
+                                    payload = orjson.dumps(res)
+                                except ImportError:
+                                    import json
+                                    payload = json.dumps(res).encode()
                                 with lmdb_env.begin(write=True) as txn:
                                     txn.put(fid.encode(), payload)
                                 if result is not None:

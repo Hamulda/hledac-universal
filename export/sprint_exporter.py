@@ -1779,6 +1779,8 @@ def _build_product_value_summary(
         "terminal_coverage_reason": _terminal_coverage_reason_str(scorecard),
         # F232C: Provider yield signals from existing provider debug surfaces
         **_compute_provider_yield_signals(scorecard),
+        # F251E: Enrichment value delta — sidecar IOC yield measurement
+        **_build_enrichment_value_delta(scorecard, accepted),
     }
 
     # Remove None fields for cleaner output (keep 0 as valid)
@@ -1786,6 +1788,121 @@ def _build_product_value_summary(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# F251E: Enrichment Value Delta
+# Measures how much new IOC value sidecars added vs. raw input findings.
+# Canonical read-only seam — no network, no model, no new store API.
+# ---------------------------------------------------------------------------
+
+def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
+    """
+    Sprint F251E: Build enrichment_value_delta from scorecard surfaces.
+
+    Measures sidecar IOC yield: unique new domains/IPs extracted by sidecars
+    vs. the raw accepted findings fed into the sidecar bus.
+
+    Sources (all read-only, no network/model):
+      - scorecard.source_family_outcomes (sidecar family outcomes)
+      - scorecard.graph_signal (nodes/edges delta from graph_accumulator)
+      - scorecard.next_seeds_from_enrichment (enrichment-seeded next seeds count)
+
+    Verdict rules:
+      - no_input: input_accepted == 0
+      - no_enrichment_yield: input > 0 but zero sidecar stored findings
+      - low_enrichment_yield: sidecars ran but yielded no unique domains/IPs
+      - useful_enrichment_yield: sidecars produced unique domains or IPs
+
+    Graph delta: surfaced as null with reason when scorecard.graph_signal absent.
+
+    Bounds: sample lists capped at 20 items to prevent report bloat.
+    """
+    evd: dict[str, Any] = {
+        "input_accepted_findings_count": input_accepted,
+        "sidecar_stored_findings_count": 0,
+        "sidecar_source_families": [],
+        "new_unique_iocs_from_sidecars": 0,
+        "new_unique_domains_from_sidecars": 0,
+        "new_unique_ips_from_sidecars": 0,
+        "graph_nodes_added": None,
+        "graph_edges_added": None,
+        "next_seeds_from_enrichment_count": 0,
+        "enrichment_value_ratio": 0.0,
+        "verdict": "no_input",
+    }
+
+    if input_accepted == 0:
+        evd["verdict"] = "no_input"
+        return evd
+
+    # ── Sidecar outcomes from source_family_outcomes ─────────────────────────
+    sfo_list: list[dict] = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
+
+    # Collect sidecar families (non-feed families that attempted and stored findings)
+    sidecar_families: list[str] = []
+    total_stored = 0
+    sample_domains: list[str] = []
+    sample_ips: list[str] = []
+
+    for entry in sfo_list:
+        if not isinstance(entry, dict):
+            continue
+        fam = entry.get("family", "")
+        # Sidecar families are non-feed families that represent enrichment runners
+        if fam in ("feed", ""):
+            continue
+        attempted = entry.get("attempted", False)
+        if not attempted:
+            continue
+        stored = entry.get("stored_count", 0) or 0
+        total_stored += stored
+        if stored <= 0:
+            continue
+        if fam not in sidecar_families:
+            sidecar_families.append(fam)
+        # Collect sample IOCs from family entries (bound at 20 per type)
+        for dom in (entry.get("sample_domains", []) or [])[:20]:
+            if dom and dom not in sample_domains:
+                sample_domains.append(dom)
+        for ip in (entry.get("sample_ips", []) or [])[:20]:
+            if ip and ip not in sample_ips:
+                sample_ips.append(ip)
+
+    evd["sidecar_stored_findings_count"] = total_stored
+    evd["sidecar_source_families"] = sidecar_families
+    evd["new_unique_domains_from_sidecars"] = len(sample_domains)
+    evd["new_unique_ips_from_sidecars"] = len(sample_ips)
+    evd["new_unique_iocs_from_sidecars"] = len(sample_domains) + len(sample_ips)
+
+    if total_stored == 0:
+        evd["verdict"] = "no_enrichment_yield"
+        evd["enrichment_value_ratio"] = 0.0
+        return evd
+
+    # ── Graph delta from scorecard.graph_signal ─────────────────────────────
+    gs: dict | None = scorecard.get("graph_signal") if isinstance(scorecard, dict) else None
+    if isinstance(gs, dict):
+        evd["graph_nodes_added"] = gs.get("nodes") or gs.get("graph_nodes") or 0
+        evd["graph_edges_added"] = gs.get("edges") or gs.get("graph_edges") or 0
+    else:
+        evd["graph_nodes_added"] = None
+        evd["graph_edges_added"] = None
+
+    # ── Next seeds from enrichment ───────────────────────────────────────────
+    nse = scorecard.get("next_seeds_from_enrichment", 0) if isinstance(scorecard, dict) else 0
+    evd["next_seeds_from_enrichment_count"] = max(0, int(nse))
+
+    # ── Verdict based on unique IOC yield ─────────────────────────────────────
+    unique_iocs = evd["new_unique_iocs_from_sidecars"]
+    evd["enrichment_value_ratio"] = round(unique_iocs / max(input_accepted, 1), 4)
+
+    if unique_iocs == 0:
+        evd["verdict"] = "low_enrichment_yield"
+    else:
+        evd["verdict"] = "useful_enrichment_yield"
+
+    return evd
+
+
 # ---------------------------------------------------------------------------
 # F229B/F230E: Lane corroboration score helpers
 # ---------------------------------------------------------------------------
