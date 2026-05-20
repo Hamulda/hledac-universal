@@ -2028,6 +2028,175 @@ def _build_engineering_action_map(
 
 
 # ---------------------------------------------------------------------------
+# F260A: Expected Evidence Contract
+# Compares provider_yield_diagnosis against what was expected for the
+# mission intent + seed classes. Read-only seam — no network, no model.
+# ---------------------------------------------------------------------------
+
+def _build_expected_evidence(
+    intent: str,
+    pyd: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Sprint F260A: Build expected_evidence contract from intent + pyd.
+
+    Returns a compact contract dict with keys:
+      - intent: str                          (canonical intent name)
+      - expected_families: list[str]         (source families expected to yield)
+      - minimum_success: str                 (pass/fail/minimal/partial)
+      - missing_critical: list[str]           (families that failed critically)
+      - unexpected_skipped: list[str]         (families skipped unexpectedly)
+      - contract_status: str                  (met | partial | unmet | no_strict_expectation)
+
+    Contract rules per intent:
+
+      domain_infrastructure:
+        expected_families = ["public", "ct", "passive_dns", "wayback"]
+        minimum: any(["ct", "passive_dns", "rdap"]) or next_seeds > 0
+        missing_critical if none of ct/pdns succeed and next_seeds == 0
+
+      malware_family:
+        expected_families = ["public"]
+        minimum: public yields candidate domains OR next_seeds > 0
+
+      vulnerability:
+        expected_families = ["public", "ct", "wayback"]
+        minimum: public or ct yields CVEs/IDs
+
+      cve_recon:
+        expected_families = ["public", "ct", "wayback"]
+        minimum: any public or ct yields CVE indicators
+
+      wallet_recon:
+        expected_families = ["public", "ct"]
+        minimum: any yields blockchain-adjacent indicators
+
+      unknown / other:
+        no_strict_expectation — pass through
+
+    Bounds:
+      - expected_families: bounded set per intent (see above)
+      - minimum_success: pass | fail | minimal | partial | no_strict_expectation
+      - contract_status: met | partial | unmet | no_strict_expectation
+      - All lists bounded; empty lists when nothing missing.
+    """
+    # Guard: fail-soft for None/non-dict pyd (empty families dict is valid — processes as unmet)
+    if pyd is None or not isinstance(pyd, dict):
+        return {
+            "intent": intent,
+            "expected_families": [],
+            "minimum_success": "no_strict_expectation",
+            "missing_critical": [],
+            "unexpected_skipped": [],
+            "contract_status": "no_strict_expectation",
+        }
+    families = pyd.get("families", {}) if isinstance(pyd.get("families"), dict) else {}
+
+    # Canonical family status helper
+    def _family_status(name: str) -> str:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("status", "unknown") if isinstance(entry, dict) else "unknown"
+
+    def _family_accepted(name: str) -> int:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("accepted_count", 0) or 0 if isinstance(entry, dict) else 0
+
+    def _family_attempted(name: str) -> bool:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("attempted", False) if isinstance(entry, dict) else False
+
+    # ----- domain_infrastructure -----
+    if intent == "domain_recon":
+        expected = ["public", "ct", "passive_dns", "wayback"]
+        success_families = [f for f in expected if _family_status(f) == "successful"]
+        attempted_families = [f for f in expected if _family_attempted(f)]
+
+        # minimum_success: any of ct/pdns succeed OR next_seeds > 0
+        # We only know seed_classes here; next_seeds is not available in this helper
+        # so we check for at least ct or pdns success
+        minimum_met = len([f for f in ("ct", "passive_dns") if _family_status(f) == "successful"]) > 0
+
+        missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
+        unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and f in attempted_families]
+
+        if minimum_met:
+            contract_status = "met"
+        elif success_families:
+            contract_status = "partial"
+        else:
+            contract_status = "unmet"
+
+        return {
+            "intent": intent,
+            "expected_families": expected,
+            "minimum_success": "partial" if success_families else "fail",
+            "missing_critical": missing,
+            "unexpected_skipped": unexpected_skipped,
+            "contract_status": contract_status,
+        }
+
+    # ----- malware_family / wallet_recon -----
+    if intent in ("malware_family", "wallet_recon"):
+        expected = ["public"] + (["ct"] if intent == "wallet_recon" else [])
+        public_status = _family_status("public")
+
+        # minimum: public yields candidate domains (accepted > 0)
+        public_accepted = _family_accepted("public")
+
+        missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
+        unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and _family_attempted(f)]
+
+        if public_accepted > 0:
+            contract_status = "met"
+            minimum = "pass"
+        else:
+            contract_status = "unmet"
+            minimum = "fail"
+
+        return {
+            "intent": intent,
+            "expected_families": expected,
+            "minimum_success": minimum,
+            "missing_critical": missing,
+            "unexpected_skipped": unexpected_skipped,
+            "contract_status": contract_status,
+        }
+
+    # ----- vulnerability / cve_recon -----
+    if intent in ("cve_recon", "vulnerability"):
+        expected = ["public", "ct", "wayback"]
+        success_families = [f for f in expected if _family_status(f) == "successful"]
+
+        missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
+        unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and _family_attempted(f)]
+
+        if success_families:
+            contract_status = "met"
+        else:
+            contract_status = "unmet"
+
+        return {
+            "intent": intent,
+            "expected_families": expected,
+            "minimum_success": "pass" if success_families else "fail",
+            "missing_critical": missing,
+            "unexpected_skipped": unexpected_skipped,
+            "contract_status": contract_status,
+        }
+
+    # ----- org_recon / person_recon / unknown -----
+    # No strict expectation — defer to other signals
+    return {
+        "intent": intent,
+        "expected_families": [],
+        "minimum_success": "no_strict_expectation",
+        "missing_critical": [],
+        "unexpected_skipped": [],
+        "contract_status": "no_strict_expectation",
+    }
+
+
+# ---------------------------------------------------------------------------
 # F229B/F230E: Lane corroboration score helpers
 # ---------------------------------------------------------------------------
 

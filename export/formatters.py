@@ -278,6 +278,12 @@ class JSONFormatter(ExportFormatter):
                 sanitized_obj["engineering_action_map"] = _build_engineering_action_map(
                     sanitized_obj.get("provider_yield_diagnosis"), sanitized_obj.get("enrichment_value_delta")
                 )
+                # Sprint F260A: expected_evidence — intent-based contract against pyd
+                from hledac.universal.export.sprint_exporter import _build_expected_evidence
+                sanitized_obj["expected_evidence"] = _build_expected_evidence(
+                    intent=sanitized_obj.get("mission_intent", "unknown"),
+                    pyd=sanitized_obj.get("provider_yield_diagnosis"),
+                )
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 
