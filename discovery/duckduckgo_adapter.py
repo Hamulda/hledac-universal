@@ -36,6 +36,8 @@ from hledac.universal.tools.discovery_replay import (
     write_cassette,
 )
 
+_PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
+
 # Backend: ddgs v9+ (primary) or duckduckgo_search v8.x (fallback)
 # Both provide DDGS.text() — async via asyncio.to_thread compatibility wrapper
 if TYPE_CHECKING:
@@ -934,7 +936,7 @@ async def async_search_public_web(
 
     # ---- Sprint F253B: Replay — read from cassette if available (before live call) ----
     if replay_enabled():
-        cached = read_cassette("duckduckgo", trimmed)
+        cached = read_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed)
         if cached is not None:
             cached_hits = cached.get("hits", ())
             elapsed = time.monotonic() - start if "start" in dir() else 0.0
@@ -1169,7 +1171,7 @@ async def async_search_public_web(
     )
     # Sprint F253B: write cassette after successful live result
     if replay_enabled():
-        write_cassette("duckduckgo", trimmed, {
+        write_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed, {
             "hits": list(final_hits),
             "error": None,
             "fallback_triggered": None,

@@ -273,6 +273,11 @@ class JSONFormatter(ExportFormatter):
                 # Sprint F250C: provider yield diagnosis — surfaced alongside investigation_packet
                 from hledac.universal.export.sprint_exporter import _build_provider_yield_diagnosis
                 sanitized_obj["provider_yield_diagnosis"] = _build_provider_yield_diagnosis(sanitized_obj)
+                # Sprint F254C: engineering_action_map — deterministic action from pyd + evd
+                from hledac.universal.export.sprint_exporter import _build_engineering_action_map
+                sanitized_obj["engineering_action_map"] = _build_engineering_action_map(
+                    sanitized_obj.get("provider_yield_diagnosis"), sanitized_obj.get("enrichment_value_delta")
+                )
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 

@@ -1904,6 +1904,130 @@ def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# F254C: Engineering Action Map
+# Maps provider_yield_diagnosis + enrichment_value_delta to a deterministic
+# engineering action recommendation for the sprint report.
+# Canonical read-only seam — no network, no model, no new store API.
+# ---------------------------------------------------------------------------
+
+def _build_engineering_action_map(
+    pyd: dict[str, Any] | None,
+    evd: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Sprint F254C: Build engineering_action_map from pyd + evd.
+
+    Returns a compact recommendation dict with keys:
+      - primary_action: str  (bounded action name)
+      - reason: str          (one-line explanation)
+      - target_area: str     (provider_selection|seed_quality|provider_yield|
+                               enrichment|storage|none)
+      - confidence: float    (0.0-1.0)
+
+    Rules (in priority order):
+      1. pyd.overall == "no_positive_nonfeed_yield" and evd.verdict == "no_input"
+         → improve_nonfeed_provider_yield / provider_yield
+      2. pyd.public.status == "error_or_zero" and "no_provider_selected" in pyd.public.reason
+         → fix_public_provider_selection / provider_selection
+      3. provider returned zero but was selected (non-skipped)
+         → add_or_use_provider_replay_fixture / provider_yield
+      4. evd.verdict == "useful_enrichment_yield"
+         → continue_pivot_expansion / enrichment
+      5. pyd.overall == "nonfeed_successful" and evd.verdict in ("no_enrichment_yield", "low_enrichment_yield")
+         → improve_sidecar_input_or_mapping / enrichment
+      6. evd.verdict == "no_enrichment_yield" and input_accepted > 0
+         → improve_sidecar_input_or_mapping / enrichment
+      7. Otherwise → none / none
+
+    Bounds:
+      - action names: improve_nonfeed_provider_yield | fix_public_provider_selection |
+                     add_or_use_provider_replay_fixture | continue_pivot_expansion |
+                     improve_sidecar_input_or_mapping | none
+      - target_area: provider_selection | seed_quality | provider_yield | enrichment | storage | none
+      - confidence: 0.0-1.0, rounded to 2 decimal places
+    """
+    if pyd is None and evd is None:
+        return {"primary_action": "none", "reason": "no diagnosis data available", "target_area": "none", "confidence": 0.0}
+
+    pyd = pyd if isinstance(pyd, dict) else {}
+    evd = evd if isinstance(evd, dict) else {}
+
+    pyd_overall = pyd.get("overall", "")
+    evd_verdict = evd.get("verdict", "")
+    evd_input = evd.get("input_accepted_findings_count", 0)
+
+    public_diag = pyd.get("families", {}).get("public", {}) if isinstance(pyd.get("families"), dict) else {}
+    public_status = public_diag.get("status", "") if isinstance(public_diag, dict) else ""
+    public_reason = public_diag.get("reason", "") if isinstance(public_diag, dict) else ""
+
+    # Rule 1: no_positive_nonfeed_yield + no_input verdict
+    # Only fires when public has no specific provider error (status != error_or_zero).
+    # Rules 2/3 take priority for specific provider errors.
+    if pyd_overall == "no_positive_nonfeed_yield" and evd_verdict == "no_input":
+        if public_status != "error_or_zero":
+            return {
+                "primary_action": "improve_nonfeed_provider_yield",
+                "reason": "zero nonfeed yield with no input accepted — provider yield is the bottleneck",
+                "target_area": "provider_yield",
+                "confidence": 0.85,
+            }
+        # public has error_or_zero — let Rules 2/3 handle it
+
+    # Rule 2: public no_provider_selected
+    if public_status == "error_or_zero" and "no_provider_selected" in str(public_reason):
+        return {
+            "primary_action": "fix_public_provider_selection",
+            "reason": "public provider was selected but returned zero — check provider bootstrap",
+            "target_area": "provider_selection",
+            "confidence": 0.90,
+        }
+
+    # Rule 3: provider returned zero but was attempted (not skipped)
+    if public_status == "error_or_zero" and ("provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)):
+        return {
+            "primary_action": "add_or_use_provider_replay_fixture",
+            "reason": "provider returned zero or unavailable — replay fixture needed for diagnostics",
+            "target_area": "provider_yield",
+            "confidence": 0.80,
+        }
+
+    # Rule 4: useful enrichment yield
+    if evd_verdict == "useful_enrichment_yield":
+        return {
+            "primary_action": "continue_pivot_expansion",
+            "reason": "enrichment sidecars produced unique IOCs — pivot expansion is working",
+            "target_area": "enrichment",
+            "confidence": 0.80,
+        }
+
+    # Rule 5: nonfeed successful but no enrichment yield
+    if pyd_overall == "nonfeed_successful" and evd_verdict in ("no_enrichment_yield", "low_enrichment_yield"):
+        return {
+            "primary_action": "improve_sidecar_input_or_mapping",
+            "reason": "nonfeed lanes succeeded but sidecars yielded no unique IOCs — improve input mapping",
+            "target_area": "enrichment",
+            "confidence": 0.75,
+        }
+
+    # Rule 6: no enrichment yield with input accepted
+    if evd_verdict == "no_enrichment_yield" and evd_input > 0:
+        return {
+            "primary_action": "improve_sidecar_input_or_mapping",
+            "reason": "input accepted but sidecars stored zero — improve sidecar input or IOC mapping",
+            "target_area": "enrichment",
+            "confidence": 0.75,
+        }
+
+    # Rule 7: default — no action needed
+    return {
+        "primary_action": "none",
+        "reason": "no actionable engineering signal detected",
+        "target_area": "none",
+        "confidence": 0.50,
+    }
+
+
+# ---------------------------------------------------------------------------
 # F229B/F230E: Lane corroboration score helpers
 # ---------------------------------------------------------------------------
 
