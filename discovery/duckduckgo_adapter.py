@@ -33,6 +33,7 @@ from hledac.universal.transport.circuit_breaker import (
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
+    replay_strict_enabled,
     write_cassette,
 )
 
@@ -810,6 +811,8 @@ async def async_search_public_web(
     except (TypeError, ValueError):
         max_results = DEFAULT_MAX_RESULTS
 
+    start = time.monotonic()
+
     # ---- Sprint F253B: public discovery replay seam (read-first) ---------
     if replay_enabled():
         cassette = read_cassette("public_duckduckgo", trimmed)
@@ -839,6 +842,25 @@ async def async_search_public_web(
                 elapsed_s=cassette.get("elapsed_s", 0.0),
                 error_type=cassette.get("error_type"),
                 provider_status_debug=cassette.get("provider_status_debug"),
+            )
+        elif replay_strict_enabled():
+            # Cassette miss in strict mode: fail-soft, no live call
+            elapsed = time.monotonic() - start
+            return DiscoveryBatchResult(
+                hits=(),
+                error="replay_miss",
+                error_type="replay_miss",
+                provider_name="duckduckgo",
+                provider_chain=("duckduckgo",),
+                source_family="search",
+                elapsed_s=elapsed,
+                provider_status_debug=[
+                    {
+                        "provider": "public_duckduckgo",
+                        "selected": False,
+                        "reason": "replay_miss",
+                    }
+                ],
             )
 
     # ---- Sprint F213B: query variant expansion for domain-like queries ----
@@ -939,7 +961,7 @@ async def async_search_public_web(
         cached = read_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed)
         if cached is not None:
             cached_hits = cached.get("hits", ())
-            elapsed = time.monotonic() - start if "start" in dir() else 0.0
+            elapsed = time.monotonic() - start
             return DiscoveryBatchResult(
                 hits=tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits,
                 error=cached.get("error"),
@@ -952,6 +974,26 @@ async def async_search_public_web(
                 error_type=cached.get("error_type"),
                 provider_status_debug=cached.get("provider_status_debug"),
             )
+        elif replay_strict_enabled():
+            # Cassette miss in strict mode: fail-soft, no live call
+            elapsed = time.monotonic() - start
+            return DiscoveryBatchResult(
+                hits=(),
+                error="replay_miss",
+                error_type="replay_miss",
+                provider_name="duckduckgo",
+                provider_chain=("duckduckgo",),
+                source_family="search",
+                elapsed_s=elapsed,
+                provider_status_debug=[
+                    {
+                        "provider": "public_duckduckgo",
+                        "selected": False,
+                        "reason": "replay_miss",
+                    }
+                ],
+            )
+        # Non-strict miss: fall through to live call
 
     # ---- per-run query cache check (F207I-A) ---------------------------------
     cached = _get_cached_discovery(trimmed)

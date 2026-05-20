@@ -33,6 +33,7 @@ import msgspec
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
+    replay_strict_enabled,
     write_cassette,
 )
 
@@ -951,6 +952,11 @@ async def query_rdap(target: str) -> dict:
         if cached is not None:
             logger.debug(f"[RDAP] replay hit for {target}")
             return cached
+        elif replay_strict_enabled():
+            # Cassette miss in strict mode: fail-soft, no live call
+            logger.debug(f"[RDAP] replay miss for {target}, strict mode")
+            return {"error": "replay_miss", "error_type": "replay_miss", "target": target, "rdap": None, "source": "rdap_org"}
+        # Non-strict miss: fall through to live call
 
     is_ip = (
         target.replace(".", "").isdigit() or ":" in target

@@ -31,6 +31,7 @@ from hledac.universal.transport.circuit_breaker import checked_aiohttp_get
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
     replay_enabled,
+    replay_strict_enabled,
     write_cassette,
 )
 
@@ -474,6 +475,27 @@ async def call_circl_pdns(
                 elapsed_s=elapsed,
             )
             return result, outcome
+        elif replay_strict_enabled():
+            # Cassette miss in strict mode: fail-soft, no live call
+            elapsed = time.monotonic() - start
+            outcome = PDNSOutcome(
+                attempted=True,
+                query=domain_norm,
+                result_count=0,
+                error="replay_miss",
+                duration_s=elapsed,
+            )
+            result = DiscoveryBatchResult(
+                hits=(),
+                error="replay_miss",
+                error_type="replay_miss",
+                provider_name="circl_pdns",
+                provider_chain=("circl_pdns",),
+                source_family="pdns",
+                elapsed_s=elapsed,
+            )
+            return result, outcome
+        # Non-strict miss: fall through to live call
 
     # Rate limit sleep
     await asyncio.sleep(_RATE_LIMIT_SLEEP_S)

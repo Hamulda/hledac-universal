@@ -1,5 +1,12 @@
 # OSINT Capability Coverage Audit — 2026-05-20 (F256A)
 
+**⚠️ SUPERSEDED by `F256C_CAPABILITY_TRUTH_RECONCILIATION.md`** — This document's
+capability status tables (sections 1, 2, 8a–8d, 9a) contain now-resolved conflicts
+for PASSIVE_DNS/CIRCL PDNS and RDAP/RIR/WHOIS. The canonical status table in F256C
+takes precedence. Other sections remain accurate reference.
+
+---
+
 **Sprint:** F256A
 **Date:** 2026-05-20
 **Goal:** Full capability activation matrix — canonical live vs offline/replay vs implemented-not-wired vs dormant vs M1-risky. No code changes.
@@ -61,9 +68,9 @@
 
 | Capability | Where Referenced | Status |
 |-----------|-----------------|--------|
-| **CIRCL PDNS passive DNS** | `nonfeed_candidate_ledger.py`, `source_finding_bridge.py` ("circl_pdns" in source tier, `passive_dns_results_to_findings`) | ❌ **GAP** — only stub in source_tier, no `call_circl_pdns()` implementation found |
+| **CIRCL PDNS passive DNS** | `nonfeed_candidate_ledger.py`, `source_finding_bridge.py` ("circl_pdns" in source tier, `passive_dns_results_to_findings`) | ⚠️ **IMPLEMENTED_NOT_WIRED** — stub adapter in `discovery/circl_pdns_adapter.py`; `call_circl_pdns()` planned but not implemented; distinct from PASSIVE_DNS (resolver-based, wired) |
 | **Common Crawl** | `tools/commoncrawl_adapter.py` exists | ⚠️ **dormant** — file exists but NOT wired into any pipeline or source tier |
-| **RDAP WHOIS** | `runtime/acquisition_strategy.py` mentions RDAP lanes | ⚠️ **GAP** — no `call_rdap()` / `async_whois()` implementation found in discovery/ or tools/ |
+| **RDAP WHOIS** | `discovery/ti_feed_adapter.py` (`query_rdap()` F242C) | ⚠️ **LIVE_ACTIVE_BUT_NOT_VISIBLE** — wired via `_handle_rdap_lookup()` → `rdap_result_to_findings()` → DuckDB; NOT in `source_family_outcomes` |
 | **I2P transport** | `transport/i2p_transport.py` (280+ lines) | ⚠️ **dormant** — exists but NOT wired into discovery pipeline or source tier |
 | **Nym transport** | `transport/nym_transport.py` (500+ lines) | ⚠️ **dormant** — exists but NOT wired into discovery pipeline or source tier |
 | **Onion discovery** | `pipeline/live_public_pipeline.py` imports "onion_discovery" | ⚠️ **dormant** — referenced in source_tier and sprint_exporter, but no `onion_discovery.py` found in discovery/ or intelligence/ |
@@ -187,10 +194,10 @@ rerank         → flashrank
 
 | Lane | Owner | Status | Gap Type |
 |------|-------|--------|---------|
-| **CIRCL PDNS** | `discovery/circl_pdns_adapter.py` (stub) | ❌ IMPLEMENTED_NOT_WIRED | `call_circl_pdns()` exists in plans, not in code |
-| **RDAP WHOIS** | none | ❌ GAP | No `call_rdap()` / `async_whois()` anywhere |
+| **CIRCL PDNS** | `discovery/circl_pdns_adapter.py` (stub) | ❌ IMPLEMENTED_NOT_WIRED | Stub adapter; `call_circl_pdns()` planned but not implemented; distinct from PASSIVE_DNS (resolver-based) |
+| **RDAP WHOIS** | `discovery/ti_feed_adapter.py` | ⚠️ LIVE_ACTIVE_BUT_NOT_VISIBLE | Wired via `_handle_rdap_lookup()` → `rdap_result_to_findings()` → DuckDB; NOT in `source_family_outcomes`; see F256C |
 | **Onion discovery** | none | ❌ GAP | `source_tier` references "onion_discovery", file doesn't exist |
-| **Common Crawl** | `tools/commoncrawl_adapter.py` | ⚠️ DORMANT | File exists, not in source_tier, no pipeline call |
+| **Common Crawl** | `tools/commoncrawl_adapter.py` | ⚠️ DORMANT | File exists; not in source_tier; not wired to any pipeline |
 
 ---
 
