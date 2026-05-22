@@ -33,6 +33,8 @@ from typing import Dict, List, Tuple, Any, Optional
 
 import aiohttp
 
+from hledac.universal.utils.async_helpers import _check_gathered
+
 from .domain_concurrency import (  # noqa: F401  # pragma: no cover
     ARM_VALUES,
     DomainConcurrencyBandit,
@@ -312,54 +314,6 @@ def get_session_runtime_status() -> dict:
         "last_error": _last_error,
         "last_close_error": _last_close_error,
     }
-
-
-# =============================================================================
-# _check_gathered — Standard gather result helper
-# =============================================================================
-
-def _check_gathered(results: List[Any]) -> Tuple[List[Any], List[Any]]:
-    """
-    Process results from asyncio.gather(..., return_exceptions=True).
-
-    Contract:
-        - Input:  list returned by asyncio.gather(return_exceptions=True)
-        - Output: (ok_results, error_results)
-        - Regular Exception items → error_results
-        - asyncio.CancelledError → RE-RAISED immediately [I6]
-        - Other BaseException (KeyboardInterrupt, SystemExit) → RE-RAISED immediately [I7]
-        - Ok results maintain their original order [I8]
-
-    Args:
-        results: list from gather(return_exceptions=True)
-
-    Returns:
-        Tuple of (ok_results, error_results)
-
-    Invariants:
-        [I6] CancelledError is never swallowed — always re-raised
-        [I7] BaseException (not Exception) is never swallowed — always re-raised
-        [I8] Exception goes to error_results, ok results keep order
-    """
-    ok_results: List[Any] = []
-    error_results: List[Any] = []
-
-    for item in results:
-        if isinstance(item, BaseException):
-            # Must check specific subclasses BEFORE general Exception
-            if isinstance(item, asyncio.CancelledError):
-                # [I6] — CancelledError must never be swallowed
-                raise item
-            # Other BaseException subclasses (KeyboardInterrupt, SystemExit)
-            if not isinstance(item, Exception):
-                # [I7] — non-Exception BaseException must not be swallowed
-                raise item
-            # Regular Exception — route to errors [I8]
-            error_results.append(item)
-        else:
-            ok_results.append(item)
-
-    return ok_results, error_results
 
 
 # =============================================================================

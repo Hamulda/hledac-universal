@@ -2797,20 +2797,44 @@ class SprintScheduler:
             self._result.acquisition_plan_build_error_type = type(_exc).__name__
             self._result.acquisition_plan_build_error = str(_exc)[:500]
 
-        # Sprint F209A: Run Mandatory Acquisition Prelude BEFORE main feed cycle loop
-        # This establishes early terminal state for PUBLIC/CT before feed cycles dominate runtime
+        # Sprint F245A: Run Mandatory Acquisition Prelude and first cycle concurrently.
+        # Prelude establishes early terminal state for PUBLIC/CT; first cycle starts feed/public
+        # discovery immediately rather than waiting for prelude to complete.
         # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
         try:
             self._timer.phase("prelude_start")
-            await self._run_mandatory_acquisition_prelude(
-                self._result, query, duckdb_store, self._ct_log_client
+            prelude_task = asyncio.create_task(
+                self._run_mandatory_acquisition_prelude(
+                    self._result, query, duckdb_store, self._ct_log_client
+                ),
+                name="sprint:prelude",
             )
         finally:
             self._timer.phase("prelude_end")
+
+        # Sprint 8VD §C: Start memory pressure monitoring loop
+        _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
+        self._bg_tasks.add(_t)
+        _t.add_done_callback(self._bg_tasks.discard)
+
+        # Sprint F245A: Run prelude and first cycle concurrently
+        first_cycle_work_items = self._build_feed_work_items(lifecycle)
+        first_cycle_task = asyncio.create_task(
+            self._run_one_cycle(lifecycle, first_cycle_work_items, query, duckdb_store),
+            name="sprint:first_cycle",
+        )
+
+        _results = await asyncio.gather(prelude_task, first_cycle_task, return_exceptions=True)
+        _prelude_exc, _cycle_exc = _results[0], _results[1]
+
+        if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
+            log.warning("[sprint] prelude raised: %s: %s", type(_prelude_exc).__name__, _prelude_exc)
+        if isinstance(_cycle_exc, BaseException) and not isinstance(_cycle_exc, asyncio.CancelledError):
+            log.warning("[sprint] first cycle raised: %s: %s", type(_cycle_exc).__name__, _cycle_exc)
+
+        self._result.cycles_completed += 1
+
         # Sprint F214: Only record prelude_complete if prelude actually ran.
-        # Guard: non-domain query with default/nonfeed profile returns early with
-        # acquisition_prelude_ran=False; must NOT emit false prelude_complete telemetry.
-        # Phase=ACTIVE (not BOOT): lifecycle already passed ensure_active() at this point.
         if getattr(self._result, "acquisition_prelude_ran", False):
             await self._finalize_result_truth(
                 "prelude_complete",
@@ -2819,12 +2843,28 @@ class SprintScheduler:
                 query,
             )
 
-        try:
-            # Sprint 8VD §C: Start memory pressure monitoring loop
-            _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
-            self._bg_tasks.add(_t)
-            _t.add_done_callback(self._bg_tasks.discard)
+        # Propagate CancelledError from either task
+        if isinstance(_prelude_exc, asyncio.CancelledError):
+            raise _prelude_exc
+        if isinstance(_cycle_exc, asyncio.CancelledError):
+            raise _cycle_exc
 
+        # F214: Check deadline after gather — prevents deadline cascade into advisory lanes
+        if not self._check_hard_deadline():
+            await self._ensure_nonfeed_predispatch_before_finalization(
+                query, "hard_deadline_exceeded"
+            )
+            self._capture_timing_fields()
+            await self._finalize_result_truth(
+                "hard_deadline_exceeded",
+                f"hard deadline exceeded after first_cycle_gather",
+                "GATHER",
+                query,
+            )
+            return
+
+        # Sprint 8VD §C: Outer try-except wraps the main cycle loop
+        try:
             while not self._runner.is_terminal():
                 # Sprint F212A: Hard deadline check FIRST — before any lifecycle
                 # transitions or guards that could break early. Ensures deadline

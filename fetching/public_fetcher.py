@@ -171,6 +171,101 @@ DEFAULT_UA: Final[str] = (
     "Mozilla/5.0 (compatible; research-bot/1.0; +passive-public-fetch)"
 )
 
+# F229: Realistic browser User-Agent pool for header rotation
+# Covers Chrome, Firefox, Safari, Edge across desktop and mobile.
+_BROWSER_UA_POOL: tuple[str, ...] = (
+    # Chrome 124 stable — Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    # Chrome 124 stable — macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    # Chrome 124 stable — Linux
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    # Chrome 120 — Android 13
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
+    # Firefox 133 — Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Firefox 133 — macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Firefox 133 — Linux
+    "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Safari 17 — macOS Sonoma
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    # Safari 17 — iOS 17 iPhone
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    # Edge 124 — Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+)
+
+# F229: Realistic Accept-Language pool for header rotation
+# Covers en-US (most common), en-GB, de-DE, fr-FR, ja-JP, zh-CN.
+_ACCEPT_LANGUAGE_POOL: tuple[str, ...] = (
+    "en-US,en;q=0.9",
+    "en-GB,en;q=0.8",
+    "en-US,en;q=0.9,de;q=0.8",
+    "en-US,en;q=0.9,fr;q=0.8",
+    "en-US,en;q=0.9,es;q=0.8",
+    "en-US,en;q=0.9,ja;q=0.8",
+    "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    "de-DE,de;q=0.9,en;q=0.8",
+    "fr-FR,fr;q=0.9,en;q=0.8",
+    "ja-JP,ja;q=0.9,en;q=0.8",
+    "en-US,en;q=0.9",
+    "en-AU,en;q=0.9",
+    "en-CA,en;q=0.9",
+    "en-IE,en;q=0.9",
+    "en-NZ,en;q=0.9",
+)
+
+
+def get_random_ua() -> str:
+    """Return a random User-Agent from the browser pool. Thread-safe via random.choice."""
+    return random.choice(_BROWSER_UA_POOL)  # noqa: S311
+
+
+def get_random_accept_language() -> str:
+    """Return a random Accept-Language from the pool. Thread-safe via random.choice."""
+    return random.choice(_ACCEPT_LANGUAGE_POOL)  # noqa: S311
+
+
+def build_randomized_headers() -> dict[str, str]:
+    """Build a randomized headers dict for HTTP requests.
+
+    Includes:
+      - User-Agent: random browser identity
+      - Accept-Language: random locale
+      - Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+      - Accept-Encoding: gzip, deflate, br (brotli support)
+      - Sec-Ch-Ua: random browser brand tokens (Chrome 124 era)
+      - Sec-Ch-Ua-Mobile: random mobile flag
+      - Sec-Ch-Ua-Platform: random OS
+      - Sec-Fetch-Dest: document (not fetch/XHR)
+      - Sec-Fetch-Mode: navigate
+      - Connection: keep-alive
+
+    Invariant: no tracking headers (DNT, X-Tracking-IP, etc.).
+    """
+    _OS_CHOICES = ('"Windows"', '"macOS"', '"Linux"', '"Android"', '"iOS"')
+    _MOBILE_CHOICES = ("?0", "?1")
+    _CHROME_TOKEN_CHOICES = (
+        '"Chromium";v="124"', '"Google Chrome";v="124"',
+        '"Not-A.Brand";v="99"',
+    )
+
+    return {
+        "User-Agent": get_random_ua(),
+        "Accept-Language": get_random_accept_language(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": random.choice(_CHROME_TOKEN_CHOICES),  # noqa: S311
+        "Sec-Ch-Ua-Mobile": random.choice(_MOBILE_CHOICES),  # noqa: S311
+        "Sec-Ch-Ua-Platform": random.choice(_OS_CHOICES),  # noqa: S311
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Connection": "keep-alive",
+    }
+
+
 MAX_BYTES_DEFAULT: Final[int] = 2_000_000
 MAX_BYTES_HARD: Final[int] = 10_000_000
 
@@ -284,6 +379,11 @@ class FetchResult(msgspec.Struct, frozen=True):
     # Added in F214Z — Static Hydration Telemetry
     hydration_score: float | None = None  # 0.0–1.0, set when static hydration was attempted
     hydration_sources: tuple[str, ...] = ()  # e.g. ("next_data", "json_ld")
+    # Added in F229 — TLS metadata and server header
+    tls_cert_san: tuple[str, ...] = ()  # Subject Alternative Names from server cert
+    tls_cert_issuer: str | None = None  # Issuer CN from server cert
+    tls_cert_sha256: str | None = None  # SHA-256 fingerprint of server cert
+    server_header: str | None = None  # Server response header value
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +483,84 @@ def _build_retry_error(status_code: int, retry_after: float | None) -> str:
 # F169B: Access-path truth helpers — derive-only, no new transport
 # ---------------------------------------------------------------------------
 
+
+
+
+def _extract_tls_metadata_from_response(resp) -> dict:
+    """
+    Extract TLS certificate metadata and Server header from an HTTP response.
+
+    For aiohttp response: resp is aiohttp.ClientResponse
+    For httpx response: resp is httpx.Response
+
+    Memory bounds: all collections are bounded, fail-safe throughout.
+    """
+    result = {
+        "tls_cert_san": (),
+        "tls_cert_issuer": None,
+        "tls_cert_sha256": None,
+        "server_header": None,
+    }
+    try:
+        # Server header — available on all responses
+        server = resp.headers.get("Server") or resp.headers.get("server")
+        if server:
+            result["server_header"] = server[:200]  # cap at 200 chars
+    except Exception:
+        pass
+
+    try:
+        # TLS cert via ssl attribute (available post-handshake)
+        ssl_obj = getattr(resp, "connection", None) or getattr(resp, "_ssl", None)
+        if ssl_obj is None:
+            # Try via response connection transport
+            try:
+                transport = getattr(resp, "transport", None)
+                if transport is not None:
+                    ssl_obj = transport.get_extra_info("ssl_object")
+            except Exception:
+                ssl_obj = None
+
+        if ssl_obj is not None:
+            try:
+                cert = ssl_obj.getpeercert()
+                if cert:
+                    # Subject Alternative Names
+                    san_list = cert.get("subjectAltName", [])
+                    if san_list:
+                        san_values: list[str] = []
+                        for _typ, _val in san_list:
+                            if len(san_values) >= 20:  # hard cap
+                                break
+                            if isinstance(_val, (str, bytes)):
+                                san_values.append(str(_val)[:500])
+                        result["tls_cert_san"] = tuple(san_values)
+
+                    # Issuer CN
+                    subject = cert.get("subject", ())
+                    for _rdn in subject:
+                        for _k, _v in _rdn:
+                            if _k == "organizationName":
+                                result["tls_cert_issuer"] = str(_v)[:200]
+                                break
+                        if result["tls_cert_issuer"]:
+                            break
+
+                    # SHA-256 fingerprint
+                    try:
+                        import hashlib
+                        # Derive PEM from der for consistent fingerprinting
+                        der = ssl_obj.getpeercert(binary_form=True)
+                        if der:
+                            result["tls_cert_sha256"] = hashlib.sha256(der).hexdigest()[:64]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return result
 
 def _derive_redirect_fields(url: str, final_url: str) -> tuple[bool, str | None]:
     """Return (redirected, redirect_target) based on URL comparison.
@@ -1226,25 +1404,30 @@ async def _fetch_with_nodriver(url: str) -> str:
         return ""
 
     browser = None
+    page = None
     try:
         browser = await uc.start(
             headless=True,
             browser_args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         page = await browser.get(url)
-        await asyncio.sleep(2)  # jitter for bot detection
-        html = await page.get_content()
-        await page.close()  # CRITICAL: without close() → memory leak
+        try:
+            await asyncio.sleep(2)  # jitter for bot detection
+            html = await page.get_content()
+        finally:
+            # CRITICAL: page cleanup guaranteed even on exception/cancellation
+            if page is not None:
+                await page.close()
         return html
     except asyncio.CancelledError:
-        if browser:
+        if browser is not None:
             browser.stop()
         raise  # Re-raise CancelledError — must propagate
     except Exception as e:
         logger.warning(f"nodriver fetch failed: {e}")
         return ""
     finally:
-        if browser:
+        if browser is not None:
             browser.stop()
 
 
@@ -1394,9 +1577,14 @@ async def async_fetch_public_text(
             logger.warning(f"Camoufox failed, trying nodriver: {url}")
             js_html = await _fetch_with_nodriver(url)
         if js_html:
-            js_text, _ = await process_html_payload(js_html, url)
+            js_text, _, js_meta = await process_html_payload(js_html, url)
             elapsed_ms = (time.monotonic() - t0) * 1000
             _tc.js_renderer_count += 1
+            _meta_sources = list(js_meta.get("ga_gtm_ids", ()))
+            if js_meta.get("og_tags"):
+                _meta_sources.append("og_tags")
+            if js_meta.get("comments"):
+                _meta_sources.append("html_comments")
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -1410,6 +1598,7 @@ async def async_fetch_public_text(
                 selected_transport="js",
                 transport_policy_reason="js_required",
                 transport_counters=_tc,
+                hydration_sources=tuple(_meta_sources),
             )
         # JS rendering completely failed
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -1588,16 +1777,18 @@ async def async_fetch_public_text(
     _resolved_ip: Optional[str] = None
     if use_doh:
         try:
-            from hledac.universal.security.passive_dns import resolve_doh
+            from hledac.universal.security.passive_dns import resolve_doh, get_random_doh_provider
             parsed_url = urllib.parse.urlparse(url)
             hostname = parsed_url.hostname or ""
             if hostname:
-                ips = await resolve_doh(hostname)
+                # F229: Randomize DoH provider per request — eliminates provider-level tracking
+                _doh_provider = get_random_doh_provider()
+                ips = await resolve_doh(hostname, provider=_doh_provider)
                 if ips:
                     _resolved_ip = ips[0]
-                    logger.debug(f"DoH resolved {hostname} → {_resolved_ip}")
+                    logger.debug(f"DoH [{_doh_provider}] resolved {hostname} → {_resolved_ip}")
                 else:
-                    logger.debug(f"DoH returned no IPs for {hostname}, falling back to system DNS")
+                    logger.debug(f"DoH [{_doh_provider}] returned no IPs for {hostname}, falling back to system DNS")
         except Exception as e:
             logger.debug(f"DoH resolution failed for {url}: {e}")
 
@@ -1620,10 +1811,12 @@ async def async_fetch_public_text(
     # Router already enforced: no darknet/JS/Freenet. Falls back to aiohttp on failure.
     if _router_lane == "curl_cffi_stealth":
         _original_policy_reason = _router_reason
+        # F229: Randomized headers for curl_cffi stealth lane — eliminates UA/language tracking
+        _stealth_headers = build_randomized_headers()
         try:
             _curl_result = await fetch_via_curl_cffi(
                 url=url,
-                headers=None,
+                headers=_stealth_headers,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
                 profile="chrome110",
@@ -2019,6 +2212,15 @@ async def async_fetch_public_text(
                                 # Return enriched result from static extraction — NO js_renderer_count increment
                                 # because static hydration is NOT a JS/browser renderer
                                 elapsed_ms = (time.monotonic() - t0) * 1000
+                                # F229: Extract HTML metadata from original text for static hydration path
+                                _meta = extract_html_metadata(text or "")
+                                _static_sources = list(hydration.sources) if hasattr(hydration, "sources") else list(hydration.sources)
+                                if _meta["ga_gtm_ids"]:
+                                    _static_sources.append("ga_gtm")
+                                if _meta["og_tags"]:
+                                    _static_sources.append("og_tags")
+                                if _meta["comments"]:
+                                    _static_sources.append("html_comments")
                                 return FetchResult(
                                     url=url,
                                     final_url=final_url,
@@ -2042,7 +2244,7 @@ async def async_fetch_public_text(
                                     transport_counters=_tc,
                                     js_renderer_skipped_reason=skip_js_reason,
                                     hydration_score=hydration.hydration_score,
-                                    hydration_sources=hydration.sources,
+                                    hydration_sources=tuple(_static_sources),
                                 )
 
                             # F214AC: Try macOS WKWebView renderer BEFORE heavy browser (camoufox/nodriver)
@@ -2051,10 +2253,20 @@ async def async_fetch_public_text(
 
                             wkr = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
                             if wkr.ok and wkr.html:
-                                js_text, js_matches = await process_html_payload(wkr.html, url)
+                                js_text, js_matches, js_metadata = await process_html_payload(wkr.html, url)
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 _tc.js_renderer_count += 1
                                 _tc.macos_webkit_count += 1
+                                _ga_ids = js_metadata.get("ga_gtm_ids", ())
+                                _og = js_metadata.get("og_tags", ())
+                                _cmts = js_metadata.get("comments", ())
+                                _addl_sources = list(hydration.sources) if hasattr(hydration, "sources") else list(hydration_sources)
+                                if _ga_ids:
+                                    _addl_sources.append("ga_gtm")
+                                if _og:
+                                    _addl_sources.append("og_tags")
+                                if _cmts:
+                                    _addl_sources.append("html_comments")
                                 return FetchResult(
                                     url=url,
                                     final_url=url,
@@ -2068,6 +2280,7 @@ async def async_fetch_public_text(
                                     selected_transport="js",
                                     transport_policy_reason="js_required",
                                     transport_counters=_tc,
+                                    hydration_sources=tuple(_addl_sources),
                                 )
 
                             # WKWebView unavailable or failed — fall through to heavy browser (camoufox → nodriver)
@@ -2339,18 +2552,25 @@ __all__ = [
 # HTML → text + pattern matching (CPU-bound, runs in shared CPU_EXECUTOR)
 # ---------------------------------------------------------------------------
 from hledac.universal.utils.executors import CPU_EXECUTOR
-from hledac.universal.utils.html_text_fast import html_to_text_fast
+from hledac.universal.utils.html_text_fast import html_to_text_fast, extract_html_metadata
 
 
-def _sync_process_html(html: str) -> tuple[str, list]:
-    """Synchronous CPU-bound HTML parsing + pattern matching.
+def _sync_process_html(html: str) -> tuple[str, list, dict]:
+    """Synchronous CPU-bound HTML parsing + pattern matching + metadata extraction.
 
     Runs in CPU_EXECUTOR thread pool — never blocks the async event loop.
     Fail-safe: malformed HTML returns empty text, never raises.
+
+    Returns:
+        Tuple of (markdown-stripped text, pattern match list, metadata dict).
+        metadata dict keys: ga_gtm_ids, og_tags, comments (from extract_html_metadata).
     """
     # Note: PatternMatcher is bootstrapped once at startup via
     # configure_default_bootstrap_patterns_if_empty() in pattern_matcher.py.
     # Re-configuring on every call wastes CPU — removed per F184B.
+
+    # F229: Extract HTML metadata BEFORE text extraction
+    metadata = extract_html_metadata(html)
 
     # F214OPT-A: selectolax-first HTML→text extraction
     text = html_to_text_fast(html)
@@ -2363,19 +2583,20 @@ def _sync_process_html(html: str) -> tuple[str, list]:
 
     # Pattern scan
     matches = match_text(text)
-    return (text, matches)
+    return (text, matches, metadata)
 
 
-async def process_html_payload(html: str, url: str) -> tuple[str, list]:
-    """Offload HTML→text+pattern matching to shared CPU_EXECUTOR.
+async def process_html_payload(html: str, url: str) -> tuple[str, list, dict]:
+    """Offload HTML→text+pattern matching+metadata extraction to shared CPU_EXECUTOR.
 
     Args:
         html: Raw HTML content.
         url: Source URL (for context in errors; not used for fetching).
 
     Returns:
-        Tuple of (markdown-stripped text, pattern match list).
-        Never raises — malformed HTML returns (stripped_text, []) on fallback.
+        Tuple of (markdown-stripped text, pattern match list, metadata dict).
+        metadata dict keys: ga_gtm_ids, og_tags, comments (from extract_html_metadata).
+        Never raises — malformed HTML returns (stripped_text, [], {}) on fallback.
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(CPU_EXECUTOR, _sync_process_html, html)

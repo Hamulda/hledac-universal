@@ -35,6 +35,7 @@ GHOST_INVARIANTS:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -281,12 +282,40 @@ class SprintAdvisoryRunner:
                 except Exception:
                     feedback_summary = None  # Fail-safe
 
-            # Plan pivots (synchronous, fail-soft)
-            pivots = planner.plan_pivots(
-                findings,
-                graph_stats=graph_stats,
-                feedback_summary=feedback_summary,
-            )
+            # F256: Retrieve HermesInferenceOutput from DuckDB for score_with_hermes_output
+            hermes_outputs: list = []
+            store = self._duckdb_store
+            if store is not None:
+                try:
+                    from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
+
+                    rows = await store._conn.execute(
+                        "SELECT payload_text FROM findings WHERE source_type = 'hermes_inference' AND query = $1 LIMIT 50",
+                        getattr(self._scheduler, "_query", "") or "",
+                    )
+                    hermes_outputs = []
+                    for row in rows:
+                        try:
+                            payload = json.loads(row[0])
+                            hermes_outputs.append(HermesInferenceOutput.from_dict(payload))
+                        except Exception:
+                            pass
+                except Exception:
+                    hermes_outputs = []  # Fail-soft
+
+            # Plan pivots — use Hermes-aware scoring if hermes_outputs available
+            if hermes_outputs:
+                pivots = planner.score_with_hermes_output(
+                    findings,
+                    hermes_outputs,
+                    graph_stats=graph_stats,
+                )
+            else:
+                pivots = planner.plan_pivots(
+                    findings,
+                    graph_stats=graph_stats,
+                    feedback_summary=feedback_summary,
+                )
             self._scheduler._planned_pivots = pivots
             log.debug(
                 f"[F202G] Planned {len(pivots)} pivots from {len(findings)} findings"

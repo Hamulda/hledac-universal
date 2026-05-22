@@ -1819,7 +1819,38 @@ class FingerprintRandomizer:
             Object.defineProperty(navigator, 'maxTouchPoints', {{
                 get: () => profile.maxTouchPoints
             }});
-            
+
+            // AudioContext fingerprint protection - override to return fake values
+            // Prevents advanced servers from detecting headless browser via AudioContext
+            const _origAudioContext = window.AudioContext || window.webkitAudioContext;
+            if (_origAudioContext) {{
+                const _fakeAudioCtx = _origAudioContext;
+                window.AudioContext = function() {{
+                    const ctx = new _fakeAudioCtx();
+                    // Override analyser methods that expose headless fingerprint
+                    const _origCreateAnalyser = ctx.createAnalyser;
+                    if (_origCreateAnalyser) {{
+                        ctx.createAnalyser = function() {{
+                            const analyser = _origCreateAnalyser.call(this);
+                            // Fake the frequency data to look like real browser
+                            const _origGetByteFrequencyData = analyser.getByteFrequencyData;
+                            analyser.getByteFrequencyData = function(array) {{
+                                const result = _origGetByteFrequencyData.call(this, array);
+                                // Add slight random variation to simulate real browser
+                                for (let i = 0; i < array.length; i++) {{
+                                    array[i] = Math.max(0, Math.min(255, array[i] + Math.floor(Math.random() * 8 - 4)));
+                                }}
+                                return array;
+                            }};
+                            return analyser;
+                        }};
+                    }}
+                    return ctx;
+                }};
+                window.AudioContext.prototype = _origAudioContext.prototype;
+                window.webkitAudioContext = window.AudioContext;
+            }}
+
             // Canvas fingerprint protection
             const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
             const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;

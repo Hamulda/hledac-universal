@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -140,7 +141,22 @@ class PassiveDNSOutcome:
 DOH_ENDPOINTS: dict[str, str] = {
     "cloudflare": "https://cloudflare-dns.com/dns-query",
     "google": "https://dns.google/resolve",
+    "quad9": "https://dns.quad9.net/dns-query",
 }
+
+# F229: Randomized DoH provider rotation — eliminates per-request tracking.
+# Providers weighted equally; caller passes None to get_random_doh_provider().
+DOH_PROVIDER_WEIGHTS: dict[str, float] = {
+    "cloudflare": 1.0,
+    "google": 1.0,
+    "quad9": 1.0,
+}
+
+
+def get_random_doh_provider() -> str:
+    """Return a random DoH provider weighted evenly. Thread-safe via random.choice."""
+    providers = list(DOH_PROVIDER_WEIGHTS.keys())
+    return random.choice(providers)  # noqa: S311 — no security-sensitive seed needed here
 
 CIRCL_PDNS_URL: str = "https://www.circl.lu/pdns/query"
 CIRCL_RATE_LIMIT_SLEEP: float = 2.0  # 30 req/min → 2s between requests
@@ -570,5 +586,7 @@ __all__ = [
     "CirclPdnsRecord",
     "parse_circl_pdns_text",
     "DOH_ENDPOINTS",
+    "get_random_doh_provider",
+    "DOH_PROVIDER_WEIGHTS",
     "transport_policy",
 ]

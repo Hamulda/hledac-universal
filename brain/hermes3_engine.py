@@ -1373,7 +1373,11 @@ What should be the next action?"""
     _REPORT_MAX_CONTEXT_CHARS = 4096 * 4  # ~4096 tokens max for context
     _REPORT_MAX_ITEM_CHARS = 500  # max per context item
     _REPORT_MAX_ITEMS = 20  # max context items to consider
-    _REPORT_SYSTEM_PROMPT = "Jsi OSINT research agent. Analyzuj poskytnuté podklady a vytvoř strukturovaný report v češtině."
+    _REPORT_SYSTEM_PROMPT = (
+        "Jsi OSINT research agent. Analyzuj poskytnuté podklady a vytvoř strukturovaný report v češtině. "
+        "Na konci své odpovědi VŽDY vlož blok <IOC_JSON> s extrahovanými entitami ve formátu JSON. "
+        "Formát: <IOC_JSON>{\"iocs\": [\"ioc1\", \"ioc2\", ...], \"entities\": [\"entity1\", \"entity2\", ...]}</IOC_JSON>"
+    )
 
     async def generate_report(self, query: str, context: list[str]) -> str:
         """

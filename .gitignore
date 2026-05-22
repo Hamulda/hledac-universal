@@ -107,3 +107,5 @@ probe_*/
 *.tgz
 *.duckdb
 cache_storage/
+# Added by code-review-graph
+.code-review-graph/

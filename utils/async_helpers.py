@@ -1,16 +1,23 @@
+# hledac/universal/utils/async_helpers.py
+# Ghost Async Helpers - Gather hygiene and blocking-I/O guards
+#
+# Provides:
+# - _check_gathered(): filter exceptions, log, ret valid results
+# - Async DNS helpers using loop.getaddrinfo()
+#
+# Invariants enforced:
+# - asyncio.gather(..., return_exceptions=True) always
+# - _check_gathered() processes results after every gather call
 """
 Ghost Async Helpers - Gather hygiene and blocking-I/O guards
-========================================================
 
 Provides:
-- _check_gathered(): filter exceptions, log, return valid results
+- _check_gathered(): filter exceptions, log, ret valid results
 - Async DNS helpers using loop.getaddrinfo()
 
 Invariants enforced:
 - asyncio.gather(..., return_exceptions=True) always
-- loop.getaddrinfo() for DNS (never socket.getaddrinfo in async)
-- time.monotonic() for intervals/cooldowns
-- asyncio.timeout() preferred over wait_for()
+- _check_gathered() processes results after every gather call
 """
 
 from __future__ import annotations
@@ -18,40 +25,65 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, List, Optional
+from typing import Any, List, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Optional
+
+__all__ = [
+    "_check_gathered",
+    "async_getaddrinfo",
+    "monotonic_ms",
+]
 
 logger = logging.getLogger(__name__)
 
 
 def _check_gathered(
     results: List[Any],
-    logger_instance: Optional[logging.Logger] = None,
-    context: str = ""
-) -> List[Any]:
+    logger_instance: 'Optional[logging.Logger]' = None,
+    ctx: str = ""
+) -> Tuple[List[Any], List[Any]]:
     """
-    Filter gather results: separate exceptions from valid values.
+    Process results from asyncio.gather(..., return_exceptions=True).
 
-    All exceptions are logged (debug level) and only non-exception
-    values are returned. This prevents Exception objects from leaking
-    into downstream code that expects actual results.
+    Input:  list returned by asyncio.gather(return_exceptions=True)
+    Output: (ok_results, error_results)
+
+    Invariants enforced:
+    - [I6] asyncio.CancelledError → RE-RAISED immediately (never swallowed)
+    - [I7] non-Exception BaseException (KeyboardInterrupt, SystemExit) → RE-RAISED
+    - [I8] regular Exception → routed to error_results (not returned as ok)
 
     Args:
         results: raw results from asyncio.gather(return_exceptions=True)
-        logger_instance: optional logger for output (defaults to module logger)
-        context: optional context string for log messages (e.g. "S3 enumeration")
+        logger_instance: optional logger for output (defaults to mod logger)
+        ctx: optional context string for log messages (e.g. "S3 enumeration")
 
     Returns:
-        List of non-exception results only
+        Tuple of (ok_results, error_results)
+        - ok_results: items that are not Exception instances
+        - error_results: Exception instances (for logging/handling downstream)
     """
+    ok_results: List[Any] = []
+    error_results: List[Any] = []
     _log = logger_instance or logger
-    valid: List[Any] = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            _log.debug(f"[GHOST] gather exception[{i}]{' '+context if context else ''}: "
-                       f"{type(result).__name__}: {result}")
+
+    for i, item in enumerate(results):
+        if isinstance(item, asyncio.CancelledError):
+            # [I6] — CancelledError must never be swallowed
+            _log.debug(f"[GHOST] gather CancelledError[{i}]{' ' + ctx if ctx else ''} — re-raising")
+            raise item
+        if not isinstance(item, Exception):
+            # Regular non-exception value — ok
+            ok_results.append(item)
         else:
-            valid.append(result)
-    return valid
+            # [I8] — regular Exception → route to errors
+            _log.debug(f"[GHOST] gather exception[{i}]{' ' + ctx if ctx else ''}: "
+                       f"{type(item).__name__}: {item}")
+            error_results.append(item)
+
+    return ok_results, error_results
 
 
 async def async_getaddrinfo(
@@ -61,13 +93,10 @@ async def async_getaddrinfo(
     family: int = 0,
     type_: int = 0,
     proto: int = 0,
-    timeout: Optional[float] = 5.0,
-) -> List[Any]:
+    timeout: float | None = None,
+) -> List[Tuple[int, int, int, str, Any]]:
     """
-    Async DNS resolution via loop.getaddrinfo().
-
-    Never use socket.getaddrinfo() directly in async code -
-    it blocks the event loop. Use this helper instead.
+    Async wrapper around loop.getaddrinfo() with optional timeout.
 
     Args:
         host: hostname to resolve
@@ -75,7 +104,7 @@ async def async_getaddrinfo(
         family: address family (0 = auto)
         type_: socket type (0 = auto)
         proto: protocol (0 = auto)
-        timeout: resolution timeout in seconds
+        timeout: max seconds to wait (None = use loop default)
 
     Returns:
         List of (family, type, proto, canonname, sockaddr) tuples
@@ -84,16 +113,10 @@ async def async_getaddrinfo(
     if timeout is not None and timeout > 0:
         async with asyncio.timeout(timeout):
             return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
-    return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
+    else:
+        return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
 
 
 def monotonic_ms() -> float:
     """Return current monotonic time in milliseconds (float)."""
     return time.monotonic() * 1000.0
-
-
-__all__ = [
-    "_check_gathered",
-    "async_getaddrinfo",
-    "monotonic_ms",
-]

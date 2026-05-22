@@ -11959,6 +11959,7 @@ class FullyAutonomousOrchestrator:
 
             if MLX_AVAILABLE and mx:
                 try:
+                    mx.eval([])
                     mx.clear_cache()
                 except Exception:
                     pass  # MLX cache clear failure
@@ -12715,6 +12716,7 @@ class FullyAutonomousOrchestrator:
         if MLX_AVAILABLE:
             try:
                 import mlx.core as mx
+                mx.eval([])
                 mx.clear_cache()
                 logger.info("✅ MLX cache cleared")
             except Exception:
@@ -12892,6 +12894,7 @@ class FullyAutonomousOrchestrator:
         # Best-effort: clear MLX cache between runs
         try:
             import mx
+            mx.eval([])
             # Sprint 8AE: prefer modern mx.clear_cache()
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
@@ -13117,6 +13120,7 @@ class FullyAutonomousOrchestrator:
             gc.collect()
             try:
                 import mx
+                mx.eval([])
                 # Sprint 8AE: prefer modern mx.clear_cache()
                 if hasattr(mx, 'clear_cache'):
                     mx.clear_cache()
@@ -30052,6 +30056,7 @@ class AutonomousWorkflowEngine:
         if MLX_AVAILABLE and mx:
             # Sprint 8AE: prefer modern mx.clear_cache()
             try:
+                mx.eval([])
                 if hasattr(mx, 'clear_cache'):
                     mx.clear_cache()
                 elif hasattr(mx.metal, 'clear_cache'):

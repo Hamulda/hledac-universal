@@ -668,17 +668,36 @@ class DuckDBShadowStore:
         # Sprint 8SB: Semantic store (FastEmbed + LanceDB)
         self._semantic_store: Optional[Any] = None
 
-        # Sprint F222: Semantic buffering extracted to SemanticStoreBuffer
-        self._semantic_buffer: SemanticStoreBuffer = SemanticStoreBuffer()
+    # ── Test factory ───────────────────────────────────────────────────────────
 
-        # Sprint F222: Graph slots moved to dedicated adapter
-        self.__graph_store = None  # GraphAttachmentStore instance (lazy init, name-mangled)
+    @classmethod
+    def for_testing(
+        cls,
+        *,
+        name: str = "test",
+        temp_dir: Optional[Path | str] = None,
+    ) -> "DuckDBShadowStore":
+        """
+        Create a DuckDB store for test isolation.
 
-        # Sprint F195: Semantic dedup cache — REMOVED (Sprint F222)
-        # Now delegated to DedupManager._semantic_dedup_cache (initialized there since F216G)
+        Not for production use — provides a predictable temp path that is
+        cleaned up by the caller after the test.
 
-        # Sprint F233A: WAL LMDB — now managed by WALManager
-        # Backward-compat alias: _wal_lmdb = None (see __init__ section above for new managers)
+        Args:
+            name:  Identifier used in the temp path (default "test").
+                  Pass unique names per test to avoid collisions.
+            temp_dir:  Optional temp directory. If None, a temp dir is created
+                      via tempfile.mkdtemp and the caller is responsible for
+                      cleaning it up.
+        """
+        import tempfile
+
+        td = temp_dir or Path(tempfile.mkdtemp(prefix="hledac_test_duckdb_"))
+        if isinstance(td, str):
+            td = Path(td)
+        td.mkdir(parents=True, exist_ok=True)
+        store_path = td / f"{name}.duckdb"
+        return cls(db_path=str(store_path))
 
 
     def set_uma_state(self, uma_state: str | None, swap_detected: bool = False) -> None:
@@ -4859,25 +4878,37 @@ class DuckDBShadowStore:
         accepted_findings: list[CanonicalFinding] = []
         accepted_indices: list[int] = []
 
-        for i, f in enumerate(findings):
-            try:
-                decision = self._assess_finding_quality(f)
-            except Exception:
-                self._quality_state._quality_fail_open_count += 1
-                result = await self.async_record_canonical_finding(f)
-                # Count if LMDB succeeded — this is the fail-open success path
-                if getattr(result, 'lmdb_success', False) if hasattr(result, 'lmdb_success') else result.get('lmdb_success', False) if isinstance(result, dict) else False:
-                    self._quality_state._accepted_count += 1
-                results[i] = result
-                continue
+        # F223: Strict chunking to prevent OOM on M1 8GB
+        # Process in batches of 500 with event-loop yield between chunks
+        CHUNK_SIZE = 500
+        for chunk_start in range(0, n, CHUNK_SIZE):
+            chunk_end = min(chunk_start + CHUNK_SIZE, n)
+            chunk_findings = findings[chunk_start:chunk_end]
 
-            if not decision.accepted:
-                # F216G: record quality gate rejection to bounded ledger
-                self._record_quality_rejection(f, decision)
-                results[i] = decision
-            else:
-                accepted_findings.append(f)
-                accepted_indices.append(i)
+            for i_offset, f in enumerate(chunk_findings):
+                i = chunk_start + i_offset
+                try:
+                    decision = self._assess_finding_quality(f)
+                except Exception:
+                    self._quality_state._quality_fail_open_count += 1
+                    result = await self.async_record_canonical_finding(f)
+                    # Count if LMDB succeeded — this is the fail-open success path
+                    if getattr(result, 'lmdb_success', False) if hasattr(result, 'lmdb_success') else result.get('lmdb_success', False) if isinstance(result, dict) else False:
+                        self._quality_state._accepted_count += 1
+                    results[i] = result
+                    continue
+
+                if not decision.accepted:
+                    # F216G: record quality gate rejection to bounded ledger
+                    self._record_quality_rejection(f, decision)
+                    results[i] = decision
+                else:
+                    accepted_findings.append(f)
+                    accepted_indices.append(i)
+
+            # Yield to event loop between chunks to prevent event-loop starvation
+            if chunk_end < n:
+                await asyncio.sleep(0)
 
         if accepted_findings:
             storage_results = await self.async_record_canonical_findings_batch(accepted_findings)

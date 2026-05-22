@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html.parser
+import json
 import os
 import re
 import sys
@@ -2618,6 +2619,75 @@ async def _generate_and_store_report(
             import logging
             logging.getLogger(__name__).warning(f"[REPORT] Storage failed: {e}")
             # Fail-soft: report was generated but not stored - still return it
+
+        # F256: Also produce HermesInferenceOutput for pivot planning
+        # (stored alongside report finding for query at advisory time)
+        # Guard: need store (for CanonicalFinding) + hermes_engine + non-empty report_text
+        if store is not None and hermes_engine is not None and report_text:
+            try:
+                from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
+                from hledac.universal.brain.ner_engine import extract_iocs_from_text
+
+                # F256K: Try structured IOC_JSON block first, fall back to NER extraction
+                key_iocs: tuple[str, ...] = ()
+                key_entities: tuple[str, ...] = ()
+
+                ioc_json_block = re.search(r'<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>', report_text, re.DOTALL)
+                if ioc_json_block:
+                    try:
+                        ioc_data = json.loads(ioc_json_block.group(1))
+                        key_iocs = tuple(ioc_data.get("iocs", [])[:20])
+                        key_entities = tuple(ioc_data.get("entities", [])[:20])
+                    except (json.JSONDecodeError, KeyError) as _:
+                        pass  # Fall back to NER extraction
+
+                if not key_iocs and not key_entities:
+                    # Fallback: use NER extraction
+                    ioc_results = extract_iocs_from_text(report_text)
+                    key_iocs = tuple(
+                        r["value"] for r in ioc_results
+                        if r.get("value") and len(r["value"]) > 3
+                    )[:20]
+                    key_entities = tuple(
+                        r["value"] for r in ioc_results
+                        if r.get("ioc_type") in ("org", "person", "gpe", "product")
+                    )[:20]
+
+                pivot_suggestions = key_iocs[:10]
+
+                hermes_output = HermesInferenceOutput(
+                    output_id=report_id,
+                    source_finding_id=report_id,
+                    inference_type="report_synthesis",
+                    timestamp=time.time(),
+                    primary_text=report_text,
+                    confidence=0.7,
+                    key_iocs=key_iocs,
+                    key_entities=key_entities,
+                    pivot_suggestions=pivot_suggestions,
+                    bounded=False,
+                    tokens_used=0,
+                    model_name=hermes_engine.__class__.__name__,
+                    source_hints=("public",),
+                )
+
+                # Store hermes_inference as CanonicalFinding for advisory retrieval
+                hermes_finding = CanonicalFinding(
+                    finding_id=hermes_output.output_id,
+                    query=query,
+                    source_type="hermes_inference",
+                    confidence=hermes_output.confidence,
+                    ts=hermes_output.timestamp,
+                    provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
+                    payload_text=json.dumps(hermes_output.to_dict(), ensure_ascii=False)[:4096],
+                )
+                await store.async_ingest_findings_batch([hermes_finding])
+                import logging as _log
+                _log.getLogger(__name__).info(f"[F256] Stored hermes_inference {hermes_output.output_id[:8]}")
+            except Exception as _e:
+                import logging as _log
+                _log.getLogger(__name__).warning(f"[F256] HermesInferenceOutput failed: {_e}")
+                # fail-soft: report still returned
 
     return report_text
 
