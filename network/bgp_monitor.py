@@ -154,4 +154,74 @@ async def monitor_bgp(
 __all__ = [
     "BGP_AVAILABLE",
     "monitor_bgp",
+    "monitor_bgp_as_findings",
 ]
+
+
+# F229: CanonicalFinding return path
+async def monitor_bgp_as_findings(
+    prefixes: list[str],
+    duration_seconds: int = 60,
+    timeout: int = 30,
+) -> list:
+    """
+    Monitor BGP events and return as CanonicalFinding list.
+
+    Fails soft: returns empty list on any error or when BGP unavailable.
+
+    Args:
+        prefixes:         List of BGP prefixes (e.g. ["1.1.1.0/24", "8.8.0.0/16"])
+        duration_seconds: How long to stream (default 60s)
+        timeout:          Seconds per call (default 30s, unused but kept for API compat)
+
+    Returns:
+        List[CanonicalFinding] — one per BGP event
+    """
+    if not BGP_AVAILABLE:
+        return []
+
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    def _to_canonical(event: dict) -> CanonicalFinding:
+        import hashlib
+        ts = event["timestamp"]
+        prefix = event["prefix"]
+        as_path = event["as_path"]
+        event_type = event["event_type"]
+        content_hash = hashlib.sha256(f"{prefix}:{as_path}:{event_type}".encode()).hexdigest()[:16]
+        finding_id = f"bgp_{prefix.replace('/', '_')}_{int(ts * 1000)}_{content_hash}"
+        return CanonicalFinding(
+            finding_id=finding_id,
+            query=f"bgp:{prefix}",
+            source_type="bgp_monitor",
+            confidence=0.8 if event_type in ("announce", "withdraw") else 0.5,
+            ts=ts,
+            provenance=(prefix, as_path, event_type),
+            payload_text=f"prefix={prefix} as_path={as_path} event={event_type}",
+            accepted=True,
+            reason="bgp_monitor",
+            entropy=0.0,
+            normalized_hash=None,
+            duplicate=False,
+        )
+
+    try:
+        events = await monitor_bgp(
+            prefixes=prefixes,
+            callback=lambda *args: None,  # discard, we just want return value
+            duration_seconds=duration_seconds,
+        )
+    except Exception:
+        return []
+
+    if not events:
+        return []
+
+    findings = []
+    for event in events:
+        try:
+            findings.append(_to_canonical(event))
+        except Exception:
+            continue
+
+    return findings

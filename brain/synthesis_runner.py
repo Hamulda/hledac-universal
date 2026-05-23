@@ -32,7 +32,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-import msgspec
+try:
+    import msgspec as _msgspec
+    msgspec = _msgspec
+except ImportError:
+    msgspec = None  # type: ignore
+    import logging
+    _logger_msgspec = logging.getLogger(__name__)
+    _logger_msgspec.warning("msgspec not installed — JSON constrained generation disabled")
 
 if TYPE_CHECKING:
     from .model_lifecycle import ModelLifecycle

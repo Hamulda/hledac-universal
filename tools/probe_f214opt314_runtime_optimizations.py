@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# NOTE: Production code uses rapidfuzz>=3.0.0 (see attribution_scorer.py).
+# This file kept as reference implementation and benchmark baseline.
 """
 F214OPT314 — Runtime Optimization Probe: Python 3.14.4 Optimization Opportunities
 

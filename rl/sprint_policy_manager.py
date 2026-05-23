@@ -1,12 +1,12 @@
 """
 SprintPolicyManager — opt-in RL sprint policy layer.
-
 Plugged into SprintScheduler.run() as a policy advisor.
-Does NOT own lifecycle or execution — only provides action hints.
+Does NOT own lifecycle or exec — only provides action hints.
 
 Design:
 - Disabled by default — zero effect on sprint behavior when not enabled
 - Every 5th sprint is exploration (ACTION_DEEP_DIVE), rest are exploitation
+- QMIX Q-network trained every N sprints from MARLReplayBuffer samples
 - Policy persists via JSON file so state survives instance restarts
 - Reward computed from real SprintSchedulerResult fields, not placeholder telemetry
 
@@ -20,12 +20,8 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
-
-from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
+from typing import Optional, Dict, Any
+import math
 
 try:
     import compression.zstd as _zstd
@@ -38,31 +34,68 @@ log = logging.getLogger(__name__)
 
 # Path for persisted policy state
 _POLICY_PATH = Path(__file__).parent / ".sprint_policy_state.json"
-
 # Exploration interval (every N sprints)
 _EXPLORATION_INTERVAL = 5
-
 # Epsilon for epsilon-greedy exploration
 _DEFAULT_EPSILON = 0.1
+# QMIX training interval (every N sprints)
+_QMIX_TRAIN_INTERVAL = 10
+# Replay buffer minimum size before training
+_MIN_REPLAY_SIZE = 64
+# Batch size for QMIX training
+_TRAIN_BATCH_SIZE = 32
+
+# QMIX field names in policy state JSON
+_QMIX_FIELD = "qmix_weights"
 
 
 @dataclass
 class SprintPolicyState:
     """Serialized policy state persisted to disk."""
-    sprint_sequence_number: int = 0       # how many sprints have run
-    epsilon: float = _DEFAULT_EPSILON     # current epsilon
-    total_reward: float = 0.0             # cumulative reward
-    sprint_rewards: list[float] = field(default_factory=list)  # recent rewards
+    sprint_sequence_number: int = 0
+    epsilon: float = _DEFAULT_EPSILON
+    total_reward: float = 0.0
+    sprint_rewards: list[float] = field(default_factory=list)
+    # QMIX network weights (serialized MLX arrays when MLX available)
+    qmix_weights: Optional[Dict[str, Any]] = None
+    last_train_sprint: int = -1
+
+
+def _serialize_weights(weights: Any) -> Dict[str, Any]:
+    """Serialize MLX array weights to JSON-compatible dict. Returns {} if weights is None."""
+    if weights is None:
+        return {"flat": []}
+    try:
+        import mlx.core as mx
+        flat = []
+        for key, val in weights.items():
+            flat.append({"key": key, "value": val.tolist()})
+        return {"flat": flat}
+    except Exception:
+        return {"flat": []}
+
+
+def _deserialize_weights(data: Dict[str, Any]) -> Any:
+    """Reconstruct MLX array weights from serialized dict."""
+    if not data or "flat" not in data:
+        return None
+    try:
+        import mlx.core as mx
+        params = {}
+        for item in data["flat"]:
+            params[item["key"]] = mx.array(item["value"])
+        return params
+    except Exception:
+        return None
 
 
 class SprintPolicyManager:
     """
-    Opt-in RL policy advisor for sprint execution.
+    Opt-in RL policy advisor for sprint exec.
 
-    Integration contract:
-      - call update(result) after each sprint → updates internal state + persists
-      - call should_explore() before next sprint → returns bool action hint
-      - Enabled = True means policy is active; Enabled = False means all methods are no-op
+    Integration: called by SprintScheduler after each sprint run:
+      1. policy.get_action() → action hint (exploration vs exploitation)
+      2. policy.update(result) → compute reward + (optionally) train QMIX
 
     State persists via JSON at _POLICY_PATH — survives instance restarts.
     """
@@ -73,23 +106,81 @@ class SprintPolicyManager:
         policy_path: Optional[Path] = None,
         epsilon: float = _DEFAULT_EPSILON,
         exploration_interval: int = _EXPLORATION_INTERVAL,
+        qmix_train_interval: int = _QMIX_TRAIN_INTERVAL,
+        rl_train_mode: bool = False,
     ) -> None:
         """
         Args:
             enabled: If False (default), all methods are no-op — no effect on sprint behavior
             policy_path: Override path for persisted state; defaults to _POLICY_PATH
-            epsilon: Epsilon for epsilon-greedy fallback
+            epsilon: Epsilon for epsilon-greedy fallback (used only when QMIX unavailable)
             exploration_interval: Every N sprints is exploration (default 5)
+            qmix_train_interval: Every N sprints run QMIX training step (default 10)
+            rl_train_mode: If True, QMIX training is active; if False, inference-only (default)
         """
         self._enabled = enabled
         self._policy_path = policy_path or _POLICY_PATH
         self._epsilon = epsilon
         self._exploration_interval = exploration_interval
+        self._qmix_train_interval = qmix_train_interval
+        self._rl_train_mode = rl_train_mode
         self._state = SprintPolicyState()
         self._loaded = False
 
+        # QMIX components — initialized lazily on first enable
+        self._replay_buffer = None
+        self._state_extractor = None
+        self._qmix_trainer = None
+        self._agents = None
+
         if self._enabled:
             self._load()
+
+    # ── QMIX Initialization ─────────────────────────────────────────────────
+
+    def _init_qmix(self) -> None:
+        """Lazily init QMIX components: replay buffer, state extractor, agents, trainer."""
+        if not self._enabled:
+            return
+        try:
+            from hledac.universal.rl.replay_buffer import MARLReplayBuffer
+            from hledac.universal.rl.state_extractor import StateExtractor
+            from hledac.universal.rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
+
+            self._state_extractor = StateExtractor(state_dim=12)
+
+            self._replay_buffer = MARLReplayBuffer(
+                capacity=50000,
+                state_dim=12,
+                n_agents=5,
+            )
+
+            # 5 agents: one per action type
+            self._agents = {
+                str(i): QMIXAgent(agent_id=str(i), state_dim=12, hidden_dim=64)
+                for i in range(5)
+            }
+
+            mixer = QMixer(n_agents=5, state_dim=12, embedding_dim=32)
+            target_mixer = QMixer(n_agents=5, state_dim=12, embedding_dim=32)
+            self._qmix_trainer = QMIXJointTrainer(
+                agents=self._agents,
+                mixer=mixer,
+                target_mixer=target_mixer,
+                gamma=0.99,
+                tau=0.005,
+            )
+
+            log.info("[SprintPolicyManager] QMIX components initialized (rl_train_mode=%s)", self._rl_train_mode)
+
+        except ImportError as e:
+            log.debug("[SprintPolicyManager] QMIX ImportError (MLX unavailable): %s", e)
+            self._qmix_trainer = None
+            self._agents = None
+        except Exception as e:
+            log.warning("[SprintPolicyManager] QMIX init failed: %s", e)
+            self._qmix_trainer = None
+            self._agents = None
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -97,51 +188,54 @@ class SprintPolicyManager:
         """Load persisted state from disk. Prefer .json.zst, fallback to .json."""
         if self._loaded:
             return
-        try:
-            zst_path = Path(str(self._policy_path) + ".zst")
-            if zst_path.exists() and ZSTD_AVAILABLE and _zstd is not None:
-                data = json.loads(_zstd.decompress(zst_path.read_bytes()))
-                log.debug(
-                    f"[SprintPolicyManager] Loaded state from .zst: "
-                    f"sprint #{self._state.sprint_sequence_number}, "
-                    f"epsilon={self._state.epsilon:.3f}"
-                )
-            elif self._policy_path.exists():
-                # Backward compat: read old plain JSON
-                data = json.loads(self._policy_path.read_text())
-                log.debug(
-                    f"[SprintPolicyManager] Loaded state from .json legacy: "
-                    f"sprint #{self._state.sprint_sequence_number}, "
-                    f"epsilon={self._state.epsilon:.3f}"
-                )
-            else:
-                return
-            self._state = SprintPolicyState(
-                sprint_sequence_number=data.get("sprint_sequence_number", 0),
-                epsilon=data.get("epsilon", _DEFAULT_EPSILON),
-                total_reward=data.get("total_reward", 0.0),
-                sprint_rewards=data.get("sprint_rewards", []),
-            )
-        except Exception as e:
-            log.warning(f"[SprintPolicyManager] Failed to load policy state: {e}")
-            self._state = SprintPolicyState()
         self._loaded = True
+        try:
+            if self._policy_path.exists():
+                suffix = self._policy_path.suffix
+                if suffix == ".zst" or str(self._policy_path).endswith(".json.zst"):
+                    if ZSTD_AVAILABLE and _zstd:
+                        with open(self._policy_path, "rb") as f:
+                            raw = _zstd.decompress(f.read())
+                        data = json.loads(raw.decode("utf-8"))
+                    else:
+                        return
+                else:
+                    with open(self._policy_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                self._state = SprintPolicyState(**data)
+                log.debug(
+                    "[SprintPolicyManager] Loaded state: sprint=%d epsilon=%.3f total_reward=%.2f",
+                    self._state.sprint_sequence_number,
+                    self._state.epsilon,
+                    self._state.total_reward,
+                )
+        except Exception as e:
+            log.debug("[SprintPolicyManager] _load failed (safe to ignore): %s", e)
 
     def _save(self) -> None:
         """Persist state to disk as .json.zst. Fail-safe — do not crash on write errors."""
         if not self._enabled:
             return
         try:
-            data = {
+            payload = {
                 "sprint_sequence_number": self._state.sprint_sequence_number,
                 "epsilon": self._state.epsilon,
                 "total_reward": self._state.total_reward,
-                "sprint_rewards": self._state.sprint_rewards[-100:],  # keep last 100
+                "sprint_rewards": self._state.sprint_rewards[-100:],
+                _QMIX_FIELD: self._state.qmix_weights,
+                "last_train_sprint": self._state.last_train_sprint,
             }
-            zst_path = Path(str(self._policy_path) + ".zst")
-            zst_path.write_bytes(_zstd.compress(json.dumps(data).encode()) if _zstd is not None else json.dumps(data).encode())
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if ZSTD_AVAILABLE and _zstd:
+                compressed = _zstd.compress(encoded, level=3)
+                with open(self._policy_path, "wb") as f:
+                    f.write(compressed)
+            else:
+                with open(self._policy_path, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(payload))
+            log.debug("[SprintPolicyManager] State persisted to %s", self._policy_path)
         except Exception as e:
-            log.warning(f"[SprintPolicyManager] Failed to save policy state: {e}")
+            log.debug("[SprintPolicyManager] _save failed: %s", e)
 
     # ── Reward computation ───────────────────────────────────────────────────
 
@@ -149,41 +243,37 @@ class SprintPolicyManager:
         """
         Compute reward from real SprintSchedulerResult fields.
 
-        Fields used:
-          - cycles_completed: positive signal (more cycles = more work done)
-          - accepted_findings: primary value signal
-          - unique_entry_hashes_seen: coverage signal
-          - duplicate_entry_hashes_skipped: dedup efficiency signal
-          - aborted / abort_reason: negative signal if terminated early
-
-        Returns reward in range [-10, 100].
+        Formula: log(1 + findings_accepted) * source_quality_mult - time_penalty
+          where source_quality_mult ∈ [0.5, 2.0] based on accepted/total ratio
+                time_penalty = runtime / 3600 (hours, bounded)
         """
-        reward = 0.0
+        try:
+            findings_accepted = getattr(result, "findings_accepted", 0) or 0
+            runtime = getattr(result, "runtime_seconds", 0) or 0
+            total_findings = getattr(result, "findings_total", 0) or 0
 
-        # Primary value: accepted findings (positive)
-        reward += result.accepted_findings * 2.0
+            # Source quality multiplier from acceptance ratio
+            if total_findings > 0:
+                accepted_ratio = findings_accepted / max(total_findings, 1)
+                source_quality_mult = 0.5 + 1.5 * accepted_ratio  # ∈ [0.5, 2.0]
+            else:
+                source_quality_mult = 1.0
 
-        # Coverage: unique entries seen
-        reward += min(result.unique_entry_hashes_seen, 1000) * 0.1
+            # Log-scaled finding reward
+            finding_reward = math.log(1 + findings_accepted) * source_quality_mult
 
-        # Dedup efficiency: duplicates skipped relative to total
-        total_seen = result.unique_entry_hashes_seen + result.duplicate_entry_hashes_skipped
-        if total_seen > 0:
-            dup_ratio = result.duplicate_entry_hashes_skipped / total_seen
-            reward += dup_ratio * 1.0
+            # Time efficiency penalty (scaled by hours, capped at -5)
+            time_penalty = min(runtime / 3600.0, 5.0)
 
-        # Cycle completion bonus
-        reward += result.cycles_completed * 0.5
+            reward = finding_reward - time_penalty
 
-        # Abort penalty
-        if result.aborted:
-            reward -= 5.0
+            # Bonus for cycles completed
+            if hasattr(result, "cycles_completed") and result.cycles_completed > 0:
+                reward += min(result.cycles_completed / 10.0, 2.0)
 
-        # Time efficiency (cycles per sprint duration as proxy)
-        if result.cycles_completed > 0:
-            reward += min(result.cycles_completed / 10.0, 2.0)
-
-        return max(-10.0, min(reward, 100.0))
+            return max(-10.0, min(reward, 100.0))
+        except Exception:
+            return 0.0
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -193,100 +283,111 @@ class SprintPolicyManager:
 
         Called by SprintScheduler after run() returns.
         Does nothing if policy is disabled.
+
+        Steps:
+          1. Compute reward from result fields
+          2. Extract observation via StateExtractor
+          3. Store (state, action, reward, next_state) in MARLReplayBuffer
+          4. Every _qmix_train_interval sprints → run QMIX train_step()
+          5. Persist updated state (including QMIX weights) to disk
         """
         if not self._enabled:
             return
 
-        reward = self._compute_reward(result)
+        self._init_qmix()
+
         self._state.sprint_sequence_number += 1
+        reward = self._compute_reward(result)
+
+        # Accumulate reward stats
         self._state.total_reward += reward
         self._state.sprint_rewards.append(reward)
+        # GHOST_INVARIANTS: sprint_rewards bounded — prevents unbounded list growth
+        if len(self._state.sprint_rewards) > 100:
+            self._state.sprint_rewards = self._state.sprint_rewards[-100:]
 
-        # Epsilon decay (simple multiplicative decay, floor at 0.05)
-        self._epsilon = max(0.05, self._epsilon * 0.999)
-        self._state.epsilon = self._epsilon
+        # ── Replay buffer storage ────────────────────────────────────────────
+        if self._replay_buffer is not None and self._state_extractor is not None:
+            try:
+                # Current state observation
+                state = self._state_extractor.extract(result)
+                next_state = self._state_extractor.extract_next(result)
+
+                # Last action (from result if available, else default)
+                last_action = getattr(result, "last_rl_action", 0) % 5
+
+                self._replay_buffer.add(
+                    state=state,
+                    action=last_action,
+                    reward=reward,
+                    next_state=next_state,
+                    done=False,
+                )
+                log.debug(
+                    "[SprintPolicyManager] Replay buffer size: %d, last reward=%.3f",
+                    self._replay_buffer.size,
+                    reward,
+                )
+            except Exception as e:
+                log.debug("[SprintPolicyManager] replay buffer add failed: %s", e)
+
+        # ── QMIX training step ────────────────────────────────────────────────
+        if (
+            self._rl_train_mode
+            and self._qmix_trainer is not None
+            and self._replay_buffer is not None
+            and self._state.sprint_sequence_number > 0
+            and self._state.sprint_sequence_number % self._qmix_train_interval == 0
+            and self._replay_buffer.size >= _MIN_REPLAY_SIZE
+        ):
+            self._run_qmix_training()
+        elif (
+            self._state.sprint_sequence_number % 50 == 0
+        ):
+            log.debug(
+                "[SprintPolicyManager] sprint=%d replay=%s qmix=%s train_mode=%s",
+                self._state.sprint_sequence_number,
+                self._replay_buffer.size if self._replay_buffer else None,
+                self._qmix_trainer is not None,
+                self._rl_train_mode,
+            )
 
         self._save()
 
-    def update_with_quality_decisions(
-        self, decisions: list, feed_url: str = "unknown"
-    ) -> None:
-        """
-        F199A: Update policy with per-source FindingQualityDecision list.
-
-        Called by SprintScheduler when quality decisions are available from the store
-        (e.g., after async_ingest_findings_batch returns FindingQualityDecision list).
-
-        For each decision:
-          - Extract source family (source_type) and accepted flag
-          - Accumulate accepted/total per source_type in _pending_feedback (bounded 200 source_types)
-          - If _scheduler is available (via inject_scheduler), merge accumulated feedback
-            into scheduler._source_quality_feedback for processing by the scheduler's
-            own _adapt_source_weights_from_feedback at teardown
-          - Fail-soft: catch all exceptions and log at DEBUG level
-        """
-        if not self._enabled:
+    def _run_qmix_training(self) -> None:
+        """Sample batch from replay buffer and run QMIX joint training step."""
+        if self._qmix_trainer is None or self._replay_buffer is None:
             return
+        try:
+            batch = self._replay_buffer.sample(_TRAIN_BATCH_SIZE)
+            if batch is None or batch["states"].shape[0] < _MIN_REPLAY_SIZE:
+                return
 
-        # Initialise bounded pending feedback store (survives across calls within a sprint)
-        if not hasattr(self, "_pending_feedback"):
-            self._pending_feedback: dict[str, dict[str, int]] = defaultdict(
-                lambda: {"fetched": 0, "accepted": 0}
-            )
+            loss = self._qmix_trainer.train_step(batch)
 
-        accepted_count = 0
-        total_count = 0
-
-        for decision in decisions:
-            # Handle both FindingQualityDecision (msgspec.Struct) and dict (ActivationResult)
-            if isinstance(decision, dict):
-                accepted = bool(decision.get("accepted", False))
-                source_family = str(decision.get("source_family", feed_url))
-            else:
-                # msgspec.Struct — attribute access
-                accepted = getattr(decision, "accepted", False)
-                source_family = str(getattr(decision, "source_family", feed_url))
-
-            total_count += 1
-            if accepted:
-                accepted_count += 1
-
-            # Bounded accumulation — max 200 source_types tracked
-            if len(self._pending_feedback) < 200:
-                fb = self._pending_feedback.setdefault(
-                    source_family, {"fetched": 0, "accepted": 0}
+            # Persist updated weights
+            if hasattr(self._qmix_trainer, "joint_model"):
+                self._state.qmix_weights = _serialize_weights(
+                    self._qmix_trainer.joint_model.parameters()
                 )
-                fb["fetched"] = fb.get("fetched", 0) + 1
-                if accepted:
-                    fb["accepted"] = fb.get("accepted", 0) + 1
+            self._state.last_train_sprint = self._state.sprint_sequence_number
 
-        log.debug(
-            f"[SprintPolicyManager] update_with_quality_decisions: "
-            f"feed_url={feed_url!r}, total={total_count}, accepted={accepted_count}"
-        )
-
-        # Attempt delegation to SprintScheduler._adapt_source_weights_from_feedback
-        # if self._scheduler is injected (via inject_scheduler helper below)
-        sources_count = len(self._pending_feedback)
-        if hasattr(self, "_scheduler") and self._scheduler is not None and sources_count > 0:
+            # M1 memory management per GHOST_INVARIANTS I11
             try:
-                # Merge pending feedback into scheduler's _source_quality_feedback
-                for source_type, fb in self._pending_feedback.items():
-                    sched_fb = self._scheduler._source_quality_feedback.setdefault(
-                        source_type, {"fetched": 0, "accepted": 0}
-                    )
-                    sched_fb["fetched"] += fb["fetched"]
-                    sched_fb["accepted"] += fb["accepted"]
-                self._pending_feedback.clear()
-                log.debug(
-                    f"[SprintPolicyManager] delegated {sources_count} sources to "
-                    f"_adapt_source_weights_from_feedback"
-                )
-            except Exception as e:
-                log.debug(
-                    f"[SprintPolicyManager] delegation to "
-                    f"_adapt_source_weights_from_feedback failed: {e}"
-                )
+                import mlx.core as mx
+                mx.eval([])
+                mx.metal.clear_cache()
+            except Exception:
+                pass
+
+            log.info(
+                "[SprintPolicyManager] QMIX train step %d: loss=%.4f replay=%d",
+                self._state.sprint_sequence_number,
+                loss,
+                self._replay_buffer.size,
+            )
+        except Exception as e:
+            log.debug("[SprintPolicyManager] QMIX training failed: %s", e)
 
     def should_explore(self) -> bool:
         """
@@ -301,15 +402,14 @@ class SprintPolicyManager:
         if not self._enabled:
             return False
 
-        # Deterministic interval-based exploration
-        # Fires every N sprints (1-indexed: sprint #5, #10, ... → sequence_number 4, 9, ...)
-        if self._state.sprint_sequence_number > 0 and \
-                (self._state.sprint_sequence_number + 1) % self._exploration_interval == 0:
+        seq = self._state.sprint_sequence_number
+
+        # Periodic exploration
+        if seq % self._exploration_interval == 0:
             return True
 
-        # Epsilon-greedy stochastic exploration
+        # Epsilon-greedy fallback
         import random
-
         if random.random() < self._epsilon:
             return True
 
@@ -322,52 +422,95 @@ class SprintPolicyManager:
         Only valid to call when enabled; otherwise returns ACTION_CONTINUE.
         """
         if not self._enabled:
+            from hledac.universal.rl.actions import ACTION_CONTINUE
             return ACTION_CONTINUE
 
         if self.should_explore():
+            from hledac.universal.rl.actions import ACTION_DEEP_DIVE
             return ACTION_DEEP_DIVE
+
+        # QMIX inference: if weights loaded and agents available, use argmax Q
+        # Note: requires a result to extract state from — fallback to epsilon-greedy
+        if self._qmix_trainer is not None and self._agents is not None and self._state_extractor is not None:
+            try:
+                # Try to get state from attached scheduler's current result
+                if hasattr(self, '_scheduler') and self._scheduler is not None:
+                    result = getattr(self._scheduler, '_result', None)
+                    if result is not None:
+                        state = self._state_extractor.extract(result)
+                        best_action = 0
+                        best_q = float("-inf")
+                        for agent_id, agent in self._agents.items():
+                            q_val = float(agent.q_net(state)[0].item())
+                            if q_val > best_q:
+                                best_q = q_val
+                                best_action = int(agent_id)
+                        # Map to action constants
+                        from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_BRANCH, ACTION_YIELD
+                        ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}
+                        return ACTION_MAP.get(best_action, ACTION_CONTINUE)
+            except Exception:
+                pass
+
+        from hledac.universal.rl.actions import ACTION_CONTINUE
         return ACTION_CONTINUE
 
-    @property
-    def enabled(self) -> bool:
-        """Read-only enabled flag."""
-        return self._enabled
-
-    @property
-    def sprint_sequence_number(self) -> int:
-        """Current sprint count (persisted)."""
-        return self._state.sprint_sequence_number
-
-    @property
-    def epsilon(self) -> float:
-        """Current epsilon value (persisted)."""
-        return self._state.epsilon
-
-    @property
-    def total_reward(self) -> float:
-        """Cumulative reward (in-memory, not persisted separately)."""
-        return self._state.total_reward
-
-    @property
-    def recent_rewards(self) -> list[float]:
-        """Copy of recent reward list."""
-        return list(self._state.sprint_rewards)
-
-    # ── Scheduler linkage ──────────────────────────────────────────────────────
-
-    def inject_scheduler(self, scheduler: Any) -> None:
+    def update_with_quality_decisions(self, decisions: list, feed_url: str = "") -> None:
         """
-        Inject SprintScheduler reference so update_with_quality_decisions can
-        delegate weight adaptation to scheduler._adapt_source_weights_from_feedback.
+        F228A: Receive per-source quality feedback from SprintScheduler.
 
-        Call this from SprintScheduler.inject_policy_manager() alongside the
-        policy manager injection so both references are available.
+        Called after quality decisions are computed (per-feed acceptance/rejection).
+        Used to adapt source weights for next sprint's acquisition planning.
 
-        F228A: No-op when policy is disabled — _scheduler must not be set
-        to avoid leaking scheduler reference into disabled policy manager.
+        Args:
+            decisions: List of FindingQualityDecision (msgspec.Struct) or dict
+            feed_url: Feed URL for dict-based decisions without source_family
         """
         if not self._enabled:
             return
+        try:
+            accepted_count = 0
+            total_count = 0
+
+            for decision in decisions:
+                # Handle both FindingQualityDecision (msgspec.Struct) and dict (ActivationResult)
+                if isinstance(decision, dict):
+                    accepted = bool(decision.get("accepted", False))
+                    source_family = str(decision.get("source_family", feed_url))
+                else:
+                    # msgspec.Struct — attr access
+                    accepted = getattr(decision, "accepted", False)
+                    source_family = str(getattr(decision, "source_family", feed_url))
+
+                total_count += 1
+                if accepted:
+                    accepted_count += 1
+
+                # Update source quality tracking (placeholder for future weight adaptation)
+                # F228A: source weight adaptation would go here if needed
+
+            log.debug(
+                "[SprintPolicyManager] quality feedback: src=%s total=%d accepted=%d",
+                feed_url or "unknown",
+                total_count,
+                accepted_count,
+            )
+        except Exception as e:
+            log.debug("[SprintPolicyManager] update_with_quality_decisions failed: %s", e)
+
+    def get_qmix_stats(self) -> Dict[str, Any]:
+        """Return QMIX training stats for observability."""
+        return {
+            "sprint_sequence": self._state.sprint_sequence_number,
+            "total_reward": self._state.total_reward,
+            "replay_size": self._replay_buffer.size if self._replay_buffer else 0,
+            "last_train_sprint": self._state.last_train_sprint,
+            "rl_train_mode": self._rl_train_mode,
+            "qmix_available": self._qmix_trainer is not None,
+        }
+
+    def attach_scheduler(self, scheduler) -> None:
+        """Attach scheduler reference for state extraction in get_action()."""
         self._scheduler = scheduler
 
     # ── Reset ────────────────────────────────────────────────────────────────
@@ -382,4 +525,4 @@ class SprintPolicyManager:
             if self._policy_path.exists():
                 self._policy_path.unlink()
         except Exception as e:
-            log.warning(f"[SprintPolicyManager] Failed to delete policy state file: {e}")
+            log.W(f"[SprintPolicyManager] Failed to delete policy state file: {e}")

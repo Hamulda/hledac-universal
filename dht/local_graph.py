@@ -120,5 +120,82 @@ class LocalGraphStore:
         await loop.run_in_executor(None, _scan)
         return out
 
+    # =============================================================================
+    # DHT Routing Table Persistence — Sprint F214
+    # =============================================================================
+    # Stores discovered DHT nodes (peer_id, host, port) in LMDB for cross-run
+    # persistence. Nodes are stored encrypted under `dht_node:<node_id>` key.
+
+    async def put_dht_node(self, node_id: str, host: str, port: int) -> None:
+        """
+        Persist a discovered DHT node to LMDB.
+
+        Args:
+            node_id: 40-char hex node ID
+            host: IP address string
+            port: UDP port number
+        """
+        node_data = orjson.dumps({"host": host, "port": port, "node_id": node_id})
+        try:
+            bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
+            encrypted = encrypt_aes_gcm(bucket_key, node_data, associated_data=node_id.encode())
+            loop = asyncio.get_running_loop()
+
+            def _put():
+                with self.env.begin(write=True) as txn:
+                    txn.put(f"dht_node:{node_id}".encode(), encrypted)
+
+            await loop.run_in_executor(None, _put)
+        except Exception:
+            pass  # Fail-soft: DHT persistence never blocks crawl
+
+    async def get_dht_node(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a DHT node from LMDB by node_id."""
+        try:
+            bucket_key = self.key_manager.get_key_for_bucket(self.bucket_id)
+
+            def _get():
+                with self.env.begin() as txn:
+                    blob = txn.get(f"dht_node:{node_id}".encode())
+                    if blob is None:
+                        return None
+                    plaintext = decrypt_aes_gcm(bucket_key, blob, associated_data=node_id.encode())
+                    return orjson.loads(plaintext)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _get)
+        except Exception:
+            return None
+
+    async def get_all_dht_nodes(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Retrieve all persisted DHT nodes (up to limit)."""
+        out: List[Dict[str, Any]] = []
+
+        def _scan():
+            with self.env.begin() as txn:
+                cur = txn.cursor()
+                for k, v in cur:
+                    if not k.startswith(b"dht_node:"):
+                        continue
+                    out.append({"id": k.decode().replace("dht_node:", "")})
+                    if len(out) >= limit:
+                        break
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _scan)
+        return out
+
+    async def clear_dht_nodes(self) -> None:
+        """Clear all persisted DHT nodes (e.g., on startup)."""
+        def _clear():
+            with self.env.begin(write=True) as txn:
+                cur = txn.cursor()
+                for k, _v in cur:
+                    if k.startswith(b"dht_node:"):
+                        txn.delete(k)
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _clear)
+
     async def close(self) -> None:
         self.env.close()

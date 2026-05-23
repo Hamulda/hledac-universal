@@ -815,6 +815,77 @@ class DeepProbeScanner:
         logger.info(f"scan_s3_buckets({domain}): {len(results)} open buckets, {len(bucket_findings)} findings")
         return results, bucket_findings
 
+    async def scan_dht(
+        self,
+        infohash: str,
+        store=None,
+        timeout_s: float = 120.0,
+    ) -> List[CanonicalFinding]:
+        """
+        F214: Real BitTorrent DHT peer discovery for a specific infohash.
+
+        Uses KademliaNode with real UDP bootstrapping (asyncio.DatagramProtocol)
+        to find peers actively announcing the given info_hash on the DHT network.
+
+        Args:
+            infohash: 40-char hex BitTorrent info hash (or any 20-byte hex seed)
+            store: DuckDBShadowStore (unused, for API compat only)
+            timeout_s: Max duration (capped at MAX_DHT_PROBE_DURATION_S=120)
+
+        Returns:
+            List of CanonicalFinding objects with source_type="dht_discovery".
+            Each finding: peer host/port as contact_info field.
+            Returns empty list if DHT_REAL_UDP=False or on any error.
+        """
+        from hledac.universal.dht.kademlia_node import DHT_REAL_UDP, MAX_DHT_PROBE_DURATION_S
+
+        if not DHT_REAL_UDP:
+            return []
+
+        timeout_s = min(timeout_s, MAX_DHT_PROBE_DURATION_S)
+        from hledac.universal.dht.kademlia_node import KademliaNode
+        from hledac.universal.core.resource_governor import ResourceGovernor
+
+        findings: List[CanonicalFinding] = []
+        try:
+            governor = ResourceGovernor()
+            node_id = f"hledac-dht-{infohash[:8]}"
+            node = KademliaNode(node_id=node_id, governor=governor)
+
+            await node.start()
+            start = time.monotonic()
+
+            # Use crawl with single info_hash to find peers
+            # crawl() internally sends GET_PEERS and collects responses
+            results = await asyncio.wait_for(
+                node.crawl(infohash, duration_s=timeout_s, max_results=50),
+                timeout=timeout_s,
+            )
+
+            for r in results:
+                peers = r.get("peers", [])
+                for peer_host, peer_port in peers:
+                    finding = CanonicalFinding(
+                        source_type="dht_discovery",
+                        query=infohash,
+                        finding_data={
+                            "info_hash": infohash,
+                            "peer_host": peer_host,
+                            "peer_port": peer_port,
+                            "name": r.get("name", ""),
+                            "size_bytes": r.get("size_bytes", 0),
+                        },
+                        confidence=0.7,
+                        category="dht",
+                    )
+                    findings.append(finding)
+
+            await node.stop()
+        except Exception:
+            pass  # Fail-soft: never propagates
+
+        return findings
+
     def _generate_bucket_candidates(self, domain: str, max_count: int) -> Dict[str, List[str]]:
         """Generate probable bucket names for S3, GCS, and Azure."""
         # Extract domain parts

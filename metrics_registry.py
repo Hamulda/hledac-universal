@@ -77,7 +77,17 @@ METRIC_NAMES = frozenset([
     "thermal_recovery_events",
     "memory_zone_normal_seconds",
     "memory_zone_high_seconds",
+    "circuit_breaker_state_transitions",
+    # Circuit breaker metrics (F228F)
+    "circuit_breaker_open_count",
+    "circuit_breaker_half_open_count",
+    "circuit_breaker_closed_count",
+    "circuit_breaker_recovery_success",
+    # Crawl budget metrics
     "memory_zone_critical_seconds",
+    # Dark surface pivot metrics (F214K)
+    "dark_surface_pivots_attempted",
+    "dark_surface_pivots_successful",
 ])
 
 

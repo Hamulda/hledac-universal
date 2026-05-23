@@ -12,13 +12,18 @@ from .base import Transport
 logger = logging.getLogger(__name__)
 
 
+# Circuit rotation — Sprint F214 B.1
+MAX_CIRCUIT_REQUESTS: int = 100  # rotate after N requests
+
+
 def _generate_torrc(torrc_path: Path) -> None:
-    """Generovat minimální torrc pokud neexistuje."""
+    """Generate torrc with anonymity-hardening settings."""
     if torrc_path.exists():
         return
     torrc_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir = torrc_path.parent / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
+    # B.2: HiddenServiceStatistics 0 — no traffic stats collection
     torrc_path.write_text(
         f"DataDirectory {data_dir}\n"
         f"SocksPort 9050\n"
@@ -26,6 +31,7 @@ def _generate_torrc(torrc_path: Path) -> None:
         f"MaxCircuitDirtiness 600\n"
         f"IsolateSOCKSAuth 1\n"
         f"NumEntryGuards 3\n"
+        f"HiddenServiceStatistics 0\n"
         f"Log notice stderr\n"
     )
 
@@ -78,6 +84,10 @@ class TorTransport(Transport):
         self._ready = asyncio.Event()
         self.http_port: int = 0
         self.security_level = 'tor'
+        # Sprint F214 B.1: circuit rotation state
+        self._circuit_request_count: int = 0
+        self._max_circuit_requests: int = MAX_CIRCUIT_REQUESTS
+        self._circuit_lock: asyncio.Lock = asyncio.Lock()
         self._session_direct = None
         self._session_tor = None
 
@@ -242,6 +252,95 @@ class TorTransport(Transport):
     async def is_running(self) -> bool:
         """Alias for is_circuit_established — Tor is considered running if circuit is built."""
         return await self.is_circuit_established()
+
+    async def rotate_circuit(self) -> bool:
+        """
+        Sprint F214 B.1: Send NEWNYM signal via stem control port.
+        Forces Tor to build a new circuit for the next request.
+        Returns True if rotation succeeded.
+        """
+        try:
+            import stem.control
+        except ImportError:
+            logger.warning("stem not available — circuit rotation skipped")
+            return False
+
+        try:
+            def _do_rotate():
+                with stem.control.Controller.from_port(port=self.control_port) as ctrl:
+                    ctrl.authenticate()
+                    ctrl.signal(stem.Signal.NEWNYM)
+            await asyncio.get_event_loop().run_in_executor(None, _do_rotate)
+            logger.debug("Tor circuit rotated via NEWNYM")
+            return True
+        except Exception as e:
+            logger.warning(f"Tor circuit rotation failed: {e}")
+            return False
+
+    async def _maybe_rotate_circuit(self) -> None:
+        """Check request count and rotate circuit if threshold reached."""
+        async with self._circuit_lock:
+            self._circuit_request_count += 1
+            if self._circuit_request_count >= self._max_circuit_requests:
+                self._circuit_request_count = 0
+                if await self.rotate_circuit():
+                    logger.info(f"Tor circuit rotated after {self._max_circuit_requests} requests")
+                else:
+                    logger.warning("Circuit rotation failed — continuing with current circuit")
+
+    async def fetch(self, config: "TransportConfig") -> "TransportResult":
+        """
+        Sprint F214 B.1: Fetch URL via Tor using curl_cffi with SOCKS5H.
+        Circuit rotation after MAX_CIRCUIT_REQUESTS.
+
+        Fail-safe: returns TransportResult with error if Tor unavailable.
+        """
+        from .curl_cffi_fetch import fetch_via_curl_cffi
+
+        # Check Tor availability first
+        if not await self.is_circuit_established():
+            from .base import TransportResult
+            return TransportResult(
+                err="tor_unavailable",
+                failure_stage="tor_check",
+                selected_transport="tor",
+            )
+
+        # Circuit rotation check
+        await self._maybe_rotate_circuit()
+
+        # Fetch via curl_cffi with SOCKS5H proxy
+        # SOCKS5H = DNS resolution over Tor (not just SOCKS5 tunnel)
+        import os
+        os.environ["CURL_CFFI_PROXY"] = "socks5h://127.0.0.1:9050"
+
+        try:
+            result = await fetch_via_curl_cffi(
+                url=config.url,
+                method=config.method,
+                headers=config.headers or {},
+                body=config.body,
+                timeout=config.timeout,
+            )
+            # Convert curl_cffi result to TransportResult
+            from .base import TransportResult
+            return TransportResult(
+                final_url=result.get("url", config.url),
+                status_code=result.get("status_code", 0),
+                content_type=result.get("content_type", ""),
+                fetched_bytes=len(result.get("content", b"")),
+                err=result.get("error"),
+                failure_stage=result.get("failure_stage"),
+                network_error_kind=result.get("network_error_kind"),
+                selected_transport="tor",
+            )
+        except Exception as e:
+            from .base import TransportResult
+            return TransportResult(
+                err=f"tor_fetch_failed: {e}",
+                failure_stage="tor_fetch",
+                selected_transport="tor",
+            )
 
     def register_handler(self, msg_type: str, handler: Callable):
         self.handlers[msg_type] = handler

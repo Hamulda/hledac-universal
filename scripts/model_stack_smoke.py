@@ -109,6 +109,30 @@ def check_embeddings() -> dict:
     try:
         from hledac.universal.brain.ane_embedder import ANEEmbedder, ANE_AVAILABLE
         notes.append(f"ANEEmbedder import=OK (ANE_AVAILABLE={ANE_AVAILABLE})")
+
+        # Sprint F228B: CoreMLEmbedder check
+        coreml_active_path = "unavailable"
+        try:
+            from hledac.universal.brain.coreml_embedder import (
+                get_coreml_embedder,
+                ANE_AVAILABLE as _CA,
+                CoreMLEmbedder,
+            )
+            ce = get_coreml_embedder()
+            if ce is not None:
+                if ce._coreml_model is not None:
+                    coreml_active_path = "coreml_ane"
+                elif ce._onnx_model_path is not None:
+                    coreml_active_path = "onnx_cpu"
+                elif ce._loaded:
+                    coreml_active_path = "hash_fallback"
+                else:
+                    coreml_active_path = "not_loaded"
+            notes.append(f"CoreMLEmbedder active_path={coreml_active_path}")
+        except ImportError:
+            notes.append("CoreMLEmbedder=N/A (coremltools not installed)")
+        except Exception as e:
+            notes.append(f"CoreMLEmbedder check: {e}")
     except Exception as e:
         return {"status": "FAIL", "component": "embeddings", "error": f"ANEEmbedder import failed: {e}"}
 

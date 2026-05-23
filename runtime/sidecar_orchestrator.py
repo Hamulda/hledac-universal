@@ -182,6 +182,9 @@ class SidecarOrchestrator:
           2. run_ct_to_passivedns_pivot_advisory  (R5)
           3. run_bgp_advisory_sidecar             (F234, non-blocking)
           4. run_wayback_cdx_deep_sidecar         (F234, non-blocking)
+          5. run_ipfs_discovery_sidecar          (F229, gated by HLEDAC_ENABLE_IPFS)
+          6. run_bgp_enrichment_sidecar          (F229, gated by HLEDAC_ENABLE_BGP)
+          7. run_banner_grab_sidecar              (F229, gated by HLEDAC_ENABLE_BANNER_GRAB)
         """
         # Step 1: SprintAdvisoryRunner for 4 core advisories
         if self._scheduler is not None:
@@ -212,7 +215,9 @@ class SidecarOrchestrator:
 
         # Steps 3-4: Non-blocking advisory sidecars
         if self._scheduler is not None:
-            bg_tasks: set = getattr(self._scheduler, "_bg_tasks", set())
+            bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
+            if bg_tasks is None:
+                bg_tasks = set()
             _bgp_task = _asyncio.create_task(
                 self._run_bgp_advisory_sidecar(), name="sprint:bgp_advisory_sidecar"
             )
@@ -223,6 +228,27 @@ class SidecarOrchestrator:
             )
             bg_tasks.add(_wayback_task)
             _wayback_task.add_done_callback(bg_tasks.discard)
+
+        # Steps 5-7: F229 deep OSINT sidecars (non-blocking, env-gated)
+        if self._scheduler is not None:
+            bg_tasks: set | None = getattr(self._scheduler, "_bg_tasks", None)
+            if bg_tasks is None:
+                bg_tasks = set()
+            _ipfs_task = _asyncio.create_task(
+                self._run_ipfs_discovery_sidecar(), name="sprint:ipfs_discovery_sidecar"
+            )
+            bg_tasks.add(_ipfs_task)
+            _ipfs_task.add_done_callback(bg_tasks.discard)
+            _bgp_enr_task = _asyncio.create_task(
+                self._run_bgp_enrichment_sidecar(), name="sprint:bgp_enrichment_sidecar"
+            )
+            bg_tasks.add(_bgp_enr_task)
+            _bgp_enr_task.add_done_callback(bg_tasks.discard)
+            _banner_task = _asyncio.create_task(
+                self._run_banner_grab_sidecar(), name="sprint:banner_grab_sidecar"
+            )
+            bg_tasks.add(_banner_task)
+            _banner_task.add_done_callback(bg_tasks.discard)
 
     async def run_target_memory_update(
         self,
@@ -397,5 +423,34 @@ class SidecarOrchestrator:
             adapter = create_wayback_cdx_deep_adapter()
             _ = await adapter.analyze(self._result)
             # Results written to result telemetry inside the adapter
+        except Exception:
+            pass  # Fail-soft
+
+    # ── F229: IPFS Discovery Sidecar ─────────────────────────────────────────
+
+    async def _run_ipfs_discovery_sidecar(self) -> None:
+        """F229: IPFS discovery — fetch unindexed content from IPFS network. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_ipfs_discovery_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    async def _run_bgp_enrichment_sidecar(self) -> None:
+        """F229: BGP enrichment — AS path analysis for IP/ASN in query. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_bgp_enrichment_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    async def _run_banner_grab_sidecar(self) -> None:
+        """F229: Banner grab — active TCP probing for service fingerprinting. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_banner_grab_sidecar()
         except Exception:
             pass  # Fail-soft

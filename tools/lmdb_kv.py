@@ -47,7 +47,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Default bounds
-DEFAULT_MAP_SIZE = 64 * 1024 * 1024  # 64MB
+DEFAULT_MAP_SIZE = 256 * 1024 * 1024  # 256MB — prevent fragmentation on large datasets
 MAX_KEYS = 10000
 LMDB_WRITE_BATCH_SIZE = 500  # Hard cap for batched writes
 
@@ -283,7 +283,7 @@ class AsyncLMDBKVStore:
         # Fallback to ThreadPoolExecutor
         # M218C: readahead=False reduces M1 UMA memory pollution from Metal page cache
         if LMDB_AVAILABLE:
-            self._env = lmdb.open(str(self.path), map_size=self.map_size, readahead=False)
+            self._env = lmdb.open(str(self.path), map_size=self.map_size, readahead=False, writemap=False, sync=False)
             logger.info(f"AsyncLMDBKVStore opened (ThreadPoolExecutor) at {self.path}")
         else:
             raise ImportError("Neither aiolmdb nor lmdb available")

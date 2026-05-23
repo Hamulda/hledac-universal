@@ -11,23 +11,12 @@
 
 @RTK.md
 
-<!-- lean-ctx-compression -->
-OUTPUT STYLE: dense
-- Each statement = one atomic fact line
-- Use abbreviations: fn, cfg, impl, deps, req, res, ctx, err, ret
-- Diff lines only (+/-/~), never repeat unchanged code
-- Symbols: → (causes), + (adds), − (removes), ~ (modifies), ∴ (therefore)
-- No narration, no filler, no hedging
-- BUDGET: ≤200 tokens per response unless code block required
-<!-- /lean-ctx-compression -->
-
 <!-- lean-ctx -->
 ## lean-ctx
 
 Prefer lean-ctx MCP tools over native equivalents for token savings.
 Full rules: @LEAN-CTX.md
 <!-- /lean-ctx -->
-
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
@@ -66,3 +55,13 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+<!-- lean-ctx-compression -->
+OUTPUT STYLE: expert-terse
+- Telegraph format: subject-verb-object, drop articles/prepositions
+- Symbolic vocabulary: → cause, ∵ because, ∴ therefore, ⊕ add, ⊖ remove, Δ change, ≈ similar, ≠ different, ∈ in/member, ∅ empty/none, ✓ ok, ✗ fail
+- Code blocks: untouched (never compress code syntax)
+- Each line: max 80 chars
+- Zero narration, zero filler
+- BUDGET: ≤100 tokens per non-code response
+<!-- /lean-ctx-compression -->

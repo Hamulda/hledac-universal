@@ -2481,950 +2481,989 @@ class SprintScheduler:
             scheduler=self,
         )
 
-        # Sprint F193A: CT log client can be injected at run() call time
-        if ct_log_client is not None:
-            self._ct_log_client = ct_log_client
-
-        # Sprint 8VD: Set sprint_id from lifecycle if available
+        # Sprint F228F: Wrap ALL body statements in defensive try/except so any
+        # exception is classified and recorded on result before propagation.
+        # SprintScheduler must NEVER silently fail — classify every error.
+        _run_error: Exception | None = None
+        _run_error_class: str = "unknown"
         try:
-            self.sprint_id = getattr(lifecycle, "sprint_id", "") or ""
-        except Exception:
-            self.sprint_id = ""
-
-        # Sprint 8RA: Store lifecycle ref for callbacks
-        self._lifecycle = lifecycle
-        # Sprint 8SA: Store adapter for all lifecycle access in this run
-        self._lc_adapter = adapter
-
-        # Sprint F195C: Inject opt-in RL policy manager
-        if policy_manager is not None:
-            self.inject_policy_manager(policy_manager)
-
-        # Sprint 8BK: Record wall-clock start for duration budget guard
-        self._wall_clock_start = _time.monotonic()
-        # Sprint F212A: Derive hard deadline from sprint_duration_s
-        self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
-        self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
-        # Sprint F214OPT-D: Wire Arrow batch hard cap to result
-        self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
-        # Sprint F195: Store duckdb_store on self for task handler access
-        self._duckdb_store = duckdb_store
-        # Sprint F218E: Cache capability check once at sprint start
-        self._duckdb_can_ingest = duckdb_store is not None and hasattr(
-            duckdb_store, "async_ingest_findings_batch"
-        )
-
-        # Sprint F195C: Initialize forensics enricher and LMDB
-        if self._enrichment_services:
-            await self._enrichment_services.init()
-        # Sprint F205H: Initialize metrics registry (fail-soft, run_dir from config or default)
-        await self._init_metrics_registry()
-        # F205H: Capture baseline RSS at sprint start (not just at cycle end)
-        self._tick_metrics_on_cycle_end()
-
-        # E4: Register GC sprint callbacks (remove stale handle first to prevent doubles)
-        global _gc_sprint_callback_handle
-        if _gc_sprint_callback_handle is not None:
-            gc.callbacks.remove(_gc_sprint_callback_handle)
-        _gc_sprint_stats.clear()
-        _gc_sprint_callback_handle = _gc_sprint_callback
-        gc.callbacks.append(_gc_sprint_callback)
-
-        # E2: Opt-in tracemalloc snapshot diff via HLEDAC_TRACEMALLOC env var
-        # Sprint F219M: init before try so finally always has consistent reference
-        _trace_snap_before: Any = None
-        _trace_enabled = os.environ.get("HLEDAC_TRACEMALLOC")
-        if _trace_enabled:
+            # Sprint F193A: CT log client can be injected at run() call time
+            if ct_log_client is not None:
+                self._ct_log_client = ct_log_client
+    
+            # Sprint 8VD: Set sprint_id from lifecycle if available
             try:
-                import tracemalloc
-                tracemalloc.start(10)  # 10-frame depth limit
-                _trace_snap_before = tracemalloc.take_snapshot()
-            except Exception as _e:
-                log.warning(f"[E2] tracemalloc start failed: {_e}")
-                _trace_enabled = False  # prevent finally from attempting stop/compare
-
-        # Initial tick to enter ACTIVE
-        phase = self._runner.tick(now_monotonic)
-
-        # Sprint 8UA: Fix lifecycle WARMUP→ACTIVE transition
-        # Sprint F206C: Delegated to runner.ensure_active()
-        self._runner.ensure_active(now_monotonic)
-
-        # Sprint 8RA: Load persistent dedup at BOOT
-        _dedup_t0 = _time.monotonic()
-        await self._load_dedup()
-        _dedup_elapsed = _time.monotonic() - _dedup_t0
-        self._result.dedup_preload_elapsed_s = _dedup_elapsed
-        self._result.dedup_preload_count = len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
-
-        # Sprint F203D: Initialize evidence chain builder at sprint start
-        try:
-            from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
-            set_global_builder(EvidenceChainBuilder())
-        except Exception:
-            pass  # Fail-soft: chain tracking is optional advisory
-
-        # Sprint F166B: Identify pre-loop cost center (additive — first reason only)
-        if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
-            self._result.pre_loop_blocker_reason = "dedup_preload"
-
-        # F240A: Timer instrumentation — memory_preflight and profile_reality_check
-        try:
-            self._timer.phase("memory_preflight")
-            # (empty — dedup preload above is the cost center)
-        finally:
-            self._timer.phase("memory_preflight_end")
-
-        # P12: Hermes prewarm — explicit policy by mode (bounded M1 8GB lifecycle)
-        # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
-        # Stable mode: current safe behavior via ModelManager memory guards
-        # Hermes ~2GB: loaded once at sprint start, released at teardown
-        self._hermes_engine = None
-        self._memory_manager = None
-        try:
-            self._timer.phase("profile_reality_check_start")
-            await self._prewarm_hermes_for_sprint()
-        except Exception as e:
-            log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
-            self._hermes_engine = None
-        finally:
-            self._timer.phase("profile_reality_check_end")
-
-        # Sprint 8SA: Source scoring — order sources by priority at start of ACTIVE
-        _DEFAULT_SOURCE_TYPES = [
-            "cisa_kev", "threatfox_ioc", "urlhaus_recent",
-            "feodo_ip", "openphish_feed",
-        ]
-        _graph_stats: dict[str, int] = {"nodes": 0, "edges": 0}
-        ordered_sources = self.prioritize_sources(
-            list(sources) if sources else _DEFAULT_SOURCE_TYPES, _graph_stats
-        )
-
-        # Sprint F166B: Capture pre-loop surfaces before entering while loop
-        _pre_loop_elapsed = _time.monotonic() - self._wall_clock_start
-        self._result.pre_loop_elapsed_s = _pre_loop_elapsed
-        # entered_active_at_monotonic: first observation of ACTIVE (loop guard)
-        self._result.entered_active_at_monotonic = _pre_loop_elapsed
-
-        # Sprint F206BG: Build acquisition strategy plan at sprint start
-        try:
-            # F214R: Use governor.evaluate() for authoritative uma_state.
-            # Eliminates duplicate policy computation in scheduler.
-            _governor_decision = None
-            if self._governor is not None:
-                try:
-                    _governor_decision = await self._governor.evaluate()
-                except Exception:
-                    pass
-            if _governor_decision is not None:
-                _uma_state = _governor_decision.uma_state
-                _swap_detected = getattr(_governor_decision, "swap_detected", False)
-            else:
-                # Fallback: read raw UMA (backward compat for non-governor runs)
-                from hledac.universal.core.resource_governor import sample_uma_status
-                uma = sample_uma_status()
-                _uma_state = "ok"
-                if uma.is_emergency:
-                    _uma_state = "emergency"
-                elif uma.is_critical:
-                    _uma_state = "critical"
-                elif uma.is_warn:
-                    _uma_state = "warn"
-                _swap_detected = uma.swap_detected
-            # Sprint F233C: Consume predecessor's next_sprint_seeds for acquisition planning
-            # Fail-soft: missing predecessor or seeds file → empty diagnostics
-            # F240A: runtime_pivot_seed_extraction phase
-            self._timer.phase("runtime_pivot_seed_extraction_start")
-            _next_seeds_ioc_seeds: list = []
-            _next_seeds_diagnostics: Any = None
-            _next_seeds_skip_reason = ""
-            if self._config.predecessor_sprint_id:
-                try:
-                    from hledac.universal.runtime.next_seeds_consumption import (
-                        consume_next_sprint_seeds,
-                        extract_ioc_values_from_seeds,
-                        NextSeedsDiagnostics,
-                    )
-                    (
-                        _next_seeds_ioc_seeds,
-                        _next_seeds_diagnostics,
-                        _next_seeds_query_suggestions,
-                        _next_seeds_skip_reason,
-                    ) = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
-                    self._result.next_seeds_provider_yield = (
-                        _next_seeds_diagnostics.provider_yield_active
-                        if _next_seeds_diagnostics else False
-                    )
-                    self._result.next_seeds_pivot_deepening = (
-                        _next_seeds_diagnostics.pivot_deepening_active
-                        if _next_seeds_diagnostics else False
-                    )
-                    self._result.next_seeds_query_suggestions = (
-                        _next_seeds_diagnostics.query_suggestions
-                        if _next_seeds_diagnostics else ()
-                    )
-                    self._result.next_seeds_consumed_count = len(_next_seeds_ioc_seeds)
-                    self._result.next_seeds_seed_source = (
-                        f"predecessor:{self._config.predecessor_sprint_id}"
-                        if self._config.predecessor_sprint_id else "none"
-                    )
-                    self._result.next_seeds_skip_reason = _next_seeds_skip_reason
-                    # F233C: Extract IOC values from ioc_followup seeds for NonfeedSeedContext
-                    if _next_seeds_ioc_seeds:
-                        _ioc_vals = extract_ioc_values_from_seeds(_next_seeds_ioc_seeds)
-                        self._result.next_seeds_ioc_domains = _ioc_vals["domains"]
-                        self._result.next_seeds_ioc_ips = _ioc_vals["ips"]
-                        self._result.next_seeds_ioc_urls = _ioc_vals["urls"]
-                        self._result.next_seeds_ioc_hashes = _ioc_vals["hashes"]
-                        self._result.next_seeds_ioc_cves = _ioc_vals["cves"]
-                    if _next_seeds_ioc_seeds and _next_seeds_diagnostics and _next_seeds_diagnostics.any_active:
-                        log.debug(
-                            "[F233C] consumed seeds from %s: ioc_seeds=%d, diagnostics=%s",
-                            self._config.predecessor_sprint_id,
-                            len(_next_seeds_ioc_seeds),
-                            _next_seeds_diagnostics,
-                        )
-                except Exception as _exc:
-                    log.debug("[F233C] next_sprint_seeds consumption failed (fail-soft): %s", _exc)
-                    _next_seeds_skip_reason = "consumption_error"
-            self._timer.phase("runtime_pivot_seed_extraction_end")
-
-            # F240A: planner_actions_consumption phase
-            self._timer.phase("planner_actions_consumption_start")
-            # Sprint F237B: Load predecessor report and consume investigation_packet.planner_actions
-            _planner_seed_iocs: dict = {}
-            _planner_lanes: list[str] = []
-            _planner_skip_reason = "no_predecessor"
-            if self._config.predecessor_sprint_id:
-                try:
-                    from hledac.universal.paths import get_sprint_json_report_path
-                    _pred_report_path = get_sprint_json_report_path(self._config.predecessor_sprint_id)
-                    if _pred_report_path.exists():
-                        import orjson
-
-                        _pred_raw = _pred_report_path.read_bytes()
-                        _pred_data: dict = orjson.loads(_pred_raw)
-                        _inv_packet = _pred_data.get("investigation_packet") or {}
-                        _planner_actions = _inv_packet.get("planner_actions") or []
-
-                        if _planner_actions:
-                            from hledac.universal.runtime.next_seeds_consumption import (
-                                consume_planner_actions,
-                            )
-                            (
-                                _planner_seed_iocs,
-                                _planner_lanes,
-                                _planner_seed_source,
-                                _planner_skip_reason,
-                            ) = consume_planner_actions(_planner_actions)
-                            self._result.planner_actions_consumed_count = len(_planner_actions)
-                            self._result.planner_action_lanes_requested = _planner_lanes
-                            self._result.planner_action_seed_source = _planner_seed_source
-                            self._result.planner_action_skip_reason = _planner_skip_reason
-                            # F245A: persist to instance fields for cross-phase access (read at ~5458)
-                            self._planner_seed_iocs = _planner_seed_iocs or {}
-                            self._planner_lanes = _planner_lanes or []
-                            log.debug(
-                                "[F237B] consumed %d planner_actions: lanes=%s, iocs=%s",
-                                len(_planner_actions),
-                                _planner_lanes,
-                                _planner_seed_iocs,
-                            )
-                except Exception as _exc:
-                    log.debug("[F237B] planner_actions consumption failed (fail-soft): %s", _exc)
-                    _planner_skip_reason = "consumption_error"
-            self._timer.phase("planner_actions_consumption_end")
-
-            # F240A: acquisition_plan_build phase
-            self._timer.phase("acquisition_plan_build_start")
-            self._acquisition_plan = build_acquisition_plan(
-                query=query,
-                duration_s=self._config.sprint_duration_s,
-                aggressive_mode=self._config.aggressive_mode,
-                uma_state=_uma_state,
-                swap_detected=_swap_detected,
-                accepted_findings_so_far=self._result.accepted_findings,
-                branch_timeout_count=self._result.branch_timeout_count,
-                # F223A: Explicit acquisition profile override from config
-                acquisition_profile=self._config.acquisition_profile,
+                self.sprint_id = getattr(lifecycle, "sprint_id", "") or ""
+            except Exception:
+                self.sprint_id = ""
+    
+            # Sprint 8RA: Store lifecycle ref for callbacks
+            self._lifecycle = lifecycle
+            # Sprint 8SA: Store adapter for all lifecycle access in this run
+            self._lc_adapter = adapter
+    
+            # Sprint F195C: Inject opt-in RL policy manager
+            if policy_manager is not None:
+                self.inject_policy_manager(policy_manager)
+    
+            # Sprint 8BK: Record wall-clock start for duration budget guard
+            self._wall_clock_start = _time.monotonic()
+            # Sprint F212A: Derive hard deadline from sprint_duration_s
+            self._hard_deadline_monotonic = self._wall_clock_start + self._config.sprint_duration_s
+            self._result.hard_deadline_monotonic = self._hard_deadline_monotonic
+            # Sprint F214OPT-D: Wire Arrow batch hard cap to result
+            self._result.arrow_batch_hard_cap = self._ARROW_BATCH_HARD_CAP
+            # Sprint F195: Store duckdb_store on self for task handler access
+            self._duckdb_store = duckdb_store
+            # Sprint F218E: Cache capability check once at sprint start
+            self._duckdb_can_ingest = duckdb_store is not None and hasattr(
+                duckdb_store, "async_ingest_findings_batch"
             )
-            self._timer.phase("acquisition_plan_build_end")
-            # F232: ct_planned — CT was in the acquisition plan (enabled)
-            from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
-            self._result.ct_planned = is_lane_enabled(self._acquisition_plan, "CT")
-            # F214: doh_planned — DOH was in the acquisition plan (enabled)
-            self._result.doh_planned = is_lane_enabled(self._acquisition_plan, "DOH")
-            # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
-            self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
-            # F216F: Generate pivot candidates from query and fill telemetry
-            # F226A: Pass mission_intent for mission-aware scoring
-            # F238D: Pass graph_stats for degree-penalty and novelty scoring
-            if self._result.nonfeed_plan_debug is not None:
-                try:
-                    _nd = self._result.nonfeed_plan_debug
-                    _graph_stats = self._get_pivot_graph_stats_for_planning()
-                    _pivot_candidates = generate_pivot_candidates_from_query(
-                        query,
-                        mission_intent=_nd.mission_intent,
-                        graph_stats=_graph_stats,
-                    )
-                    _nd.pivot_candidates_count = len(_pivot_candidates)
-                    _nd.pivot_candidate_types = tuple(set(p.pivot_type for p in _pivot_candidates))
-                    _nd.pivot_scheduled_lanes = ()
-                    _nd.pivot_skip_reason = None
-                    _nd.pivot_errors = ()
-                    # F238D: populate proof fields
-                    if _graph_stats and _graph_stats.get("nodes", 0) > 0:
-                        self._result.pivot_graph_stats_used = True
-                        self._result.pivot_graph_stats_keys = tuple(_graph_stats.keys())
-                        self._result.graph_aware_pivot_count = len(_pivot_candidates)
-                except Exception:
-                    pass  # Fail-soft
-            # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
-            # can read them even if nonfeed_plan_debug is None (snapshot lost in some exit paths)
-            if self._result.nonfeed_plan_debug is not None:
-                _nd = self._result.nonfeed_plan_debug
-                self._result.nonfeed_priority_enabled = getattr(_nd, "nonfeed_priority_enabled", False)
-                self._result.nonfeed_profile_expected_lanes = tuple(getattr(_nd, "nonfeed_profile_expected_lanes", ()) or ())
-                # F224B: nonfeed_expected_lanes = scheduled_nonfeed_lanes (canonical source)
-                self._result.nonfeed_expected_lanes = tuple(getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
-                self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
-        except Exception as _exc:
-            self._acquisition_plan = None
-            # Sprint F225A: Surface build failure in result so final report
-            # can distinguish "plan empty" from "build failed".
-            self._result.acquisition_plan_build_failed = True
-            self._result.acquisition_plan_build_error_type = type(_exc).__name__
-            self._result.acquisition_plan_build_error = str(_exc)[:500]
-
-        # Sprint F245A: Run Mandatory Acquisition Prelude and first cycle concurrently.
-        # Prelude establishes early terminal state for PUBLIC/CT; first cycle starts feed/public
-        # discovery immediately rather than waiting for prelude to complete.
-        # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
-        try:
-            self._timer.phase("prelude_start")
-            prelude_task = asyncio.create_task(
-                self._run_mandatory_acquisition_prelude(
-                    self._result, query, duckdb_store, self._ct_log_client
-                ),
-                name="sprint:prelude",
-            )
-        finally:
-            self._timer.phase("prelude_end")
-
-        # Sprint 8VD §C: Start memory pressure monitoring loop
-        _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
-        self._bg_tasks.add(_t)
-        _t.add_done_callback(self._bg_tasks.discard)
-
-        # Sprint F245A: Run prelude and first cycle concurrently
-        first_cycle_work_items = self._build_feed_work_items(lifecycle)
-        first_cycle_task = asyncio.create_task(
-            self._run_one_cycle(lifecycle, first_cycle_work_items, query, duckdb_store),
-            name="sprint:first_cycle",
-        )
-
-        _results = await asyncio.gather(prelude_task, first_cycle_task, return_exceptions=True)
-        _prelude_exc, _cycle_exc = _results[0], _results[1]
-
-        if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
-            log.warning("[sprint] prelude raised: %s: %s", type(_prelude_exc).__name__, _prelude_exc)
-        if isinstance(_cycle_exc, BaseException) and not isinstance(_cycle_exc, asyncio.CancelledError):
-            log.warning("[sprint] first cycle raised: %s: %s", type(_cycle_exc).__name__, _cycle_exc)
-
-        self._result.cycles_completed += 1
-
-        # Sprint F214: Only record prelude_complete if prelude actually ran.
-        if getattr(self._result, "acquisition_prelude_ran", False):
-            await self._finalize_result_truth(
-                "prelude_complete",
-                "acquisition prelude finished",
-                "ACTIVE",
-                query,
-            )
-
-        # Propagate CancelledError from either task
-        if isinstance(_prelude_exc, asyncio.CancelledError):
-            raise _prelude_exc
-        if isinstance(_cycle_exc, asyncio.CancelledError):
-            raise _cycle_exc
-
-        # F214: Check deadline after gather — prevents deadline cascade into advisory lanes
-        if not self._check_hard_deadline():
-            await self._ensure_nonfeed_predispatch_before_finalization(
-                query, "hard_deadline_exceeded"
-            )
-            self._capture_timing_fields()
-            await self._finalize_result_truth(
-                "hard_deadline_exceeded",
-                f"hard deadline exceeded after first_cycle_gather",
-                "GATHER",
-                query,
-            )
-            return
-
-        # Sprint 8VD §C: Outer try-except wraps the main cycle loop
-        try:
-            while not self._runner.is_terminal():
-                # Sprint F212A: Hard deadline check FIRST — before any lifecycle
-                # transitions or guards that could break early. Ensures deadline
-                # is always enforced regardless of windup_guard or 8BK guard state.
-                if not self._check_hard_deadline():
-                    # Deadline exceeded — stop starting new work
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        query, "hard_deadline_exceeded"
-                    )
-                    self._capture_timing_fields()
-                    await self._finalize_result_truth(
-                        "hard_deadline_exceeded",
-                        f"hard deadline exceeded at cycle {self._result.cycles_started}",
-                        "GATHER",
-                        query,
-                    )
-                    break
-                if self._stop_requested:
-                    # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal state
-                    if await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "stop_requested"
-                    ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            query, "stop_requested_break"
-                        )
-                        self._capture_timing_fields()
-                        await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
-                        break
-                    # Guard blocked: continue loop to satisfy nonfeed lanes
-                    continue
-                # Detect abort requested via lifecycle flag
-                if self._runner.abort_requested:
-                    self._result.aborted = True
-                    self._result.abort_reason = self._runner.abort_reason or "lifecycle_abort"
-                    # Sprint F195B: write partial on abort so latest state survives
-                    await self._maybe_export_partial(lifecycle)
-                    # Sprint F207T-A: Return guard — ensure mandatory nonfeed before abort return
-                    # Abort is terminal; attempt guard but do not block abort
-                    await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "lifecycle_abort"
-                    )
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        query, "lifecycle_abort_break"
-                    )
-                    self._capture_timing_fields()
-                    await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
-                    break
-
-                # Periodic tick
-                phase = self._runner.tick(now_monotonic)
-
-                # ── Sprint F207M-A: Nonfeed pre-dispatch checkpoint ───────────
-                # Run BEFORE windup guard so CT is attempted before early windup can fire.
-                # Called once per sprint; subsequent calls are no-ops.
-                await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
-
-                # ── Sprint F207S-B: Scheduler-owned prewindup barrier ───────
-                # Primary windup gate: scheduler ensures barrier terminal state BEFORE
-                # it asks the lifecycle runner whether windup is allowed.
-                # Even if the lifecycle runner's callback is missed, the scheduler
-                # cannot enter windup until required lanes are terminal.
-                #
-                # Sprint F206C: windup_guard delegated to runner
-                # Sprint F207M-A: nonfeed pre-dispatch guard
-                # Sprint F207R-A: windup_guard accepts pre_windup_barrier callback
-                # Sprint F207S-A: telemetry for callback observation
-                # Sprint F207S-B: scheduler barrier is the primary gate; callback is secondary
-                self._result.windup_guard_call_count += 1
-
-                _barrier_result = await self._ensure_pre_windup_lane_terminal_states(
-                    query, self._acquisition_plan, "ok"
-                )
-                _barrier_satisfied = getattr(_barrier_result, "satisfied", False)
-                _barrier_required = getattr(_barrier_result, "required_lanes", ())
-                _barrier_delayed = self._prewindup_barrier_delayed
-
-                if _barrier_required and not _barrier_satisfied and not _barrier_delayed:
-                    # Not satisfied and first delay — mark delayed, yield one cycle
-                    self._prewindup_barrier_delayed = True
-                    self._result.prewindup_barrier_delayed_cycle = True
-                    log.debug(
-                        "[F207S-B] Prewindup barrier not satisfied (required=%s) — delaying cycle once",
-                        _barrier_required,
-                    )
-                    # Continue the active loop once instead of entering windup
-                    continue
-
-                # Barrier satisfied or already delayed once — delegate to runner
-                _guard_result = self._runner.windup_guard(
-                    now_monotonic,
-                    pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(
-                        query, duckdb_store
-                    ),
-                )
-                _obs = self._runner.last_guard_observation
-                if _obs:
-                    # F208M-B: Only increment supplied when callback was actually reached
-                    if _obs.get("callback_supplied"):
-                        self._result.windup_guard_callback_supplied_count += 1
-                    self._result.windup_guard_callback_executed_count += 1 if _obs.get("callback_executed") else 0
-                    self._result.windup_guard_last_reason = _obs.get("reason", "")
-                    self._result.windup_guard_last_phase = _obs.get("phase", "")
-                    self._result.windup_guard_last_allowed = _obs.get("allowed")
-                    self._result.windup_guard_last_callback_not_executed_reason = _obs.get("callback_not_executed_reason", "")
-                if _guard_result:
-                    # If nonfeed pre-dispatch hasn't run yet, yield to it first
-                    if not self._nonfeed_predispatch_done:
-                        log.debug("[F207M-A] Windup signalled but pre-dispatch not done — yielding")
-                        # Give pre-dispatch a chance before entering windup
-                        await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
-
-                    # Phase already advanced via tick(); let scheduler handle pre-windup ops
-                    # Sprint 8RA: Flush dedup at WINDUP entry
-                    await self._flush_dedup()
-                    # Sprint F195C: Flush forensics at WINDUP entry
-                    if self._enrichment_services:
-                        await self._enrichment_services.flush()
-                    # Sprint 8VQ: Evaluate advisory gate at WINDUP entry (diagnostic only)
-                    self.evaluate_advisory_gate()
-                    # Sprint F195B: write partial on early windup so latest state survives
-                    await self._maybe_export_partial(lifecycle)
-                    # Sprint F207V-D: Return guard — windup barrier is terminal; ensure
-                    # mandatory nonfeed lanes before breaking out of work loop
-                    if await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "windup_barrier"
-                    ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            query, "windup_barrier_passed"
-                        )
-                        self._capture_timing_fields()
-                        await self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
-                        break  # exit work loop → teardown
-                    # Guard blocked — force one bounded terminalization pass then break
-                    await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "windup_barrier_forced"
-                    )
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        query, "windup_barrier_break"
-                    )
-                    self._capture_timing_fields()
-                    await self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
-                    break  # exit work loop → teardown
-
-                # ── Sprint 8SA: Source scoring re-ordering ───────────────────
-                # Re-prioritize at the start of each ACTIVE cycle using latest graph stats
-                current_phase_str = self._runner.current_phase
-                if current_phase_str == "ACTIVE":
-                    ordered_sources = self.prioritize_sources(
-                        ordered_sources, _graph_stats
-                    )
-
-                # ── Run one cycle ───────────────────────────────────────────
-                # Enforce max_cycles BEFORE starting new work
-                if self._result.cycles_started >= self._config.max_cycles:
-                    # Sprint F207T-A: Return guard — max cycles is terminal, force one final
-                    # barrier dispatch to satisfy mandatory lanes, then break
-                    await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "max_cycles"
-                    )
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        query, "max_cycles_break"
-                    )
-                    self._capture_timing_fields()
-                    await self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
-                    break
-
-                self._result.cycles_started += 1
-                # Sprint F166B: Capture first_cycle_started at cycles_started += 1
-                if self._result.first_cycle_started_at_monotonic is None:
-                    self._result.first_cycle_started_at_monotonic = _time.monotonic() - self._wall_clock_start
-                    # Sprint F166B: Check starvation — gap > 30s = pre-active starvation
-                    gap = self._result.first_cycle_started_at_monotonic - self._result.entered_active_at_monotonic
-                    if gap > 30.0:
-                        self._result.pre_active_starved = True
-                        if not self._result.pre_loop_blocker_reason:
-                            self._result.pre_loop_blocker_reason = "pre_loop_slow"
-                # Sprint 8BK: Wall-clock duration guard — catches cases where lifecycle
-                # remaining_time() does not decrease between cycles (e.g. async tick gap).
-                # Force-enter-windup if wall-clock exceeds sprint_duration_s + grace.
-                # Grace = one cycle budget; prevents false trigger on exact boundary.
-                elapsed_wall = _time.monotonic() - self._wall_clock_start
-                if elapsed_wall > self._config.sprint_duration_s + self._config.cycle_sleep_s:
-                    log.warning(
-                        f"[8BK] Duration budget exceeded: {elapsed_wall:.1f}s "
-                        f"> {self._config.sprint_duration_s + self._config.cycle_sleep_s:.1f}s "
-                        f"(grace={self._config.cycle_sleep_s:.1f}s). Forcing windup."
-                    )
-                    # Sprint F207T-A: Return guard — duration budget is terminal urgency,
-                    # force one final barrier dispatch, then proceed to windup
-                    await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "duration_budget"
-                    )
-                    await self._ensure_nonfeed_predispatch_before_finalization(
-                        query, "duration_budget_break"
-                    )
-                    self._capture_timing_fields()
-                    await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
-                    break
-                # Sprint 8XE: Store sources for public discovery query hint
-                self._last_sources = list(ordered_sources)
-                cycle_ok = await self._run_one_cycle(
-                    lifecycle, ordered_sources, now_monotonic, query, duckdb_store
-                )
-                self._result.cycles_completed += 1
-
-                # Sprint F205H: Tick metrics at cycle completion (bounded, fail-soft)
-                self._tick_metrics_on_cycle_end()
-
-                # Sprint F195C: Progress callback for dashboard / observability
-                if progress_callback is not None:
-                    elapsed_s = _time.monotonic() - self._wall_clock_start
-                    try:
-                        progress_callback(self._result, current_phase_str, elapsed_s)
-                    except Exception:
-                        pass  # fail-safe: dashboard must never affect sprint
-
-                # Sprint F195B: Partial export every N findings in aggressive mode
-                await self._maybe_export_partial(lifecycle)
-
-                # Sprint 8TB: Drain pivot queue after each ACTIVE cycle
-                if current_phase_str == "ACTIVE":
-                    pivot_n = await self._drain_pivot_queue()
-                    if pivot_n:
-                        log.debug(f"Pivot queue drained: {pivot_n} tasks, stats={self._pivot_stats}")
-
-                if not cycle_ok:
-                    # Sprint F207T-A: Return guard — cycle failed, check nonfeed terminal
-                    if await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "cycle_ok_false"
-                    ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            query, "cycle_ok_false_break"
-                        )
-                        self._capture_timing_fields()
-                        await self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
-                        break
-                    # Guard blocked: continue loop to satisfy nonfeed lanes
-                    continue
-
-                # Early exit check
-                if (
-                    self._config.stop_on_first_accepted
-                    and self._result.accepted_findings > 0
-                ):
-                    self._result.stop_requested = True
-                    # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal
-                    if await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "stop_on_first_accepted"
-                    ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            query, "stop_on_first_accepted_break"
-                        )
-                        self._capture_timing_fields()
-                        await self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
-                        break
-                    # Guard blocked: continue loop to satisfy nonfeed lanes
-                    continue
-
-                # Sleep between cycles (short interval, not one long sleep)
-                # Sprint F206C: Delegated to runner.sleep_or_abort()
-                await self._runner.sleep_or_abort(self._config.cycle_sleep_s)
-
-                # ── Post-sleep windup gate ──────────────────────────────────
-                # Sprint F206C: Delegated to runner.post_sleep_gate()
-                if self._runner.post_sleep_gate(now_monotonic):
-                    # Sprint F195B: write partial on windup so latest state survives
-                    await self._maybe_export_partial(lifecycle)
-                    # Sprint F207U-C: Return guard — check return value; if guard
-                    # blocked, continue loop once more to satisfy nonfeed lanes before
-                    # allowing windup break. This prevents post_sleep_gate from
-                    # bypassing the mandatory PUBLIC/CT terminal-state requirement.
-                    if await self._ensure_mandatory_nonfeed_before_return(
-                        query, duckdb_store, "post_sleep_windup"
-                    ):
-                        await self._ensure_nonfeed_predispatch_before_finalization(
-                            query, "post_sleep_windup_break"
-                        )
-                        # Sprint F220D: Feed dominance nonfeed rescue window
-                    # If feed is dominant and nonfeed is near-zero, attempt bounded rescue
-                    # before declaring feed-only early exit.
-                    _rescue_triggered = False
-                    if (
-                        self._result.accepted_findings >= 1000
-                        and self._result.lane_ct_accepted_findings == 0
-                        and self._result.lane_wayback_accepted_findings == 0
-                        and self._result.lane_pdns_accepted_findings == 0
-                        and self._result.lane_blockchain_accepted_findings == 0
-                        and self._result.lane_ipfs_accepted_findings == 0
-                        and self._result.lane_doh_accepted_findings == 0
-                        and self._result.requested_duration_s >= 180
-                    ):
-                        _rescue_elapsed = await self._run_feed_dominance_nonfeed_rescue_window(query, duckdb_store)
-                        if _rescue_elapsed is not None and _rescue_elapsed > 0:
-                            _rescue_triggered = True
-                            log.info(
-                                f"[F220D] Feed dominance rescue window completed in {_rescue_elapsed:.1f}s, "
-                                f"nonfeed findings: ct={self._result.lane_ct_accepted_findings} "
-                                f"public={self._result.public_accepted_findings}"
-                            )
-                        else:
-                            log.debug("[F220D] Feed dominance rescue window returned no candidates")
-
-                    self._capture_timing_fields()
-                    if _rescue_triggered:
-                        await self._finalize_result_truth(
-                            "post_sleep_windup_break",
-                            "feed dominant nonfeed rescue attempted",
-                            "WINDUP",
-                            query,
-                        )
-                        break
-                    else:
-                        await self._finalize_result_truth(
-                            "post_sleep_windup_break",
-                            "post_sleep gate windup, guard passed",
-                            "WINDUP",
-                            query,
-                        )
-                        break
-
-                # Sprint 8UC B.4: Speculative prefetch every 15s
-                now_mono = _time.monotonic()
-                if (now_mono - self._last_speculative) >= 15.0:
-                    _t = asyncio.create_task(self._speculative_prefetch(n=3), name="sprint:speculative_prefetch")
-                    self._bg_tasks.add(_t)
-                    _t.add_done_callback(self._bg_tasks.discard)
-                    self._last_speculative = now_mono
-
-                # Sprint 8UC B.5: OODA cycle every 60s
-                if (now_mono - self._last_ooda) >= self._ooda_interval:
-                    _t = asyncio.create_task(self._run_ooda_cycle(self._pivot_ioc_graph), name="sprint:ooda_cycle")
-                    self._bg_tasks.add(_t)
-                    _t.add_done_callback(self._bg_tasks.discard)
-                    self._last_ooda = now_mono
-
-        except Exception as exc:
-            self._runner.abort(f"scheduler_exception:{type(exc).__name__}")
-            self._result.aborted = True
-            self._result.abort_reason = f"{type(exc).__name__}"
-            # Sprint F215D: Mark exception path so _finalize_result_truth knows this is an error abort
-            self._run_exit_path_override = "aborted_by_error"
-
-        finally:
-            # E4: Remove GC callbacks and log stats
+    
+            # Sprint F195C: Initialize forensics enricher and LMDB
+            if self._enrichment_services:
+                await self._enrichment_services.init()
+            # Sprint F205H: Initialize metrics registry (fail-soft, run_dir from config or default)
+            await self._init_metrics_registry()
+            # F205H: Capture baseline RSS at sprint start (not just at cycle end)
+            self._tick_metrics_on_cycle_end()
+    
+            # E4: Register GC sprint callbacks (remove stale handle first to prevent doubles)
+            global _gc_sprint_callback_handle
             if _gc_sprint_callback_handle is not None:
                 gc.callbacks.remove(_gc_sprint_callback_handle)
-                _gc_sprint_callback_handle = None
-                if _gc_sprint_stats:
-                    log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
-
-            # E2: Opt-in tracemalloc snapshot diff
-            if _trace_snap_before is not None and _trace_enabled:
+            _gc_sprint_stats.clear()
+            _gc_sprint_callback_handle = _gc_sprint_callback
+            gc.callbacks.append(_gc_sprint_callback)
+    
+            # E2: Opt-in tracemalloc snapshot diff via HLEDAC_TRACEMALLOC env var
+            # Sprint F219M: init before try so finally always has consistent reference
+            _trace_snap_before: Any = None
+            _trace_enabled = os.environ.get("HLEDAC_TRACEMALLOC")
+            if _trace_enabled:
                 try:
                     import tracemalloc
-                    tracemalloc.stop()
-                    snap_after = tracemalloc.take_snapshot()
-                    diff = snap_after.compare_to(_trace_snap_before, 'lineno')
-                    for stat in diff[:10]:
-                        log.info(f"[E2] Alloc delta: {stat}")
+                    tracemalloc.start(10)  # 10-frame depth limit
+                    _trace_snap_before = tracemalloc.take_snapshot()
                 except Exception as _e:
-                    log.warning(f"[E2] tracemalloc compare failed: {_e}")
-                finally:
-                    # Sprint F219M: delete snapshot refs so they cannot survive beyond sprint
-                    # Use try/except since snap_after/diff may not be defined if tracemalloc.stop() raised
+                    log.warning(f"[E2] tracemalloc start failed: {_e}")
+                    _trace_enabled = False  # prevent finally from attempting stop/compare
+    
+            # Initial tick to enter ACTIVE
+            phase = self._runner.tick(now_monotonic)
+    
+            # Sprint 8UA: Fix lifecycle WARMUP→ACTIVE transition
+            # Sprint F206C: Delegated to runner.ensure_active()
+            self._runner.ensure_active(now_monotonic)
+    
+            # Sprint 8RA: Load persistent dedup at BOOT
+            _dedup_t0 = _time.monotonic()
+            await self._load_dedup()
+            _dedup_elapsed = _time.monotonic() - _dedup_t0
+            self._result.dedup_preload_elapsed_s = _dedup_elapsed
+            self._result.dedup_preload_count = len(self._dedup_seen) if hasattr(self, '_dedup_seen') and self._dedup_seen is not None else 0
+    
+            # Sprint F203D: Initialize evidence chain builder at sprint start
+            try:
+                from hledac.universal.knowledge.evidence_chain import EvidenceChainBuilder, set_global_builder
+                set_global_builder(EvidenceChainBuilder())
+            except Exception:
+                pass  # Fail-soft: chain tracking is optional advisory
+    
+            # Sprint F166B: Identify pre-loop cost center (additive — first reason only)
+            if _dedup_elapsed > 1.0 and not self._result.pre_loop_blocker_reason:
+                self._result.pre_loop_blocker_reason = "dedup_preload"
+    
+            # F240A: Timer instrumentation — memory_preflight and profile_reality_check
+            try:
+                self._timer.phase("memory_preflight")
+                # (empty — dedup preload above is the cost center)
+            finally:
+                self._timer.phase("memory_preflight_end")
+    
+            # P12: Hermes prewarm — explicit policy by mode (bounded M1 8GB lifecycle)
+            # Aggressive mode: prewarm before fan-out, unless RSS > 4GB (skip fail-soft)
+            # Stable mode: current safe behavior via ModelManager memory guards
+            # Hermes ~2GB: loaded once at sprint start, released at teardown
+            self._hermes_engine = None
+            self._memory_manager = None
+            try:
+                self._timer.phase("profile_reality_check_start")
+                await self._prewarm_hermes_for_sprint()
+            except Exception as e:
+                log.debug(f"[P12] Hermes prewarm failed, ToT will be skipped: {e}")
+                self._hermes_engine = None
+            finally:
+                self._timer.phase("profile_reality_check_end")
+    
+            # Sprint 8SA: Source scoring — order sources by priority at start of ACTIVE
+            _DEFAULT_SOURCE_TYPES = [
+                "cisa_kev", "threatfox_ioc", "urlhaus_recent",
+                "feodo_ip", "openphish_feed",
+            ]
+            _graph_stats: dict[str, int] = {"nodes": 0, "edges": 0}
+            ordered_sources = self.prioritize_sources(
+                list(sources) if sources else _DEFAULT_SOURCE_TYPES, _graph_stats
+            )
+    
+            # Sprint F166B: Capture pre-loop surfaces before entering while loop
+            _pre_loop_elapsed = _time.monotonic() - self._wall_clock_start
+            self._result.pre_loop_elapsed_s = _pre_loop_elapsed
+            # entered_active_at_monotonic: first observation of ACTIVE (loop guard)
+            self._result.entered_active_at_monotonic = _pre_loop_elapsed
+    
+            # Sprint F206BG: Build acquisition strategy plan at sprint start
+            try:
+                # F214R: Use governor.evaluate() for authoritative uma_state.
+                # Eliminates duplicate policy computation in scheduler.
+                _governor_decision = None
+                if self._governor is not None:
                     try:
-                        del snap_after
-                    except NameError:
+                        _governor_decision = await self._governor.evaluate()
+                    except Exception:
                         pass
+                if _governor_decision is not None:
+                    _uma_state = _governor_decision.uma_state
+                    _swap_detected = getattr(_governor_decision, "swap_detected", False)
+                else:
+                    # Fallback: read raw UMA (backward compat for non-governor runs)
+                    from hledac.universal.core.resource_governor import sample_uma_status
+                    uma = sample_uma_status()
+                    _uma_state = "ok"
+                    if uma.is_emergency:
+                        _uma_state = "emergency"
+                    elif uma.is_critical:
+                        _uma_state = "critical"
+                    elif uma.is_warn:
+                        _uma_state = "warn"
+                    _swap_detected = uma.swap_detected
+                # Sprint F233C: Consume predecessor's next_sprint_seeds for acquisition planning
+                # Fail-soft: missing predecessor or seeds file → empty diagnostics
+                # F240A: runtime_pivot_seed_extraction phase
+                self._timer.phase("runtime_pivot_seed_extraction_start")
+                _next_seeds_ioc_seeds: list = []
+                _next_seeds_diagnostics: Any = None
+                _next_seeds_skip_reason = ""
+                if self._config.predecessor_sprint_id:
                     try:
-                        del diff
-                    except NameError:
-                        pass
-
-        # ── Teardown / Export ───────────────────────────────────────────────
-        # Sprint F206C: Delegated to runner.teardown()
-        self._runner.teardown()
-        if self._config.export_enabled:
+                        from hledac.universal.runtime.next_seeds_consumption import (
+                            consume_next_sprint_seeds,
+                            extract_ioc_values_from_seeds,
+                            NextSeedsDiagnostics,
+                        )
+                        (
+                            _next_seeds_ioc_seeds,
+                            _next_seeds_diagnostics,
+                            _next_seeds_query_suggestions,
+                            _next_seeds_skip_reason,
+                        ) = consume_next_sprint_seeds(self._config.predecessor_sprint_id)
+                        self._result.next_seeds_provider_yield = (
+                            _next_seeds_diagnostics.provider_yield_active
+                            if _next_seeds_diagnostics else False
+                        )
+                        self._result.next_seeds_pivot_deepening = (
+                            _next_seeds_diagnostics.pivot_deepening_active
+                            if _next_seeds_diagnostics else False
+                        )
+                        self._result.next_seeds_query_suggestions = (
+                            _next_seeds_diagnostics.query_suggestions
+                            if _next_seeds_diagnostics else ()
+                        )
+                        self._result.next_seeds_consumed_count = len(_next_seeds_ioc_seeds)
+                        self._result.next_seeds_seed_source = (
+                            f"predecessor:{self._config.predecessor_sprint_id}"
+                            if self._config.predecessor_sprint_id else "none"
+                        )
+                        self._result.next_seeds_skip_reason = _next_seeds_skip_reason
+                        # F233C: Extract IOC values from ioc_followup seeds for NonfeedSeedContext
+                        if _next_seeds_ioc_seeds:
+                            _ioc_vals = extract_ioc_values_from_seeds(_next_seeds_ioc_seeds)
+                            self._result.next_seeds_ioc_domains = _ioc_vals["domains"]
+                            self._result.next_seeds_ioc_ips = _ioc_vals["ips"]
+                            self._result.next_seeds_ioc_urls = _ioc_vals["urls"]
+                            self._result.next_seeds_ioc_hashes = _ioc_vals["hashes"]
+                            self._result.next_seeds_ioc_cves = _ioc_vals["cves"]
+                        if _next_seeds_ioc_seeds and _next_seeds_diagnostics and _next_seeds_diagnostics.any_active:
+                            log.debug(
+                                "[F233C] consumed seeds from %s: ioc_seeds=%d, diagnostics=%s",
+                                self._config.predecessor_sprint_id,
+                                len(_next_seeds_ioc_seeds),
+                                _next_seeds_diagnostics,
+                            )
+                    except Exception as _exc:
+                        log.debug("[F233C] next_sprint_seeds consumption failed (fail-soft): %s", _exc)
+                        _next_seeds_skip_reason = "consumption_error"
+                self._timer.phase("runtime_pivot_seed_extraction_end")
+    
+                # F240A: planner_actions_consumption phase
+                self._timer.phase("planner_actions_consumption_start")
+                # Sprint F237B: Load predecessor report and consume investigation_packet.planner_actions
+                _planner_seed_iocs: dict = {}
+                _planner_lanes: list[str] = []
+                _planner_skip_reason = "no_predecessor"
+                if self._config.predecessor_sprint_id:
+                    try:
+                        from hledac.universal.paths import get_sprint_json_report_path
+                        _pred_report_path = get_sprint_json_report_path(self._config.predecessor_sprint_id)
+                        if _pred_report_path.exists():
+                            import orjson
+    
+                            _pred_raw = _pred_report_path.read_bytes()
+                            _pred_data: dict = orjson.loads(_pred_raw)
+                            _inv_packet = _pred_data.get("investigation_packet") or {}
+                            _planner_actions = _inv_packet.get("planner_actions") or []
+    
+                            if _planner_actions:
+                                from hledac.universal.runtime.next_seeds_consumption import (
+                                    consume_planner_actions,
+                                )
+                                (
+                                    _planner_seed_iocs,
+                                    _planner_lanes,
+                                    _planner_seed_source,
+                                    _planner_skip_reason,
+                                ) = consume_planner_actions(_planner_actions)
+                                self._result.planner_actions_consumed_count = len(_planner_actions)
+                                self._result.planner_action_lanes_requested = _planner_lanes
+                                self._result.planner_action_seed_source = _planner_seed_source
+                                self._result.planner_action_skip_reason = _planner_skip_reason
+                                # F245A: persist to instance fields for cross-phase access (read at ~5458)
+                                self._planner_seed_iocs = _planner_seed_iocs or {}
+                                self._planner_lanes = _planner_lanes or []
+                                log.debug(
+                                    "[F237B] consumed %d planner_actions: lanes=%s, iocs=%s",
+                                    len(_planner_actions),
+                                    _planner_lanes,
+                                    _planner_seed_iocs,
+                                )
+                    except Exception as _exc:
+                        log.debug("[F237B] planner_actions consumption failed (fail-soft): %s", _exc)
+                        _planner_skip_reason = "consumption_error"
+                self._timer.phase("planner_actions_consumption_end")
+    
+                # F240A: acquisition_plan_build phase
+                self._timer.phase("acquisition_plan_build_start")
+                self._acquisition_plan = build_acquisition_plan(
+                    query=query,
+                    duration_s=self._config.sprint_duration_s,
+                    aggressive_mode=self._config.aggressive_mode,
+                    uma_state=_uma_state,
+                    swap_detected=_swap_detected,
+                    accepted_findings_so_far=self._result.accepted_findings,
+                    branch_timeout_count=self._result.branch_timeout_count,
+                    # F223A: Explicit acquisition profile override from config
+                    acquisition_profile=self._config.acquisition_profile,
+                )
+                self._timer.phase("acquisition_plan_build_end")
+                # F232: ct_planned — CT was in the acquisition plan (enabled)
+                from hledac.universal.runtime.acquisition_strategy import is_lane_enabled
+                self._result.ct_planned = is_lane_enabled(self._acquisition_plan, "CT")
+                # F214: doh_planned — DOH was in the acquisition plan (enabled)
+                self._result.doh_planned = is_lane_enabled(self._acquisition_plan, "DOH")
+                # [F207L] Capture nonfeed_plan_debug from acquisition plan for KPI telemetry
+                self._result.nonfeed_plan_debug = getattr(self._acquisition_plan, 'nonfeed_plan_debug', None)
+                # F216F: Generate pivot candidates from query and fill telemetry
+                # F226A: Pass mission_intent for mission-aware scoring
+                # F238D: Pass graph_stats for degree-penalty and novelty scoring
+                if self._result.nonfeed_plan_debug is not None:
+                    try:
+                        _nd = self._result.nonfeed_plan_debug
+                        _graph_stats = self._get_pivot_graph_stats_for_planning()
+                        _pivot_candidates = generate_pivot_candidates_from_query(
+                            query,
+                            mission_intent=_nd.mission_intent,
+                            graph_stats=_graph_stats,
+                        )
+                        _nd.pivot_candidates_count = len(_pivot_candidates)
+                        _nd.pivot_candidate_types = tuple(set(p.pivot_type for p in _pivot_candidates))
+                        _nd.pivot_scheduled_lanes = ()
+                        _nd.pivot_skip_reason = None
+                        _nd.pivot_errors = ()
+                        # F238D: populate proof fields
+                        if _graph_stats and _graph_stats.get("nodes", 0) > 0:
+                            self._result.pivot_graph_stats_used = True
+                            self._result.pivot_graph_stats_keys = tuple(_graph_stats.keys())
+                            self._result.graph_aware_pivot_count = len(_pivot_candidates)
+                    except Exception:
+                        pass  # Fail-soft
+                # [F224B] Capture sticky fields from nonfeed_plan_debug so final report
+                # can read them even if nonfeed_plan_debug is None (snapshot lost in some exit paths)
+                if self._result.nonfeed_plan_debug is not None:
+                    _nd = self._result.nonfeed_plan_debug
+                    self._result.nonfeed_priority_enabled = getattr(_nd, "nonfeed_priority_enabled", False)
+                    self._result.nonfeed_profile_expected_lanes = tuple(getattr(_nd, "nonfeed_profile_expected_lanes", ()) or ())
+                    # F224B: nonfeed_expected_lanes = scheduled_nonfeed_lanes (canonical source)
+                    self._result.nonfeed_expected_lanes = tuple(getattr(_nd, "scheduled_nonfeed_lanes", ()) or ())
+                    self._result.nonfeed_expected_lanes_source = "build_acquisition_plan.nonfeed_plan_debug"
+            except Exception as _exc:
+                self._acquisition_plan = None
+                # Sprint F225A: Surface build failure in result so final report
+                # can distinguish "plan empty" from "build failed".
+                self._result.acquisition_plan_build_failed = True
+                self._result.acquisition_plan_build_error_type = type(_exc).__name__
+                self._result.acquisition_plan_build_error = str(_exc)[:500]
+    
+            # Sprint F245A: Run Mandatory Acquisition Prelude and first cycle concurrently.
+            # Prelude establishes early terminal state for PUBLIC/CT; first cycle starts feed/public
+            # discovery immediately rather than waiting for prelude to complete.
             # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
             try:
-                self._timer.phase("export_start")
-                await self._run_export(lifecycle)
+                self._timer.phase("prelude_start")
+                prelude_task = asyncio.create_task(
+                    self._run_mandatory_acquisition_prelude(
+                        self._result, query, duckdb_store, self._ct_log_client
+                    ),
+                    name="sprint:prelude",
+                )
             finally:
-                self._timer.phase("export_end")
-
-        self._result.final_phase = self._runner.current_phase
-
-        # Sprint 8RA: Close persistent dedup at TEARDOWN
-        await self._close_dedup()
-        # Sprint F195C: Close forensics enricher and LMDB at TEARDOWN
-        if self._enrichment_services:
-            await self._enrichment_services.close()
-
-        # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
-        await self._sidecar_orchestrator.run_advisory_runner()
-
-        # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
-        await self._unload_hermes_at_teardown()
-
-        # F2 Audit: Release all lazy models (NER, GNN, ANE, MoE) via brain._lazy
-        from hledac.universal.brain import _lazy as lazy_module
-        lazy_module.unload_all()
-
-        # Sprint 8UC B.4: Cancel all background speculative tasks
-        for t in list(self._bg_tasks):
-            t.cancel()
-        if self._bg_tasks:
-            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
-        self._bg_tasks.clear()
-
-        # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
-        await self._close_metrics_registry()
-
-        # Sprint F215G: Close aiohttp sessions for Tor/I2P (session leak fix)
-        # F215G: These are local singletons in public_fetcher, not shared with session_runtime
-        try:
-            from hledac.universal.fetching import public_fetcher
-            await public_fetcher._close_tor_session()
-            await public_fetcher._close_i2p_session()
-        except Exception:
-            pass  # fail-safe: session close must not crash teardown
-
-        # WARN 14: Close GopherTransport and OpenSourceCollectors at teardown
-        try:
-            from hledac.universal.transport import get_gopher_transport
-            await get_gopher_transport().stop()
-        except Exception:
-            pass  # fail-safe: transport stop must not crash teardown
-        try:
-            from hledac.universal.intelligence import get_open_source_collectors
-            await get_open_source_collectors().close()
-        except Exception:
-            pass  # fail-safe: collector close must not crash teardown
-
-        # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
-        _r = self._result
-        # dominant_public_blocker: backend_degraded takes priority, else error string
-        match ():
-            case _ if _r.public_backend_degraded:
-                _r.dominant_public_blocker = "backend_degraded"
-            case _ if _r.public_error and _r.public_error not in ("", "null"):
-                _r.dominant_public_blocker = _r.public_error[:80]
-            case _:
-                pass
-        # dominant_feed_blocker: first non-empty feed blocker type
-        match ():
-            case _ if _r.feed_inaccessible_detected:
-                _r.dominant_feed_blocker = "feed_inaccessible"
-            case _ if _r.feed_content_empty_detected:
-                _r.dominant_feed_blocker = "feed_content_empty"
-            case _ if _r.feed_no_pattern_with_content:
-                _r.dominant_feed_blocker = "feed_no_pattern_with_content"
-            case _ if _r.findings_build_loss_detected:
-                _r.dominant_feed_blocker = "findings_build_loss"
-            case _ if _r.feed_zero_yield_detected:
-                _r.dominant_feed_blocker = "feed_zero_yield"
-            case _:
-                pass
-        # dominant_branch_blocker: whichever branch had a non-empty blocker first
-        match ():
-            case _ if _r.dominant_public_blocker and not _r.dominant_feed_blocker:
-                _r.dominant_branch_blocker = "public"
-            case _ if _r.dominant_feed_blocker and not _r.dominant_public_blocker:
-                _r.dominant_branch_blocker = "feed"
-            case _ if _r.dominant_public_blocker and _r.dominant_feed_blocker:
-                _r.dominant_branch_blocker = "both"
-            case _:
-                pass
-        # branch_degradation_summary: descriptive tag combining all detected conditions
-        _tags: list[str] = []
-        if _r.public_backend_degraded:
-            _tags.append("public_degraded")
-        if _r.feed_inaccessible_detected:
-            _tags.append("feed_inaccessible")
-        if _r.feed_content_empty_detected:
-            _tags.append("feed_content_empty")
-        if _r.feed_no_pattern_with_content:
-            _tags.append("feed_no_pattern")
-        if _r.findings_build_loss_detected:
-            _tags.append("findings_build_loss")
-        if _r.feed_zero_yield_detected:
-            _tags.append("feed_zero_yield")
-        if _tags:
-            _r.branch_degradation_summary = "_".join(_tags)
-
-        # Sprint F195C: Update RL policy with sprint result (opt-in, fail-safe)
-        if self._policy_manager is not None:
-            try:
-                self._policy_manager.update(self._result)
-            except Exception as e:
-                log.debug(f"[SprintPolicyManager] update() failed: {e}")
-
-        # Sprint F199A: Adapt source weights from per-source quality feedback (fail-soft)
-        try:
-            self._adapt_source_weights_from_feedback()
-        except Exception as e:
-            log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
-
-        # Sprint F228A: Call policy_manager.update_with_quality_decisions if enabled and decisions exist.
-        # Collect decisions from the store's batch results accumulated during the sprint.
-        # Fail-soft: any exception is caught and logged; CancelledError propagates.
-        # Telemetry: policy_quality_feedback_calls, _decisions, _sources, _errors.
-        if self._policy_manager is not None and self._policy_manager.enabled:
-            _decisions: list = []
-            _feed_url = "feed"
-            # Feed ingest decisions: reconstructed from _source_quality_feedback per feed_url.
-            # Each decision dict has accepted (bool) and source_family (str) keys.
-            try:
-                # Reconstruct FindingQualityDecision-style dicts from accumulated feedback
-                for _feed, _fb in self._source_quality_feedback.items():
-                    _total = _fb.get("fetched", 0)
-                    _accepted = _fb.get("accepted", 0)
-                    if _total == 0:
-                        continue
-                    # One decision per feed_url: accepted is True if ratio >= 0.15 (same threshold as _adapt)
-                    _ratio = _accepted / _total if _total > 0 else 0.0
-                    _decisions.append({
-                        "accepted": _ratio >= 0.15,
-                        "source_family": _feed,
-                    })
-                if _decisions:
-                    try:
-                        self._policy_manager.update_with_quality_decisions(_decisions, feed_url=_feed_url)
-                        self._result.policy_quality_feedback_calls += 1
-                        self._result.policy_quality_feedback_decisions += len(_decisions)
-                        self._result.policy_quality_feedback_sources += len(set(d.get("source_family") for d in _decisions))
-                    except asyncio.CancelledError:
-                        raise  # CancelledError must propagate — do not catch here
-                    except Exception as _e:
-                        self._result.policy_quality_feedback_errors += 1
-                        log.debug(f"[F228A] policy_quality_feedback update failed: {_e}")
-            except asyncio.CancelledError:
-                raise
-            except Exception as _e:
-                self._result.policy_quality_feedback_errors += 1
-                log.debug(f"[F228A] policy_quality_feedback decision collection failed: {_e}")
-
-        # Sprint F208I-B: Finalize result ONCE before returning.
-        # _finalize_result_truth computes terminality + calls _record_scheduler_exit.
-        # Sprint F215D: Skip if early exit already finalized (break paths already called
-        # _finalize_result_truth with correct exit_path before setting timing fields here).
-        await self._ensure_nonfeed_predispatch_before_finalization(
-            query, "run_complete"
-        )
-        # Sprint F215D: Capture timing fields — needed for all paths (early + normal).
-        self._capture_timing_fields()
-        # Sprint F215D: Only finalize if early_exit_class is not yet set.
-        # Early exit paths (break statements) call _finalize_result_truth BEFORE reaching
-        # here with the correct exit_path — we must NOT overwrite with "run_complete".
-        if not self._result.early_exit_class:
-            await self._finalize_result_truth(
-                exit_path="run_complete",
-                exit_reason="run() finished normally",
-                exit_phase="TEARDOWN",
-                query=query,
+                self._timer.phase("prelude_end")
+    
+            # Sprint 8VD §C: Start memory pressure monitoring loop
+            _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
+            self._bg_tasks.add(_t)
+            _t.add_done_callback(self._bg_tasks.discard)
+    
+            # Sprint F245A: Run prelude and first cycle concurrently
+            first_cycle_work_items = self._build_feed_work_items(lifecycle)
+            first_cycle_task = asyncio.create_task(
+                self._run_one_cycle(lifecycle, first_cycle_work_items, query, duckdb_store),
+                name="sprint:first_cycle",
             )
-        # F238E Phase A: Attach timer events to result before returning (fail-soft)
-        try:
-            self._result.timer_events = self._timer.events
-        except Exception:
-            self._result.timer_events = None
+    
+            _results = await asyncio.gather(prelude_task, first_cycle_task, return_exceptions=True)
+            _prelude_exc, _cycle_exc = _results[0], _results[1]
+    
+            if isinstance(_prelude_exc, BaseException) and not isinstance(_prelude_exc, asyncio.CancelledError):
+                log.warning("[sprint] prelude raised: %s: %s", type(_prelude_exc).__name__, _prelude_exc)
+            if isinstance(_cycle_exc, BaseException) and not isinstance(_cycle_exc, asyncio.CancelledError):
+                log.warning("[sprint] first cycle raised: %s: %s", type(_cycle_exc).__name__, _cycle_exc)
+    
+            self._result.cycles_completed += 1
+    
+            # Sprint F214: Only record prelude_complete if prelude actually ran.
+            if getattr(self._result, "acquisition_prelude_ran", False):
+                await self._finalize_result_truth(
+                    "prelude_complete",
+                    "acquisition prelude finished",
+                    "ACTIVE",
+                    query,
+                )
+    
+            # Propagate CancelledError from either task
+            if isinstance(_prelude_exc, asyncio.CancelledError):
+                raise _prelude_exc
+            if isinstance(_cycle_exc, asyncio.CancelledError):
+                raise _cycle_exc
+    
+            # F214: Check deadline after gather — prevents deadline cascade into advisory lanes
+            if not self._check_hard_deadline():
+                await self._ensure_nonfeed_predispatch_before_finalization(
+                    query, "hard_deadline_exceeded"
+                )
+                self._capture_timing_fields()
+                await self._finalize_result_truth(
+                    "hard_deadline_exceeded",
+                    f"hard deadline exceeded after first_cycle_gather",
+                    "GATHER",
+                    query,
+                )
+                return
+    
+            # Sprint 8VD §C: Outer try-except wraps the main cycle loop
+            try:
+                while not self._runner.is_terminal():
+                    # Sprint F212A: Hard deadline check FIRST — before any lifecycle
+                    # transitions or guards that could break early. Ensures deadline
+                    # is always enforced regardless of windup_guard or 8BK guard state.
+                    if not self._check_hard_deadline():
+                        # Deadline exceeded — stop starting new work
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "hard_deadline_exceeded"
+                        )
+                        self._capture_timing_fields()
+                        await self._finalize_result_truth(
+                            "hard_deadline_exceeded",
+                            f"hard deadline exceeded at cycle {self._result.cycles_started}",
+                            "GATHER",
+                            query,
+                        )
+                        break
+                    if self._stop_requested:
+                        # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal state
+                        if await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "stop_requested"
+                        ):
+                            await self._ensure_nonfeed_predispatch_before_finalization(
+                                query, "stop_requested_break"
+                            )
+                            self._capture_timing_fields()
+                            await self._finalize_result_truth("stop_requested_break", "stop_requested guard passed", "GATHER", query)
+                            break
+                        # Guard blocked: continue loop to satisfy nonfeed lanes
+                        continue
+                    # Detect abort requested via lifecycle flag
+                    if self._runner.abort_requested:
+                        self._result.aborted = True
+                        self._result.abort_reason = self._runner.abort_reason or "lifecycle_abort"
+                        # Sprint F195B: write partial on abort so latest state survives
+                        await self._maybe_export_partial(lifecycle)
+                        # Sprint F207T-A: Return guard — ensure mandatory nonfeed before abort return
+                        # Abort is terminal; attempt guard but do not block abort
+                        await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "lifecycle_abort"
+                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "lifecycle_abort_break"
+                        )
+                        self._capture_timing_fields()
+                        await self._finalize_result_truth("lifecycle_abort_break", "abort_requested from lifecycle", "GATHER", query)
+                        break
+    
+                    # Periodic tick
+                    phase = self._runner.tick(now_monotonic)
+    
+                    # ── Sprint F207M-A: Nonfeed pre-dispatch checkpoint ───────────
+                    # Run BEFORE windup guard so CT is attempted before early windup can fire.
+                    # Called once per sprint; subsequent calls are no-ops.
+                    await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
+    
+                    # ── Sprint F207S-B: Scheduler-owned prewindup barrier ───────
+                    # Primary windup gate: scheduler ensures barrier terminal state BEFORE
+                    # it asks the lifecycle runner whether windup is allowed.
+                    # Even if the lifecycle runner's callback is missed, the scheduler
+                    # cannot enter windup until required lanes are terminal.
+                    #
+                    # Sprint F206C: windup_guard delegated to runner
+                    # Sprint F207M-A: nonfeed pre-dispatch guard
+                    # Sprint F207R-A: windup_guard accepts pre_windup_barrier callback
+                    # Sprint F207S-A: telemetry for callback observation
+                    # Sprint F207S-B: scheduler barrier is the primary gate; callback is secondary
+                    self._result.windup_guard_call_count += 1
+    
+                    _barrier_result = await self._ensure_pre_windup_lane_terminal_states(
+                        query, self._acquisition_plan, "ok"
+                    )
+                    _barrier_satisfied = getattr(_barrier_result, "satisfied", False)
+                    _barrier_required = getattr(_barrier_result, "required_lanes", ())
+                    _barrier_delayed = self._prewindup_barrier_delayed
+    
+                    if _barrier_required and not _barrier_satisfied and not _barrier_delayed:
+                        # Not satisfied and first delay — mark delayed, yield one cycle
+                        self._prewindup_barrier_delayed = True
+                        self._result.prewindup_barrier_delayed_cycle = True
+                        log.debug(
+                            "[F207S-B] Prewindup barrier not satisfied (required=%s) — delaying cycle once",
+                            _barrier_required,
+                        )
+                        # Continue the active loop once instead of entering windup
+                        continue
+    
+                    # Barrier satisfied or already delayed once — delegate to runner
+                    _guard_result = self._runner.windup_guard(
+                        now_monotonic,
+                        pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(
+                            query, duckdb_store
+                        ),
+                    )
+                    _obs = self._runner.last_guard_observation
+                    if _obs:
+                        # F208M-B: Only increment supplied when callback was actually reached
+                        if _obs.get("callback_supplied"):
+                            self._result.windup_guard_callback_supplied_count += 1
+                        self._result.windup_guard_callback_executed_count += 1 if _obs.get("callback_executed") else 0
+                        self._result.windup_guard_last_reason = _obs.get("reason", "")
+                        self._result.windup_guard_last_phase = _obs.get("phase", "")
+                        self._result.windup_guard_last_allowed = _obs.get("allowed")
+                        self._result.windup_guard_last_callback_not_executed_reason = _obs.get("callback_not_executed_reason", "")
+                    if _guard_result:
+                        # If nonfeed pre-dispatch hasn't run yet, yield to it first
+                        if not self._nonfeed_predispatch_done:
+                            log.debug("[F207M-A] Windup signalled but pre-dispatch not done — yielding")
+                            # Give pre-dispatch a chance before entering windup
+                            await self._maybe_dispatch_nonfeed_probe_lanes(query, duckdb_store)
+    
+                        # Phase already advanced via tick(); let scheduler handle pre-windup ops
+                        # Sprint 8RA: Flush dedup at WINDUP entry
+                        await self._flush_dedup()
+                        # Sprint F195C: Flush forensics at WINDUP entry
+                        if self._enrichment_services:
+                            await self._enrichment_services.flush()
+                        # Sprint 8VQ: Evaluate advisory gate at WINDUP entry (diagnostic only)
+                        self.evaluate_advisory_gate()
+                        # Sprint F195B: write partial on early windup so latest state survives
+                        await self._maybe_export_partial(lifecycle)
+                        # Sprint F207V-D: Return guard — windup barrier is terminal; ensure
+                        # mandatory nonfeed lanes before breaking out of work loop
+                        if await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "windup_barrier"
+                        ):
+                            await self._ensure_nonfeed_predispatch_before_finalization(
+                                query, "windup_barrier_passed"
+                            )
+                            self._capture_timing_fields()
+                            await self._finalize_result_truth("windup_barrier_passed", "pre-windup barrier satisfied, entered windup", "WINDUP", query)
+                            break  # exit work loop → teardown
+                        # Guard blocked — force one bounded terminalization pass then break
+                        await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "windup_barrier_forced"
+                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "windup_barrier_break"
+                        )
+                        self._capture_timing_fields()
+                        await self._finalize_result_truth("windup_barrier_break", "pre-windup barrier unsatisfied, forced terminalization", "WINDUP", query)
+                        break  # exit work loop → teardown
+    
+                    # ── Sprint 8SA: Source scoring re-ordering ───────────────────
+                    # Re-prioritize at the start of each ACTIVE cycle using latest graph stats
+                    current_phase_str = self._runner.current_phase
+                    if current_phase_str == "ACTIVE":
+                        ordered_sources = self.prioritize_sources(
+                            ordered_sources, _graph_stats
+                        )
+    
+                    # ── Run one cycle ───────────────────────────────────────────
+                    # Enforce max_cycles BEFORE starting new work
+                    if self._result.cycles_started >= self._config.max_cycles:
+                        # Sprint F207T-A: Return guard — max cycles is terminal, force one final
+                        # barrier dispatch to satisfy mandatory lanes, then break
+                        await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "max_cycles"
+                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "max_cycles_break"
+                        )
+                        self._capture_timing_fields()
+                        await self._finalize_result_truth("max_cycles_break", "cycles >= max_cycles reached", "GATHER", query)
+                        break
+    
+                    self._result.cycles_started += 1
+                    # Sprint F166B: Capture first_cycle_started at cycles_started += 1
+                    if self._result.first_cycle_started_at_monotonic is None:
+                        self._result.first_cycle_started_at_monotonic = _time.monotonic() - self._wall_clock_start
+                        # Sprint F166B: Check starvation — gap > 30s = pre-active starvation
+                        gap = self._result.first_cycle_started_at_monotonic - self._result.entered_active_at_monotonic
+                        if gap > 30.0:
+                            self._result.pre_active_starved = True
+                            if not self._result.pre_loop_blocker_reason:
+                                self._result.pre_loop_blocker_reason = "pre_loop_slow"
+                    # Sprint 8BK: Wall-clock duration guard — catches cases where lifecycle
+                    # remaining_time() does not decrease between cycles (e.g. async tick gap).
+                    # Force-enter-windup if wall-clock exceeds sprint_duration_s + grace.
+                    # Grace = one cycle budget; prevents false trigger on exact boundary.
+                    elapsed_wall = _time.monotonic() - self._wall_clock_start
+                    if elapsed_wall > self._config.sprint_duration_s + self._config.cycle_sleep_s:
+                        log.warning(
+                            f"[8BK] Duration budget exceeded: {elapsed_wall:.1f}s "
+                            f"> {self._config.sprint_duration_s + self._config.cycle_sleep_s:.1f}s "
+                            f"(grace={self._config.cycle_sleep_s:.1f}s). Forcing windup."
+                        )
+                        # Sprint F207T-A: Return guard — duration budget is terminal urgency,
+                        # force one final barrier dispatch, then proceed to windup
+                        await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "duration_budget"
+                        )
+                        await self._ensure_nonfeed_predispatch_before_finalization(
+                            query, "duration_budget_break"
+                        )
+                        self._capture_timing_fields()
+                        await self._finalize_result_truth("duration_budget_break", "duration_budget exhausted", "GATHER", query)
+                        break
+                    # Sprint 8XE: Store sources for public discovery query hint
+                    self._last_sources = list(ordered_sources)
+                    cycle_ok = await self._run_one_cycle(
+                        lifecycle, ordered_sources, now_monotonic, query, duckdb_store
+                    )
+                    self._result.cycles_completed += 1
+    
+                    # Sprint F205H: Tick metrics at cycle completion (bounded, fail-soft)
+                    self._tick_metrics_on_cycle_end()
+    
+                    # Sprint F195C: Progress callback for dashboard / observability
+                    if progress_callback is not None:
+                        elapsed_s = _time.monotonic() - self._wall_clock_start
+                        try:
+                            progress_callback(self._result, current_phase_str, elapsed_s)
+                        except Exception:
+                            pass  # fail-safe: dashboard must never affect sprint
+    
+                    # Sprint F195B: Partial export every N findings in aggressive mode
+                    await self._maybe_export_partial(lifecycle)
+    
+                    # Sprint 8TB: Drain pivot queue after each ACTIVE cycle
+                    if current_phase_str == "ACTIVE":
+                        pivot_n = await self._drain_pivot_queue()
+                        if pivot_n:
+                            log.debug(f"Pivot queue drained: {pivot_n} tasks, stats={self._pivot_stats}")
+    
+                    if not cycle_ok:
+                        # Sprint F207T-A: Return guard — cycle failed, check nonfeed terminal
+                        if await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "cycle_ok_false"
+                        ):
+                            await self._ensure_nonfeed_predispatch_before_finalization(
+                                query, "cycle_ok_false_break"
+                            )
+                            self._capture_timing_fields()
+                            await self._finalize_result_truth("cycle_ok_false_break", "cycle returned False, guard passed", "GATHER", query)
+                            break
+                        # Guard blocked: continue loop to satisfy nonfeed lanes
+                        continue
+    
+                    # Early exit check
+                    if (
+                        self._config.stop_on_first_accepted
+                        and self._result.accepted_findings > 0
+                    ):
+                        self._result.stop_requested = True
+                        # Sprint F207T-A: Return guard — ensure mandatory nonfeed terminal
+                        if await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "stop_on_first_accepted"
+                        ):
+                            await self._ensure_nonfeed_predispatch_before_finalization(
+                                query, "stop_on_first_accepted_break"
+                            )
+                            self._capture_timing_fields()
+                            await self._finalize_result_truth("stop_on_first_accepted_break", "first accepted finding, stop", "GATHER", query)
+                            break
+                        # Guard blocked: continue loop to satisfy nonfeed lanes
+                        continue
+    
+                    # Sleep between cycles (short interval, not one long sleep)
+                    # Sprint F206C: Delegated to runner.sleep_or_abort()
+                    await self._runner.sleep_or_abort(self._config.cycle_sleep_s)
+    
+                    # ── Post-sleep windup gate ──────────────────────────────────
+                    # Sprint F206C: Delegated to runner.post_sleep_gate()
+                    if self._runner.post_sleep_gate(now_monotonic):
+                        # Sprint F195B: write partial on windup so latest state survives
+                        await self._maybe_export_partial(lifecycle)
+                        # Sprint F207U-C: Return guard — check return value; if guard
+                        # blocked, continue loop once more to satisfy nonfeed lanes before
+                        # allowing windup break. This prevents post_sleep_gate from
+                        # bypassing the mandatory PUBLIC/CT terminal-state requirement.
+                        if await self._ensure_mandatory_nonfeed_before_return(
+                            query, duckdb_store, "post_sleep_windup"
+                        ):
+                            await self._ensure_nonfeed_predispatch_before_finalization(
+                                query, "post_sleep_windup_break"
+                            )
+                            # Sprint F220D: Feed dominance nonfeed rescue window
+                        # If feed is dominant and nonfeed is near-zero, attempt bounded rescue
+                        # before declaring feed-only early exit.
+                        _rescue_triggered = False
+                        if (
+                            self._result.accepted_findings >= 1000
+                            and self._result.lane_ct_accepted_findings == 0
+                            and self._result.lane_wayback_accepted_findings == 0
+                            and self._result.lane_pdns_accepted_findings == 0
+                            and self._result.lane_blockchain_accepted_findings == 0
+                            and self._result.lane_ipfs_accepted_findings == 0
+                            and self._result.lane_doh_accepted_findings == 0
+                            and self._result.requested_duration_s >= 180
+                        ):
+                            _rescue_elapsed = await self._run_feed_dominance_nonfeed_rescue_window(query, duckdb_store)
+                            if _rescue_elapsed is not None and _rescue_elapsed > 0:
+                                _rescue_triggered = True
+                                log.info(
+                                    f"[F220D] Feed dominance rescue window completed in {_rescue_elapsed:.1f}s, "
+                                    f"nonfeed findings: ct={self._result.lane_ct_accepted_findings} "
+                                    f"public={self._result.public_accepted_findings}"
+                                )
+                            else:
+                                log.debug("[F220D] Feed dominance rescue window returned no candidates")
+    
+                        self._capture_timing_fields()
+                        if _rescue_triggered:
+                            await self._finalize_result_truth(
+                                "post_sleep_windup_break",
+                                "feed dominant nonfeed rescue attempted",
+                                "WINDUP",
+                                query,
+                            )
+                            break
+                        else:
+                            await self._finalize_result_truth(
+                                "post_sleep_windup_break",
+                                "post_sleep gate windup, guard passed",
+                                "WINDUP",
+                                query,
+                            )
+                            break
+    
+                    # Sprint 8UC B.4: Speculative prefetch every 15s
+                    now_mono = _time.monotonic()
+                    if (now_mono - self._last_speculative) >= 15.0:
+                        _t = asyncio.create_task(self._speculative_prefetch(n=3), name="sprint:speculative_prefetch")
+                        self._bg_tasks.add(_t)
+                        _t.add_done_callback(self._bg_tasks.discard)
+                        self._last_speculative = now_mono
+    
+                    # Sprint 8UC B.5: OODA cycle every 60s
+                    if (now_mono - self._last_ooda) >= self._ooda_interval:
+                        _t = asyncio.create_task(self._run_ooda_cycle(self._pivot_ioc_graph), name="sprint:ooda_cycle")
+                        self._bg_tasks.add(_t)
+                        _t.add_done_callback(self._bg_tasks.discard)
+                        self._last_ooda = now_mono
+    
+            except Exception as exc:
+                self._runner.abort(f"scheduler_exception:{type(exc).__name__}")
+                self._result.aborted = True
+                self._result.abort_reason = f"{type(exc).__name__}"
+                # Sprint F215D: Mark exception path so _finalize_result_truth knows this is an error abort
+                self._run_exit_path_override = "aborted_by_error"
+    
+            finally:
+                # E4: Remove GC callbacks and log stats
+                if _gc_sprint_callback_handle is not None:
+                    gc.callbacks.remove(_gc_sprint_callback_handle)
+                    _gc_sprint_callback_handle = None
+                    if _gc_sprint_stats:
+                        log.debug(f"[E4] GC sprint stats: {len(_gc_sprint_stats)} collections")
+    
+                # E2: Opt-in tracemalloc snapshot diff
+                if _trace_snap_before is not None and _trace_enabled:
+                    try:
+                        import tracemalloc
+                        tracemalloc.stop()
+                        snap_after = tracemalloc.take_snapshot()
+                        diff = snap_after.compare_to(_trace_snap_before, 'lineno')
+                        for stat in diff[:10]:
+                            log.info(f"[E2] Alloc delta: {stat}")
+                    except Exception as _e:
+                        log.warning(f"[E2] tracemalloc compare failed: {_e}")
+                    finally:
+                        # Sprint F219M: delete snapshot refs so they cannot survive beyond sprint
+                        # Use try/except since snap_after/diff may not be defined if tracemalloc.stop() raised
+                        try:
+                            del snap_after
+                        except NameError:
+                            pass
+                        try:
+                            del diff
+                        except NameError:
+                            pass
+    
+            # ── Teardown / Export ───────────────────────────────────────────────
+            # Sprint F206C: Delegated to runner.teardown()
+            self._runner.teardown()
+            if self._config.export_enabled:
+                # F238E Phase A: Timer instrumentation — fail-soft, time.monotonic() only
+                try:
+                    self._timer.phase("export_start")
+                    await self._run_export(lifecycle)
+                finally:
+                    self._timer.phase("export_end")
+    
+            self._result.final_phase = self._runner.current_phase
+    
+            # Sprint 8RA: Close persistent dedup at TEARDOWN
+            await self._close_dedup()
+            # Sprint F195C: Close forensics enricher and LMDB at TEARDOWN
+            if self._enrichment_services:
+                await self._enrichment_services.close()
+    
+            # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
+            await self._sidecar_orchestrator.run_advisory_runner()
+    
+            # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
+            await self._unload_hermes_at_teardown()
+    
+            # F2 Audit: Release all lazy models (NER, GNN, ANE, MoE) via brain._lazy
+            from hledac.universal.brain import _lazy as lazy_module
+            lazy_module.unload_all()
+    
+            # Sprint 8UC B.4: Cancel all background speculative tasks
+            for t in list(self._bg_tasks):
+                t.cancel()
+            if self._bg_tasks:
+                await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+            self._bg_tasks.clear()
+    
+            # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
+            await self._close_metrics_registry()
+    
+            # Sprint F215G: Close aiohttp sessions for Tor/I2P (session leak fix)
+            # F215G: These are local singletons in public_fetcher, not shared with session_runtime
+            try:
+                from hledac.universal.fetching import public_fetcher
+                await public_fetcher._close_tor_session()
+                await public_fetcher._close_i2p_session()
+            except Exception:
+                pass  # fail-safe: session close must not crash teardown
+    
+            # WARN 14: Close GopherTransport and OpenSourceCollectors at teardown
+            try:
+                from hledac.universal.transport import get_gopher_transport
+                await get_gopher_transport().stop()
+            except Exception:
+                pass  # fail-safe: transport stop must not crash teardown
+            try:
+                from hledac.universal.intelligence import get_open_source_collectors
+                await get_open_source_collectors().close()
+            except Exception:
+                pass  # fail-safe: collector close must not crash teardown
+    
+            # Sprint F169E: Compute dominant branch blocker summary (additive, first-non-empty wins)
+            _r = self._result
+            # dominant_public_blocker: backend_degraded takes priority, else error string
+            match ():
+                case _ if _r.public_backend_degraded:
+                    _r.dominant_public_blocker = "backend_degraded"
+                case _ if _r.public_error and _r.public_error not in ("", "null"):
+                    _r.dominant_public_blocker = _r.public_error[:80]
+                case _:
+                    pass
+            # dominant_feed_blocker: first non-empty feed blocker type
+            match ():
+                case _ if _r.feed_inaccessible_detected:
+                    _r.dominant_feed_blocker = "feed_inaccessible"
+                case _ if _r.feed_content_empty_detected:
+                    _r.dominant_feed_blocker = "feed_content_empty"
+                case _ if _r.feed_no_pattern_with_content:
+                    _r.dominant_feed_blocker = "feed_no_pattern_with_content"
+                case _ if _r.findings_build_loss_detected:
+                    _r.dominant_feed_blocker = "findings_build_loss"
+                case _ if _r.feed_zero_yield_detected:
+                    _r.dominant_feed_blocker = "feed_zero_yield"
+                case _:
+                    pass
+            # dominant_branch_blocker: whichever branch had a non-empty blocker first
+            match ():
+                case _ if _r.dominant_public_blocker and not _r.dominant_feed_blocker:
+                    _r.dominant_branch_blocker = "public"
+                case _ if _r.dominant_feed_blocker and not _r.dominant_public_blocker:
+                    _r.dominant_branch_blocker = "feed"
+                case _ if _r.dominant_public_blocker and _r.dominant_feed_blocker:
+                    _r.dominant_branch_blocker = "both"
+                case _:
+                    pass
+            # branch_degradation_summary: descriptive tag combining all detected conditions
+            _tags: list[str] = []
+            if _r.public_backend_degraded:
+                _tags.append("public_degraded")
+            if _r.feed_inaccessible_detected:
+                _tags.append("feed_inaccessible")
+            if _r.feed_content_empty_detected:
+                _tags.append("feed_content_empty")
+            if _r.feed_no_pattern_with_content:
+                _tags.append("feed_no_pattern")
+            if _r.findings_build_loss_detected:
+                _tags.append("findings_build_loss")
+            if _r.feed_zero_yield_detected:
+                _tags.append("feed_zero_yield")
+            if _tags:
+                _r.branch_degradation_summary = "_".join(_tags)
+    
+            # Sprint F195C: Update RL policy with sprint result (opt-in, fail-safe)
+            if self._policy_manager is not None:
+                try:
+                    self._policy_manager.update(self._result)
+                except Exception as e:
+                    log.debug(f"[SprintPolicyManager] update() failed: {e}")
+    
+            # Sprint F199A: Adapt source weights from per-source quality feedback (fail-soft)
+            try:
+                self._adapt_source_weights_from_feedback()
+            except Exception as e:
+                log.debug(f"[F199A] _adapt_source_weights_from_feedback() failed: {e}")
+    
+            # Sprint F228A: Call policy_manager.update_with_quality_decisions if enabled and decisions exist.
+            # Collect decisions from the store's batch results accumulated during the sprint.
+            # Fail-soft: any exception is caught and logged; CancelledError propagates.
+            # Telemetry: policy_quality_feedback_calls, _decisions, _sources, _errors.
+            if self._policy_manager is not None and self._policy_manager.enabled:
+                _decisions: list = []
+                _feed_url = "feed"
+                # Feed ingest decisions: reconstructed from _source_quality_feedback per feed_url.
+                # Each decision dict has accepted (bool) and source_family (str) keys.
+                try:
+                    # Reconstruct FindingQualityDecision-style dicts from accumulated feedback
+                    for _feed, _fb in self._source_quality_feedback.items():
+                        _total = _fb.get("fetched", 0)
+                        _accepted = _fb.get("accepted", 0)
+                        if _total == 0:
+                            continue
+                        # One decision per feed_url: accepted is True if ratio >= 0.15 (same threshold as _adapt)
+                        _ratio = _accepted / _total if _total > 0 else 0.0
+                        _decisions.append({
+                            "accepted": _ratio >= 0.15,
+                            "source_family": _feed,
+                        })
+                    if _decisions:
+                        try:
+                            self._policy_manager.update_with_quality_decisions(_decisions, feed_url=_feed_url)
+                            self._result.policy_quality_feedback_calls += 1
+                            self._result.policy_quality_feedback_decisions += len(_decisions)
+                            self._result.policy_quality_feedback_sources += len(set(d.get("source_family") for d in _decisions))
+                        except asyncio.CancelledError:
+                            raise  # CancelledError must propagate — do not catch here
+                        except Exception as _e:
+                            self._result.policy_quality_feedback_errors += 1
+                            log.debug(f"[F228A] policy_quality_feedback update failed: {_e}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as _e:
+                    self._result.policy_quality_feedback_errors += 1
+                    log.debug(f"[F228A] policy_quality_feedback decision collection failed: {_e}")
+    
+            # Sprint F208I-B: Finalize result ONCE before returning.
+            # _finalize_result_truth computes terminality + calls _record_scheduler_exit.
+            # Sprint F215D: Skip if early exit already finalized (break paths already called
+            # _finalize_result_truth with correct exit_path before setting timing fields here).
+            await self._ensure_nonfeed_predispatch_before_finalization(
+                query, "run_complete"
+            )
+            # Sprint F215D: Capture timing fields — needed for all paths (early + normal).
+            self._capture_timing_fields()
+            # Sprint F215D: Only finalize if early_exit_class is not yet set.
+            # Early exit paths (break statements) call _finalize_result_truth BEFORE reaching
+            # here with the correct exit_path — we must NOT overwrite with "run_complete".
+            if not self._result.early_exit_class:
+                await self._finalize_result_truth(
+                    exit_path="run_complete",
+                    exit_reason="run() finished normally",
+                    exit_phase="TEARDOWN",
+                    query=query,
+                )
+            # F238E Phase A: Attach timer events to result before returning (fail-soft)
+            try:
+                self._result.timer_events = self._timer.events
+            except Exception:
+                self._result.timer_events = None
+        except Exception as _run_err:
+            # Sprint F228F: Classify body exceptions before re-raising.
+            # SprintScheduler must NEVER silently fail — classify every error.
+            _exc_name = type(_run_err).__name__
+            if "Timeout" in _exc_name or "timeout" in str(_run_err):
+                _run_error_class = "timeout_error"
+            elif "DuckDB" in _exc_name or "duckdb" in str(_run_err).lower():
+                _run_error_class = "storage_error"
+            elif "LMDB" in _exc_name or "lmdb" in str(_run_err).lower():
+                _run_error_class = "storage_error"
+            elif "LanceDB" in _exc_name or "lance" in str(_run_err).lower():
+                _run_error_class = "storage_error"
+            elif "MLX" in _exc_name or "mlx" in str(_run_err).lower():
+                _run_error_class = "mlx_error"
+            elif "Memory" in _exc_name or "memory" in str(_run_err).lower():
+                _run_error_class = "mlx_error"
+            elif "Network" in _exc_name or "network" in str(_run_err).lower():
+                _run_error_class = "network_error"
+            elif "Connection" in _exc_name or "connection" in str(_run_err).lower():
+                _run_error_class = "network_error"
+            elif "HTTP" in _exc_name or "http" in str(_run_err).lower():
+                _run_error_class = "network_error"
+            elif "Validation" in _exc_name or "validation" in str(_run_err).lower():
+                _run_error_class = "validation_error"
+            elif "Cancelled" in _exc_name:
+                _run_error_class = "cancelled"
+            else:
+                _run_error_class = "unknown_error"
+            _run_error = _run_err
+            self._result.run_error_class = _run_error_class
+            self._result.run_error = str(_run_err)[:500]
+            raise
+
         return self._result
 
     async def _record_scheduler_exit(

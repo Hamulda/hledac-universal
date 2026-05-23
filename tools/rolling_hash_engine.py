@@ -20,6 +20,16 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# -----------------------------------------------------------------------------
+# Rust extension import guard
+# -----------------------------------------------------------------------------
+_RUST_RH_AVAILABLE = False
+try:
+    from hledac.rust_extensions.rolling_hash import RustRollingHashEngine
+    _RUST_RH_AVAILABLE = True
+except ImportError:
+    pass
+
 # Gear hash parameters (FastCDC defaults)
 GEAR_MASK = 0x3FFFFFFF  # 30-bit mask
 # Full 256-byte gear table for CDC

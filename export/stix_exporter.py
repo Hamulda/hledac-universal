@@ -32,6 +32,14 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Mapping, Union, cast
 
+from hledac.universal.security.pq_crypto import (
+    PQAvailability,
+    PQSignature,
+    PQStatus,
+    PostQuantumBackend,
+    create_post_quantum_backend,
+)
+
 __all__ = [
     "render_stix_bundle",
     "render_stix_bundle_json",
@@ -1742,7 +1750,114 @@ def render_stix_bundle(report: object) -> dict[str, Any]:
         "objects": objects,
     }
 
-    return bundle
+    return _maybe_sign_bundle(bundle)
+
+
+# ---------------------------------------------------------------------------
+# Sprint F214AC: Post-Quantum ML-DSA-65 STIX bundle signature
+# Fail-safe throughout — skip silently if PQ backend unavailable
+# ---------------------------------------------------------------------------
+
+def _maybe_sign_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+    """
+    Add ML-DSA-65 PQ signature to STIX bundle if backend available.
+
+    GHOST_INVARIANTS: no asyncio.run() in async context.
+    Runs async PQ sign via asyncio.to_thread when called from sync render path.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running event loop (startup / tests) — use blocking call
+        return asyncio.run(_maybe_sign_bundle_async(bundle))
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pq_sign")
+        future = loop.run_in_executor(pool, _sync_pq_sign, bundle)
+        try:
+            return future.result()
+        finally:
+            pool.shutdown(wait=True)
+
+
+def _sync_pq_sign(bundle: dict[str, Any]) -> dict[str, Any]:
+    """to_thread target — runs event loop in a separate thread."""
+    return asyncio.run(_maybe_sign_bundle_async(bundle))
+
+
+async def _maybe_sign_bundle_async(bundle: dict[str, Any]) -> dict[str, Any]:
+    """
+    Async PQ signing path — gather(return_exceptions=True) on all awaits.
+
+    Returns bundle unchanged if PQ unavailable or signing fails.
+    """
+    try:
+        results = await asyncio.gather(
+            _get_pq_backend_async(),
+            return_exceptions=True,
+        )
+        errors = [r for r in results if isinstance(r, Exception)]
+        if errors:
+            return bundle
+
+        backend, status = results[0]
+        if not backend.is_available():
+            return bundle
+        if status.availability not in (PQAvailability.AVAILABLE,):
+            return bundle
+
+        key_id = "com.hledac.pq.signing.v1"
+        extension = _build_pq_extension(bundle, backend, key_id)
+        if extension is None:
+            return bundle
+
+        signed = dict(bundle)
+        signed["extension"] = extension
+        return signed
+    except Exception:
+        return bundle
+
+
+async def _get_pq_backend_async() -> tuple[PostQuantumBackend, PQStatus]:
+    """Get PQ backend — always use create_post_quantum_backend (async factory)."""
+    backend, status = await create_post_quantum_backend()
+    return backend, status
+
+
+def _build_pq_extension(bundle: dict[str, Any], backend: PostQuantumBackend, key_id: str) -> dict[str, Any] | None:
+    """
+    Compute ML-DSA-65 signature over bundle objects digest.
+
+    Returns None silently on any error (GHOST_INVARIANTS: fail-safe).
+    """
+    try:
+        import hashlib
+
+        canonical: bytes = json.dumps(
+            bundle.get("objects", []),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest: str = hashlib.sha256(canonical).hexdigest()
+
+        if not backend.ensure_mldsa_key(key_id, level=65):
+            return None
+
+        sig: PQSignature = backend.sign_mldsa_digest(key_id, digest, level=65)
+
+        return {
+            "extension_type": "hledac:pq-signature",
+            "ml_dsa_signature": sig.signature_bytes.hex(),
+            "ml_dsa_level": sig.level,
+            "key_id": sig.key_id,
+            "bundle_sha256": digest,
+            "backend": backend.name(),
+            "hybrid": sig.has_mldsa(),
+        }
+    except Exception:
+        return None
 
 
 def render_stix_bundle_json(report: object) -> str:

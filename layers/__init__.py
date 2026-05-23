@@ -81,6 +81,15 @@ from .layer_manager import (
     create_capabilities_manager,
     get_capabilities_manager,
 )
+from .temporal_signal_layer import (
+    TemporalEvent,
+    TemporalScore,
+    TemporalEdgeCandidate,
+    _KeyState,
+    TemporalSignalLayer,
+    event_from_finding_like,
+)
+from .temporal_signal_store import TemporalSignalStore
 from .temporal_signal_runtime import (
     get_temporal_signal_layer,
     reset_temporal_signal_layer,
@@ -169,4 +178,11 @@ __all__ = [
     "save_temporal_signal_snapshot",
     "close_temporal_signal_store",
     "build_temporal_priority_hints",
+    # Temporal Signal Layer & Store classes
+    "TemporalSignalStore",
+    "TemporalSignalLayer",
+    "TemporalEvent",
+    "TemporalScore",
+    "TemporalEdgeCandidate",
+    "event_from_finding_like",
 ]

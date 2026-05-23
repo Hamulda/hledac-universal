@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import os
 from enum import Enum
 from typing import Any, Dict, Optional, Set, Callable, Awaitable, TYPE_CHECKING
 
@@ -88,6 +89,9 @@ class Capability(Enum):
     DNS_TUNNEL = "dns_tunnel"
     NETWORK_RECON = "network_recon"
     DARK_WEB = "dark_web"
+    BGP = "bgp"
+    IPFS = "ipfs"
+    BANNER_GRAB = "banner_grab"
 
     # Analysis
     TEMPORAL = "temporal"
@@ -836,6 +840,31 @@ def create_default_registry() -> CapabilityRegistry:
         available=check_module("hledac.universal.intelligence.pattern_mining")[0],
         reason="Pattern mining available" if check_module("hledac.universal.intelligence.pattern_mining")[0] else "Pattern mining not available",
         module_path="hledac.universal.intelligence.pattern_mining"
+    )
+
+    # F229: Deep OSINT sidecars — gate on env vars
+    _bgp_env = os.environ.get("HLEDAC_ENABLE_BGP", "").lower() in ("1", "true", "yes", "on")
+    registry.register(
+        capability=Capability.BGP,
+        available=_bgp_env and check_module("hledac.universal.network.bgp_monitor")[0],
+        reason="BGP monitor enabled" if _bgp_env else "BGP disabled via HLEDAC_ENABLE_BGP",
+        module_path="hledac.universal.network.bgp_monitor"
+    )
+
+    _ipfs_env = os.environ.get("HLEDAC_ENABLE_IPFS", "").lower() in ("1", "true", "yes", "on")
+    registry.register(
+        capability=Capability.IPFS,
+        available=_ipfs_env and check_module("hledac.universal.network.ipfs_client")[0],
+        reason="IPFS client enabled" if _ipfs_env else "IPFS disabled via HLEDAC_ENABLE_IPFS",
+        module_path="hledac.universal.network.ipfs_client"
+    )
+
+    _banner_env = os.environ.get("HLEDAC_ENABLE_BANNER_GRAB", "").lower() in ("1", "true", "yes", "on")
+    registry.register(
+        capability=Capability.BANNER_GRAB,
+        available=_banner_env and check_module("hledac.universal.network.banner_grabber")[0],
+        reason="Banner grabber enabled" if _banner_env else "Banner grab disabled via HLEDAC_ENABLE_BANNER_GRAB",
+        module_path="hledac.universal.network.banner_grabber"
     )
 
     return registry

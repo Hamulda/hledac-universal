@@ -211,6 +211,7 @@ webkit = [
 # All imports are lazy (try/except ImportError) — safe to defer.
 security = [
     "cryptography>=48.0.0",
+    "liboqs-python>=0.15.0; platform_machine=='arm64' or platform_machine=='aarch64'",  # ML-KEM-768 + ML-DSA-65 via liboqs (optional, simulation fallback exists)
 ]
 
 # --- transport: HTTP/2 and alternative transport layers ---

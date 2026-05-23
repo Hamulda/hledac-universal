@@ -2,6 +2,6 @@
   "include": ["."],
   "pythonVersion": "3.14",
   "typeCheckingMode": "basic",
-  "reportMissingImports": false,
+  "reportMissingImports": true,
   "reportMissingTypeStubs": false
 }

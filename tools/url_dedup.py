@@ -31,6 +31,16 @@ except ImportError:
     XXHASH_AVAILABLE = False
     import hashlib
 
+# -----------------------------------------------------------------------------
+# Rust extension import guard
+# -----------------------------------------------------------------------------
+_RUST_BLOOM_AVAILABLE = False
+try:
+    from hledac.rust_extensions.bloom_filter import RustRotatingBloomFilter
+    _RUST_BLOOM_AVAILABLE = True
+except ImportError:
+    pass
+
 
 @runtime_checkable
 class DeduplicationStrategy(Protocol):

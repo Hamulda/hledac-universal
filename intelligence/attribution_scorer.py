@@ -11,8 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-# IdentityCandidate imported from identity_stitching_canonical to avoid circular imports
-# Using late import at module level for type checking only
+from rapidfuzz.distance import Levenshtein
+
 __all__ = [
     "AttributionFactor",
     "AttributionScore",
@@ -96,38 +96,13 @@ class AttributionScore:
 
 
 def _levenshtein_distance(s1: str, s2: str) -> int:
-    """Pure Python Levenshtein distance — O(mn) time, O(min(m,n)) space."""
-    if len(s1) < len(s2):
-        s1, s2 = s2, s1
-    if len(s2) == 0:
-        return len(s1)
-
-    # Use two rows instead of full matrix
-    prev_row = list(range(len(s2) + 1))
-    curr_row = [0] * (len(s2) + 1)
-
-    for i, c1 in enumerate(s1):
-        curr_row[0] = i + 1
-        for j, c2 in enumerate(s2):
-            cost = 0 if c1 == c2 else 1
-            curr_row[j + 1] = min(
-                prev_row[j + 1] + 1,  # deletion
-                curr_row[j] + 1,  # insertion
-                prev_row[j] + cost,  # substitution
-            )
-        prev_row, curr_row = curr_row, prev_row
-
-    return prev_row[len(s2)]
+    """Levenshtein distance via rapidfuzz (C++ backend, O(mn) time)."""
+    return Levenshtein.distance(s1, s2)
 
 
 def _normalized_levenshtein(s1: str, s2: str) -> float:
     """Returns similarity 0-1 where 1 = identical."""
-    if not s1 and not s2:
-        return 1.0
-    max_len = max(len(s1), len(s2))
-    if max_len == 0:
-        return 1.0
-    return 1.0 - (_levenshtein_distance(s1.lower(), s2.lower()) / max_len)
+    return Levenshtein.normalized_similarity(s1.lower(), s2.lower())
 
 
 # ── AttributionConfidenceScorer ───────────────────────────────────────────────

@@ -49,6 +49,18 @@ _LAZY_EXPORTS = {
     # Concurrency utilities
     "FETCH_SEMAPHORE": "hledac.universal.utils.concurrency",
     "adjust_fetch_workers": "hledac.universal.utils.concurrency",
+    # Utils
+    "ActionResult": "hledac.universal.utils.action_result",
+    "get_uuid7_compat_status": "hledac.universal.utils",
+    # Transport
+    "TransportContext": "hledac.universal.transport.transport_resolver",
+    "TransportResolver": "hledac.universal.transport.transport_resolver",
+    # Layers
+    "build_temporal_priority_hints": "hledac.universal.layers.temporal_signal_runtime",
+    # RL (deleted ghost module — stub to fail fast if imported)
+    "MARLCoordinator": "_ghost_deleted",
+    # Runtime (deleted ghost module)
+    "PressureLevel": "_ghost_deleted",
 
     # Public fetcher
     "async_fetch_public_text": "hledac.universal.fetching.public_fetcher",
@@ -65,6 +77,13 @@ def __getattr__(name: str):
     module_name = _LAZY_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    if module_name == "_ghost_deleted":
+        raise ImportError(
+            f"{name!r} was deleted in a prior sprint. "
+            "Search the git history for the last commit that had it, "
+            "or remove the import."
+        )
 
     try:
         module = import_module(module_name)
@@ -130,6 +149,17 @@ __all__ = [
     # Concurrency
     "FETCH_SEMAPHORE",
     "adjust_fetch_workers",
+    # Utils
+    "ActionResult",
+    "get_uuid7_compat_status",
+    # Transport
+    "TransportContext",
+    "TransportResolver",
+    # Layers
+    "build_temporal_priority_hints",
+    # Deleted ghost modules (fail fast with helpful message)
+    "MARLCoordinator",
+    "PressureLevel",
     # Resource allocator
     "AdaptiveSemaphore",
     # Loader

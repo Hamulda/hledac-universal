@@ -56,7 +56,7 @@ _DOMAIN_MODULES: Dict[str, Dict[str, str]] = {
     'infrastructure': {
         'UniversalCoordinator': '.base',
         'CoordinatorRegistry': '.coordinator_registry',
-        'OperationTrackingMixin': '.mixins',
+        'OperationTrackingMixin': '.base',
         'MemoryPressureLevel': '.enums',
     },
     'specialized': {

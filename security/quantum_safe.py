@@ -27,6 +27,21 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ── PQ Availability Flag ──────────────────────────────────────────────────────
+try:
+    import oqs as _oqs
+
+    REAL_PQ_AVAILABLE = True
+except ImportError:
+    REAL_PQ_AVAILABLE = False
+    _oqs = None
+
+if not REAL_PQ_AVAILABLE:
+    logger.warning(
+        "PQ crypto running in SIMULATION mode — NOT cryptographically secure. "
+        "Install liboqs-python: pip install oqs"
+    )
+
 
 class SecurityLevel(Enum):
     """Úrovně zabezpečení"""
@@ -781,12 +796,29 @@ class QuantumSafeVault:
         """Inicializovat vault - vygenerovat klíče"""
         logger.info(f"Initializing QuantumSafeVault ({self.security_level.value})")
         
-        # Simulace generování klíčů (v produkci by použilo reálné Kyber/Dilithium)
-        self._keypair = {
-            "public": secrets.token_bytes(32),
-            "secret": secrets.token_bytes(32),
-        }
-        
+        # REAL PQ: ML-KEM-768 + ML-DSA-65 keypairs via liboqs
+        if not REAL_PQ_AVAILABLE:
+            # FALLBACK: simulation mode — NOT cryptographically secure
+            self._keypair = {
+                "public": secrets.token_bytes(32),
+                "secret": secrets.token_bytes(32),
+            }
+            self._signing_keypair = {
+                "public": secrets.token_bytes(32),
+                "secret": secrets.token_bytes(64),
+            }
+        else:
+            with _oqs.KeyEncapsulation("ML-KEM-768") as kem:
+                self._keypair = {
+                    "public": kem.generate_keypair(),
+                    "secret": kem.export_secret_key(),
+                }
+            with _oqs.Signature("ML-DSA-65") as sig:
+                self._signing_keypair = {
+                    "public": sig.generate_keypair(),
+                    "secret": sig.export_secret_key(),
+                }
+
         self._initialized = True
         logger.info("✓ QuantumSafeVault initialized")
     
@@ -811,10 +843,14 @@ class QuantumSafeVault:
         # Generovat nonce
         nonce = secrets.token_bytes(12)
         
-        # Simulace ML-KEM encapsulation
-        # V produkci: použít skutečný Kyber KEM
-        shared_secret = secrets.token_bytes(32)
-        encapsulated_key = secrets.token_bytes(32)
+        # REAL ML-KEM encapsulation via liboqs
+        if REAL_PQ_AVAILABLE:
+            with _oqs.KeyEncapsulation("ML-KEM-768", self._keypair["secret"]) as kem:
+                encapsulated_key, shared_secret = kem.encap_secret(self._keypair["public"])
+        else:
+            # FALLBACK: simulation mode — NOT cryptographically secure
+            shared_secret = secrets.token_bytes(32)
+            encapsulated_key = secrets.token_bytes(32)
         
         # AES-256-GCM s shared_secret
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -847,9 +883,13 @@ class QuantumSafeVault:
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
         
-        # Simulace ML-KEM decapsulation
-        # V produkci: použít skutečný Kyber
-        shared_secret = secrets.token_bytes(32)
+        # REAL ML-KEM decapsulation via liboqs
+        if REAL_PQ_AVAILABLE:
+            with _oqs.KeyEncapsulation("ML-KEM-768", self._keypair["secret"]) as kem:
+                shared_secret = kem.decap_secret(container.encapsulated_key)
+        else:
+            # FALLBACK: simulation mode — NOT cryptographically secure
+            shared_secret = secrets.token_bytes(32)
         
         # AES-256-GCM decryption
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -871,14 +911,26 @@ class QuantumSafeVault:
         if not self._initialized:
             raise RuntimeError("Vault not initialized")
         
-        # Simulace ML-DSA signature
-        # V produkci: použít skutečný Dilithium
-        return secrets.token_bytes(64)
-    
+        # REAL ML-DSA signature via liboqs
+        if REAL_PQ_AVAILABLE:
+            with _oqs.Signature("ML-DSA-65", self._signing_keypair["secret"]) as sig:
+                return sig.sign(message)
+        else:
+            # FALLBACK: simulation mode — NOT cryptographically secure
+            return secrets.token_bytes(64)
+
     async def verify(self, message: bytes, signature: bytes) -> bool:
         """Ověřit podpis"""
-        # Simulace ověření
-        return True
+        if not self._initialized:
+            raise RuntimeError("Vault not initialized")
+
+        # REAL ML-DSA verification via liboqs
+        if REAL_PQ_AVAILABLE:
+            with _oqs.Signature("ML-DSA-65", self._signing_keypair["secret"]) as sig:
+                return sig.verify(message, signature, self._signing_keypair["public"])
+        else:
+            # FALLBACK: simulation mode — NOT cryptographically secure
+            return True
 
     async def _get_neuro_engine(self) -> NeuromorphicCryptoEngine:
         """Lazy initialization of neuromorphic crypto engine (M1 8GB optimization)."""

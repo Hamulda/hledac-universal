@@ -173,6 +173,129 @@ class CircuitBreaker:
         """Check if operation can be executed"""
         return self.state != "open"
 
+
+# ── Sprint F228F: Unified Circuit Breaker ────────────────────────────────────
+# self_healing.CircuitBreaker (string-based state, CI/CD focus)
+# delegates to transport/circuit_breaker.py (CBState enum, domain-scoped,
+# wired to FetchCoordinator). SelfHealingCircuitBreakerAdapter provides
+# backward compatibility while routing all actual blocking decisions
+# through the canonical transport layer.
+#
+# MetricsRegistry circuit_breaker_state_transitions counter updated on
+# every state change (open→half_open, half_open→closed, etc.).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class SelfHealingCircuitBreakerAdapter:
+    """
+    Adapter that makes self_healing.CircuitBreaker delegate to the
+    canonical transport/circuit_breaker domain breakers.
+
+    - Actual circuit state lives in transport layer (CBState enum)
+    - SelfHealingCICD.circuit_breakers dict is synchronized on each call
+    - MetricsRegistry.circuit_breaker_state_transitions incremented on transitions
+    - Backward compatible: self_healing code paths unchanged above this layer
+    """
+
+    def __init__(self, metrics_registry=None):
+        self._metrics = metrics_registry
+        self._cache: dict[str, tuple[str, float]] = {}
+
+    def _get_canonical_state(self, domain: str) -> str:
+        """Return canonical CBState as lowercase string, or 'unknown'."""
+        try:
+            from transport import circuit_breaker
+            snap = circuit_breaker.get_snapshot(domain)
+            if snap is None:
+                return "unknown"
+            return snap.state.value
+        except Exception:
+            return "unknown"
+
+    def _increment_transition(self, domain: str, old_state: str, new_state: str) -> None:
+        """Increment circuit_breaker_state_transitions counter if metrics available."""
+        if self._metrics is None:
+            return
+        try:
+            self._metrics.inc("circuit_breaker_state_transitions", 1)
+            self._metrics.inc(f"circuit_breaker_{new_state}_count", 1)
+        except Exception:
+            pass
+
+    def check_and_record(
+        self, domain: str, success: bool,
+        failure_threshold: int = 5, recovery_timeout: float = 60.0,
+    ) -> bool:
+        """Check if operation allowed, record outcome, sync state."""
+        canonical_state = self._get_canonical_state(domain)
+        cb = self._circuit_breaker_for_domain(domain, failure_threshold, recovery_timeout)
+        old_state = cb.state if hasattr(cb, "state") else "closed"
+
+        if canonical_state == "open":
+            if hasattr(cb, "state") and cb.state != "open":
+                cb.state = "open"
+                self._increment_transition(domain, old_state, "open")
+        elif canonical_state == "half_open":
+            if hasattr(cb, "state") and cb.state != "half_open":
+                cb.state = "half_open"
+                self._increment_transition(domain, old_state, "half_open")
+        elif canonical_state == "closed":
+            if hasattr(cb, "state") and cb.state != "closed":
+                cb.state = "closed"
+                cb.failure_count = 0
+                self._increment_transition(domain, old_state, "closed")
+                try:
+                    from transport import circuit_breaker
+                    breaker = circuit_breaker.get_breaker(domain)
+                    if breaker:
+                        breaker.record_success()
+                        if self._metrics:
+                            self._metrics.inc("circuit_breaker_recovery_success", 1)
+                except Exception:
+                    pass
+
+        try:
+            from transport import circuit_breaker as cb_mod
+            breaker = cb_mod.get_breaker(domain)
+            if breaker:
+                if success:
+                    breaker.record_success()
+                else:
+                    breaker.record_failure(is_timeout=False, failure_kind="self_healing_delegated")
+        except Exception:
+            pass
+
+        return canonical_state != "open"
+
+    def _circuit_breaker_for_domain(self, domain: str, failure_threshold: int, recovery_timeout: float):
+        """Get or create a self_healing CircuitBreaker for a domain."""
+        if not hasattr(self, "_local_breakers"):
+            self._local_breakers = {}
+        if domain not in self._local_breakers:
+            from self_healing import CircuitBreaker
+            self._local_breakers[domain] = CircuitBreaker(
+                failure_threshold=failure_threshold, recovery_timeout=recovery_timeout,
+            )
+        return self._local_breakers[domain]
+
+    def is_open(self, domain: str) -> bool:
+        return self._get_canonical_state(domain) == "open"
+
+    def get_state(self, domain: str) -> str:
+        return self._get_canonical_state(domain)
+
+
+_self_healing_cb_adapter: SelfHealingCircuitBreakerAdapter | None = None
+
+
+def get_self_healing_cb_adapter(metrics_registry=None) -> SelfHealingCircuitBreakerAdapter:
+    """Get or create the module-level SelfHealingCircuitBreakerAdapter singleton."""
+    global _self_healing_cb_adapter
+    if _self_healing_cb_adapter is None:
+        _self_healing_cb_adapter = SelfHealingCircuitBreakerAdapter(metrics_registry=metrics_registry)
+    return _self_healing_cb_adapter
+
+
 class SelfHealingCICD:
     """Intelligent self-healing CI/CD system"""
 

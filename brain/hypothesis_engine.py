@@ -43,6 +43,8 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Protocol, Set, Tuple, Union
 
+from brain.evidence_fusion import DempsterShafer
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -124,6 +126,39 @@ class FalsificationResult:
     counter_evidence: List[str] = field(default_factory=list)
     reasoning: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
+
+
+# =============================================================================
+# Dark Surface Query Data Classes
+# =============================================================================
+
+class DarkQueryType(Enum):
+    """Types of dark surface queries for unindexed source expansion."""
+    ONION = "onion"
+    IPFS = "ipfs"
+    PASTE = "paste"
+    I2P = "i2p"
+
+
+@dataclass(frozen=True, slots=True)
+class DarkQuery:
+    """
+    Query for exploring dark/unindexed surface.
+
+    Invariant: All dark queries MUST transit via Tor/I2P transport.
+    NEVER route through aiohttp clearnet.
+    """
+    query_type: DarkQueryType
+    query: str
+    priority: float  # 0-1, higher = explore first
+    source_iocs: Tuple[str, ...] = field(default_factory=lambda: tuple())  # IOC refs for context
+    reasoning: str = ""  # Why this query was generated
+
+
+@dataclass
+class _DarkQueryListResponse:
+    """Response model for Hermes LLM dark query generation."""
+    queries: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # =============================================================================
@@ -279,16 +314,25 @@ class Hypothesis:
         """Add supporting evidence with optional weight."""
         if evidence_id not in self.supporting_evidence:
             self.supporting_evidence.append(evidence_id)
-            # Update probability with positive likelihood ratio
+            # Update probability with positive likelihood ratio (Bayesian primary path)
             self.update_probability(1.0 + weight * 0.5)
+            # Dempster-Shafer second-opinion channel (additive, non-destructive)
+            # Hypothesis objects may not have _ds_engine; use gettattr for safe access
+            ds_engine = getattr(self, '_ds_engine', None)
+            if ds_engine is not None:
+                ds_engine.add_evidence('support', mass=min(1.0, weight * 0.5), source_weight=1.0)
         self.updated_at = datetime.now()
 
     def add_conflicting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add conflicting evidence with optional weight."""
         if evidence_id not in self.conflicting_evidence:
             self.conflicting_evidence.append(evidence_id)
-            # Update probability with negative likelihood ratio
+            # Update probability with negative likelihood ratio (Bayesian primary path)
             self.update_probability(1.0 / (1.0 + weight * 0.5))
+            # Dempster-Shafer second-opinion channel (additive, non-destructive)
+            ds_engine = getattr(self, '_ds_engine', None)
+            if ds_engine is not None:
+                ds_engine.add_evidence('conflict', mass=min(1.0, weight * 0.5), source_weight=1.0)
         self.updated_at = datetime.now()
 
     def _recalculate_confidence(self) -> None:
@@ -2151,6 +2195,8 @@ class HypothesisEngine:
         min_confidence_threshold: float = 0.1,
         memory_limit_mb: float = 500.0,
         enable_adversarial_verification: bool = True,
+        use_dempster_shafer: bool = False,
+        ds_contradiction_threshold: float = 0.5,
     ):
         """
         Initialize the HypothesisEngine.
@@ -2161,12 +2207,21 @@ class HypothesisEngine:
             min_confidence_threshold: Minimum confidence to keep a hypothesis
             memory_limit_mb: Target memory limit for hypothesis storage
             enable_adversarial_verification: Whether to enable adversarial verification
+            use_dempster_shafer: Enable Dempster-Shafer second-opinion channel
+            ds_contradiction_threshold: Threshold for DS contradiction detection
         """
         self.inference_engine = inference_engine
         self.max_hypotheses = max_hypotheses
         self.min_confidence_threshold = min_confidence_threshold
         self.memory_limit_mb = memory_limit_mb
         self.enable_adversarial_verification = enable_adversarial_verification
+        self.use_dempster_shafer = use_dempster_shafer
+        self.ds_contradiction_threshold = ds_contradiction_threshold
+
+        # Dempster-Shafer second-opinion engine (additive, non-destructive)
+        self._ds_engine: Optional[DempsterShafer] = (
+            DempsterShafer(hypotheses={'support', 'conflict', 'unknown'}) if use_dempster_shafer else None
+        )
 
         # Hypothesis storage
         self._hypotheses: Dict[str, Hypothesis] = {}
@@ -2196,8 +2251,65 @@ class HypothesisEngine:
         logger.info(
             f"HypothesisEngine initialized (max_hypotheses={max_hypotheses}, "
             f"memory_limit={memory_limit_mb}MB, "
-            f"adversarial_verification={enable_adversarial_verification})"
+            f"adversarial_verification={enable_adversarial_verification}, "
+            f"use_dempster_shafer={use_dempster_shafer})"
         )
+
+    # -------------------------------------------------------------------------
+    # Dempster-Shafer second-opinion API (additive, non-destructive)
+    # -------------------------------------------------------------------------
+
+    def get_ds_belief(self, hypothesis: str = "support") -> Optional[float]:
+        """
+        Return Dempster-Shafer belief for a hypothesis.
+
+        Args:
+            hypothesis: 'support', 'conflict', or 'unknown'
+
+        Returns:
+            Belief mass, or None if DS engine is not enabled.
+        """
+        if self._ds_engine is None:
+            return None
+        return self._ds_engine.belief(hypothesis)
+
+    def get_ds_conflict(self) -> Optional[float]:
+        """
+        Return Dempster-Shafer conflict mass.
+
+        Returns:
+            Conflict mass, or None if DS engine is not enabled.
+        """
+        if self._ds_engine is None:
+            return None
+        return self._ds_engine.conflict_mass()
+
+    def detect_contradiction_ds(self, threshold: Optional[float] = None) -> Optional[bool]:
+        """
+        Detect contradiction via Dempster-Shafer conflict mass.
+
+        Args:
+            threshold: Override the instance threshold. Defaults to ds_contradiction_threshold.
+
+        Returns:
+            True if conflict > threshold, False otherwise.
+            None if DS engine is not enabled.
+        """
+        if self._ds_engine is None:
+            return None
+        actual_threshold = threshold if threshold is not None else self.ds_contradiction_threshold
+        return self._ds_engine.detect_contradiction(threshold=actual_threshold)
+
+    @property
+    def has_contradiction(self) -> bool:
+        """
+        Property: True if DS conflict mass exceeds the configured threshold.
+
+        Returns False if DS engine is not enabled.
+        """
+        if self._ds_engine is None:
+            return False
+        return self._ds_engine.detect_contradiction(threshold=self.ds_contradiction_threshold)
 
     def _init_test_templates(self) -> None:
         """Initialize test design templates for each hypothesis type."""
@@ -4413,6 +4525,194 @@ Formát (pouze seznam, žádný další text):
         self._adversarial_verifier = None
         gc.collect()
         logger.info("HypothesisEngine cleared")
+
+    # =============================================================================
+    # Dark Surface Query Generation
+    # =============================================================================
+
+    MAX_DARK_QUERIES_PER_SPRINT = 3
+
+    async def generate_dark_surface_queries(
+        self,
+        findings: List[Any],
+        hermes_engine: Any = None,
+        tor_available: bool = False,
+        i2p_available: bool = False,
+    ) -> List[DarkQuery]:
+        """
+        F214K: Generate queries for dark/unindexed surfaces from IOC findings.
+
+        Expands hypothesis space to .onion, IPFS, paste sites, I2P based on
+        IOC clusters detected in current sprint findings.
+
+        Args:
+            findings: List of CanonicalFinding from current sprint
+            hermes_engine: Optional Hermes3Engine for LLM-assisted expansion
+            tor_available: True if Tor transport is active
+            i2p_available: True if I2P transport is active
+
+        Returns:
+            List of DarkQuery (max MAX_DARK_QUERIES_PER_SPRINT, bounded)
+
+        Invariant: Dark queries MUST transit via Tor/I2P transport.
+        NEVER route through aiohttp clearnet.
+        """
+        if not findings:
+            return []
+
+        # Safety gate: only generate if dark transport available
+        if not (tor_available or i2p_available):
+            logger.debug("[DARK_SURFACE] No dark transport available, skipping")
+            return []
+
+        # Extract IOCs from findings for query context
+        iocs: List[str] = []
+        for f in findings[:50]:  # Cap at 50 findings
+            if hasattr(f, 'ioc_value') and f.ioc_value:
+                iocs.append(str(f.ioc_value))
+            elif hasattr(f, 'raw_ioc') and f.raw_ioc:
+                iocs.append(str(f.raw_ioc))
+
+        if not iocs:
+            return []
+
+        ioc_brief = ", ".join(iocs[:15])
+        available_transports = []
+        if tor_available:
+            available_transports.append("Tor")
+        if i2p_available:
+            available_transports.append("I2P")
+        transport_str = "+".join(available_transports)
+
+        # Use Hermes for LLM-assisted expansion if available
+        if hermes_engine is not None:
+            prompt = f"""Z techto IOC z aktualniho sprintu: {ioc_brief}
+
+Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).
+Pro kazdy dotaz uved:
+1. typ: onion | ipfs | paste | i2p
+2. samotny dotaz (co hledat)
+3. priorita: 0-1 (vyssi = dulezitejsi)
+4. odovodneni (proc by to mohlo mit relevantni data)
+
+Vystup formatuj jako JSON list s objekty: type, query, priority, reasoning
+
+Zajimave patterny k hledani:
+- .onion domeny korelovane s IP/domain z IOC
+- IPFS CID z intelligence findings
+- Paste site leak korelace
+- Darknet forum IOC patterns"""
+            try:
+                response_model = _DarkQueryListResponse
+                result = await hermes_engine.generate_structured(
+                    prompt=prompt,
+                    response_model=response_model,
+                    max_tokens=1024,
+                    system_msg="Jsi OSINT dark surface research assistant.",
+                )
+                dark_queries: List[DarkQuery] = []
+                for item in (result.queries if hasattr(result, 'queries') else []):
+                    dt = DarkQueryType(item.get('type', 'onion'))
+                    dark_queries.append(DarkQuery(
+                        query_type=dt,
+                        query=item.get('query', ''),
+                        priority=float(item.get('priority', 0.5)),
+                        source_iocs=tuple(iocs[:5]),
+                        reasoning=item.get('reasoning', ''),
+                    ))
+                return dark_queries[:self.MAX_DARK_QUERIES_PER_SPRINT]
+            except Exception as e:
+                logger.warning(f"[DARK_SURFACE] Hermes LLM expansion failed: {e}, using heuristic fallback")
+                return self._generate_dark_surface_queries_fallback(iocs, transport_str)
+        else:
+            return self._generate_dark_surface_queries_fallback(iocs, transport_str)
+
+    def _generate_dark_surface_queries_fallback(
+        self,
+        iocs: List[str],
+        transport_str: str,
+    ) -> List[DarkQuery]:
+        """Heuristic fallback for dark surface query generation (no LLM)."""
+        queries: List[DarkQuery] = []
+        seen: Set[str] = set()
+
+        for ioc in iocs[:20]:
+            # ONION pattern: domain/IP -> onion query
+            if self._looks_like_domain_or_ip(ioc):
+                q = f"site:.onion {ioc}"
+                if q not in seen:
+                    seen.add(q)
+                    queries.append(DarkQuery(
+                        query_type=DarkQueryType.ONION,
+                        query=q,
+                        priority=0.6,
+                        source_iocs=tuple([ioc]),
+                        reasoning=f"IOC {ioc} -> onion mirror via {transport_str}",
+                    ))
+
+            # IPFS pattern: CID-like hash -> IPFS query
+            if self._looks_like_ipfs_cid(ioc):
+                q = f"ipfs://{ioc}"
+                if q not in seen:
+                    seen.add(q)
+                    queries.append(DarkQuery(
+                        query_type=DarkQueryType.IPFS,
+                        query=q,
+                        priority=0.7,
+                        source_iocs=tuple([ioc]),
+                        reasoning=f"CID-like IOC {ioc} -> IPFS content via {transport_str}",
+                    ))
+
+            # Paste pattern: hash -> paste site search
+            if self._looks_like_hash(ioc):
+                q = f"pastebin OR ghostbin OR hastebin {ioc}"
+                if q not in seen:
+                    seen.add(q)
+                    queries.append(DarkQuery(
+                        query_type=DarkQueryType.PASTE,
+                        query=q,
+                        priority=0.5,
+                        source_iocs=tuple([ioc]),
+                        reasoning=f"Hash IOC {ioc} -> paste leak via {transport_str}",
+                    ))
+
+        return queries[:self.MAX_DARK_QUERIES_PER_SPRINT]
+
+    @staticmethod
+    def _looks_like_domain_or_ip(s: str) -> bool:
+        """Check if IOC looks like a domain or IP address."""
+        if not s:
+            return False
+        s = str(s).lower()
+        if '.' in s and not s.startswith('0x') and len(s) > 4:
+            if any(c.isalpha() for c in s):
+                return True
+        parts = s.split('.')
+        if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+            return True
+        return False
+
+    @staticmethod
+    def _looks_like_ipfs_cid(s: str) -> bool:
+        """Check if IOC looks like an IPFS CID."""
+        if not s:
+            return False
+        s = str(s)
+        if s.startswith('Qm') and len(s) > 30:
+            return True
+        if s.startswith('bafy'):
+            return True
+        return False
+
+    @staticmethod
+    def _looks_like_hash(s: str) -> bool:
+        """Check if IOC looks like a cryptographic hash."""
+        if not s:
+            return False
+        s = str(s)
+        if len(s) in (32, 40, 56, 64) and all(c in '0123456789abcdef' for c in s.lower()):
+            return True
+        return False
 
 
 # Factory function

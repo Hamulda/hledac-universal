@@ -1134,6 +1134,7 @@ all = [
     { name = "h2" },
     { name = "iniconfig" },
     { name = "lancedb" },
+    { name = "liboqs-python", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64'" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mlx-embeddings" },
     { name = "mypy" },
@@ -1233,6 +1234,7 @@ search = [
 ]
 security = [
     { name = "cryptography" },
+    { name = "liboqs-python", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64'" },
 ]
 tor = [
     { name = "stem" },
@@ -1276,6 +1278,7 @@ requires-dist = [
     { name = "iniconfig", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "kuzu", marker = "extra == 'graph-truth'", specifier = ">=0.6.0" },
     { name = "lancedb", marker = "extra == 'graph-storage'", specifier = ">=0.2.5" },
+    { name = "liboqs-python", marker = "(platform_machine == 'aarch64' and extra == 'security') or (platform_machine == 'arm64' and extra == 'security')", specifier = ">=0.15.0" },
     { name = "lmdb", specifier = ">=2.2.0,<3.0.0" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'apple-accel'", specifier = ">=0.16.0" },
     { name = "mlx-embeddings", marker = "extra == 'apple-accel'", specifier = ">=0.1.0" },
@@ -1485,6 +1488,14 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/39/d1/b37165bed9016c19e2cdecf4176fbd902a014fb8a87dd44415438e190969/language_tags-1.3.1.tar.gz", hash = "sha256:b15f05505dad3ad296a1782d5a6083fd141309186094d1ab08095348f4203f37", size = 222642, upload-time = "2026-05-08T11:46:24.418Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/21/b48b9e8408b3faec9fb7cb2f68352c7724add35a980c948eaceb29ac41e4/language_tags-1.3.1-py3-none-any.whl", hash = "sha256:f7db7ef8879523019603e09644a86d95ba60595ce5e5ea82d46e8971b0f68f7b", size = 216654, upload-time = "2026-05-08T11:46:17.836Z" },
+]
+
+[[package]]
+name = "liboqs-python"
+version = "0.15.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/17/fe44d21e9a9d98de28be8eb2ab905be58654fa92c95981213d3571c73955/liboqs_python-0.15.0-py3-none-any.whl", hash = "sha256:969b27c65c99f973f8c991472151331814c9f02642115fe4d6391bcdc33433a4", size = 19521, upload-time = "2026-05-15T12:20:15.172Z" },
 ]
 
 [[package]]

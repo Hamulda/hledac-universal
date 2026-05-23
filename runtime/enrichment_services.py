@@ -220,6 +220,8 @@ class EnrichmentServices:
                 str(db_path),
                 map_size=50 * 1024 * 1024,  # 50MB max for enrichment data
                 max_dbs=1,
+                writemap=False,
+                sync=False,
             )
         except Exception as exc:
             log.debug("Forensics LMDB open failed: %s", exc)
@@ -266,6 +268,8 @@ class EnrichmentServices:
                 str(db_path),
                 map_size=50 * 1024 * 1024,  # 50MB max
                 max_dbs=1,
+                writemap=False,
+                sync=False,
             )
         except Exception as exc:
             log.debug("Multimodal LMDB open failed: %s", exc)

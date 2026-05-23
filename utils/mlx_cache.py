@@ -181,14 +181,14 @@ MLX_AVAILABLE = True  # assume available until proven otherwise at runtime
 #   Python + packages          ~1.0 GiB
 #   DuckDB (RAM disk)          ~0.5 GiB
 #   LMDB + graph structures    ~0.75 GiB
-#   Metal cache limit          ~2.5 GiB  ← kv_cacheworkspace on GPU
-#   Metal wired limit          ~2.5 GiB  ← pinned Metal memory (cannot be swapped)
+#   Metal cache limit          ~2.0 GiB  ← kv_cache workspace on GPU (fits 3B-4bit)
+#   Metal wired limit          ~0.5 GiB  ← pinned Metal memory (cannot be swapped)
 #   Headroom for model weights  ~1.25 GiB (mlx-lm lazy-loads into GPU)
 #
 # Both limits use bytes as the native API unit (verified via inspect.signature
 # on darwin with mlx.core.metal.set_cache_limit / set_wired_limit).
-_METAL_CACHE_LIMIT_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB = 2 684 354 560 bytes
-_METAL_WIRED_LIMIT_BYTES = int(2.5 * 1024 ** 3)   # 2.5 GiB = 2 684 354 560 bytes
+_METAL_CACHE_LIMIT_BYTES = int(2.0 * 1024 ** 3)   # 2.0 GiB — fits 3B-4bit model
+_METAL_WIRED_LIMIT_BYTES = int(0.5 * 1024 ** 3)   # 0.5 GiB — pinned Metal memory
 
 # Public aliases for test surface (Sprint 7B / 6B probes)
 _MLX_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES

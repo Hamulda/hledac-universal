@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any, List, Optional, Set
 
 
 # ----------------------------------------------------------------------
@@ -339,6 +340,57 @@ def _plan_entity(
                 reason="entity_public_rescue",
             )
         )
+
+
+def _plan_dark_surface_pivot(
+    dark_queries: List[Any],
+    items: List[LanePlanItem],
+    seen_pairs: Set[tuple[str, str]],
+    tor_available: bool = False,
+    i2p_available: bool = False,
+) -> None:
+    """
+    F214K: Add dark surface queries to pivot plan.
+
+    Args:
+        dark_queries: List of DarkQuery from HypothesisEngine
+        items: LanePlanItem list to append to (modified in place)
+        seen_pairs: Track (lane, seed) pairs to avoid dupes
+        tor_available: Tor transport is active
+        i2p_available: I2P transport is active
+
+    Invariant: Dark pivots MUST go via Tor/I2P only — never clearnet.
+    """
+    if not dark_queries:
+        return
+
+    # Determine which dark lane name to use based on available transport
+    dark_lane = "TOR" if tor_available else ("I2P" if i2p_available else None)
+    if dark_lane is None:
+        return  # No dark transport, skip
+
+    _PRIORITY_DARK_SURFACE = 0.65  # Medium-high priority
+
+    for dq in dark_queries:
+        seed_value = dq.query
+        pair = (dark_lane, seed_value)
+        if pair in seen_pairs:
+            continue
+
+        # Verify dark transport matches query type
+        if dq.query_type.value == "onion" and not tor_available:
+            continue  # Onion requires Tor
+        if dq.query_type.value == "i2p" and not i2p_available:
+            continue  # I2P requires I2P
+
+        seen_pairs.add(pair)
+        items.append(LanePlanItem(
+            lane=dark_lane,
+            seed_value=seed_value,
+            seed_type="dark_query",
+            priority=dq.priority,
+            reason=f"dark_{dq.query_type.value}__{dq.reasoning[:50]}" if dq.reasoning else f"dark_{dq.query_type.value}",
+        ))
 
 
 def _build_reason(items: list[LanePlanItem], skipped: list[str], total_seeds: int) -> str:

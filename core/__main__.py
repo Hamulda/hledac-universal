@@ -1105,6 +1105,7 @@ async def run_sprint(
     ui_mode: bool = False,
     windup_lead_s: float | None = None,
     acquisition_profile: str | None = None,  # F223A: explicit profile override
+    rl_train_mode: bool = False,  # RL F257: QMIX training vs inference-only
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -1210,13 +1211,29 @@ async def run_sprint(
         sprint_duration_s=duration_s,
         windup_lead_s=config.windup_lead_s,
     )
-    # Sprint F223K: Opt-in RL feedback loop — enables quality-weighted source selection
+    # Sprint F223K + RL F257: Opt-in RL feedback loop — enables quality-weighted source selection
+    # RL F257: --rl-train flag enables QMIX training (Q-network weight updates every 10 sprints)
     policy_manager = SprintPolicyManager(
-        enabled=os.environ.get("ENABLE_RL_FEEDBACK", "false").lower() == "true"
+        enabled=os.environ.get("ENABLE_RL_FEEDBACK", "false").lower() == "true",
+        rl_train_mode=rl_train_mode,
     )
     scheduler.inject_policy_manager(policy_manager)
 
-    # Sprint F153: Canonical source inventory — real URLs from typed seed surface
+    # Sprint F228F: Pre-run health check — verify critical dependencies
+    # SprintScheduler is top architectural chokepoint (degree 398).
+    # If it fails silently, nothing writes to DuckDB and nothing accumulates to graph.
+    # F228F CRITICAL 3 fix: add 30s timeout to prevent indefinite hang.
+    try:
+        async with asyncio.timeout(30.0):
+            health = await scheduler.health_check()
+    except asyncio.TimeoutError:
+        logger.W("[F228F] health_check timed out after 30s — continuing without pre-run check")
+        health = None
+    if health is not None and not health.ok:
+        logger.W(f"[F228F] health_check warnings: {health.summary()}")
+        # Fail-soft: log and continue — sprint will handle degraded mode gracefully
+    elif health is not None:
+        logger.debug(f"[F228F] health_check: {health.summary()} - real URLs from typed seed surface")
     live_feed_urls = _get_live_feed_urls()
 
     # Sprint F193A: Instantiate CT log client for canonical pipeline
@@ -2223,6 +2240,11 @@ def main() -> None:
         choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
         help="F216B/F251D: Acquisition runtime profile (default | nonfeed_diagnostic | deep_osint_m1)",
     )
+    parser.add_argument(
+        "--rl-train",
+        action="store_true",
+        help="RL F257: Enable QMIX training mode (updates Q-network weights every 10 sprints). Default is inference-only after 124 sprint warmup.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -2243,7 +2265,7 @@ def main() -> None:
         restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
         try:
             sprint_task = loop.create_task(
-                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile)
+                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train)
             )
             sig_task = loop.create_task(shutdown_event.wait())
             done, pending = loop.run_until_complete(

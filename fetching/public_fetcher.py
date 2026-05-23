@@ -2213,7 +2213,10 @@ async def async_fetch_public_text(
                                 # because static hydration is NOT a JS/browser renderer
                                 elapsed_ms = (time.monotonic() - t0) * 1000
                                 # F229: Extract HTML metadata from original text for static hydration path
-                                _meta = extract_html_metadata(text or "")
+                                # F256K: offload sync CPU-bound extraction to thread pool
+                                _meta = await asyncio.get_running_loop().run_in_executor(
+                                    CPU_EXECUTOR, extract_html_metadata, text or ""
+                                )
                                 _static_sources = list(hydration.sources) if hasattr(hydration, "sources") else list(hydration.sources)
                                 if _meta["ga_gtm_ids"]:
                                     _static_sources.append("ga_gtm")

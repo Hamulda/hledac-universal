@@ -31,6 +31,16 @@ __all__ = [
 ]
 
 # -----------------------------------------------------------------------------
+# Rust extension import guard
+# -----------------------------------------------------------------------------
+_RUST_ACO_AVAILABLE = False
+try:
+    from hledac.rust_extensions.aho_corasick import RustAhoCorasickMatcher
+    _RUST_ACO_AVAILABLE = True
+except ImportError:
+    pass
+
+# -----------------------------------------------------------------------------
 # Backend truth
 # -----------------------------------------------------------------------------
 BACKEND_AVAILABLE = True
@@ -38,10 +48,14 @@ BACKEND_VERSION = getattr(ahocorasick, "__version__", "unknown")
 
 
 def get_backend_info() -> dict:
+    backend = "pyahocorasick"
+    if _RUST_ACO_AVAILABLE:
+        backend = "rust_aho_corasick"
     return {
-        "backend": "pyahocorasick",
+        "backend": backend,
         "version": BACKEND_VERSION,
         "available": BACKEND_AVAILABLE,
+        "rust_available": _RUST_ACO_AVAILABLE,
     }
 
 

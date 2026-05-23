@@ -9,11 +9,21 @@ future MLX/Outlines synthesis.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Union, cast
+
+from hledac.universal.security.pq_crypto import (
+    PQAvailability,
+    PQSignature,
+    PQStatus,
+    PostQuantumBackend,
+    create_post_quantum_backend,
+)
 
 __all__ = [
     "render_jsonld",
@@ -321,7 +331,110 @@ def render_jsonld(report: object) -> dict[str, Any]:
             return [_clean(i) for i in v if i is not None]
         return v
 
-    return _clean(obj)
+    return _maybe_sign_jsonld(_clean(obj))
+
+
+# ---------------------------------------------------------------------------
+# Sprint F214AC: Post-Quantum ML-DSA-65 JSON-LD signature
+# Fail-safe throughout — skip silently if PQ backend unavailable
+# ---------------------------------------------------------------------------
+
+def _maybe_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
+    """
+    Add ML-DSA-65 PQ signature to JSON-LD dict if backend available.
+
+    GHOST_INVARIANTS: no asyncio.run() in async context.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_maybe_sign_jsonld_async(obj))
+    else:
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pq_sign")
+        future = loop.run_in_executor(pool, _sync_pq_sign_jsonld, obj)
+        try:
+            return future.result()
+        finally:
+            pool.shutdown(wait=True)
+
+
+def _sync_pq_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
+    """to_thread target — runs event loop in a separate thread."""
+    return asyncio.run(_maybe_sign_jsonld_async(obj))
+
+
+async def _maybe_sign_jsonld_async(obj: dict[str, Any]) -> dict[str, Any]:
+    """
+    Async PQ signing path — gather(return_exceptions=True) on all awaits.
+
+    Returns obj unchanged if PQ unavailable or signing fails.
+    """
+    try:
+        results = await asyncio.gather(
+            _get_pq_backend_async(),
+            return_exceptions=True,
+        )
+        error_results = [r for r in results if isinstance(r, Exception)]
+        if error_results:
+            return obj
+
+        backend, status = results[0]
+        if not backend.is_available():
+            return obj
+        if status.availability not in (PQAvailability.AVAILABLE,):
+            return obj
+
+        key_id = "com.hledac.pq.signing.v1"
+        extension = _build_pq_extension_jsonld(obj, backend, key_id)
+        if extension is None:
+            return obj
+
+        signed = dict(obj)
+        signed["ghost:pqSignature"] = extension
+        return signed
+    except Exception:
+        return obj
+
+
+async def _get_pq_backend_async() -> tuple[PostQuantumBackend, PQStatus]:
+    """Get PQ backend — always use create_post_quantum_backend (async factory)."""
+    backend, status = await create_post_quantum_backend()
+    return backend, status
+
+
+def _build_pq_extension_jsonld(obj: dict[str, Any], backend: PostQuantumBackend, key_id: str) -> dict[str, Any] | None:
+    """
+    Compute ML-DSA-65 signature over JSON-LD object canonical digest.
+
+    Returns None silently on any error (GHOST_INVARIANTS: fail-safe).
+    """
+    try:
+        import hashlib
+
+        canonical: bytes = json.dumps(
+            obj,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest: str = hashlib.sha256(canonical).hexdigest()
+
+        if not backend.ensure_mldsa_key(key_id, level=65):
+            return None
+
+        sig: PQSignature = backend.sign_mldsa_digest(key_id, digest, level=65)
+
+        return {
+            "extension_type": "hledac:pq-signature",
+            "ml_dsa_signature": sig.signature_bytes.hex(),
+            "ml_dsa_level": sig.level,
+            "key_id": sig.key_id,
+            "jsonld_sha256": digest,
+            "backend": backend.name(),
+            "hybrid": sig.has_mldsa(),
+        }
+    except Exception:
+        return None
 
 
 def render_jsonld_str(report: object) -> str:

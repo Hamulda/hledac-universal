@@ -32,19 +32,6 @@ from typing import Optional, Any
 import psutil
 
 # Sprint F222F: RotatingBloomFilter for cross-run URL dedup pre-check
-try:
-    from probables import RotatingBloomFilter
-
-    _PROBABLES_AVAILABLE = True
-except ImportError:
-    try:
-        from pyprobables import RotatingBloomFilter
-
-        _PROBABLES_AVAILABLE = True
-    except ImportError:
-        RotatingBloomFilter = object
-        _PROBABLES_AVAILABLE = False
-
 __all__ = ["DedupManager"]
 
 # Sprint 8AG §6.17: Default dedup LMDB map size
@@ -107,11 +94,6 @@ class DedupManager:
         self._semantic_dedup_cache: Optional[Any] = None
         self._semantic_dedup_boot_error: Optional[str] = None
 
-        # Sprint F222F: RotatingBloomFilter for cross-run URL dedup pre-check
-        # Pre-filter: avoids LMDB I/O for bloom-filter-negative lookups
-        self._bloom_filter: Optional[Any] = None
-        self._bloom_filter_boot_error: Optional[str] = None
-
         self._initialized: bool = False
 
     # ------------------------------------------------------------------
@@ -119,13 +101,12 @@ class DedupManager:
     # ------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Initialize persistent dedup LMDB, semantic dedup cache, and bloom filter."""
+        """Initialize persistent dedup LMDB and semantic dedup cache."""
         if self._initialized:
             return
 
         self._init_persistent_dedup_lmdb()
         self._init_semantic_dedup_cache()
-        self._init_bloom_filter()
         self._initialized = True
 
     def close(self) -> None:
@@ -182,8 +163,7 @@ class DedupManager:
         """
         Lookup a fingerprint in the persistent dedup LMDB.
 
-        Bloom filter pre-check: if bloom misses, skip LMDB lookup entirely.
-        LMDB remains authoritative on positive lookups.
+        LMDB remains authoritative.
 
         Args:
             fp: 32-char BLAKE2b fingerprint hex string
@@ -191,10 +171,6 @@ class DedupManager:
         Returns:
             finding_id string if found, None otherwise (miss or LMDB unavailable)
         """
-        # Bloom miss → definitely not in LMDB, skip I/O
-        if not self.bloom_lookup(fp):
-            return None
-        # Bloom hit (or unavailable) → proceed to authoritative LMDB lookup
         if self._dedup_lmdb is None:
             return None
         try:
@@ -210,8 +186,7 @@ class DedupManager:
 
     def store_persistent_dedup(self, fp: str, finding_id: str) -> None:
         """
-        Store a fingerprint → finding_id mapping in persistent dedup LMDB
-        and update bloom filter.
+        Store a fingerprint → finding_id mapping in persistent dedup LMDB.
 
         Args:
             fp: 32-char BLAKE2b fingerprint hex string
@@ -224,8 +199,6 @@ class DedupManager:
             value_bytes = finding_id.encode("utf-8")
             with self._dedup_lmdb._env.begin(write=True) as txn:
                 txn.put(key, value_bytes)
-            # Keep bloom filter in sync with LMDB writes
-            self.bloom_add(fp)
         except Exception as e:
             self._dedup_lmdb_last_error = f"store failed for fp={fp[:8]}: {e}"
 
@@ -298,79 +271,8 @@ class DedupManager:
         return self._semantic_dedup_cache
 
     # ------------------------------------------------------------------
-    # RotatingBloomFilter (cross-run pre-check)
+    # Status
     # ------------------------------------------------------------------
-
-    def _init_bloom_filter(self) -> None:
-        """
-        Initialize RotatingBloomFilter for cross-run URL dedup pre-check.
-
-        Fails softly: any exception stored in _bloom_filter_boot_error.
-        Bloom filter is advisory — LMDB remains authoritative on positive lookups.
-        """
-        if not _PROBABLES_AVAILABLE:
-            self._bloom_filter_boot_error = "probables library not available"
-            return
-        try:
-            from hledac.universal.paths import LMDB_ROOT
-            from hledac.universal.tools.url_dedup import create_rotating_bloom_filter
-
-            # 1M elements at 1% FPR — cross-run dedup pre-filter
-            self._bloom_filter = create_rotating_bloom_filter(
-                est_elements=1_000_000,
-                false_positive_rate=0.01,
-            )
-            self._bloom_filter_boot_error = None
-
-            # Pre-populate from LMDB dedup store (if present)
-            self._prepopulate_bloom_from_lmdb()
-        except Exception as e:
-            self._bloom_filter = None
-            self._bloom_filter_boot_error = str(e)
-
-    def _prepopulate_bloom_from_lmdb(self) -> None:
-        """
-        Pre-populate bloom filter from existing LMDB dedup store.
-
-        Scans LMDB keys and adds fingerprints to bloom filter on startup.
-        Bloom filter becomes authoritative for negative lookups (no LMDB I/O needed).
-        """
-        if self._bloom_filter is None or self._dedup_lmdb is None:
-            return
-        try:
-            count = 0
-            with self._dedup_lmdb._env.begin(write=False, buffers=True) as txn:
-                cursor = txn.cursor()
-                prefix = self.DEDUP_NAMESPACE.encode("utf-8")
-                for key, _ in cursor.iter_next():
-                    if key[:len(prefix)] == prefix:
-                        fp = self._dedup_lmdb_key_to_fingerprint(key)
-                        self._bloom_filter.add(fp)
-                        count += 1
-            # Silence unused variable warning — count is for future logging
-            del count
-        except Exception:
-            pass
-
-    def bloom_lookup(self, fp: str) -> bool:
-        """
-        Bloom filter pre-check for cross-run dedup.
-
-        Returns:
-            True if fingerprint MAY be in LMDB (bloom hit),
-            False if definitely not (bloom miss — skip LMDB lookup).
-
-        Note: False positives are possible — caller must verify with LMDB lookup.
-        """
-        if self._bloom_filter is None:
-            return True  # Bloom unavailable → proceed to LMDB
-        return fp in self._bloom_filter
-
-    def bloom_add(self, fp: str) -> None:
-        """Add fingerprint to bloom filter."""
-        if self._bloom_filter is not None:
-            self._bloom_filter.add(fp)
-
     # ------------------------------------------------------------------
     # Status
     # ------------------------------------------------------------------
@@ -389,8 +291,6 @@ class DedupManager:
         """
         return {
             "persistent_dedup_enabled": self._dedup_lmdb is not None,
-            "bloom_filter_enabled": self._bloom_filter is not None,
-            "bloom_filter_boot_error": self._bloom_filter_boot_error,
             "last_boot_cleanup_error": self._dedup_lmdb_boot_error,
             "last_dedup_error": self._dedup_lmdb_last_error,
             "dedup_lmdb_path": self._dedup_lmdb_path_str or "",

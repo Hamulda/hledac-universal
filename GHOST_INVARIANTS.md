@@ -144,3 +144,32 @@ HTTPX H2 lane is gated by `HLEDAC_ENABLE_HTTPX_H2` env var (default: disabled). 
 
 ### Fallback is one-shot per URL
 When httpx_h2 fails and h2 is not installed, `_httpx_reason="httpx_h2_fallback"` is set and aiohttp path is taken. No infinite loop — the fallback is not retried via httpx_h2.
+
+### F229: IPFS Discovery Sidecar
+- Env gate: `HLEDAC_ENABLE_IPFS` (default: disabled)
+- Method: `SprintScheduler._run_ipfs_discovery_sidecar()` → `sidecar_orchestrator._run_ipfs_discovery_sidecar()`
+- Entry: `run_advisory_runner()` step 5 (non-blocking, via create_task)
+- Fail-soft: all errors return empty list, never crash sprint
+- Bounds: max 20 CIDs per search, 30s timeout per fetch
+- Returns: CanonicalFinding list via `ipfs_search_as_findings()`
+- Provenance: (cid, gateway, query)
+
+### F229: BGP Enrichment Sidecar
+- Env gate: `HLEDAC_ENABLE_BGP` (default: disabled)
+- Method: `SprintScheduler._run_bgp_enrichment_sidecar()` → `sidecar_orchestrator._run_bgp_enrichment_sidecar()`
+- Entry: `run_advisory_runner()` step 6 (non-blocking, via create_task)
+- Fail-soft: all errors return empty list, never crash sprint
+- Bounds: max 10 prefixes, 60s duration, max 1000 events
+- Returns: CanonicalFinding list via `monitor_bgp_as_findings()`
+- Prefix extraction: CIDR notation regex + bare IP
+- Provenance: (prefix, as_path, event_type)
+
+### F229: Banner Grab Sidecar
+- Env gate: `HLEDAC_ENABLE_BANNER_GRAB` (default: disabled)
+- Method: `SprintScheduler._run_banner_grab_sidecar()` → `sidecar_orchestrator._run_banner_grab_sidecar()`
+- Entry: `run_advisory_runner()` step 7 (non-blocking, via create_task)
+- Fail-soft: all errors return empty list, never crash sprint
+- Bounds: max 20 IPs, top 10 ports per IP, 100 results cap
+- Returns: CanonicalFinding list via `grab_batch_as_findings()`
+- Target extraction: IP regex, common ports [21,22,23,25,53,80,110,143,443,465,587,993,995,3306,3389,5432,6379,8080,8443]
+- Provenance: (ip, port, protocol)

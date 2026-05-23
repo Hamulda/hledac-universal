@@ -234,8 +234,12 @@ def open_lmdb(path: pathlib.Path, *, map_size: Optional[int] = None, **kw) -> An
     except Exception:
         pass  # Defensive: never let pre-cleanup failure prevent open attempt
 
+    # M1 UMA: writemap=False + sync=False prevent OS page cache thrashing
+    defaults = {"writemap": False, "sync": False}
+    merged_kw = {**defaults, **kw}
+
     try:
-        return lmdb.open(str(path), map_size=map_size, **kw)
+        return lmdb.open(str(path), map_size=map_size, **merged_kw)
     except lmdb.LockError:
         # Sprint 8AG §1.4: safe stale-lock recovery with strict liveness check
         try:
@@ -249,7 +253,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: Optional[int] = None, **kw) -> An
         if removed:
             # Holder was confirmed dead — safe to retry once
             try:
-                return lmdb.open(str(path), map_size=map_size, **kw)
+                return lmdb.open(str(path), map_size=map_size, **merged_kw)
             except lmdb.LockError:
                 raise
         raise  # No lock removed or cleanup failed — propagate original error

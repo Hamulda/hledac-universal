@@ -271,6 +271,24 @@ class FetchCoordinator(UniversalCoordinator):
         self._tor_max_sessions = CONCURRENCY_TOR
         self._tor_lock = asyncio.Lock()
 
+        # Sprint F214: TorTransport opt-in backend (HLEDAC_ENABLE_TOR=1)
+        self._tor_transport: Any = None
+        self._tor_transport_enabled: bool = False
+        if os.environ.get("HLEDAC_ENABLE_TOR") == "1":
+            try:
+                from ..transport.tor_transport import TorTransport
+                self._tor_transport = TorTransport()
+                self._tor_transport_enabled = self._tor_transport.available
+                if self._tor_transport_enabled:
+                    logger.info("TorTransport enabled via HLEDAC_ENABLE_TOR=1")
+                    logger.info(f"  Circuit rotation after {self._tor_transport._max_circuit_requests} requests")
+            except Exception as e:
+                logger.warning(f"TorTransport init failed: {e}")
+                self._tor_transport_enabled = False
+
+        # Sprint F214AD: Race condition guard for dedup check+add
+        self._dedup_lock = asyncio.Lock()
+
         # I2P connection pooling (mirrors Tor pattern)
         self._i2p_sessions: Dict[str, Any] = {}
         self._i2p_last_used: Dict[str, float] = {}
@@ -1009,7 +1027,7 @@ class FetchCoordinator(UniversalCoordinator):
                 continue
 
             if result and result.get('success'):
-                self._processed_urls.add(url)
+                # Dedup already done in _fetch_url via _dedup_lock — no duplicate add needed
                 self._urls_fetched_count += 1
 
                 # Extract evidence ID
@@ -1082,6 +1100,12 @@ class FetchCoordinator(UniversalCoordinator):
         if is_offline_mode():
             raise OfflineModeError(f"Offline mode enabled, skipping fetch: {url}")
 
+        # Sprint F214AD: Atomic dedup check+add BEFORE aimd_acquire to prevent race condition
+        async with self._dedup_lock:
+            if url in self._processed_urls:
+                return None
+            self._processed_urls.add(url)
+
         # Sprint 4B: AIMD concurrency gate
         await self._aimd_acquire()
 
@@ -1137,6 +1161,23 @@ class FetchCoordinator(UniversalCoordinator):
 
                 if url_transport is Transport.TOR:
                     trace_fetch_start(url, "tor", {"attempt": attempt, "timeout": TIMEOUT_TOR})
+                    # Sprint F214: Use TorTransport if enabled (circuit rotation)
+                    if self._tor_transport_enabled and self._tor_transport:
+                        result = await self._tor_transport.fetch(config)
+                        if not result.err:
+                            # Map TransportResult → FetchCoordinator dict
+                            result = {
+                                'success': True,
+                                'status': result.status_code,
+                                'content': b'',  # TransportResult has no raw bytes field
+                                'url': url,
+                                'final_url': result.final_url or url,
+                                'content_type': result.content_type or 'text/html',
+                            }
+                            trace_fetch_end(url, "tor_transport", "ok", 0.0)
+                            break
+                        logger.debug(f"TorTransport fetch failed: {result.err}")
+                    # Fallback: use existing Tor session pool
                     result = await self._fetch_with_tor(url)
                     if result:
                         # Sprint F3/F8/F9: normalize Tor result to common ingest shape

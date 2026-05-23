@@ -73,7 +73,7 @@ class TestGNNPredictor(unittest.IsolatedAsyncioTestCase):
 
     async def test_gnn_init(self):
         """Ověří inicializaci GNNPredictor."""
-        with patch('hledac.universal.brain.gnn_predictor.MLX_AVAILABLE', False):
+        with patch('hledac.universal.brain.gnn_predictor.MLX_GNN_AVAILABLE', False):
             from hledac.universal.brain.gnn_predictor import GNNPredictor
             # Should raise when MLX not available
             with self.assertRaises(RuntimeError):

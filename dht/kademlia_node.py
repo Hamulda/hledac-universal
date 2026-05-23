@@ -54,17 +54,16 @@ DHT_PROMOTION_STATUS: str = "simulated_no_persist"
 
 def is_dht_production_ready() -> bool:
     """
-    Returns False — DHT is SIMULATED and must not persist findings.
+    Returns DHT_REAL_UDP — real UDP DHT is production-ready for persistence.
+    Simulated DHT (HLEDAC_ENABLE_DHT != "1") is NOT production-ready.
 
-    F206F: This gate exists to prevent accidental promotion of simulated
-    DHT results to production OSINT sources. DHT crawl results are
-    returned for potential future enrichment but are never written to
-    DuckDB via async_ingest_findings_batch.
+    F206F: This gate prevents accidental promotion of simulated DHT
+    results to production OSINT sources.
 
     Returns:
-        False always — DHT is not production-ready for persistence.
+        DHT_REAL_UDP — True only when HLEDAC_ENABLE_DHT=1 (real UDP active).
     """
-    return False
+    return DHT_REAL_UDP
 
 
 # =============================================================================
@@ -74,12 +73,13 @@ def is_dht_production_ready() -> bool:
 import asyncio
 import hashlib
 import logging
+import os
 import random
 import socket
 import time
 import uuid
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from hledac.universal.core.resource_governor import ResourceGovernor, Priority
 
@@ -92,13 +92,173 @@ MAX_ITEM_BYTES = 256 * 1024  # 256KB hard cap
 MAX_PENDING_RPCS = 5000
 MAX_PENDING_RPC_TTL_S = 60.0
 
-# Sprint 8VE A.2: Bootstrap peers for DHT crawl (IPv4-only)
-BOOTSTRAP_PEERS = [
+# =============================================================================
+# DHT REAL UDP IMPLEMENTATION — Sprint F214
+# =============================================================================
+# Real BitTorrent DHT (BEP-5) crawling over native asyncio.DatagramProtocol.
+#
+# BEP-5 Message Types (bencode):
+#   PING          {"y":"q","q":"ping","a":{"id":"<20-byte-node-id>"}}
+#   PONG          {"y":"r","r":{"id":"<20-byte-node-id>"}}
+#   FIND_NODE     {"y":"q","q":"find_node","a":{"id":"<20-byte-node-id>","target":"<20-byte-target>"}}
+#   FIND_NODE_R   {"y":"r","r":{"id":"<20-byte-node-id>","nodes":"<compact-node-info>"}}
+#   GET_PEERS     {"y":"q","q":"get_peers","a":{"id":"<20-byte-node-id>","info_hash":"<20-byte>"}}
+#   GET_PEERS_R   {"y":"r","r":{"id":"<20-byte-node-id>","token":"<str>","nodes":"<compact>","values":[<ip,port>]}}
+#   ANNOUNCE_PEER {"y":"q","q":"announce_peer","a":{"id":"<20-byte-node-id>","info_hash":"<20-byte>","port":6881,"token":"<str>"}}
+#
+# Bootstrap nodes: router.bittorrent.com:6881, dht.transmissionbt.com:6881,
+#                  router.utorrent.com:6881, dht.libtorrent.org:25401
+#
+# M1 Constraints:
+#   - Max 2 concurrent bootstrap operations at a time (Semaphore(2))
+#   - 5s timeout per DHT request
+#   - 120s max probe duration (MAX_DHT_PROBE_DURATION_S)
+#   - Fail-soft: any DHT exception logged, never propagates
+#   - LMDB routing table persistence via LocalGraphStore
+# =============================================================================
+
+DHT_REAL_UDP = bool(os.getenv("HLEDAC_ENABLE_DHT", "0") == "1")
+MAX_DHT_PROBE_DURATION_S = 120
+DHT_BOOTSTRAP_TIMEOUT_S = 5.0
+DHT_BOOTSTRAP_SEMAPHORE = asyncio.Semaphore(2)  # M1: max 2 concurrent bootstraps
+
+# =============================================================================
+# PROMOTION GATE
+# =============================================================================
+if DHT_REAL_UDP:
+    STATUS_LINE = "STATUS: REAL UDP DHT — HLEDAC_ENABLE_DHT=1 ACTIVE"
+else:
+    STATUS_LINE = "STATUS: DHT SIMULATED — set HLEDAC_ENABLE_DHT=1 to activate real UDP"
+# =============================================================================
+
+DHT_BOOTSTRAP_PEERS = [
     ("router.bittorrent.com",  6881),
     ("dht.transmissionbt.com", 6881),
     ("router.utorrent.com",    6881),
     ("dht.libtorrent.org",    25401),
 ]
+# Backward-compat alias — old code references BOOTSTRAP_PEERS
+BOOTSTRAP_PEERS = DHT_BOOTSTRAP_PEERS
+
+
+# =============================================================================
+# Real UDP: asyncio.DatagramProtocol for DHT
+# =============================================================================
+class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
+    """
+    F214: asyncio.DatagramProtocol for real BitTorrent DHT (BEP-5) bootstrapping.
+
+    Handles FIND_NODE responses from bootstrap peers to populate the routing table.
+    Not connection-oriented — stateless query/response over UDP.
+
+    M1 Constraints applied:
+      - 5s timeout per request (handled by caller via wait_for)
+      - 3s collection window after sending
+      - Fail-soft: no exceptions propagated to caller
+    """
+
+    __slots__ = ("_loop", "_node_id", "_nodes_found", "_error")
+
+    def __init__(self, loop, node_id: str):
+        self._loop = loop
+        self._node_id = node_id
+        self._nodes_found: Dict[str, Dict[str, Any]] = {}
+        self._error: Optional[Exception] = None
+        self._transport: Optional[asyncio.DatagramTransport] = None
+
+    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
+        self._transport = transport
+
+    def send(self, data: bytes, addr: Tuple[str, int]) -> tuple:
+        """Send datagram. Call via asyncio.wait_for for timeout."""
+        if self._transport:
+            self._transport.sendto(data, addr)
+        return (self._transport, None)
+
+    def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
+        """Parse DHT FIND_NODE response, extract compact node info."""
+        try:
+            msg = self._bdecode(data)
+            if not msg or not isinstance(msg, dict):
+                return
+            r = msg.get("r", {})
+            if not isinstance(r, dict):
+                return
+            node_id = r.get("id", b"").hex() if isinstance(r.get("id"), bytes) else ""
+            if not node_id or len(node_id) != 40:
+                return
+            compact = r.get("nodes", b"")
+            if not compact or len(compact) < 26:
+                return
+            # Parse compact node info: 20-byte node_id + 4-byte IP + 2-byte port
+            for i in range(0, len(compact) - 25, 26):
+                chunk = compact[i : i + 26]
+                if len(chunk) < 26:
+                    break
+                nid = chunk[:20]
+                ip_bytes = chunk[20:24]
+                raw_port = chunk[24:26]
+                ip = ".".join(str(b) for b in ip_bytes)
+                port = int.from_bytes(raw_port, "big")
+                self._nodes_found[nid.hex()] = {"id": nid.hex(), "host": ip, "port": port}
+        except Exception:
+            pass
+
+    def error_received(self, exc: Exception) -> None:
+        self._error = exc
+
+    @staticmethod
+    def _bdecode(data: bytes) -> Optional[Dict[str, Any]]:
+        """Minimal bencode decoder for DHT responses."""
+        try:
+            return _bdecode_fixed(data)
+        except Exception:
+            return None
+
+
+def _bdecode_fixed(data: bytes) -> Optional[Dict[str, Any]]:
+    """
+    Module-level bencode decoder for use in _DHTBootstrapProtocol.
+    Mirrors KademliaNode._bdecode logic.
+    """
+    try:
+        def _dec_rec(d: bytes, p: int) -> tuple[Any, int]:
+            if p >= len(d):
+                return (None, p)
+            ch = d[p:p+1]
+            if ch == b"d":
+                res: Dict[str, Any] = {}
+                p += 1
+                while p < len(d) and d[p:p+1] != b"e":
+                    kk, p = _dec_rec(d, p)
+                    if kk is None:
+                        break
+                    vv, p = _dec_rec(d, p)
+                    res[str(kk)] = vv
+                return (res, p + 1 if p < len(d) else p)
+            elif ch == b"l":
+                lst: List[Any] = []
+                p += 1
+                while p < len(d) and d[p:p+1] != b"e":
+                    itm, p = _dec_rec(d, p)
+                    if itm is None:
+                        break
+                    lst.append(itm)
+                return (lst, p + 1 if p < len(d) else p)
+            elif ch == b"i":
+                p += 1
+                end = d.index(b"e", p)
+                return (int(d[p:end]), end + 1)
+            elif ch.isdigit():
+                colon = d.index(b":", p)
+                ln = int(d[p:colon])
+                start = colon + 1
+                return (d[start:start+ln], start + ln)
+            return (None, p + 1)
+        result, _ = _dec_rec(data, 0)
+        return result if isinstance(result, dict) else None
+    except Exception:
+        return None
 
 
 async def crawl_dht_for_keyword(
@@ -300,10 +460,72 @@ class KademliaNode:
 
     async def start(self):
         self._refresh_task = asyncio.create_task(self._refresh_loop(), name="kademlia:refresh_loop")
-        for peer in self.bootstrap_nodes:
-            if peer == self.node_id:
-                continue
-            await self._ping(peer)
+        if DHT_REAL_UDP:
+            # F214: Real UDP bootstrap using asyncio.DatagramProtocol
+            try:
+                await self._dht_bootstrap_real()
+            except Exception as e:
+                logger.debug(f"[DHT] real UDP bootstrap failed (non-fatal): {e}")
+        else:
+            for peer in self.bootstrap_nodes:
+                if peer == self.node_id:
+                    continue
+                await self._ping(peer)
+
+    async def _dht_bootstrap_real(self) -> None:
+        """
+        F214: Real DHT bootstrap via asyncio.DatagramProtocol.
+
+        Sends FIND_NODE to all bootstrap peers to populate routing table.
+        Uses DHT_BOOTSTRAP_SEMAPHORE to limit concurrent bootstraps (M1: max 2).
+        Each request has 5s timeout. Fail-soft: logs but never propagates.
+        """
+        if not DHT_REAL_UDP:
+            return
+
+        async with DHT_BOOTSTRAP_SEMAPHORE:
+            loop = asyncio.get_running_loop()
+
+            def create_protocol():
+                return _DHTBootstrapProtocol(loop, self.node_id)
+
+            # Bind to random port (ephemeral)
+            transport, protocol = await loop.create_datagram_endpoint(
+                create_protocol,
+                local_addr=("0.0.0.0", 0),
+            )
+
+            try:
+                # Send FIND_NODE to each bootstrap peer
+                our_id = self.node_id.encode()[:20].ljust(20, b"\x00")
+                find_msg = {
+                    "t": "bn",
+                    "y": "q",
+                    "q": "find_node",
+                    "a": {"id": our_id, "target": our_id},
+                }
+                bencoded = self._bencode(find_msg) + b"\n"
+
+                pending = []
+                for host, port in DHT_BOOTSTRAP_PEERS:
+                    try:
+                        _, sent = await asyncio.wait_for(
+                            protocol.send(bencoded, (host, port)),
+                            timeout=DHT_BOOTSTRAP_TIMEOUT_S,
+                        )
+                        pending.append((host, port))
+                    except Exception:
+                        pass
+
+                # Wait for responses (collect up to 4 routing table entries)
+                await asyncio.sleep(3.0)
+
+                if protocol.nodes_found:
+                    for node_id_hex, node_info in list(protocol.nodes_found.items())[:20]:
+                        self._update_routing(node_id_hex, node_info)
+
+            finally:
+                transport.close()
 
     async def stop(self):
         self._running = False

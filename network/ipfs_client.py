@@ -18,11 +18,17 @@ Anti-patterns prevented:
   - No size bypass (Content-Length check before read)
   - No hardcoded API keys
   - Graceful degradation: None return on all failures
+
+F229: CanonicalFinding return path added.
+  - ipfs_fetch_as_findings() returns List[CanonicalFinding]
+  - ipfs_search_as_findings() returns List[CanonicalFinding]
+  - Fail-soft: errors return empty list, never raise
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import aiohttp
 from typing import Optional
 
@@ -215,6 +221,126 @@ __all__ = [
     "fetch_ipfs",
     "search_ipfs",
     "ipfs_content_to_finding_dict",
+    "ipfs_fetch_as_findings",
+    "ipfs_search_as_findings",
     "MAX_FILE_SIZE_BYTES",
     "IPFS_PROMOTION_STATUS",
 ]
+
+
+# F229: CanonicalFinding return path
+async def ipfs_fetch_as_findings(cid: str, query: str, timeout: int = 30) -> list:
+    """
+    Fetch IPFS content and return as CanonicalFinding list.
+
+    Fails soft: returns empty list on any error.
+
+    Args:
+        cid:      IPFS Content ID
+        query:    orig query (IOC value or search term)
+        timeout:  seconds per gateway attempt (default 30)
+
+    Returns:
+        List[CanonicalFinding] — one finding per successful fetch
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    try:
+        content = await fetch_ipfs(cid, timeout=timeout)
+        if content is None:
+            return []
+    except Exception:
+        return []
+
+    try:
+        ts = time.time()
+        finding_dict = ipfs_content_to_finding_dict(
+            cid=cid,
+            content=content,
+            gateway="ipfs_fetch",
+            query=query,
+            ts=ts,
+            finding_id_prefix="ipfs",
+        )
+        # Sprint 8W quality decision contract
+        finding = CanonicalFinding(
+            finding_id=finding_dict["finding_id"],
+            query=finding_dict["query"],
+            source_type=finding_dict["source_type"],
+            confidence=finding_dict["confidence"],
+            ts=finding_dict["ts"],
+            provenance=finding_dict["provenance"],
+            payload_text=finding_dict.get("payload_text"),
+            # Quality contract (Sprint 8W)
+            accepted=True,
+            reason="ipfs_fetch",
+            entropy=0.0,
+            normalized_hash=None,
+            duplicate=False,
+        )
+        return [finding]
+    except Exception:
+        return []
+
+
+async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> list:
+    """
+    Search IPFS for query and return all fetched content as CanonicalFinding list.
+
+    Fails soft: errors return empty list, partial results are returned.
+
+    Args:
+        query:              Search keyword/phrase
+        timeout_per_result: Seconds per fetch (default 30)
+
+    Returns:
+        List[CanonicalFinding] — one finding per found CID
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    try:
+        cids = await search_ipfs(query)
+    except Exception:
+        return []
+
+    if not cids:
+        return []
+
+    findings: list = []
+    for cid in cids[:20]:  # Cap at 20 CIDs for M1 safety
+        try:
+            content = await fetch_ipfs(cid, timeout=timeout_per_result)
+            if content is None:
+                continue
+        except Exception:
+            continue
+
+        try:
+            ts = time.time()
+            finding_dict = ipfs_content_to_finding_dict(
+                cid=cid,
+                content=content,
+                gateway="ipfs_search",
+                query=query,
+                ts=ts,
+                finding_id_prefix="ipfs_search",
+            )
+            finding = CanonicalFinding(
+                finding_id=finding_dict["finding_id"],
+                query=finding_dict["query"],
+                source_type=finding_dict["source_type"],
+                confidence=finding_dict["confidence"],
+                ts=finding_dict["ts"],
+                provenance=finding_dict["provenance"],
+                payload_text=finding_dict.get("payload_text"),
+                accepted=True,
+                reason="ipfs_search",
+                entropy=0.0,
+                normalized_hash=None,
+                duplicate=False,
+            )
+            findings.append(finding)
+        except Exception:
+            continue
+
+    return findings

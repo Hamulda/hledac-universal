@@ -67,17 +67,17 @@ except ImportError:
     classify_failure_kind = None  # type: ignore
 
 # Sprint 33: outlines for grammar-constrained decoding
+logger = logging.getLogger(__name__)  # declare early for except block
 try:
     import outlines
     from outlines import generate as outlines_generate
     OUTLINES_AVAILABLE = True
 except ImportError:
     OUTLINES_AVAILABLE = False
+    logger.warning("outlines not installed — grammar-constrained decoding disabled")
 
 # Sprint 37: KV-cache for prompt prefix (lazy import to avoid loading mlx_lm at cold-start)
 KV_CACHE_AVAILABLE = False  # Set to True only when cache is actually initialized
-
-logger = logging.getLogger(__name__)
 
 # Sprint 81: MLX memory management
 try:

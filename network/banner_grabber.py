@@ -362,6 +362,66 @@ __all__ = [
     "BannerGrabber",
     "BannerGrabberAdapter",
     "BannerResult",
+    "grab_batch_as_findings",
     "MAX_BANNER_GRABS",
     "PORT_TIMEOUTS",
 ]
+
+
+# F229: CanonicalFinding return path
+async def grab_batch_as_findings(
+    targets: list[tuple[str, int]],
+    timeout: int = 10,
+    concurrency: int = 20,
+) -> list:
+    """
+    Grab banners from targets and return as CanonicalFinding list.
+
+    Fails soft: returns empty list on any error.
+
+    Args:
+        targets:     List of (ip, port) tuples
+        timeout:     Seconds per connection (default 10, unused but kept for API compat)
+        concurrency: Max simultaneous grabs (default 20, unused but kept for API compat)
+
+    Returns:
+        List[CanonicalFinding]
+    """
+    import time
+
+    try:
+        import hashlib
+        import time
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+        grabber = BannerGrabber()
+        results = await grabber.grab_batch(targets)
+    except Exception:
+        return []
+
+    findings = []
+    for result in results:
+        try:
+            if result.error:
+                continue
+            content = f"{result.ip}:{result.port}|{result.banner[:200]}"
+            content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+            finding_id = f"banner_{result.ip}_{result.port}_{content_hash}"
+            finding = CanonicalFinding(
+                finding_id=finding_id,
+                query=f"banner:{result.ip}:{result.port}",
+                source_type="banner_grab",
+                confidence=0.6,
+                ts=time.time(),
+                provenance=(result.ip, result.port, result.protocol),
+                payload_text=f"port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}",
+                accepted=True,
+                reason="banner_grab",
+                entropy=0.0,
+                normalized_hash=None,
+                duplicate=False,
+            )
+            findings.append(finding)
+        except Exception:
+            continue
+
+    return findings[:100]

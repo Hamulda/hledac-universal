@@ -443,7 +443,8 @@ _SCHEMA_SQL = """
         source_type     VARCHAR,
         confidence      DOUBLE,
         ts              DOUBLE,
-        provenance_json TEXT
+        provenance_json TEXT,
+        UNIQUE (query, source_type)
     );
     CREATE TABLE IF NOT EXISTS shadow_runs (
         run_id      VARCHAR PRIMARY KEY,
@@ -1098,7 +1099,8 @@ class DuckDBShadowStore:
         _SQL_INSERT_SHADOW_FINDING = (
             "INSERT INTO shadow_findings "
             "(id, query, source_type, confidence, ts, provenance_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)"
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (query, source_type) DO NOTHING"
         )
         _SQL_INSERT_SHADOW_RUN = (
             "INSERT INTO shadow_runs "
