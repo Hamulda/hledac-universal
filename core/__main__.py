@@ -1102,6 +1102,8 @@ async def run_sprint(
     export_dir: str = str(Path.home() / ".hledac" / "reports"),
     aggressive_mode: bool = False,
     deep_probe_enabled: bool = False,
+    deep_research: bool = False,  # F11: enhanced deep research advisory
+    extreme_mode: bool = False,  # F11: EXHAUSTIVE depth for deep research
     ui_mode: bool = False,
     windup_lead_s: float | None = None,
     acquisition_profile: str | None = None,  # F223A: explicit profile override
@@ -1202,6 +1204,9 @@ async def run_sprint(
         branch_timeout_budget_s=8.0 if aggressive_mode else 0.0,
         # F223A: Explicit acquisition profile override
         acquisition_profile=acquisition_profile,
+        # F11: Deep research advisory
+        deep_research_enabled=deep_research,
+        extreme_mode=extreme_mode,
     )
 
     scheduler = SprintScheduler(config)
@@ -1229,7 +1234,7 @@ async def run_sprint(
     except asyncio.TimeoutError:
         logger.W("[F228F] health_check timed out after 30s — continuing without pre-run check")
         health = None
-    if health is not None and not health.ok:
+    if health is not None and not health.overall_ok:
         logger.W(f"[F228F] health_check warnings: {health.summary()}")
         # Fail-soft: log and continue — sprint will handle degraded mode gracefully
     elif health is not None:
@@ -2234,6 +2239,16 @@ def main() -> None:
         help="Run deep probe research post-sprint (deep web, S3 buckets, IPFS)",
     )
     parser.add_argument(
+        "--deep-research",
+        action="store_true",
+        help="F11: Run enhanced deep research advisory post-sprint",
+    )
+    parser.add_argument(
+        "--extreme",
+        action="store_true",
+        help="F11: Enable EXHAUSTIVE depth for deep research (implies --deep-research)",
+    )
+    parser.add_argument(
         "--acquisition-profile",
         type=str,
         default="default",
@@ -2265,7 +2280,7 @@ def main() -> None:
         restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
         try:
             sprint_task = loop.create_task(
-                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train)
+                run_sprint(args.query, float(args.duration), args.export_dir, args.aggressive, args.deep_probe, deep_research=args.deep_research, extreme_mode=args.extreme, acquisition_profile=args.acquisition_profile, rl_train_mode=args.rl_train)
             )
             sig_task = loop.create_task(shutdown_event.wait())
             done, pending = loop.run_until_complete(

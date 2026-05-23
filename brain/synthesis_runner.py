@@ -388,6 +388,9 @@ class SynthesisRunner:
         self._compression_threshold: int = 0
         self._compressor: Optional[Any] = None
 
+        # F214: HypothesisEngine — optional synthesis step
+        self._hypothesis_engine: Optional[Any] = None
+
     def inject_graph(self, graph: Any) -> None:
         """Inject IOCGraph instance from 8QA for STIX context injection."""
         self._ioc_graph = graph
@@ -419,6 +422,21 @@ class SynthesisRunner:
         Also accepts direct runtime SprintLifecycleManager instances.
         """
         self._lifecycle_adapter = adapter
+
+    # ------------------------------------------------------------------
+    # F214: HypothesisEngine injection
+    # ------------------------------------------------------------------
+
+    def inject_hypothesis_engine(self, engine: Any) -> None:
+        """
+        F214: Inject HypothesisEngine for optional post-synthesis
+        hypothesis extraction from OSINTReport.
+
+        The engine uses the already-loaded Hermes3 via dependency injection
+        (not a separate MLX model load). Max 10 active hypotheses per call.
+        Fail-soft: hypothesis extraction failure does not affect synthesis result.
+        """
+        self._hypothesis_engine = engine
 
     # ------------------------------------------------------------------
     # Sprint 8TD: Custom prompt injection
@@ -820,6 +838,27 @@ class SynthesisRunner:
                     confidence=report.confidence,
                     operator_note=f"report produced with confidence {report.confidence:.3f}",
                 )
+                # F214: Extract testable hypotheses from synthesis output
+                # Fail-soft: hypothesis pipeline error must not affect canonical report
+                if self._hypothesis_engine is not None:
+                    try:
+                        ctx = {
+                            "query": query,
+                            "report_summary": report.threat_summary[:500] if report.threat_summary else "",
+                            "iocs": [i.ioc_value for i in (report.ioc_entities or [])[:10]],
+                            "source": "synthesis_runner",
+                        }
+                        hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
+                            context=ctx,
+                            hermes_engine=getattr(self._hypothesis_engine, "_inference_engine", None),
+                        )
+                        if hyp_strings:
+                            logger.debug(
+                                f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report"
+                            )
+                    except Exception as e:
+                        logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
+
                 return report
 
         # All engines failed or parse failed

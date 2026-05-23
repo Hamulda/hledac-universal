@@ -172,6 +172,9 @@ class AcquisitionLane:
     IPFS = "IPFS"
     DOH = "DOH"
     OPEN_SOURCE = "OPEN_SOURCE"
+    SHODAN = "SHODAN"
+    CENSYS = "CENSYS"
+    GREYNOISE = "GREYNOISE"
 
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
@@ -522,6 +525,9 @@ LaneSpecPivot    = LaneSpec(max_items=20,  timeout_s=15,  risk_level=RiskLevel.L
 LaneSpecAcademic = LaneSpec(max_items=10,  timeout_s=45,  risk_level=RiskLevel.MEDIUM)
 LaneSpecIPFS     = LaneSpec(max_items=3,   timeout_s=60,  risk_level=RiskLevel.MEDIUM)
 LaneSpecOpenSrc  = LaneSpec(max_items=20, timeout_s=60,  risk_level=RiskLevel.MEDIUM)
+LaneSpecShodan   = LaneSpec(max_items=20, timeout_s=30,  risk_level=RiskLevel.MEDIUM)
+LaneSpecCensys   = LaneSpec(max_items=20, timeout_s=45,  risk_level=RiskLevel.MEDIUM)
+LaneSpecGreyNoise = LaneSpec(max_items=30, timeout_s=20,  risk_level=RiskLevel.LOW)
 
 
 def _lc(lane: str, base: int, uma_state: str) -> int:
@@ -713,6 +719,33 @@ LANE_RULES: tuple[LaneRule, ...] = tuple([
         lambda ctx: ctx.is_academic and not ctx.hardware_critical,
         lambda ctx: "academic_profile",
         lambda ctx: 1,
+    ),
+
+    # ── SHODAN ───────────────────────────────────────────────────────────
+    # F235: External intel lane — active when query has IP/CIDR indicator
+    _lane_rule(
+        AcquisitionLane.SHODAN, LaneSpecShodan,
+        lambda ctx: ctx.has_ip and not ctx.hardware_critical,
+        lambda ctx: "ip_or_cidr_indicator",
+        lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── CENSYS ───────────────────────────────────────────────────────────
+    # F235: External intel lane — active when query has domain/cert keyword
+    _lane_rule(
+        AcquisitionLane.CENSYS, LaneSpecCensys,
+        lambda ctx: ctx.has_domain and not ctx.hardware_critical,
+        lambda ctx: "domain_or_cert_indicator",
+        lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state),
+    ),
+
+    # ── GREYNOISE ────────────────────────────────────────────────────────
+    # F235: External intel lane — active when query has IP/CIDR indicator
+    _lane_rule(
+        AcquisitionLane.GREYNOISE, LaneSpecGreyNoise,
+        lambda ctx: ctx.has_ip and not ctx.hardware_critical,
+        lambda ctx: "ip_or_cidr_indicator",
+        lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state),
     ),
 ])
 
@@ -3971,6 +4004,152 @@ async def run_enabled_acquisition_lanes(
             source_family="stealth",
         )
 
+    # ── F235: External Intelligence Lanes ───────────────────────────────────
+
+    async def _run_shodan_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run Shodan intelligence lane — device/IP fingerprints."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.shodan_lane import ShodanLane
+
+                lane_obj = ShodanLane()
+                findings = await lane_obj.query(query)
+
+                accepted = 0
+                if findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
+                        except Exception:
+                            pass
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.SHODAN,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="shodan_intel",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.SHODAN,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="shodan_intel",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.SHODAN,
+                enabled=plan.enabled,
+                attempted=True,
+                duration_s=time.monotonic() - start,
+                error=f"{type(exc).__name__}:{exc}",
+                source_family="shodan_intel",
+            )
+
+    async def _run_censys_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run Censys intelligence lane — certificate transparency."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.censys_lane import CensysLane
+
+                lane_obj = CensysLane()
+                findings = await lane_obj.query(query)
+
+                accepted = 0
+                if findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
+                        except Exception:
+                            pass
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CENSYS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="censys_intel",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CENSYS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="censys_intel",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CENSYS,
+                enabled=plan.enabled,
+                attempted=True,
+                duration_s=time.monotonic() - start,
+                error=f"{type(exc).__name__}:{exc}",
+                source_family="censys_intel",
+            )
+
+    async def _run_greynoise_lane(plan) -> "AcquisitionLaneOutcome":
+        """Run GreyNoise intelligence lane — mass scanner classification."""
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(plan.timeout_s):
+                from hledac.universal.intelligence.greynoise_lane import GreyNoiseLane
+
+                lane_obj = GreyNoiseLane()
+                findings = await lane_obj.query(query)
+
+                accepted = 0
+                if findings and store is not None:
+                    if hasattr(store, "async_ingest_findings_batch"):
+                        try:
+                            ingest_results = await store.async_ingest_findings_batch(findings)
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
+                        except Exception:
+                            pass
+
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.GREYNOISE,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="greynoise_intel",
+                )
+        except asyncio.TimeoutError:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.GREYNOISE,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="greynoise_intel",
+            )
+        except Exception as exc:
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.GREYNOISE,
+                enabled=plan.enabled,
+                attempted=True,
+                duration_s=time.monotonic() - start,
+                error=f"{type(exc).__name__}:{exc}",
+                source_family="greynoise_intel",
+            )
+
     lane_runners = {
         AcquisitionLane.CT: _run_ct_lane,
         AcquisitionLane.WAYBACK: _run_wayback_lane,
@@ -3981,6 +4160,9 @@ async def run_enabled_acquisition_lanes(
         AcquisitionLane.IPFS: _run_ipfs_lane,
         AcquisitionLane.OPEN_SOURCE: _run_open_source_lane,
         AcquisitionLane.DOH: _run_doh_lane,
+        AcquisitionLane.SHODAN: _run_shodan_lane,
+        AcquisitionLane.CENSYS: _run_censys_lane,
+        AcquisitionLane.GREYNOISE: _run_greynoise_lane,
     }
 
     for plan in snapshot.plans:

@@ -507,31 +507,72 @@ class ResearchLoop:
         return reward, findings
 
     async def _generate_hypotheses(self, query: str) -> List[Dict]:
-        """Generate hypotheses using hypothesis engine."""
+        """Generate hypotheses using HypothesisEngine.
+
+        Calls generate_hypotheses_async() when engine has Hermes3 injected.
+        Runs attempt_falsification on each candidate; only non-falsified
+        hypotheses become research seeds.
+        M1 memory bound: max 10 active hypotheses per iteration.
+        """
         findings = []
 
         try:
             if self.hypothesis_engine is not None:
-                # Try to use hypothesis engine if available
-                hypotheses = await self.hypothesis_engine.generate(query)
-                for h in hypotheses[:10]:  # Limit to 10
+                ctx: Dict[str, Any] = {"query": query, "source": "research_loop"}
+                engine = self.hypothesis_engine
+
+                # Use async variant if available (supports Hermes3 injection)
+                if hasattr(engine, "generate_hypotheses_async"):
+                    hyp_strings = await engine.generate_hypotheses_async(
+                        context=ctx,
+                        hermes_engine=getattr(engine, "_inference_engine", None),
+                    )
+                elif hasattr(engine, "generate_hypotheses"):
+                    import inspect
+                    if inspect.iscoroutinefunction(engine.generate_hypotheses):
+                        hyp_strings = await engine.generate_hypotheses(ctx)
+                    else:
+                        hyp_strings = engine.generate_hypotheses(ctx)
+                else:
+                    hyp_strings = []
+
+                for h_text in hyp_strings[:10]:  # M1 mem bound
+                    # Attempt falsification on each candidate
+                    falsified = False
+                    if hasattr(engine, "attempt_falsification"):
+                        try:
+                            from dataclasses import dataclass, field
+                            @dataclass
+                            class _H:
+                                hypothesis: str = ""
+                                test_results: list = field(default_factory=list)
+                                supporting_evidence: list = field(default_factory=list)
+                                conflicting_evidence: list = field(default_factory=list)
+                            tmp = _H(hypothesis=h_text)
+                            result = engine.attempt_falsification(tmp)
+                            falsified = getattr(result, "falsified", False)
+                        except Exception:
+                            pass  # fail-soft: proceed
+
+                    status = "rejected" if falsified else "active"
                     findings.append({
                         "type": "hypothesis",
-                        "content": str(h),
+                        "content": h_text,
                         "source": "hypothesis_engine",
+                        "status": status,
+                    })
+            else:
+                # Fallback: keyword-based hypothesis generation
+                keywords = query.split()[:5]
+                for kw in keywords:
+                    findings.append({
+                        "type": "hypothesis",
+                        "content": f"Explore relationships involving '{kw}'",
+                        "source": "keyword_hypothesis",
+                        "status": "pending",
                     })
         except Exception as e:
             logger.debug(f"Hypothesis generation failed: {e}")
-
-        # Fallback: generate simple keyword-based hypotheses
-        if not findings:
-            keywords = query.split()[:5]
-            for kw in keywords:
-                findings.append({
-                    "type": "hypothesis",
-                    "content": f"Explore relationships involving '{kw}'",
-                    "source": "keyword_hypothesis",
-                })
 
         return findings
 

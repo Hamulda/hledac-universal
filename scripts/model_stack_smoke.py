@@ -120,11 +120,11 @@ def check_embeddings() -> dict:
             )
             ce = get_coreml_embedder()
             if ce is not None:
-                if ce._coreml_model is not None:
+                if ce._backend == "coreml" and ce._model is not None:
                     coreml_active_path = "coreml_ane"
-                elif ce._onnx_model_path is not None:
+                elif ce._backend == "onnx" and ce._model is not None:
                     coreml_active_path = "onnx_cpu"
-                elif ce._loaded:
+                elif ce._is_loaded:
                     coreml_active_path = "hash_fallback"
                 else:
                     coreml_active_path = "not_loaded"

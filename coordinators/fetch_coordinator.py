@@ -143,6 +143,7 @@ TIMEOUT_CLEARNET_API = 20.0   # seconds - API JSON endpoints
 TIMEOUT_CLEARNET_HTML = 35.0  # seconds - HTML page fetch
 TIMEOUT_TOR = 75.0            # seconds - .onion over Tor
 TIMEOUT_I2P = 150.0           # seconds - .i2p over I2P
+TIMEOUT_GOPHER = 30.0        # seconds - gopher protocol fetch
 
 # =============================================================================
 # Sprint 4B: CONCURRENCY MATRIX
@@ -285,6 +286,19 @@ class FetchCoordinator(UniversalCoordinator):
             except Exception as e:
                 logger.warning(f"TorTransport init failed: {e}")
                 self._tor_transport_enabled = False
+
+        # Sprint F214: GopherTransport opt-in backend (HLEDAC_ENABLE_GOPHER=1)
+        self._gopher_transport: Any = None
+        self._gopher_transport_enabled: bool = False
+        if os.environ.get("HLEDAC_ENABLE_GOPHER") == "1":
+            try:
+                from ..transport.gopher_transport import GopherTransport
+                self._gopher_transport = GopherTransport()
+                self._gopher_transport_enabled = True
+                logger.info("GopherTransport enabled via HLEDAC_ENABLE_GOPHER=1")
+            except Exception as e:
+                logger.warning(f"GopherTransport init failed: {e}")
+                self._gopher_transport_enabled = False
 
         # Sprint F214AD: Race condition guard for dedup check+add
         self._dedup_lock = asyncio.Lock()
@@ -1220,6 +1234,27 @@ class FetchCoordinator(UniversalCoordinator):
                             result['final_url'] = url
                             trace_fetch_end(url, "i2p_fallback", "ok", 0.0)
                             break
+                elif url_transport is Transport.GOPHER:
+                    # Sprint F216: GopherTransport opt-in backend
+                    if self._gopher_transport_enabled and self._gopher_transport:
+                        trace_fetch_start(url, "gopher", {"attempt": attempt, "timeout": TIMEOUT_GOPHER})
+                        try:
+                            gopher_res = await self._gopher_transport.fetch(url, timeout_s=TIMEOUT_GOPHER)
+                            if not gopher_res.err:
+                                result = {
+                                    'success': True,
+                                    'status': 200,
+                                    'content': gopher_res.content,
+                                    'url': url,
+                                    'final_url': url,
+                                    'content_type': 'text/plain',
+                                }
+                                trace_fetch_end(url, "gopher_transport", "ok", 0.0)
+                                break
+                            logger.debug(f"GopherTransport fetch failed: {gopher_res.err}")
+                        except Exception as e:
+                            logger.debug(f"GopherTransport error: {e}")
+                            trace_fetch_end(url, "gopher_transport", "error", 0.0)
 
                 # Sprint 46: Session injection - get cookies before fetch
                 # P3-5 fix: Never log raw session cookies - use _mask_cookies_for_log()

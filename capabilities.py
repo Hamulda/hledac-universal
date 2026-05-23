@@ -92,6 +92,9 @@ class Capability(Enum):
     BGP = "bgp"
     IPFS = "ipfs"
     BANNER_GRAB = "banner_grab"
+    SHODAN = "shodan"
+    CENSYS = "censys"
+    GREYNOISE = "greynoise"
 
     # Analysis
     TEMPORAL = "temporal"
@@ -865,6 +868,35 @@ def create_default_registry() -> CapabilityRegistry:
         available=_banner_env and check_module("hledac.universal.network.banner_grabber")[0],
         reason="Banner grabber enabled" if _banner_env else "Banner grab disabled via HLEDAC_ENABLE_BANNER_GRAB",
         module_path="hledac.universal.network.banner_grabber"
+    )
+
+    # F235: External intelligence APIs — gate on env vars + API key presence
+    _shodan_env = os.environ.get("HLEDAC_ENABLE_SHODAN", "").lower() in ("1", "true", "yes", "on")
+    _shodan_key = os.environ.get("SHODAN_API_KEY", "").strip()
+    registry.register(
+        capability=Capability.SHODAN,
+        available=_shodan_env and bool(_shodan_key),
+        reason=f"Shodan enabled (key present: {bool(_shodan_key)})" if _shodan_env else "Shodan disabled via HLEDAC_ENABLE_SHODAN",
+        module_path="hledac.universal.intelligence.shodan_lane"
+    )
+
+    _censys_env = os.environ.get("HLEDAC_ENABLE_CENSYS", "").lower() in ("1", "true", "yes", "on")
+    _censys_id = os.environ.get("CENSYS_API_ID", "").strip()
+    _censys_secret = os.environ.get("CENSYS_SECRET", "").strip()
+    registry.register(
+        capability=Capability.CENSYS,
+        available=_censys_env and bool(_censys_id) and bool(_censys_secret),
+        reason=f"Censys enabled (credentials present: {bool(_censys_id and _censys_secret)})" if _censys_env else "Censys disabled via HLEDAC_ENABLE_CENSYS",
+        module_path="hledac.universal.intelligence.censys_lane"
+    )
+
+    _gn_env = os.environ.get("HLEDAC_ENABLE_GREYNOISE", "").lower() in ("1", "true", "yes", "on")
+    _gn_key = os.environ.get("GREYNOISE_API_KEY", "").strip()
+    registry.register(
+        capability=Capability.GREYNOISE,
+        available=_gn_env and bool(_gn_key),
+        reason=f"GreyNoise enabled (key present: {bool(_gn_key)})" if _gn_env else "GreyNoise disabled via HLEDAC_ENABLE_GREYNOISE",
+        module_path="hledac.universal.intelligence.greynoise_lane"
     )
 
     return registry

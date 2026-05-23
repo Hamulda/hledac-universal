@@ -720,6 +720,10 @@ class SprintSchedulerConfig:
     # F233C: Optional predecessor sprint_id for next_sprint_seeds consumption
     predecessor_sprint_id: str | None = None
 
+    # F11: Deep research advisory (post-WINDUP, fire-and-forget)
+    deep_research_enabled: bool = False
+    extreme_mode: bool = False
+
     def tier_of(self, source: str) -> SourceTier:
         return self.source_tier_map.get(source, SourceTier.OTHER)
 
@@ -852,6 +856,29 @@ class FeedDominanceGuard:
                 f"feed_dominance={dom_class}:{ratio:.3f}:"
                 f"feed={feed_accepted}:nonfeed={nonfeed}"
             ),
+        )
+
+
+@dataclass(slots=True)
+class HealthReport:
+    """
+    F228F: Pre-run health check result for critical dependencies.
+    Returned by SprintScheduler.health_check() — NEVER raises.
+    """
+    duckdb_ok: bool = False
+    hermes_ok: bool = False
+    fetch_coordinator_ok: bool = False
+    graph_service_ok: bool = False
+    overall_ok: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return (
+            f"duckdb={'OK' if self.duckdb_ok else 'FAIL'} "
+            f"hermes={'OK' if self.hermes_ok else 'FAIL'} "
+            f"fetch={'OK' if self.fetch_coordinator_ok else 'NA'} "
+            f"graph={'OK' if self.graph_service_ok else 'NA'} "
+            f"overall={'OK' if self.overall_ok else 'DEGRADED'}"
         )
 
 
@@ -3265,7 +3292,10 @@ class SprintScheduler:
     
             # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
             await self._sidecar_orchestrator.run_advisory_runner()
-    
+
+            # F11: Deep research advisory — fire-and-forget after teardown/export
+            self._maybe_launch_enhanced_research()
+
             # P12: Release Hermes engine at teardown via ModelManager (bounded M1 8GB lifecycle)
             await self._unload_hermes_at_teardown()
     
@@ -9646,6 +9676,113 @@ class SprintScheduler:
         except Exception as exc:
             log.warning(f"Dedup flush failed: {exc}")
 
+    # F11: Background task tracking set — prevents GC of fire-and-forget tasks
+    _background_research_tasks: set[asyncio.Task[None]] = set()
+
+    def _maybe_launch_enhanced_research(self) -> None:
+        """Fire-and-forget deep research advisory. Called at TEARDOWN."""
+        if not self._config.deep_research_enabled:
+            return
+        # Memory guard: block if UMA is in WARN or worse
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            snapshot = get_uma_snapshot()
+            if snapshot.is_warn or snapshot.is_critical or snapshot.is_emergency:
+                log.debug("[F11] Deep research blocked — memory pressure: %s", snapshot.state)
+                return
+        except Exception:
+            pass  # fail-safe: guard is advisory
+        task = asyncio.create_task(self._run_enhanced_research_async())
+        self._background_research_tasks.add(task)
+        task.add_done_callback(self._background_research_tasks.discard)
+        log.info("[F11] Deep research advisory launched (fire-and-forget)")
+
+    async def _run_enhanced_research_async(self) -> None:
+        """Async wrapper — runs deep research advisory with 180s timeout."""
+        try:
+            await asyncio.wait_for(self._run_enhanced_research(), timeout=180.0)
+        except asyncio.TimeoutError:
+            log.warning("[F11] Deep research timed out after 180s")
+        except Exception as e:
+            log.warning(f"[F11] Deep research advisory failed: {e}")
+
+
+    async def _run_enhanced_research(self) -> list:
+        """
+        F11: Run enhanced/deep research advisory post-sprint.
+
+        GHOST_INVARIANTS: fail-soft, named except, CancelledError propagated.
+        """
+        try:
+            from hledac.universal.enhanced_research import (
+                DeepResearchRequest,
+                DeepResearchResponse,
+                TriadAdmissionDescriptor,
+                deep_research_provider_seam,
+            )
+            from hledac.universal.enhanced_research import ResearchDepth
+        except ImportError:
+            log.debug("[F11] enhanced_research not available")
+            return []
+
+        # Gate: preset must be DEEP/EXTREME/AUTONOMOUS (check via extreme_mode flag)
+        if not self._config.deep_research_enabled:
+            return []
+        # Triad admission — max 1 concurrent (M1 constraint)
+        triad_admission = TriadAdmissionDescriptor()
+        if hasattr(triad_admission, 'max_concurrent_research'):
+            triad_admission.max_concurrent_research = 1
+        # Build request
+        query = getattr(self._result, 'sprint_query', '') or getattr(self._config, 'query', '')
+        depth = ResearchDepth.EXHAUSTIVE if self._config.extreme_mode else ResearchDepth.DEEP
+        req = DeepResearchRequest(
+            query=f"deep research: {query}",
+            depth=depth,
+            max_results=50,
+            grounding_hints=[],
+        )
+        # Execute with grounding shim
+        try:
+            response: DeepResearchResponse = await deep_research_provider_seam(req, None)
+        except Exception as e:
+            log.warning("[F11] deep_research_provider_seam failed: {e}")
+            return []
+        if not response or not response.findings:
+            return []
+        # Convert ResearchFinding → CanonicalFinding
+        canonicals = []
+        for f in response.findings[:100]:  # MAX_DEEP_RESEARCH_FINDINGS=100
+            try:
+                from hledac.universal.capabilities import CanonicalFinding
+                import time as _time_module
+                ts = getattr(f, 'timestamp', None)
+                ts_float = ts.timestamp() if ts else _time_module.time()
+                confidence = getattr(f, 'relevance_score', 0.5) * getattr(f, 'credibility_score', 0.5)
+                src = getattr(f, 'src', 'enhanced_research')
+                canonical = CanonicalFinding(
+                    finding_id=f"er_{getattr(f, 'id', 'unknown')}",
+                    query=f"deep_research:{getattr(self._result, 'sprint_id', 'unknown')}",
+                    source_type=getattr(f, 'source_type', src) or src,
+                    confidence=confidence,
+                    ts=ts_float,
+                    provenance=getattr(f, 'url', '') or '',
+                    payload_text=f"{getattr(f, 'title', '')}\n{getattr(f, 'content', '')[:2000]}",
+                )
+                canonicals.append(canonical)
+            except Exception:
+                pass  # fail-safe: skip unconvertible findings
+        if not canonicals:
+            return []
+        # Ingest to DuckDB
+        try:
+            store = getattr(self, '_duckdb_store', None)
+            if store and hasattr(store, 'async_ingest_findings_batch'):
+                await store.async_ingest_findings_batch(canonicals)
+                log.info(f"[F11] Deep research ingested {len(canonicals)} findings")
+        except Exception as e:
+            log.warning(f"[F11] DuckDB ingest failed: {e}")
+        return canonicals
+
     async def _close_dedup(self) -> None:
         """Close LMDB at TEARDOWN. Calls flush first."""
         await self._flush_dedup()
@@ -11132,6 +11269,84 @@ class SprintScheduler:
         Returns empty list if no pivots were planned or planner failed.
         """
         return getattr(self, "_planned_pivots", [])
+
+    async def health_check(self) -> HealthReport:
+        """
+        F228F: Pre-run health check for critical dependencies.
+        Always returns HealthReport — NEVER raises.
+        Timeout handled externally by caller (asyncio.timeout in __main__).
+        """
+        log = logging.getLogger("hledac.sprint")
+        errors: list[str] = []
+        duckdb_ok = False
+        hermes_ok = False
+        fetch_coordinator_ok = False
+        graph_service_ok = False
+
+        # DuckDB: check store exists and has async_ingest_findings_batch
+        try:
+            store = getattr(self, "_duckdb_store", None)
+            if store is not None and hasattr(store, "async_ingest_findings_batch"):
+                duckdb_ok = True
+            else:
+                errors.append("duckdb_store not injected or missing async_ingest_findings_batch")
+        except Exception as e:
+            errors.append(f"duckdb check failed: {e}")
+
+        # Hermes: check engine loaded
+        try:
+            hermes = getattr(self, "_hermes_engine", None)
+            if hermes is not None and hasattr(hermes, "is_loaded"):
+                hermes_ok = hermes.is_loaded
+            elif hermes is not None:
+                hermes_ok = True  # engine exists, assume loaded
+            else:
+                errors.append("hermes not loaded")
+        except Exception as e:
+            errors.append(f"hermes check failed: {e}")
+
+        # FetchCoordinator: check via public_fetcher session status
+        try:
+            from hledac.universal.fetching.public_fetcher import get_public_fetcher_session_status
+            status = get_public_fetcher_session_status()
+            # fetcher considered available if any session is present and not closed
+            fetch_coordinator_ok = (
+                status.get("tor_session_present", False) and not status.get("tor_session_closed", True)
+            ) or (
+                status.get("i2p_session_present", False) and not status.get("i2p_session_closed", True)
+            )
+            if not fetch_coordinator_ok:
+                errors.append("public_fetcher sessions not available")
+        except Exception:
+            # fetch_coordinator not critical — degraded mode only
+            fetch_coordinator_ok = False
+
+        # GraphService: check via module-level graph_stats() function
+        try:
+            from hledac.universal.knowledge.graph_service import graph_stats
+            stats = graph_stats()
+            graph_service_ok = stats is not None
+        except Exception:
+            graph_service_ok = False  # fail-soft, graph is optionalional
+
+        # overall_ok: duckdb and hermes are critical
+        overall_ok = duckdb_ok and hermes_ok
+
+        report = HealthReport(
+            duckdb_ok=duckdb_ok,
+            hermes_ok=hermes_ok,
+            fetch_coordinator_ok=fetch_coordinator_ok,
+            graph_service_ok=graph_service_ok,
+            overall_ok=overall_ok,
+            errors=errors,
+        )
+
+        if overall_ok:
+            log.info(f"[F228F] Health check: {report.summary()}")
+        else:
+            log.warning(f"[F228F] Health check DEGRADED: {errors}")
+
+        return report
 
     def enqueue_pivot(
         self,

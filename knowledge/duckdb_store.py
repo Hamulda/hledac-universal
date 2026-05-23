@@ -518,6 +518,16 @@ _SCHEMA_SQL = """
         signal_value DOUBLE,
         ts DOUBLE
     );
+    CREATE TABLE IF NOT EXISTS hypothesis_tracking (
+        hypothesis_id TEXT PRIMARY KEY,
+        sprint_id TEXT,
+        hypothesis_text TEXT,
+        status TEXT,
+        confidence REAL,
+        falsification_result TEXT,
+        disproved_by_sprint_id TEXT,
+        ts DOUBLE
+    );
     CREATE TABLE IF NOT EXISTS target_memory (
         target_id TEXT PRIMARY KEY,
         first_seen_ts DOUBLE,
@@ -1115,6 +1125,7 @@ class DuckDBShadowStore:
             "INSERT INTO source_hit_log VALUES (?,?,?,?,?,?)"
         )
         _SQL_INSERT_HYPOTHESIS_FEEDBACK = "INSERT INTO hypothesis_feedback"
+        _SQL_INSERT_HYPOTHESIS_TRACKING = "INSERT OR REPLACE INTO hypothesis_tracking"
         _SQL_UPSERT_TARGET_PROFILE = "INSERT OR REPLACE INTO target_profiles"
         _SQL_SELECT_TARGET_PROFILE = "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"
         _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
@@ -4379,6 +4390,75 @@ class DuckDBShadowStore:
             except Exception:
                 continue
         return records
+
+    # ── F214: Hypothesis tracking (cross-sprint persistence) ───────────────
+
+    async def async_record_hypothesis_tracking(
+        self,
+        hypothesis_id: str,
+        sprint_id: str,
+        hypothesis_text: str,
+        status: str,
+        confidence: float,
+        falsification_result: str | None = None,
+        disproved_by_sprint_id: str | None = None,
+    ) -> bool:
+        """
+        F214: Persist a hypothesis tracking record for cross-sprint lineage.
+        Supports: "we hypothesized X in sprint N, disproved by sprint M."
+
+        Thread-safe, non-blocking — runs on duckdb_worker via run_in_executor.
+        Fail-soft: returns False silently on error.
+        """
+        if not self._initialized or self._closed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                self._executor,
+                self._sync_record_hypothesis_tracking,
+                hypothesis_id,
+                sprint_id,
+                hypothesis_text,
+                status,
+                confidence,
+                falsification_result,
+                disproved_by_sprint_id,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _sync_record_hypothesis_tracking(
+        self,
+        hypothesis_id: str,
+        sprint_id: str,
+        hypothesis_text: str,
+        status: str,
+        confidence: float,
+        falsification_result: str | None,
+        disproved_by_sprint_id: str | None,
+    ) -> None:
+        """Sync writer for hypothesis_tracking."""
+        conn = self._get_conn()
+        if conn is None:
+            return
+        try:
+            conn.execute(
+                self._statements._SQL_INSERT_HYPOTHESIS_TRACKING,
+                (
+                    hypothesis_id,
+                    sprint_id,
+                    hypothesis_text,
+                    status,
+                    confidence,
+                    falsification_result,
+                    disproved_by_sprint_id,
+                    time.time(),
+                ),
+            )
+        except Exception:
+            pass
 
     def _finding_id_of(self, f: CanonicalFinding | dict) -> str:
         """Extract finding_id from CanonicalFinding or dict, safely."""

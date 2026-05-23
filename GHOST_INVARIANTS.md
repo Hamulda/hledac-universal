@@ -173,3 +173,44 @@ When httpx_h2 fails and h2 is not installed, `_httpx_reason="httpx_h2_fallback"`
 - Returns: CanonicalFinding list via `grab_batch_as_findings()`
 - Target extraction: IP regex, common ports [21,22,23,25,53,80,110,143,443,465,587,993,995,3306,3389,5432,6379,8080,8443]
 - Provenance: (ip, port, protocol)
+
+### F235: External Intelligence API Invariants
+External intelligence APIs (Shodan, Censys, GreyNoise) provide high-value unindexed data
+that Google does not crawl. All integration follows these invariants:
+
+#### Capability Gating
+- All three lanes gated by env vars + API key presence:
+  - `HLEDAC_ENABLE_SHODAN` + `SHODAN_API_KEY`
+  - `HLEDAC_ENABLE_CENSYS` + `CENSYS_API_ID` + `CENSYS_SECRET`
+  - `HLEDAC_ENABLE_GREYNOISE` + `GREYNOISE_API_KEY`
+- If capability not enabled or API key absent → lane returns [] silently
+- Never block sprint if API key missing — fail-soft is mandatory
+
+#### API Key Protection
+- API keys must NEVER appear in logs, payload_text, or SprintExporter output
+- Keys read from env vars at query time, not stored in state
+- Keys never included in CanonicalFinding provenance tuples
+
+#### Rate Limiting
+- Rate limit via TokenBucket from `utils.rate_limiters.py`
+- Shodan free tier: 1 req/sec → bucket "shodan_api"
+- Censys free tier: 0.4 req/sec → bucket "censys_api"
+- GreyNoise free tier: ~1 req/sec → bucket "greynoise_api"
+- No blocking sleep() — always via bucket.acquire()
+
+#### HTTP Transport
+- Use aiohttp directly for these specialized TI sources (not FetchCoordinator)
+- Each lane creates its own scoped ClientSession with 30s timeout
+- Fail-soft: any error (timeout, 429, 5xx) → return [] with warning log
+
+#### Confidence Scoring
+- CanonicalFinding confidence = 0.9 for verified external source
+- Banner richness / tag count can push to 0.92
+- Never mark external intel findings below 0.85 confidence
+
+#### Acquisition Lane Wiring
+- SHODAN: enabled when query has IP/CIDR indicator (`ctx.has_ip`)
+- CENSYS: enabled when query has domain indicator (`ctx.has_domain`)
+- GREYNOISE: enabled when query has IP/CIDR indicator (`ctx.has_ip`)
+- Both run via `_run_shodan_lane`, `_run_censys_lane`, `_run_greynoise_lane`
+  in `run_enabled_acquisition_lanes()` inner closure

@@ -407,3 +407,19 @@ def create_metrics_registry(
 ) -> MetricsRegistry:
     """Create a MetricsRegistry instance"""
     return MetricsRegistry(run_dir=run_dir, run_id=run_id)
+
+
+# Module-level singleton for fire-and-forget access (circuit breaker safe)
+_metrics_registry_singleton: MetricsRegistry | None = None
+
+
+def get_metrics_registry() -> MetricsRegistry:
+    """Get or create the module-level singleton MetricsRegistry.
+
+    For use by circuit breaker and other components that need
+    fire-and-forget metrics without managing lifecycle.
+    """
+    global _metrics_registry_singleton
+    if _metrics_registry_singleton is None:
+        _metrics_registry_singleton = MetricsRegistry(run_dir=Path("/tmp/hledac_metrics"), run_id="default")
+    return _metrics_registry_singleton

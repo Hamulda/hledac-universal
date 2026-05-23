@@ -82,6 +82,7 @@ _ACTIVE_NETWORK_SIDECARS: frozenset[str] = frozenset({
     "network_intel",
     "banner_grab",
     "ipv6_recon",
+    "gopher_crawl",
 })
 
 
@@ -99,6 +100,7 @@ SIDECAR_NETWORK_CLASS: dict[str, str] = {
     "rir_correlator": "active_network",
     "wayback_diff": "active_network",
     "social_identity_surface": "active_network",
+    "gopher_crawl": "active_network",
     # core — passive processing
     "passive_fingerprint": "core",
     "passive_tech_stack": "core",
@@ -137,6 +139,7 @@ SIDECAR_NETWORK_RISK: dict[str, str] = {
     # active_target — direct connection to target (investigation subject)
     "banner_grab": "active_target",
     "ipv6_recon": "active_target",
+    "gopher_crawl": "active_target",
     # third_party_provider — external API/provider calls, not target scanning
     "network_intel": "third_party_provider",
     "leak_sentinel": "third_party_provider",
@@ -1324,6 +1327,36 @@ async def _ipv6_recon_runner(
         pass  # Fail-soft
 
 
+async def _gopher_crawl_runner(
+    findings: list,
+    store: "DuckDBShadowStore",
+    query: str,
+) -> int | None:
+    """F216: Gopher archive crawler — crawls seed servers, extracts text, stores findings."""
+    if store is None:
+        return 0
+    try:
+        from hledac.universal.discovery.gopher_crawler import GopherCrawler, SEED_SERVERS
+
+        crawler = GopherCrawler()
+        all_results = await crawler.crawl_seed_servers()
+        all_findings: list = []
+        for cr in all_results:
+            if isinstance(cr, Exception):
+                continue
+            # Generate findings with a sentinel sprint_id
+            findings_batch = GopherCrawler.items_to_findings(cr, sprint_id="gopher_sprint")
+            all_findings.extend(findings_batch)
+        if not all_findings:
+            return 0
+        results = await store.async_ingest_findings_batch(all_findings)
+        stored = sum(1 for r in results if isinstance(r, dict) and r.get("accepted"))
+        return stored
+    except Exception:
+        _logger.warning(f"gopher_crawl runner failed: {e}")
+        return 0
+
+
 # ── Default Registry ───────────────────────────────────────────────────────────
 # Ordered list of (name, runner) pairs — bus registers these by default.
 DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
@@ -1343,6 +1376,7 @@ DEFAULT_SIDECAR_RUNNERS: list[tuple[str, SidecarRunner]] = [
     ("network_intel", _network_intel_runner),
     ("banner_grab", _banner_grab_runner),
     ("ipv6_recon", _ipv6_recon_runner),
+    ("gopher_crawl", _gopher_crawl_runner),
 ]
 
 

@@ -54,6 +54,15 @@ class CBState(Enum):
     HALF_OPEN = "half_open"
 
 
+def _metrics_safe_increment(metric_name: str) -> None:
+    """Fire-and-forget metric increment — never blocks CB logic."""
+    try:
+        from metrics_registry import get_metrics_registry
+        get_metrics_registry().inc(metric_name)
+    except Exception:
+        pass  # never interfere with CB
+
+
 @dataclass(frozen=True)
 class CircuitBreakerSnapshot:
     """Immutable snapshot of circuit breaker state for diagnostics."""
@@ -93,6 +102,8 @@ class CircuitBreaker:
             if time.monotonic() - self._last_failure_time > self.recovery_timeout:
                 self._state = CBState.HALF_OPEN
                 self._half_open_probes = 0
+                _metrics_safe_increment("circuit_breaker_state_transitions")
+                _metrics_safe_increment("circuit_breaker_half_open_count")
                 return False
             return True
         return False
@@ -106,6 +117,8 @@ class CircuitBreaker:
             if time.monotonic() - self._last_failure_time > self.recovery_timeout:
                 self._state = CBState.HALF_OPEN
                 self._half_open_probes = 0
+                _metrics_safe_increment("circuit_breaker_state_transitions")
+                _metrics_safe_increment("circuit_breaker_half_open_count")
                 return CircuitDecision(
                     allowed=True,
                     domain=self.domain,
@@ -122,6 +135,8 @@ class CircuitBreaker:
             )
         if self._state == CBState.HALF_OPEN:
             if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
+                _metrics_safe_increment("circuit_breaker_state_transitions")
+                _metrics_safe_increment("circuit_breaker_open_count")
                 return CircuitDecision(
                     allowed=False,
                     domain=self.domain,
@@ -146,12 +161,16 @@ class CircuitBreaker:
         )
 
     def record_success(self):
+        prev_state = self._state.value
         self._failure_count = 0
         self._consecutive_timeouts = 0
         self._half_open_probes = 0
         self._state = CBState.CLOSED
         self.recovery_timeout = BASE_RECOVERY_TIMEOUT_S
         self._last_failure_kind = ""
+        if prev_state == "half_open":
+            _metrics_safe_increment("circuit_breaker_state_transitions")
+            _metrics_safe_increment("circuit_breaker_recovery_success")
 
     def record_failure(self, is_timeout: bool = False, failure_kind: str = ""):
         self._failure_count += 1
@@ -167,8 +186,15 @@ class CircuitBreaker:
         else:
             self._consecutive_timeouts = 0
         if self._failure_count >= self.failure_threshold:
+            prev_state = self._state.value
             self._state = CBState.OPEN
             self._opened_at_monotonic = time.monotonic()
+            if prev_state != "open":
+                try:
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_open_count")
+                except Exception:
+                    pass
 
     def get_state(self) -> str:
         return self._state.value
@@ -213,6 +239,25 @@ def get_all_breaker_states() -> dict[str, str]:
 def get_all_breaker_snapshots() -> list[CircuitBreakerSnapshot]:
     """Return list of snapshots for all tracked breakers."""
     return [b.get_snapshot() for b in _BREAKERS.values()]
+
+
+def per_domain_stats() -> dict[str, dict]:
+    """Return per-domain stats dict for debug dashboard.
+
+    Returns:
+        {domain: {state, failure_count, last_failure_time, opened_at_monotonic, last_failure_kind, recovery_timeout_s}}
+    """
+    return {
+        d: {
+            "state": b.get_state(),
+            "failure_count": b._failure_count,
+            "last_failure_time": b._last_failure_time,
+            "opened_at_monotonic": b._opened_at_monotonic,
+            "last_failure_kind": b._last_failure_kind,
+            "recovery_timeout_s": b.recovery_timeout,
+        }
+        for d, b in _BREAKERS.items()
+    }
 
 
 def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:

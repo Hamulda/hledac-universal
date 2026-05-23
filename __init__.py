@@ -57,10 +57,42 @@ _LAZY_EXPORTS = {
     "TransportResolver": "hledac.universal.transport.transport_resolver",
     # Layers
     "build_temporal_priority_hints": "hledac.universal.layers.temporal_signal_runtime",
-    # RL (deleted ghost module — stub to fail fast if imported)
+    # D ghost modules (fail fast with helpful msg)
     "MARLCoordinator": "_ghost_deleted",
-    # Runtime (deleted ghost module)
     "PressureLevel": "_ghost_deleted",
+
+    # === SIBLING PACKAGE RE-EXPORTS (via _shims to avoid cross-dep chain) ===
+    # hledac.core (sibling pkg — re-export via local shims)
+    "AgentExecutionError": "hledac.universal._shims.core_resilience",
+    "CircuitBreakerOpen": "hledac.universal._shims.core_resilience",
+    "fetch_json": "hledac.universal._shims.core_http",
+    "safe_fetch": "hledac.universal._shims.core_http",
+    "UnifiedAIOrchestrator": "hledac.universal._shims.core_unified_ai_orchestrator",
+    "Watchdog": "hledac.universal._shims.core_watchdog",
+    # mlx_embeddings: local universal/core/mlx_embeddings.py wraps sibling;
+    # import from universal resolves to local, sibling import fails gracefully
+    "MLXEmbeddingManager": "hledac.universal.core.mlx_embeddings",
+    "get_embedding_manager": "hledac.universal.core.mlx_embeddings",
+
+    # hledac.security (sibling pkg — re-export via local shims)
+    "StealthEngine": "hledac.universal._shims.security_stealth_engine",
+    "ThreatIntelligence": "hledac.universal._shims.security_threat_intelligence",
+    "QuantumResistantCrypto": "hledac.universal._shims.security_quantum_resistant_crypto",
+    "ZKPResearchEngine": "hledac.universal._shims.security_zkp_research_engine",
+    "TemporalAnonymizer": "hledac.universal._shims.security_temporal_anonymizer",
+    "ZeroAttributionEngine": "hledac.universal._shims.security_zero_attribution_engine",
+    # KeyManager: exists locally in universal/security/key_manager.py
+    "KeyManager": "hledac.universal.security.key_manager",
+
+    # hledac.cortex (sibling pkg — re-export via local shim)
+    "GhostDirector": "hledac.universal._shims.cortex_director",
+
+    # hledac.tools.preserved_logic.* (sibling pkg — ghost stubs for non-existent modules)
+    "ParallelExecutionOptimizer": "_ghost_deleted",
+    "RayClusterManager": "_ghost_deleted",
+    "LanguageDetector": "_ghost_deleted",
+    "SemanticFilter": "_ghost_deleted",
+    # === END SIBLING RE-EXPORTS ===
 
     # Public fetcher
     "async_fetch_public_text": "hledac.universal.fetching.public_fetcher",
@@ -160,6 +192,30 @@ __all__ = [
     # Deleted ghost modules (fail fast with helpful message)
     "MARLCoordinator",
     "PressureLevel",
+    # Sibling re-exports (hledac.core)
+    "AgentExecutionError",
+    "CircuitBreakerOpen",
+    "fetch_json",
+    "safe_fetch",
+    "UnifiedAIOrchestrator",
+    "Watchdog",
+    "MLXEmbeddingManager",
+    "get_embedding_manager",
+    # Sibling re-exports (hledac.security)
+    "StealthEngine",
+    "ThreatIntelligence",
+    "QuantumResistantCrypto",
+    "ZKPResearchEngine",
+    "TemporalAnonymizer",
+    "ZeroAttributionEngine",
+    "KeyManager",
+    # Sibling re-exports (hledac.cortex)
+    "GhostDirector",
+    # Ghost stubs (hledac.tools.preserved_logic.*)
+    "ParallelExecutionOptimizer",
+    "RayClusterManager",
+    "LanguageDetector",
+    "SemanticFilter",
     # Resource allocator
     "AdaptiveSemaphore",
     # Loader
