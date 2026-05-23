@@ -12,8 +12,8 @@ from .base import Transport
 logger = logging.getLogger(__name__)
 
 
-# Circuit rotation — Sprint F214 B.1
-MAX_CIRCUIT_REQUESTS: int = 100  # rotate after N requests
+# Circuit rotation — Sprint F214 B.1 / F251: per-domain circuit isolation
+MAX_CIRCUIT_REQUESTS: int = 3  # rotate after N requests per domain (correlation risk reduction)
 
 
 def _generate_torrc(torrc_path: Path) -> None:
@@ -84,8 +84,9 @@ class TorTransport(Transport):
         self._ready = asyncio.Event()
         self.http_port: int = 0
         self.security_level = 'tor'
-        # Sprint F214 B.1: circuit rotation state
-        self._circuit_request_count: int = 0
+        # Sprint F214 B.1 / F251: circuit rotation state
+        self._circuit_request_count: int = 0  # global fallback counter
+        self._domain_circuits: dict[str, int] = {}  # F251: per-domain circuit isolation
         self._max_circuit_requests: int = MAX_CIRCUIT_REQUESTS
         self._circuit_lock: asyncio.Lock = asyncio.Lock()
         self._session_direct = None
@@ -277,16 +278,39 @@ class TorTransport(Transport):
             logger.warning(f"Tor circuit rotation failed: {e}")
             return False
 
-    async def _maybe_rotate_circuit(self) -> None:
-        """Check request count and rotate circuit if threshold reached."""
+    async def _maybe_rotate_circuit(self, domain: str = "") -> None:
+        """
+        Sprint F214 B.1 / F251: Check request count and rotate circuit if threshold reached.
+
+        F251: Per-domain circuit isolation — each .onion domain gets its own circuit after
+        3 requests. This prevents correlation attacks where the same circuit is used
+        to crawl multiple .onion addresses belonging to the same actor.
+
+        Falls back to global counter for non-domain calls (backward compat).
+        """
+        from urllib.parse import urlparse
+
         async with self._circuit_lock:
-            self._circuit_request_count += 1
-            if self._circuit_request_count >= self._max_circuit_requests:
-                self._circuit_request_count = 0
-                if await self.rotate_circuit():
-                    logger.info(f"Tor circuit rotated after {self._max_circuit_requests} requests")
-                else:
-                    logger.warning("Circuit rotation failed — continuing with current circuit")
+            if domain:
+                # F251: per-domain circuit isolation
+                count = self._domain_circuits.get(domain, 0) + 1
+                self._domain_circuits[domain] = count
+                if count >= self._max_circuit_requests:
+                    # Reset counter for this domain after rotation
+                    self._domain_circuits[domain] = 0
+                    if await self.rotate_circuit():
+                        logger.info(f"Tor circuit rotated for domain {domain} after {count} requests")
+                    else:
+                        logger.warning(f"Circuit rotation failed for {domain} — continuing")
+            else:
+                # Legacy global counter fallback
+                self._circuit_request_count += 1
+                if self._circuit_request_count >= self._max_circuit_requests:
+                    self._circuit_request_count = 0
+                    if await self.rotate_circuit():
+                        logger.info(f"Tor circuit rotated after {self._max_circuit_requests} requests")
+                    else:
+                        logger.warning("Circuit rotation failed — continuing with current circuit")
 
     async def fetch(self, config: "TransportConfig") -> "TransportResult":
         """
@@ -306,8 +330,16 @@ class TorTransport(Transport):
                 selected_transport="tor",
             )
 
-        # Circuit rotation check
-        await self._maybe_rotate_circuit()
+        # F251: per-domain circuit isolation — extract domain from URL
+        domain = ""
+        try:
+            parsed = urlparse(config.url)
+            domain = parsed.netloc
+        except Exception:
+            pass
+
+        # Circuit rotation check (pass domain for per-domain isolation)
+        await self._maybe_rotate_circuit(domain=domain)
 
         # Fetch via curl_cffi with SOCKS5H proxy
         # SOCKS5H = DNS resolution over Tor (not just SOCKS5 tunnel)

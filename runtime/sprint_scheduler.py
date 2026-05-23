@@ -716,6 +716,8 @@ class SprintSchedulerConfig:
     # Sprint F214: Optional strict feed dominance guard — blocks feed-only early exit
     # when True and guard is triggered (ratio > 0.95, nonfeed < 5)
     require_nonfeed_corrob_for_early_exit: bool = False
+    # Sprint F250: Preferred transport for sensitive queries (auto/nym/tor/i2p/clearnet)
+    sensitive_query_transport: str = "auto"
 
     # F233C: Optional predecessor sprint_id for next_sprint_seeds consumption
     predecessor_sprint_id: str | None = None
@@ -869,6 +871,7 @@ class HealthReport:
     hermes_ok: bool = False
     fetch_coordinator_ok: bool = False
     graph_service_ok: bool = False
+    nym_circuit_open: bool = False
     overall_ok: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -1086,6 +1089,9 @@ class SprintSchedulerResult:
     rdap_enrichment_findings_stored: int = 0
     rdap_enrichment_rejections: int = 0
     rdap_enrichment_error: str | None = None
+    # Sprint F250E: Security gate telemetry
+    security_rejected_count: int = 0
+    pii_redacted_count: int = 0
     # Sprint F207A: Multi-source acquisition lane outcomes (CT/WAYBACK/PASSIVE_DNS/BLOCKCHAIN)
     acquisition_lane_outcomes: tuple = ()  # tuple[AcquisitionLaneOutcome, ...]
     # Sprint F207J-A: Lane verdict accumulators for signal_path and branch_mix truth
@@ -1355,6 +1361,8 @@ class SprintSchedulerResult:
     next_seeds_ioc_urls: tuple[str, ...] = ()
     next_seeds_ioc_hashes: tuple[str, ...] = ()
     next_seeds_ioc_cves: tuple[str, ...] = ()
+    # Sprint F214Q: Quantum pathfinder discovered IOC values
+    quantum_path_seeds: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -2096,6 +2104,8 @@ class SprintScheduler:
         # Sprint F195C: Multimodal enrichment layer (F350M: moved to EnrichmentServices)
         # Sprint F350M: Unified enrichment services (forensics + multimodal lifecycle)
         self._enrichment_services: Any = None
+        # Sprint F250: Layer manager for Ghost/Stealth/Temporal/Security layers (opt-in via HLEDAC_ENABLE_LAYERS=1)
+        self._layer_manager: Any = None
         # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
         self._ioc_graph: Any = None
         # Sprint F193B: Hypothesis → finding feedback loop tracking
@@ -2508,6 +2518,15 @@ class SprintScheduler:
             scheduler=self,
         )
 
+        # Sprint F250: Initialize LayerManager (Ghost/Stealth/Temporal/Security) — opt-in only
+        if os.environ.get("HLEDAC_ENABLE_LAYERS") == "1":
+            try:
+                from hledac.universal.layers.layer_manager import LayerManager
+                self._layer_manager = LayerManager(config=None)
+                log.info("layers LayerManager initialized")
+            except Exception as _e:
+                log.W("layers LayerManager init failed: %s", _e)
+
         # Sprint F228F: Wrap ALL body statements in defensive try/except so any
         # exception is classified and recorded on result before propagation.
         # SprintScheduler must NEVER silently fail — classify every error.
@@ -2552,6 +2571,28 @@ class SprintScheduler:
                 await self._enrichment_services.init()
             # Sprint F205H: Initialize metrics registry (fail-soft, run_dir from config or default)
             await self._init_metrics_registry()
+
+            # ── Wave 2: RelationshipDiscoveryEngine cross-sprint bridge ─────────
+            # Load persisted graph → register on GraphService → sync latent at teardown
+            try:
+                from hledac.universal.intelligence.relationship_discovery import RelationshipDiscoveryEngine
+                from hledac.universal.paths import LMDB_ROOT
+                self._rel_discovery_engine = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
+                _rel_graph_path = LMDB_ROOT / "rel_discovery_graph.pkl"
+                if _rel_graph_path.exists():
+                    self._rel_discovery_engine.load_graph(_rel_graph_path)
+                    log.debug(f"[RelDiscovery] Loaded graph: {_rel_graph_path}")
+                # Register as callback on GraphService (DuckPGQ upsert fires this for every relation)
+                from hledac.universal.knowledge.graph_service import Relationship
+                _cb = lambda src, dst, rel_type, weight: self._rel_discovery_engine.add_relationship(
+                    Relationship(source=src, target=dst, type=rel_type, strength=weight)
+                )
+                _DEFAULT_GRAPH_SERVICE.register_relationship_callback(_cb)
+                log.debug("[RelDiscovery] Registered callback on GraphService")
+            except Exception as _e:
+                log.warning(f"[RelDiscovery] init failed: {_e}")
+                self._rel_discovery_engine = None
+
             # F205H: Capture baseline RSS at sprint start (not just at cycle end)
             self._tick_metrics_on_cycle_end()
     
@@ -3286,6 +3327,16 @@ class SprintScheduler:
     
             # Sprint 8RA: Close persistent dedup at TEARDOWN
             await self._close_dedup()
+            # Wave 2: Save RelationshipDiscoveryEngine graph at teardown
+            if self._rel_discovery_engine is not None:
+                try:
+                    from hledac.universal.paths import LMDB_ROOT
+                    self._rel_discovery_engine.save_graph(LMDB_ROOT / "rel_discovery_graph.pkl")
+                    log.debug("[RelDiscovery] Graph saved at teardown")
+                    # Sync latent NetworkX relationships → DuckPGQ with low confidence
+                    self._sync_latent_relationships_to_graph()
+                except Exception as _e:
+                    log.warning(f"[RelDiscovery] save/sync failed: {_e}")
             # Sprint F195C: Close forensics enricher and LMDB at TEARDOWN
             if self._enrichment_services:
                 await self._enrichment_services.close()
@@ -6461,6 +6512,15 @@ class SprintScheduler:
 
         F212-B: Public discovery runs under remaining-time-aware asyncio.timeout.
         Branch is skipped if remaining time is at or below the safety floor.
+
+        # Sprint F250: StealthLayer rotate_fingerprint before each cycle (opt-in advisory)
+        if os.environ.get("HLEDAC_ENABLE_LAYERS") == "1":
+            try:
+                stealth = getattr(self._layer_manager, "stealth", None)
+                if stealth is not None and hasattr(stealth, "rotate_fingerprint"):
+                    stealth.rotate_fingerprint()
+            except Exception as _e:
+                log.W("layers StealthLayer.rotate_fingerprint failed: %s", _e)
         """
         async_run_live_feed, FeedPipelineRunResult = _import_live_feed_pipeline()
 
@@ -7341,6 +7401,8 @@ class SprintScheduler:
         _pub_skipped_scheme = getattr(public_result, 'public_skipped_unsupported_scheme', 0) or 0
         _pub_skipped_mem = getattr(public_result, 'public_skipped_memory_gate', 0) or 0
         _pub_skipped_quality = getattr(public_result, 'public_skipped_quality_gate', 0) or 0
+        _security_rejected = getattr(self._result, 'security_rejected_count', 0) or 0
+        _pii_redacted = getattr(self._result, 'pii_redacted_count', 0) or 0
         _pub_skipped_browser = getattr(public_result, 'public_skipped_browser_unavailable', 0) or 0
         _pub_skipped_xml = getattr(public_result, 'public_skipped_xml_or_feed', 0) or 0
         _pub_skipped_timeout = getattr(public_result, 'public_skipped_timeout', 0) or 0
@@ -7385,6 +7447,8 @@ class SprintScheduler:
             "public_skipped_unsupported_scheme": _pub_skipped_scheme,
             "public_skipped_memory_gate": _pub_skipped_mem,
             "public_skipped_quality_gate": _pub_skipped_quality,
+            "security_rejected_count": _security_rejected,
+            "pii_redacted_count": _pii_redacted,
             "public_skipped_browser_unavailable": _pub_skipped_browser,
             "public_skipped_xml_or_feed": _pub_skipped_xml,
             "public_skipped_timeout": _pub_skipped_timeout,
@@ -7562,6 +7626,22 @@ class SprintScheduler:
                     self._accumulate_findings_to_graph(findings, sprint_id=self.sprint_id or "")
                 finally:
                     self._timer.phase("graph_accum_end")
+                # Sprint F214Q: Quantum Path Analysis — find undiscovered connected IOCs
+                try:
+                    self._timer.phase("quantum_path_start")
+                    new_ioc_values = [
+                        f.value for f in findings
+                        if isinstance(f, dict) and f.get("value")
+                    ] or []
+                    quantum_seeds = await self._run_quantum_path_analysis(new_ioc_values)
+                    if quantum_seeds:
+                        self._result.quantum_path_seeds = quantum_seeds
+                        from hledac.universal.knowledge.sprint_seeds_store import sync_save_sprint_seeds
+                        sync_save_sprint_seeds(self.sprint_id or "", quantum_seeds)
+                except Exception as e:
+                    _logger.debug(f"[SPRINT] quantum_path analysis failed: {e}")
+                finally:
+                    self._timer.phase("quantum_path_end")
                 # F232: ct_storage_attempted — storage was attempted
                 self._result.ct_storage_attempted = True
                 results = await store.async_ingest_findings_batch(findings)
@@ -7604,6 +7684,91 @@ class SprintScheduler:
                     query=query,
                 )
 
+                # Sprint F250E: Security gate — filter findings before layer hooks and storage
+                # Gate: HLEDAC_ENABLE_LAYERS=1 AND security layer initialized
+                if os.environ.get("HLEDAC_ENABLE_LAYERS") == "1" and accepted_findings:
+                    try:
+                        security = getattr(self._layer_manager, "security", None)
+                    except Exception:
+                        security = None
+                    if security is not None and hasattr(security, "validate_finding"):
+                        _sec_accepted: list = []
+                        _sec_rejected = 0
+                        _sec_pii_redacted = 0
+                        for f in accepted_findings:
+                            try:
+                                _ok, _reason = security.validate_finding(f)
+                                if not _ok:
+                                    _sec_rejected += 1
+                                    _logger.debug(
+                                        "[security_gate] rejected finding %s: %s",
+                                        getattr(f, "finding_id", ""),
+                                        _reason,
+                                    )
+                                    continue
+                                if _reason == "pii_redacted":
+                                    _sec_pii_redacted += 1
+                                _sec_accepted.append(f)
+                            except Exception:
+                                # Fail-soft: accept on error
+                                _sec_accepted.append(f)
+                        accepted_findings = _sec_accepted
+                        self._result.security_rejected_count = (
+                            getattr(self._result, "security_rejected_count", 0) + _sec_rejected
+                        )
+                        self._result.pii_redacted_count = (
+                            getattr(self._result, "pii_redacted_count", 0) + _sec_pii_redacted
+                        )
+
+                # Sprint F250: Post-ingest layer hooks — Ghost/Temporal/Security (opt-in advisory)
+                if os.environ.get("HLEDAC_ENABLE_LAYERS") == "1" and accepted_findings:
+                    try:
+                        from hledac.universal.project_types import ActionType
+                        from hledac.universal.layers import get_temporal_signal_layer
+                        from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
+                        ghost = getattr(self._layer_manager, "ghost", None)
+                        temporal = get_temporal_signal_layer()
+                        security = getattr(self._layer_manager, "security", None)
+                    except Exception:
+                        ghost = None
+                        temporal = None
+                        security = None
+
+                    for f in accepted_findings:
+                        # GhostLayer: audit scan action (re-raise StagnationError as CRITICAL)
+                        if ghost is not None:
+                            try:
+                                await ghost.execute_action(
+                                    ActionType.SCAN,
+                                    {"finding_id": getattr(f, "finding_id", "") or "", "query": query},
+                                    store_in_vault=True,
+                                )
+                            except StagnationError:
+                                log.critical("[layers] GhostLayer stagnation — re-raising")
+                                raise
+                            except Exception as _e:
+                                log.W("layers GhostLayer.execute_action failed: %s", _e)
+                        # TemporalSignalLayer: observe finding as temporal event
+                        if temporal is not None:
+                            try:
+                                te = event_from_finding_like(f)
+                                if te:
+                                    temporal.observe(te)
+                            except Exception as _e:
+                                log.W("layers TemporalSignalLayer.observe failed: %s", _e)
+                        # SecurityLayer: log finding_accepted audit
+                        if security is not None:
+                            try:
+                                audit = getattr(security, "_mission_audit", None)
+                                if audit is not None and hasattr(audit, "log_action"):
+                                    audit.log_action(
+                                        "finding_accepted",
+                                        b"",
+                                        {"finding_id": getattr(f, "finding_id", "") or "", "query": query},
+                                    )
+                            except Exception as _e:
+                                log.W("layers SecurityLayer._mission_audit.log_action failed: %s", _e)
+
                 # F204D: Update cross-sprint target memory via SidecarOrchestrator
                 if accepted_findings:
                     await self._sidecar_orchestrator.run_target_memory_update(
@@ -7616,6 +7781,274 @@ class SprintScheduler:
         finally:
             if session is not None:
                 await session.close()
+
+    # ── F251: Onion Discovery Sidecar ────────────────────────────────────────
+
+    async def _run_onion_discovery_sidecar(self) -> None:
+        """
+        Sprint F251: Dark web .onion discovery via Tor.
+
+        Gate: HLEDAC_ENABLE_TOR=1 AND TorTransport circuit established AND
+        memory_pressure < 0.70. Fail-soft throughout — never crashes sprint.
+
+        Sidecar chain position: AFTER _run_ct_log_discovery_in_cycle() (CT logs
+        reveal .onion domains from certificate transparency).
+
+        M1 8GB constraints:
+        - Semaphore(3): max 3 concurrent Tor crawls
+        - 45s per crawl timeout
+        - 120s total sidecar budget
+        - 20 seeds max per sprint
+        """
+        import os
+        import asyncio as _asyncio
+        from urllib.parse import urlparse
+
+        # Guard: HLEDAC_ENABLE_TOR gate
+        if not os.environ.get("HLEDAC_ENABLE_TOR", "").strip() in ("1", "true", "True"):
+            return
+
+        # Guard: memory pressure < 0.70 (M1 8GB safety)
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                snap = await governor.evaluate()
+                uma_state = getattr(snap, "uma_state", "ok") or "ok"
+                if uma_state in ("critical", "emergency"):
+                    log.debug("[F251] Onion sidecar skipped: uma_state=%s", uma_state)
+                    return
+        except Exception:
+            pass  # fail-soft: governor check is advisory
+
+        # Guard: Tor circuit established
+        try:
+            from hledac.universal.transport.tor_transport import TorTransport
+            tor = TorTransport()
+            if not tor.available:
+                log.debug("[F251] TorTransport unavailable (deps missing)")
+                return
+            if not await tor.is_circuit_established():
+                log.debug("[F251] Tor circuit not established — skipping onion discovery")
+                return
+        except Exception as e:
+            log.debug("[F251] Tor availability check failed: %s", e)
+            return
+
+        # Build seed list from OnionSeedManager (Ahmia expansion + curated seeds)
+        try:
+            from hledac.universal.intelligence.onion_seed_manager import OnionSeedManager
+            seed_mgr = OnionSeedManager()
+        except Exception as e:
+            log.debug("[F251] OnionSeedManager init failed: %s", e)
+            return
+
+        # F251: Discover additional .onion seeds via Ahmia for domains in query
+        # (Ahmia search expands seed set for related .onion addresses)
+        try:
+            ahmia_query = " ".join([
+                word for word in query.split()
+                if len(word) > 2 and not word.startswith("http")
+            ][:5])
+            if ahmia_query:
+                await seed_mgr.discover_from_ahmia(ahmia_query, session=None)
+        except Exception:
+            pass  # fail-soft: Ahmia discovery is best-effort
+
+        seeds = seed_mgr.get_seeds(limit=20)
+        if not seeds:
+            log.debug("[F251] No onion seeds available")
+            return
+
+        log.debug("[F251] Onion discovery: %d seeds, memory pressure ok, Tor ready", len(seeds))
+
+        # Crawl seeds bounded by Semaphore(3), 45s per crawl, 120s total
+        findings: list = []
+        semaphore = _asyncio.Semaphore(3)
+
+        async def crawl_seed(seed: str) -> list:
+            """Crawl single .onion seed, convert to CanonicalFinding list."""
+            inner_findings: list = []
+            try:
+                from hledac.universal.intelligence.dark_web_intelligence import (
+                    DarkWebCrawler,
+                    darkweb_content_to_canonical,
+                )
+
+                async with _asyncio.timeout(45.0):
+                    crawler = DarkWebCrawler(tor_proxy=None)
+                    try:
+                        await crawler.initialize()
+                        query_for_finding = f"onion_discovery:{seed}"
+                        async for content in crawler.crawl_onion(seed, depth=0):
+                            try:
+                                cf = darkweb_content_to_canonical(content, query=query_for_finding)
+                                inner_findings.append(cf)
+                            except Exception:
+                                pass  # fail-soft: individual conversion error
+                    finally:
+                        await crawler.close()  # F251: prevent session/connector leak
+            except _asyncio.TimeoutError:
+                log.debug("[F251] Seed %s timed out after 45s", seed)
+            except Exception as e:
+                log.debug("[F251] Seed %s crawl failed: %s", seed, e)
+            return inner_findings
+
+        try:
+            async with _asyncio.timeout(120.0):
+                tasks = [crawl_seed(seed) for seed in seeds]
+                results = await _asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, list):
+                        findings.extend(result)
+        except _asyncio.TimeoutError:
+            log.debug("[F251] Onion sidecar timed out after 120s")
+
+        if not findings:
+            log.debug("[F251] No findings from onion discovery")
+            return
+
+        # Ingest findings through canonical write path
+        try:
+            duckdb = getattr(self, "_duckdb_store", None)
+            if duckdb is not None:
+                await duckdb.async_ingest_findings_batch(findings)
+                log.debug("[F251] Ingested %d onion findings", len(findings))
+        except Exception as e:
+            log.warning("[F251] Onion findings ingest failed: %s", e)
+
+    async def _run_i2p_discovery_sidecar(self) -> None:
+        """
+        I2P discovery: crawl .i2p addresses found in sprint IOCs.
+
+        Gate: HLEDAC_ENABLE_I2P=1 AND I2PTransport.is_running().
+        Memory pressure < 0.70. Fail-soft throughout — never crashes sprint.
+
+        Sidecar chain position: AFTER _run_onion_discovery_sidecar() if it
+        exists, otherwise after CT log discovery.
+
+        M1 8GB constraints:
+        - max 5 .i2p addresses per sprint
+        - 45s per fetch timeout
+        - 120s total sidecar budget
+        """
+        import os
+        import asyncio as _asyncio
+
+        # Guard: HLEDAC_ENABLE_I2P gate
+        if not os.environ.get("HLEDAC_ENABLE_I2P", "").strip() in ("1", "true", "True"):
+            return
+
+        # Guard: memory pressure < 0.70 (M1 8GB safety)
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                snap = await governor.evaluate()
+                uma_state = getattr(snap, "state", "normal") if snap else "normal"
+                if uma_state in ("critical", "emergency"):
+                    return
+        except Exception:
+            pass  # fail-soft: governor check is advisory
+
+        # Guard: I2P transport running
+        try:
+            from hledac.universal.transport.i2p_transport import I2PTransport
+            i2p = I2PTransport()
+            if not i2p.is_running():
+                log.debug("[F2P] I2PTransport not running (is_running=False)")
+                return
+        except Exception as e:
+            log.debug("[F2P] I2PTransport init failed: %s", e)
+            return
+
+        # Extract .i2p addresses from sprint IOCs via DuckDB
+        i2p_addresses: list[str] = []
+        duckdb = getattr(self, "_duckdb_store", None)
+        if duckdb is not None:
+            try:
+                con = getattr(duckdb, "_con", None) or getattr(duckdb, "con", None)
+                if con is not None:
+                    rows = con.execute(
+                        "SELECT val FROM ioc_nodes WHERE val LIKE '%.i2p' LIMIT 20"
+                    ).fetchmany(20)
+                    for row in rows:
+                        val = row[0] if row else ""
+                        if val:
+                            i2p_addresses.append(val)
+            except Exception:
+                pass  # fail-soft: DuckDB read error
+
+        # Deduplicate and limit
+        seen = set()
+        unique_i2p: list[str] = []
+        for addr in i2p_addresses:
+            if addr not in seen:
+                seen.add(addr)
+                unique_i2p.append(addr)
+        i2p_addresses = unique_i2p[:5]  # max 5 addresses
+
+        if not i2p_addresses:
+            log.debug("[F2P] No .i2p addresses found in sprint IOCs")
+            return
+
+        log.debug("[F2P] Starting I2P discovery for %d addresses", len(i2p_addresses))
+
+        from hledac.universal.transport.base import TransportConfig
+
+        findings: list = []
+
+        async def fetch_i2p_address(addr: str) -> list:
+            """Fetch single .i2p address and convert to CanonicalFinding list."""
+            inner: list = []
+            try:
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+            except Exception:
+                return inner
+
+            try:
+                config = TransportConfig(url=f"http://{addr}")
+                result = await i2p.fetch(config)
+                if result.err:
+                    log.debug("[F2P] Fetch %s failed: %s", addr, result.err)
+                    return inner
+
+                content = result.content or ""
+                if content:
+                    from datetime import datetime
+                    finding = CanonicalFinding(
+                        finding_id=f"i2p-{addr}-{int(datetime.now().timestamp() * 1000)}",
+                        query="i2p_discovery",
+                        source_type="i2p_discovery",
+                        confidence=0.5,
+                        ts=datetime.now().isoformat(),
+                        provenance=["i2p_transport"],
+                        payload_text=content[:4096] if len(content) > 4096 else content,
+                    )
+                    inner.append(finding)
+            except Exception as e:
+                log.debug("[F2P] I2P fetch %s failed: %s", addr, e)
+            return inner
+
+        try:
+            async with _asyncio.timeout(120.0):
+                tasks = [fetch_i2p_address(addr) for addr in i2p_addresses]
+                results = await _asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, list):
+                        findings.extend(result)
+        except _asyncio.TimeoutError:
+            log.debug("[F2P] I2P sidecar timed out after 120s")
+
+        if not findings:
+            log.debug("[F2P] No findings from I2P discovery")
+            return
+
+        # Ingest findings through canonical write path
+        try:
+            if duckdb is not None:
+                await duckdb.async_ingest_findings_batch(findings)
+                log.debug("[F2P] Ingested %d I2P findings", len(findings))
+        except Exception as e:
+            log.warning("[F2P] I2P findings ingest failed: %s", e)
 
     # ── F198A: Cross-Sprint Graph Accumulation ───────────────────────────────
 
@@ -7636,6 +8069,76 @@ class SprintScheduler:
         if self._graph_accumulator is None:
             self._graph_accumulator = SprintGraphAccumulator()
         return self._graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id or "")
+
+    # ── Wave 2: Latent Relationship Sync ───────────────────────────────────────
+
+    def _sync_latent_relationships_to_graph(self) -> None:
+        """
+        Wave 2: Export NetworkX latent relationships and upsert unseen ones to DuckPGQ.
+
+        NetworkX discovers relationships (co-occurrence, shared attributes) that are
+        NOT yet in DuckPGQ. These are upserted with confidence=0.3 (low-confidence
+        inferred relationships) so the knowledge graph learns across sprints.
+        """
+        if self._rel_discovery_engine is None:
+            return
+        try:
+            nx_graph = self._rel_discovery_engine.export_graph()
+            if nx_graph is None:
+                return
+            from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
+            seen_rels = _DEFAULT_GRAPH_SERVICE._seen_rels
+            added = 0
+            for src, dst, data in nx_graph.edges(data=True):
+                key = (src, dst, "latent_related")
+                if key not in seen_rels:
+                    _DEFAULT_GRAPH_SERVICE.upsert_relation(
+                        src, dst, "latent_related",
+                        weight=data.get("weight", 1.0),
+                        evidence="latent_networkx"
+                    )
+                    seen_rels.add(key)
+                    added += 1
+            if added:
+                log.debug(f"[RelDiscovery] Synced {added} latent relationships to DuckPGQ")
+        except Exception as _e:
+            log.warning(f"[RelDiscovery] Latent sync failed: {_e}")
+
+    async def _run_quantum_path_analysis(self, new_ioc_values: list[str]) -> list[str]:
+        """
+        Sprint F214Q: Post-sprint quantum-inspired graph walk.
+        Find undiscovered connected IOCs via DuckPGQGraph.find_connected().
+        M1 RAM budget: bounded to 20 IOCs per sprint, max_hops=2, max 1000 total nodes.
+        """
+        if not new_ioc_values or self._ioc_graph is None:
+            return []
+        try:
+            discovered: list[str] = []
+            seen = set(new_ioc_values)
+            for ioc_val in new_ioc_values[:20]:
+                try:
+                    connected = self._ioc_graph.find_connected(ioc_val, max_hops=2)
+                    if isinstance(connected, list):
+                        for node in connected:
+                            val = node.get("val") if isinstance(node, dict) else str(node)
+                            if val and val not in seen:
+                                seen.add(val)
+                                discovered.append(val)
+                                if len(discovered) >= 10:
+                                    break
+                except Exception:
+                    pass
+                if len(discovered) >= 100:
+                    break
+            # Sprint F229A: rank by connection frequency — deduplicate + sort by degree
+            seen_connections: dict[str, int] = {}
+            for val in discovered:
+                seen_connections[val] = seen_connections.get(val, 0) + 1
+            ranked = sorted(seen_connections.keys(), key=lambda v: seen_connections[v], reverse=True)
+            return ranked[:20]
+        except Exception as e:
+            _logger.debug(f"[SPRINT] quantum_path find_connected failed: {e}")
+            return []
 
     # ── Sprint F216G: Quality Rejection Ledger recording ─────────────────────────
 
@@ -10383,6 +10886,8 @@ class SprintScheduler:
             "public_skipped_unsupported_scheme": getattr(pr, 'public_skipped_unsupported_scheme', 0) or 0,
             "public_skipped_memory_gate": getattr(pr, 'public_skipped_memory_gate', 0) or 0,
             "public_skipped_quality_gate": getattr(pr, 'public_skipped_quality_gate', 0) or 0,
+            "security_rejected_count": getattr(pr, 'security_rejected_count', 0) or 0,
+            "pii_redacted_count": getattr(pr, 'pii_redacted_count', 0) or 0,
             "public_skipped_browser_unavailable": getattr(pr, 'public_skipped_browser_unavailable', 0) or 0,
             "public_skipped_xml_or_feed": getattr(pr, 'public_skipped_xml_or_feed', 0) or 0,
             "public_skipped_timeout": getattr(pr, 'public_skipped_timeout', 0) or 0,
@@ -11270,6 +11775,39 @@ class SprintScheduler:
         """
         return getattr(self, "_planned_pivots", [])
 
+    @property
+    def _sensitive_query_transport(self) -> str:
+        """
+        Sprint F250: Return preferred transport for sensitive queries.
+        Priority: Nym > Tor > I2P > clearnet.
+        Returns transport name string or "clearnet" fallback.
+        """
+        # Check Nym first (highest anonymity)
+        try:
+            from hledac.universal.transport.nym_transport import NymTransport
+            nym = NymTransport()
+            if nym.is_running and not getattr(nym, "circuit_breaker_open", False):
+                return "nym"
+        except Exception:
+            pass
+        # Check Tor
+        try:
+            from hledac.universal.transport.tor_transport import TorTransport
+            tor = TorTransport()
+            if tor.available and getattr(tor, "_circuit_established", False):
+                return "tor"
+        except Exception:
+            pass
+        # Check I2P
+        try:
+            from hledac.universal.transport.i2p_transport import I2PTransport
+            i2p = I2PTransport()
+            if i2p.is_running():
+                return "i2p"
+        except Exception:
+            pass
+        return "clearnet"
+
     async def health_check(self) -> HealthReport:
         """
         F228F: Pre-run health check for critical dependencies.
@@ -11329,6 +11867,15 @@ class SprintScheduler:
         except Exception:
             graph_service_ok = False  # fail-soft, graph is optionalional
 
+        # Nym circuit breaker state
+        nym_circuit_open = False
+        try:
+            from hledac.universal.transport.nym_transport import NymTransport
+            nym = NymTransport()
+            nym_circuit_open = getattr(nym, "circuit_breaker_open", False)
+        except Exception:
+            pass  # Nym is optional
+
         # overall_ok: duckdb and hermes are critical
         overall_ok = duckdb_ok and hermes_ok
 
@@ -11337,6 +11884,7 @@ class SprintScheduler:
             hermes_ok=hermes_ok,
             fetch_coordinator_ok=fetch_coordinator_ok,
             graph_service_ok=graph_service_ok,
+            nym_circuit_open=nym_circuit_open,
             overall_ok=overall_ok,
             errors=errors,
         )

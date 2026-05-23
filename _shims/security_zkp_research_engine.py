@@ -1,9 +1,10 @@
 """
-Stub for hledac.security.zkp_research_engine — file exists but class name uncertain.
-Stub created per Sprint F214 sibling import fix to prevent ImportError.
+Stub for hledac.security.zkp_research_engine — module does not exist.
+Created as ghost stub per Sprint F214 sibling import fix.
 """
 class ZKPResearchEngine:
-    """Ghost stub — hledac.security.zkp_research_engine exists but class unknown."""
-    pass
+    """STUB: hledac.security.zkp_research_engine not found. Replace when implemented."""
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("ZKPResearchEngine stub — real implementation missing")
 
 __all__ = ["ZKPResearchEngine"]

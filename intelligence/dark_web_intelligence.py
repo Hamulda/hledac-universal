@@ -690,5 +690,37 @@ __all__ = [
     "PGPKeyInfo",
     "CryptocurrencyAnalyzer",
     "DarkWebSource",
-    "OnionType"
+    "OnionType",
+    "darkweb_content_to_canonical",
 ]
+
+
+def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> "CanonicalFinding":
+    """
+    Sprint F251: Map DarkWebCrawler output → CanonicalFinding for sprint ingestion.
+
+    Bounded: payload_text truncated to 3000 chars, fail-safe if title is None.
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    import hashlib
+
+    title = content.title or "onion"
+    body = content.text_content or ""
+    payload = f"{title}\n{body[:3000]}"
+
+    # relevance_score stored in metadata by DarkWebCrawler enrichors
+    meta = content.metadata or {}
+    confidence = float(meta.get("relevance_score", 0.5))
+    confidence = max(0.0, min(1.0, confidence))  # clamp to [0.0, 1.0]
+
+    finding_id = f"dw_{hashlib.md5(content.url.encode()).hexdigest()[:16]}"
+
+    return CanonicalFinding(
+        finding_id=finding_id,
+        query=query,
+        source_type="onion_discovery",
+        confidence=confidence,
+        ts=content.extracted_at,
+        provenance=(content.url,),
+        payload_text=payload,
+    )

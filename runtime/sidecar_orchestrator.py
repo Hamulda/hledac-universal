@@ -239,6 +239,18 @@ class SidecarOrchestrator:
             )
             bg_tasks.add(_ipfs_task)
             _ipfs_task.add_done_callback(bg_tasks.discard)
+            # F251: Onion discovery sidecar (Tor .onion crawling)
+            _onion_task = _asyncio.create_task(
+                self._run_onion_discovery_sidecar(), name="sprint:onion_discovery_sidecar"
+            )
+            bg_tasks.add(_onion_task)
+            _onion_task.add_done_callback(bg_tasks.discard)
+            # F2P: I2P discovery sidecar
+            _i2p_task = _asyncio.create_task(
+                self._run_i2p_discovery_sidecar(), name="sprint:i2p_discovery_sidecar"
+            )
+            bg_tasks.add(_i2p_task)
+            _i2p_task.add_done_callback(bg_tasks.discard)
             _bgp_enr_task = _asyncio.create_task(
                 self._run_bgp_enrichment_sidecar(), name="sprint:bgp_enrichment_sidecar"
             )
@@ -434,6 +446,28 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_ipfs_discovery_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    # ── F251: Onion Discovery Sidecar ───────────────────────────────────────
+
+    async def _run_onion_discovery_sidecar(self) -> None:
+        """F251: Dark web .onion discovery via Tor. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_onion_discovery_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    # ── F2P: I2P Discovery Sidecar ─────────────────────────────────────────
+
+    async def _run_i2p_discovery_sidecar(self) -> None:
+        """F2P: I2P .i2p discovery via I2P transport. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_i2p_discovery_sidecar()
         except Exception:
             pass  # Fail-soft
 

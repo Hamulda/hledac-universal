@@ -346,10 +346,88 @@ class SecurityLayer:
         text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN_REDACTED]', text)
         return text
 
+    # Sprint F250E: Security gate — lightweight finding validator
+    BLOCKLISTED_DOMAINS = frozenset([
+        "honeypot.example.com",
+        "sinkhole.example.net",
+        "known-false-positive.osint.local",
+    ])
+
+    ENTROPY_THRESHOLD = 1.5
+
+    def validate_finding(self, finding: dict) -> tuple[bool, str]:
+        """
+        Lightweight security gate for findings — runs synchronously, <1ms.
+
+        Checks:
+          a) PII redaction: email/phone/SSN patterns → anonymize_text()
+          b) Blocklisted domain: known false-positive/ honeypot URLs → reject
+          c) Low entropy: Shannon entropy < 1.5 → reject
+
+        Returns:
+            (should_accept, reason) — True/"ok" = pass, False/"reason" = reject
+        """
+        try:
+            payload = finding.get("payload_text", "") or ""
+            provenance = finding.get("provenance", "") or ""
+
+            # (b) Blocklisted domain check
+            if provenance:
+                import urllib.parse
+                try:
+                    parsed = urllib.parse.urlparse(provenance)
+                    host = parsed.netloc.lower()
+                    if any(bad in host for bad in self.BLOCKLISTED_DOMAINS):
+                        return (False, "blocklisted_domain")
+                except Exception:
+                    pass
+
+            # (a) PII pattern check — flag for redaction, don't reject
+            import re as _re
+            pii_patterns = [
+                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # email
+                r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b',  # phone
+                r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
+            ]
+            has_pii = any(_re.search(p, payload) for p in pii_patterns)
+            if has_pii:
+                redacted = self.anonymize_text(payload)
+                finding["payload_text"] = redacted
+                # Don't reject — just redact and continue
+                return (True, "pii_redacted")
+
+            # (c) Low entropy check
+            if payload:
+                entropy = self._shannon_entropy(payload)
+                if entropy < self.ENTROPY_THRESHOLD:
+                    return (False, "low_entropy_payload")
+
+            return (True, "ok")
+        except Exception:
+            # Fail-soft: accept on any error
+            return (True, "ok")
+
+    @staticmethod
+    def _shannon_entropy(text: str) -> float:
+        """Compute Shannon entropy of text. <1.5 suggests random/encoded bytes."""
+        if not text:
+            return 0.0
+        import math
+        freq: dict[str, float] = {}
+        for ch in text:
+            freq[ch] = freq.get(ch, 0) + 1
+        entropy = 0.0
+        length = len(text)
+        for count in freq.values():
+            prob = count / length
+            if prob > 0:
+                entropy -= prob * math.log2(prob)
+        return entropy
+
     # ====================================================================
     # MissionAudit Integration (Forensic Mode)
     # ====================================================================
-    
+
     def log_action(self, action_type: str, data: bytes, metadata: Optional[Dict] = None) -> Optional[str]:
         """
         Log an action to the cryptographic audit chain.

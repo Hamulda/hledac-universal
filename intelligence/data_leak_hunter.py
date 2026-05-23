@@ -154,8 +154,12 @@ class DataLeakHunter:
             "rate_limit": 2,
         },
         "intelligencex": {
-            "url": "https://public.intelligencex.com/api/",
-            "rate_limit": 10,
+            "url": "https://2.intelx.io/intel/search",
+            "rate_limit": 2,
+        },
+        "grep_app": {
+            "url": "https://grep.app/api/search",
+            "rate_limit": 3,
         },
     }
     
@@ -359,7 +363,14 @@ class DataLeakHunter:
         # Check breach APIs
         api_alerts = await self._check_breach_apis(value, target_type)
         alerts.extend(api_alerts)
-        
+
+        # GREP.app — code/secret leak search (all target types)
+        try:
+            grep_alerts = await self._check_grep_app(value)
+            alerts.extend(grep_alerts)
+        except Exception as e:
+            logger.debug(f"GREP.app check failed: {e}")
+
         # Check paste sites (for emails and usernames)
         if target_type in ("email", "username"):
             paste_alerts = await self._check_paste_sites(value, target_type)
@@ -571,7 +582,7 @@ class DataLeakHunter:
         return alerts
 
     async def _check_intelligencex(self, value: str, target_type: str) -> List[LeakAlert]:
-        """Check IntelligenceX API for leaks."""
+        """Check IntelligenceX API for leaks (two-phase: search + poll)."""
         alerts = []
 
         if not self.api_config.intelligencex_api_key:
@@ -579,63 +590,141 @@ class DataLeakHunter:
 
         config = self.BREACH_APIS["intelligencex"]
         headers = {
-            "Authorization": f"Bearer {self.api_config.intelligencex_api_key}",
+            "X-Key": self.api_config.intelligencex_api_key,
             "Content-Type": "application/json",
         }
 
-        type_map = {
-            "email": "email",
-            "domain": "domain",
-            "username": "username",
-            "ip": "ip",
-            "hash": "hash",
-        }
-        ix_type = type_map.get(target_type, "email")
-
-        payload = {
-            "searchtype": ix_type,
-            "searchquery": value,
-            "limit": 20,
+        # Phase 1: submit search
+        search_payload = {
+            "term": value,
+            "maxresults": 20,
+            "media": 0,
         }
 
+        search_id = None
         try:
             async with self._session.post(
                 config["url"],
                 headers=headers,
-                json=payload,
+                json=search_payload,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 self._api_calls += 1
-
-                if resp.status == 200:
-                    data = await resp.json()
-                    for result in data.get("results", []):
-                        alert = LeakAlert(
-                            alert_id=str(uuid.uuid4()),
-                            timestamp=datetime.now(),
-                            target=value,
-                            target_type=target_type,
-                            source=LeakSource.BREACH_API,
-                            severity=AlertSeverity.HIGH,
-                            breach_name=result.get("source", "IntelligenceX"),
-                            leaked_data={
-                                "url": result.get("url"),
-                                "category": result.get("category"),
-                                "date": result.get("date"),
-                            },
-                            url=result.get("url"),
-                        )
-                        alerts.append(alert)
-                elif resp.status == 429:
-                    logger.warning("IntelligenceX API rate limited")
-                    await asyncio.sleep(config["rate_limit"] * 6)
-                else:
-                    logger.debug(f"IntelligenceX API: {resp.status}")
-
-            await asyncio.sleep(config["rate_limit"])
-
+                if resp.status == 429:
+                    logger.W("IntelligenceX API rate limited")
+                    return alerts
+                if resp.status != 200:
+                    logger.debug(f"IntelligenceX search: {resp.status}")
+                    return alerts
+                search_result = await resp.json()
+                search_id = search_result.get("id")
+                if not search_id:
+                    logger.debug("IntelligenceX: no search id returned")
+                    return alerts
         except Exception as e:
-            logger.debug(f"IntelligenceX request failed: {e}")
+            logger.debug(f"IntelligenceX search failed: {e}")
+            return alerts
+
+        # Phase 2: poll for results (max 3 attempts, 2s apart — strict rate limit)
+        result_url = f"{config['url']}/result?id={search_id}&limit=20&offset=0"
+        for attempt in range(3):
+            await asyncio.sleep(2.0)
+            try:
+                async with self._session.get(
+                    result_url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status == 429:
+                        logger.W(f"IntelligenceX poll attempt {attempt + 1} rate limited")
+                        continue
+                    if resp.status != 200:
+                        logger.debug(f"IntelligenceX poll: {resp.status}")
+                        break
+                    poll_result = await resp.json()
+                    records = poll_result.get("results", []) or poll_result.get("records", [])
+                    for r in records[:20]:
+                        try:
+                            alert = LeakAlert(
+                                alert_id=str(uuid4()),
+                                target=value,
+                                target_type=target_type,
+                                source=LeakSource.BREACH_API,
+                                severity=AlertSeverity.HIGH,
+                                breach_name=f"IntelligenceX:{r.get('type', 'unknown')}",
+                                leaked_data={
+                                    "bucket": r.get("bucket", ""),
+                                    "date": r.get("date", ""),
+                                    "content": r.get("content", "")[:500],
+                                    "url": r.get("url", ""),
+                                },
+                                url=r.get("url", ""),
+                            )
+                            alerts.append(alert)
+                        except Exception:
+                            continue
+                    break
+            except Exception as e:
+                logger.debug(f"IntelligenceX poll attempt {attempt + 1} failed: {e}")
+                continue
+
+        return alerts
+
+    async def _check_grep_app(self, query: str) -> List[LeakAlert]:
+        """Check GREP.app for code/secret leaks matching query."""
+        alerts = []
+
+        try:
+            import curl_cffi
+        except ImportError:
+            return alerts
+
+        try:
+            url = f"https://grep.app/api/search?q={query}&filter[lang][0]=python"
+            async with curl_cffi.aiohttp.ClientSession(
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                },
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 429:
+                        logger.W("GREP.app rate limited")
+                        return alerts
+                    if resp.status != 200:
+                        logger.debug(f"GREP.app: {resp.status}")
+                        return alerts
+                    data = await resp.json()
+                    hits = data.get("hits", {}).get("hits", [])[:10]
+                    for hit in hits:
+                        try:
+                            src = hit.get("_source", {})
+                            repo = src.get("repo", "unknown")
+                            file = src.get("filename", src.get("path", "unknown"))
+                            content = src.get("content", "")
+                            snippet = content[:200] + ("..." if len(content) > 200 else "")
+                            alert = LeakAlert(
+                                alert_id=str(uuid4()),
+                                target=query,
+                                target_type="code_leak",
+                                source=LeakSource.BREACH_API,
+                                severity=AlertSeverity.MEDIUM,
+                                breach_name=f"grep_app:{repo}",
+                                leaked_data={
+                                    "repo": repo,
+                                    "file": file,
+                                    "snippet": snippet,
+                                },
+                                url=src.get("url", ""),
+                            )
+                            alerts.append(alert)
+                        except Exception:
+                            continue
+        except Exception as e:
+            logger.debug(f"GREP.app check failed: {e}")
 
         return alerts
 

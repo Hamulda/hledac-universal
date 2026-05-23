@@ -1,10 +1,11 @@
 """
-Stub for hledac.security.zero_attribution_engine — file DOES NOT EXIST.
-Only zero_trust_middleware.py exists in sibling. Stub created per Sprint F214
+Stub for hledac.security.zero_attribution_engine — module does not exist.
+Only zero_trust_middleware.py exists in security/. Stub created per Sprint F214
 sibling import fix to prevent ImportError at runtime.
 """
 class ZeroAttributionEngine:
-    """Ghost stub — hledac.security.zero_attribution_engine does not exist (only zero_trust_middleware)."""
-    pass
+    """STUB: hledac.security.zero_attribution_engine not found. Replace when implemented."""
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("ZeroAttributionEngine stub — real implementation missing")
 
 __all__ = ["ZeroAttributionEngine"]

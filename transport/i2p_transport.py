@@ -378,6 +378,54 @@ class I2PTransport(Transport):
         """Check if I2P transport is operational."""
         return self.available and self.transport_mode != "none"
 
+    async def fetch(self, config: "TransportConfig") -> "TransportResult":
+        """
+        Fetch URL via I2P network using SOCKS5H or HTTP proxy.
+
+        SOCKS5H mode (default): DNS resolution happens on the proxy side,
+        preventing .i2p hostname leaks. HTTP mode uses plain aiohttp with
+        the proxy URL configured via TCPConnector.
+
+        Fail-safe: returns TransportResult with err if I2P unavailable.
+        """
+        if not self.is_running():
+            from .base import TransportResult
+            return TransportResult(
+                err="i2p_unavailable",
+                failure_stage="i2p_check",
+                selected_transport="i2p",
+            )
+
+        try:
+            session = await self.get_session()
+        except I2PUnavailableError as e:
+            from .base import TransportResult
+            return TransportResult(
+                err=f"i2p_session_unavailable: {e}",
+                failure_stage="i2p_session",
+                selected_transport="i2p",
+            )
+
+        try:
+            timeout = getattr(config, 'timeout', 30) or 30
+            async with session.get(
+                config.url,
+                timeout=self._aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                body = await resp.text()
+                return TransportResult(
+                    content=body,
+                    status_code=resp.status,
+                    selected_transport="i2p",
+                )
+        except Exception as e:
+            from .base import TransportResult
+            return TransportResult(
+                err=f"i2p_fetch_failed: {e}",
+                failure_stage="i2p_fetch",
+                selected_transport="i2p",
+            )
+
 
 # ---------------------------------------------------------------------------
 # P10: I2P Constants for transport_resolver integration

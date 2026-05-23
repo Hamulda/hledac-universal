@@ -26,8 +26,9 @@ ARCHITECTURE (F226):
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 
@@ -79,11 +80,16 @@ class GraphService:
     Use this class directly for test isolation or cross-sprint tenant isolation.
     """
 
-    __slots__ = ("_seen_iocs", "_seen_rels")  # _duckpgq_graph NOT stored (uses _get_graph)
+    __slots__ = ("_seen_iocs", "_seen_rels", "_relationship_callbacks")  # _duckpgq_graph NOT stored (uses _get_graph)
 
     def __init__(self) -> None:
         self._seen_iocs: set[tuple[str, str]] = set()
         self._seen_rels: set[tuple[str, str, str]] = set()
+        self._relationship_callbacks: list[Callable] = []
+
+    def register_relationship_callback(self, fn: Callable[..., None]) -> None:
+        """Register callback for relationship events (src, dst, rel_type, weight)."""
+        self._relationship_callbacks.append(fn)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -106,6 +112,12 @@ class GraphService:
         key = (value, ioc_type)
         if key in self._seen_iocs:
             return False
+
+        # Sprint F214Q: Validate ioc_type against canonical taxonomy
+        from hledac.universal.knowledge.ioc_graph import IOC_TYPES as _VALID_IOC_TYPES
+        if ioc_type not in _VALID_IOC_TYPES:
+            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, falling back to 'unknown'")
+            ioc_type = "unknown"
 
         graph = _get_graph()
         if graph is None:
@@ -132,6 +144,8 @@ class GraphService:
         Returns:
             Number of rows passed to DuckDB (not number actually inserted).
         """
+        from hledac.universal.knowledge.ioc_graph import IOC_TYPES as _VALID_IOC_TYPES
+
         if not rows:
             return 0
         unique: list[tuple[str, str, float, str]] = []
@@ -139,6 +153,9 @@ class GraphService:
         for value, ioc_type, confidence, source in rows:
             key = (value, ioc_type)
             if key not in self._seen_iocs:
+                # Sprint F214Q: Validate ioc_type
+                if ioc_type not in _VALID_IOC_TYPES:
+                    ioc_type = "unknown"
                 unique.append((value, ioc_type, confidence, source))
                 seen_add(key)
         if not unique:
@@ -177,6 +194,14 @@ class GraphService:
         try:
             graph.add_relation(src, dst, rel_type, weight, evidence)
             self._seen_rels.add(key)
+            # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
+            for cb in self._relationship_callbacks:
+                try:
+                    result = cb(src, dst, rel_type, weight)
+                    if asyncio.iscoroutine(result):
+                        asyncio.get_event_loop().run_until_complete(result)
+                except Exception as cb_e:
+                    logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
             return True
         except Exception as e:
             logger.warning(f"[GraphService] upsert_relation failed: {e}")

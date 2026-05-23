@@ -58,7 +58,7 @@ _IOC_GRAPH_FILENAME: str = "ioc_graph"
 
 # IOC type enumeration
 IOC_TYPES: frozenset[str] = frozenset(
-    ("cve", "ip", "hash_sha256", "hash_md5", "onion", "domain", "apt", "malware")
+    ("cve", "ip", "hash_sha256", "hash_md5", "onion", "i2p", "domain", "apt", "malware")
 )
 
 # ---------------------------------------------------------------------------

@@ -1125,6 +1125,18 @@ def _generate_next_sprint_seeds(
             # Sprint F226D: dedup before cap
             seeds = _dedup_seeds(seeds)
 
+            # Sprint F214Q: Merge quantum pathfinder seeds with degree-centrality seeds
+            from hledac.universal.knowledge.sprint_seeds_store import sync_load_sprint_seeds
+            quantum_seeds = sync_load_sprint_seeds(sprint_id)
+            if quantum_seeds:
+                q_seed_dicts = [
+                    {"seed_type": "quantum_path", "query": q, "priority": 0.8, "source": "graph_quantum_pathfinder"}
+                    for q in quantum_seeds[:50]
+                ]
+                # Merge: quantum first (higher fidelity path-informed), then dedup
+                seeds = _dedup_seeds(q_seed_dicts + seeds)
+                next_seeds_source = "quantum_pathfinder"
+
             # Bounded output — keep total seed count manageable
             MAX_SEEDS = 15
             if len(seeds) > MAX_SEEDS:
@@ -1696,6 +1708,9 @@ def _build_product_value_summary(
             "in_memory_duplicate": dedup_status.get("in_memory_duplicate_rejected_count", 0),
             "persistent_duplicate": dedup_status.get("persistent_duplicate_rejected_count", 0),
             "fail_open": dedup_status.get("other_rejected_count", 0),
+            # Sprint F250E: Security gate
+            "security_rejected": scorecard.get("security_rejected_count", 0) or 0,
+            "pii_redacted": scorecard.get("pii_redacted_count", 0) or 0,
         }
         total_rejected = sum(reject_breakdown.values())
         dedup_effective = dedup_status.get("persistent_dedup_enabled", False)
@@ -1705,8 +1720,16 @@ def _build_product_value_summary(
             "capacity": dedup_status.get("hot_cache_capacity", 0),
         }
     else:
-        reject_breakdown = None
-        total_rejected = None
+        # Sprint F250E: Even when dedup_status is absent, preserve security gate counters
+        reject_breakdown = {
+            "low_information": 0,
+            "in_memory_duplicate": 0,
+            "persistent_duplicate": 0,
+            "fail_open": 0,
+            "security_rejected": scorecard.get("security_rejected_count", 0) or 0,
+            "pii_redacted": scorecard.get("pii_redacted_count", 0) or 0,
+        }
+        total_rejected = reject_breakdown["security_rejected"]  # security is the only real count here
         dedup_effective = None
         dedup_lmdb_path = None
         hot_cache = None

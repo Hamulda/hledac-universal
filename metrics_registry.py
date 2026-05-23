@@ -354,7 +354,28 @@ class MetricsRegistry:
             # Live data (ring buffer contains recent snapshots)
             "counters": dict(self._counters),
             "gauges": dict(self._gauges),
+            # Sprint F250: Nym mixnet state for sensitive query routing
+            "nym_address": self._nym_address_if_available(),
+            "nym_circuit_open": self._nym_circuit_open_if_open(),
         }
+
+    def _nym_address_if_available(self) -> str | None:
+        """Get NymTransport nym_address if available."""
+        try:
+            from hledac.universal.transport.nym_transport import NymTransport
+            nym = NymTransport()
+            return getattr(nym, "nym_address", None)
+        except Exception:
+            return None
+
+    def _nym_circuit_open_if_open(self) -> bool:
+        """Check if NymTransport circuit breaker is open."""
+        try:
+            from hledac.universal.transport.nym_transport import NymTransport
+            nym = NymTransport()
+            return getattr(nym, "circuit_breaker_open", False)
+        except Exception:
+            return False
 
     def ingest_sprint_event(self, event: Dict[str, object]) -> None:
         """

@@ -43,6 +43,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, Iterator, List, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
@@ -63,6 +64,24 @@ def _get_nx():
         import networkx as _nx_mod
         _nx = _nx_mod
     return _nx
+
+
+# Sprint F229A: Module-level session singleton for RelationshipDiscoveryEngine
+# Allows GraphService.upsert_relation to fire NetworkX callbacks for cross-sprint persistence
+_SESSION_ENGINE: Optional["RelationshipDiscoveryEngine"] = None
+
+
+def get_session_relationship_engine() -> "RelationshipDiscoveryEngine":
+    """
+    Get or create the module-level session RelationshipDiscoveryEngine singleton.
+
+    Used by GraphService to sync DuckPGQ upserts → NetworkX session graph
+    for cross-sprint relationship discovery.
+    """
+    global _SESSION_ENGINE
+    if _SESSION_ENGINE is None:
+        _SESSION_ENGINE = RelationshipDiscoveryEngine(use_sparse=True, max_memory_mb=512)
+    return _SESSION_ENGINE
 
 # igraph for M1 optimization (preferred over networkx when available)
 try:
@@ -2184,6 +2203,73 @@ class RelationshipDiscoveryEngine:
             ],
             "stats": self._stats,
         }
+
+    # ========================================================================
+    # Cross-Sprint Persistence (Wave 2)
+    # ========================================================================
+
+    MAX_NODES: int = 10_000  # Memory bound for M1 8GB
+
+    def save_graph(self, path: "Path") -> None:
+        """Persist NetworkX graph to disk with node-count pruning."""
+        nx_graph = self._build_networkx_graph()
+        if nx_graph is None:
+            return
+        node_count = nx_graph.number_of_nodes()
+        if node_count > self.MAX_NODES:
+            degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))
+            prune_count = node_count - self.MAX_NODES
+            nodes_to_remove = set(degree_sorted[:prune_count])
+            nx_graph.remove_nodes_from(nodes_to_remove)
+            logger.warning(
+                f"[RelDiscovery] Pruned {prune_count} lowest-degree nodes, "
+                f"remaining: {nx_graph.number_of_nodes()}"
+            )
+        import pickle
+        with open(path, "wb") as f:
+            pickle.dump(nx_graph, f, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.debug(f"[RelDiscovery] Graph saved: {nx_graph.number_of_nodes()} nodes, {nx_graph.number_of_edges()} edges")
+
+    def load_graph(self, path: "Path") -> bool:
+        """Load persisted NetworkX graph from disk with node-count bound.
+
+        Returns True if loaded, False if file missing or error.
+        """
+        if not path.exists():
+            return False
+        try:
+            import pickle
+            with open(path, "rb") as f:
+                nx_graph = pickle.load(f)
+            node_count = nx_graph.number_of_nodes()
+            if node_count > self.MAX_NODES:
+                degree_sorted = sorted(nx_graph.nodes(), key=lambda n: nx_graph.degree(n))
+                prune_count = node_count - self.MAX_NODES
+                nx_graph.remove_nodes_from(set(degree_sorted[:prune_count]))
+                logger.warning(
+                    f"[RelDiscovery] Loaded graph pruned to {nx_graph.number_of_nodes()} nodes "
+                    f"(was {node_count}, max {self.MAX_NODES})"
+                )
+            # Rebuild internal state from NetworkX graph
+            self._nx_graph = nx_graph
+            for node in nx_graph.nodes():
+                if node not in self._entities:
+                    self.add_entity(Entity(node, EntityType.UNKNOWN))
+            edge_data = nx_graph.edges(data=True)
+            for src, dst, data in edge_data:
+                rel_type = data.get("rel_type", RelationshipType.RELATED_TO)
+                strength = data.get("weight", 1.0)
+                self.add_relationship(
+                    Relationship(source=src, target=dst, type=rel_type, strength=strength, confidence=0.5)
+                )
+            logger.info(
+                f"[RelDiscovery] Graph loaded: {nx_graph.number_of_nodes()} nodes, "
+                f"{nx_graph.number_of_edges()} edges"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"[RelDiscovery] Failed to load graph from {path}: {e}")
+            return False
 
     def export_for_visualization(self) -> Dict[str, Any]:
         """Export graph data optimized for visualization."""

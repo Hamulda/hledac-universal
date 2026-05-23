@@ -1,5 +1,5 @@
 def test_beta_binomial_basic():
-    from hledac.universal.hypothesis import BetaBinomial
+    from hledac.universal.brain.confidence_utils import BetaBinomial
     bb = BetaBinomial()
     bb.add_support(1.0)
     bb.add_contradict(0.5)

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "cwd": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
+      "type": "stdio",
+      "env": []
+    }
+  }
+}
