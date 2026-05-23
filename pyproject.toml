@@ -23,7 +23,7 @@ name = "hledac-universal"
 version = "18.0.0"
 description = "Autonomous OSINT orchestrator for M1 MacBook — Ghost Prime"
 readme = "README.md"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.14,<3.16"
 license = { text = "Proprietary" }
 authors = [
     { name = "Vojtech Hamada", email = "vojtahamada@seznam.cz" }
@@ -252,14 +252,14 @@ packages = ["hledac.universal"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC"]
 ignore = ["E501"]   # line-length handled by formatter
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

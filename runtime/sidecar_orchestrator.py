@@ -261,6 +261,12 @@ class SidecarOrchestrator:
             )
             bg_tasks.add(_banner_task)
             _banner_task.add_done_callback(bg_tasks.discard)
+            # F214Q: DHT discovery sidecar
+            _dht_task = _asyncio.create_task(
+                self._run_dht_sidecar(), name="sprint:dht_sidecar"
+            )
+            bg_tasks.add(_dht_task)
+            _dht_task.add_done_callback(bg_tasks.discard)
 
     async def run_target_memory_update(
         self,
@@ -486,5 +492,15 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_banner_grab_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    # F214Q: DHT discovery sidecar
+    async def _run_dht_sidecar(self) -> None:
+        """F214Q: DHT torrent discovery via BitTorrent DHT network. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_dht_sidecar()
         except Exception:
             pass  # Fail-soft

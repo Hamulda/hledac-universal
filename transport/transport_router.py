@@ -44,7 +44,7 @@ from __future__ import annotations
 import os
 import urllib.parse
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 # =============================================================================
 # Lane Literals
@@ -360,6 +360,20 @@ def route_transport(
         suggested_max_bytes=suggested_max_bytes,
         suggested_concurrency=suggested_concurrency,
     )
+
+
+_I2P_TRANSPORT_SINGLETON: Any = None
+
+
+def set_i2p_transport_singleton(transport: Any) -> None:
+    """F250: Register I2PTransport singleton so all consumers share one session."""
+    global _I2P_TRANSPORT_SINGLETON
+    _I2P_TRANSPORT_SINGLETON = transport
+
+
+def get_i2p_transport_singleton() -> Any:
+    """F250: Return registered I2PTransport singleton, or None."""
+    return _I2P_TRANSPORT_SINGLETON
 
 
 __all__ = [

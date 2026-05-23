@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 # Circuit rotation — Sprint F214 B.1 / F251: per-domain circuit isolation
 MAX_CIRCUIT_REQUESTS: int = 3  # rotate after N requests per domain (correlation risk reduction)
 
+# Sprint F214Q B.3: Module-level TorTransport singleton — max 1 STEM Controller per process
+_TOR_TRANSPORT_SINGLETON: "TorTransport | None" = None
+
+
+def get_tor_transport_singleton() -> "TorTransport | None":
+    """Return the module-level TorTransport singleton or None."""
+    return _TOR_TRANSPORT_SINGLETON
+
+
+def set_tor_transport_singleton(transport: "TorTransport") -> None:
+    """Set the module-level TorTransport singleton. Call after start() succeeds."""
+    global _TOR_TRANSPORT_SINGLETON
+    _TOR_TRANSPORT_SINGLETON = transport
+
 
 def _generate_torrc(torrc_path: Path) -> None:
     """Generate torrc with anonymity-hardening settings."""
@@ -91,6 +105,9 @@ class TorTransport(Transport):
         self._circuit_lock: asyncio.Lock = asyncio.Lock()
         self._session_direct = None
         self._session_tor = None
+        # Sprint F214Q B.3: telemetry counters
+        self._circuits_created: int = 0
+        self._circuit_failures: int = 0
 
     async def start(self) -> bool:
         """Spustit Tor daemon autonomně. Vrátí True pokud circuit established."""
@@ -216,6 +233,28 @@ class TorTransport(Transport):
             await self.runner.cleanup()
         logger.info("Tor stopped")
 
+    def telemetry(self) -> dict:
+        """Sprint F214Q B.3: Export circuit telemetry for MetricsRegistry."""
+        return {
+            "circuits_created": self._circuits_created,
+            "circuit_failures": self._circuit_failures,
+        }
+
+    def __del__(self):
+        """
+        Sprint F214Q B.3: Fallback cleanup guard — logs warning if stop() was not called.
+        Does NOT call stop() here (can raise in destructor).
+        Cleanup must be done via stop() explicitly.
+        """
+        # Warn if Tor process or HTTP server were started but stop() was never called
+        if getattr(self, 'tor_process', None) is not None or getattr(self, 'http_server', None) is not None:
+            logger.warning(
+                f"TorTransport.__del__: stop() not called — "
+                f"Tor process or HTTP server may leak. "
+                f"circuits_created={getattr(self, '_circuits_created', 0)}, "
+                f"circuit_failures={getattr(self, '_circuit_failures', 0)}"
+            )
+
     async def wait_ready(self):
         await self._ready.wait()
 
@@ -272,9 +311,11 @@ class TorTransport(Transport):
                     ctrl.authenticate()
                     ctrl.signal(stem.Signal.NEWNYM)
             await asyncio.get_event_loop().run_in_executor(None, _do_rotate)
+            self._circuits_created += 1  # Sprint F214Q B.3: circuit telemetry
             logger.debug("Tor circuit rotated via NEWNYM")
             return True
         except Exception as e:
+            self._circuit_failures += 1  # Sprint F214Q B.3: circuit telemetry
             logger.warning(f"Tor circuit rotation failed: {e}")
             return False
 

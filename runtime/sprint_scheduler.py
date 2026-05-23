@@ -1083,6 +1083,8 @@ class SprintSchedulerResult:
     # Sprint F193B: CommonCrawl + academic discovery additive truth
     cc_archive_injected: int = 0
     academic_findings_count: int = 0
+    # Sprint F214Q: DHT discovery findings
+    dht_findings_produced: int = 0
     # Sprint F242C: RDAP runtime integration telemetry
     rdap_enrichment_attempted: int = 0
     rdap_enrichment_findings_built: int = 0
@@ -1101,6 +1103,9 @@ class SprintSchedulerResult:
     lane_blockchain_accepted_findings: int = 0
     # R10: IPFS CID-only lane telemetry
     lane_ipfs_accepted_findings: int = 0
+    # F218Z: IPFS discovery sidecar telemetry
+    ipfs_cids_attempted: int = 0
+    ipfs_findings_accepted: int = 0
     # Sprint F234A: DOH lane telemetry
     lane_doh_accepted_findings: int = 0
     # Sprint F214: DOH acquisition report fields (mirrored from CT pattern)
@@ -2106,6 +2111,13 @@ class SprintScheduler:
         self._enrichment_services: Any = None
         # Sprint F250: Layer manager for Ghost/Stealth/Temporal/Security layers (opt-in via HLEDAC_ENABLE_LAYERS=1)
         self._layer_manager: Any = None
+        # Sprint F214: DHT KademliaNode singleton (real UDP, background init)
+        self._dht_node: Any = None
+        # Sprint F250: I2PTransport background init
+        self._i2p_transport: Any = None
+        # Sprint F250: NymTransport background init
+        self._nym_transport: Any = None
+        self._tor_transport: Any = None  # Sprint F214Q B.3: TorTransport singleton
         # Sprint 8VI §D: DuckPGQGraph reference (set during WARMUP)
         self._ioc_graph: Any = None
         # Sprint F193B: Hypothesis → finding feedback loop tracking
@@ -2890,7 +2902,34 @@ class SprintScheduler:
             _t = asyncio.create_task(self._memory_pressure_loop(), name="sprint:memory_pressure_loop")
             self._bg_tasks.add(_t)
             _t.add_done_callback(self._bg_tasks.discard)
-    
+
+            # Sprint F214: DHT background init (non-blocking)
+            if os.environ.get("HLEDAC_ENABLE_DHT") == "1":
+                _dht_t = asyncio.create_task(self._init_dht_node_background(), name="sprint:dht_init")
+                self._bg_tasks.add(_dht_t)
+                _dht_t.add_done_callback(self._bg_tasks.discard)
+
+            # Sprint F250: I2PTransport background init (non-blocking)
+            if os.environ.get("HLEDAC_ENABLE_I2P") == "1":
+                _i2p_t = asyncio.create_task(self._init_i2p_background(), name="sprint:i2p_init")
+                self._bg_tasks.add(_i2p_t)
+                _i2p_t.add_done_callback(self._bg_tasks.discard)
+
+            # Sprint F250: NymTransport background init (non-blocking)
+            if os.environ.get("HLEDAC_ENABLE_NYM") == "1":
+                _nym_t = asyncio.create_task(self._init_nym_background(), name="sprint:nym_init")
+                self._bg_tasks.add(_nym_t)
+                _nym_t.add_done_callback(self._bg_tasks.discard)
+
+            # Sprint F214Q B.3: TorTransport background init (non-blocking)
+            # Gate: HLEDAC_ENABLE_TOR=1 OR HLEDAC_TOR_PROXY set
+            _tor_gate = os.environ.get("HLEDAC_ENABLE_TOR", "").strip() in ("1", "true", "True")
+            _tor_proxy = bool(os.environ.get("HLEDAC_TOR_PROXY", "").strip())
+            if _tor_gate or _tor_proxy:
+                _tor_t = asyncio.create_task(self._init_tor_background(), name="sprint:tor_init")
+                self._bg_tasks.add(_tor_t)
+                _tor_t.add_done_callback(self._bg_tasks.discard)
+
             # Sprint F245A: Run prelude and first cycle concurrently
             first_cycle_work_items = self._build_feed_work_items(lifecycle)
             first_cycle_task = asyncio.create_task(
@@ -3360,7 +3399,39 @@ class SprintScheduler:
             if self._bg_tasks:
                 await asyncio.gather(*self._bg_tasks, return_exceptions=True)
             self._bg_tasks.clear()
-    
+
+            # Sprint F214: Stop DHT node singleton at teardown
+            if self._dht_node is not None:
+                try:
+                    await self._dht_node.stop()
+                except Exception:
+                    pass
+                self._dht_node = None
+
+            # Sprint F250: Stop I2PTransport singleton at teardown
+            if self._i2p_transport is not None:
+                try:
+                    await self._i2p_transport.stop()
+                except Exception:
+                    pass
+                self._i2p_transport = None
+
+            # Sprint F250: Stop NymTransport singleton at teardown
+            if self._nym_transport is not None:
+                try:
+                    await self._nym_transport.stop()
+                except Exception:
+                    pass
+                self._nym_transport = None
+
+            # Sprint F214Q B.3: Stop TorTransport singleton at teardown
+            if self._tor_transport is not None:
+                try:
+                    await self._tor_transport.stop()
+                except Exception:
+                    pass
+                self._tor_transport = None
+
             # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
             await self._close_metrics_registry()
     
@@ -7949,15 +8020,20 @@ class SprintScheduler:
         except Exception:
             pass  # fail-soft: governor check is advisory
 
-        # Guard: I2P transport running
+        # Guard: I2P transport running — use singleton if available
         try:
             from hledac.universal.transport.i2p_transport import I2PTransport
+            from hledac.universal.transport.transport_resolver import get_i2p_transport_singleton
+            singleton = get_i2p_transport_singleton()
+            if singleton is not None and singleton.is_running():
+                return
+            # Fallback: instantiate to check is_running()
             i2p = I2PTransport()
             if not i2p.is_running():
                 log.debug("[F2P] I2PTransport not running (is_running=False)")
                 return
         except Exception as e:
-            log.debug("[F2P] I2PTransport init failed: %s", e)
+            log.debug("[F2P] I2PTransport init/check failed: %s", e)
             return
 
         # Extract .i2p addresses from sprint IOCs via DuckDB
@@ -8049,6 +8125,256 @@ class SprintScheduler:
                 log.debug("[F2P] Ingested %d I2P findings", len(findings))
         except Exception as e:
             log.warning("[F2P] I2P findings ingest failed: %s", e)
+
+    # ── F214Q: DHT Discovery Sidecar ───────────────────────────────────────
+
+    async def _run_dht_sidecar(self) -> None:
+        """
+        Sprint F214Q: DHT torrent discovery via BitTorrent DHT network.
+
+        INVARIANT: DHT queries NEVER go over Tor — clearnet UDP only.
+        Gate: HLEDAC_ENABLE_DHT=1, max_results=5, timeout=60s.
+        Fail-soft: DHT errors logged, never crash sprint.
+        """
+        import asyncio as _asyncio
+
+        # Guard: HLEDAC_ENABLE_DHT gate
+        if not os.environ.get("HLEDAC_ENABLE_DHT", "").strip() in ("1", "true", "True"):
+            return
+
+        # Guard: memory pressure < 0.75 (M1 8GB safety)
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                snap = await governor.evaluate()
+                uma_state = getattr(snap, "state", "normal") if snap else "normal"
+                if uma_state in ("critical", "emergency"):
+                    return
+        except Exception:
+            pass
+
+        log.debug("[F214Q] Starting DHT discovery sidecar")
+
+        try:
+            from hledac.universal.dht.kademlia_node import KademliaNode, DHT_REAL_UDP
+            from hledac.universal.intelligence.dark_web_intelligence import (
+                DHTFinding,
+                dht_content_to_canonical,
+            )
+
+            # DHT only works in real UDP mode
+            if not DHT_REAL_UDP:
+                log.debug("[F214Q] DHT simulated mode — skipping sidecar")
+                return
+
+            # Get DuckDB store for canonical write path
+            duckdb = getattr(self, "_duckdb_store", None)
+
+            # Extract info_hash seeds from prior CT findings in this sprint
+            info_hash_seeds: list[str] = []
+            try:
+                if duckdb is not None:
+                    # Query accepted CT findings for info_hash patterns
+                    from hledac.universal.knowledge.duckdb_store import duckdb_pool
+                    async with duckdb_pool.connection() as conn:
+                        rows = await conn.execute(
+                            "SELECT DISTINCT provenance FROM findings "
+                            "WHERE source_type = 'certificate_transparency' "
+                            "AND provenance LIKE '%info_hash%' "
+                            "LIMIT 20"
+                        ).fetch()
+                    for row in rows:
+                        prov = row[0] if row else ""
+                        if "info_hash:" in prov:
+                            ih = prov.split("info_hash:")[1].split(",")[0].strip()
+                            if ih:
+                                info_hash_seeds.append(ih)
+            except Exception:
+                pass  # fail-soft: DuckDB read err
+
+            if not info_hash_seeds:
+                log.debug("[F214Q] No info_hash seeds from CT findings")
+                return
+
+            # Sprint F214 Step 5: Use singleton DHT node if ready, else fallback
+            node = self._dht_node
+            if node is None:
+                # Fallback: standalone crawl (simulated or real UDP without singleton)
+                log.debug("[F214Q] DHT node not ready — using standalone crawl")
+                try:
+                    from hledac.universal.dht.kademlia_node import crawl_dht_for_keyword
+                    results = await crawl_dht_for_keyword(
+                        self._query,
+                        max_results=5,
+                        duration_s=30.0,
+                    )
+                    for r in results:
+                        if r.get("info_hash"):
+                            findings.append(
+                                dht_content_to_canonical(
+                                    DHTFinding(
+                                        info_hash=r["info_hash"],
+                                        name=r.get("name", ""),
+                                        files=r.get("files", []),
+                                        size_bytes=r.get("size_bytes", 0),
+                                        peers=r.get("peers", 0),
+                                        source="dht_fallback",
+                                    ),
+                                    query=self._query[:128],
+                                )
+                            )
+                except Exception as e:
+                    log.debug("[F214Q] fallback crawl failed: %s", e)
+                return
+
+            findings: list = []
+            semaphore = _asyncio.Semaphore(2)  # M1: max 2 concurrent DHT ops
+
+            async def dht_lookup(info_hash: str) -> list:
+                """Lookup single info_hash via DHT singleton."""
+                async with semaphore:
+                    try:
+                        result = await node.lookup_info_hash_metadata(info_hash, timeout_s=30.0)
+                        if result and isinstance(result, dict) and result.get("info_hash"):
+                            return [result]
+                    except Exception:
+                        pass
+                    return []
+
+            # Execute DHT lookups with timeout
+            tasks = [dht_lookup(ih) for ih in info_hash_seeds[:5]]
+            results = await _asyncio.wait_for(
+                _asyncio.gather(*tasks, return_exceptions=True),
+                timeout=60.0
+            )
+
+            # Convert DHT results to CanonicalFinding
+            for batch in results:
+                if isinstance(batch, list):
+                    for item in batch:
+                        try:
+                            dht_finding = DHTFinding(
+                                info_hash=item.get("info_hash", ""),
+                                name=item.get("name", ""),
+                                files=item.get("files", []),
+                                size_bytes=item.get("size_bytes", 0),
+                                peers=item.get("peers", 0),
+                                source="dht",
+                            )
+                            cf = dht_content_to_canonical(dht_finding, query=self._query[:128])
+                            findings.append(cf)
+                        except Exception:
+                            pass  # fail-soft: individual conversion err
+
+            if not findings:
+                log.debug("[F214Q] No DHT findings produced")
+                return
+
+            # Ingest findings through canonical write path
+            if duckdb is not None:
+                await duckdb.async_ingest_findings_batch(findings)
+                log.debug("[F214Q] Ingested %d DHT findings", len(findings))
+                self._result.dht_findings_produced = len(findings)
+
+        except _asyncio.TimeoutError:
+            log.debug("[F214Q] DHT sidecar timed out after 60s")
+        except Exception as e:
+            log.warning("[F214Q] DHT sidecar failed: %s", e)
+
+    # ── F218Z: IPFS Discovery Sidecar ─────────────────────────────────────────
+
+    async def _run_ipfs_discovery_sidecar(
+        self,
+        cids: list[str] | None = None,
+        query_context: str = "",
+    ) -> list:
+        """
+        F218Z: IPFS CID resolution and content fetch via Tor transport.
+
+        Gate: HLEDAC_ENABLE_IPFS=1
+        Transport: Tor required (self._tor_transport), NEVER clearnet
+        Bounds: max 20 CIDs, 120s timeout per CID, 10MB max file size
+        Fail-soft: returns empty list on any error.
+
+        Args:
+            cids: List of IPFS CIDs to fetch. If None, extracts from
+                  pivot findings or DHT results in the current sprint.
+            query_context: Query string for ipfs_search_as_findings fallback.
+        """
+        import aiohttp as _aiohttp
+
+        # Guard: IPFS gate
+        if not os.environ.get("HLEDAC_ENABLE_IPFS", "").strip() in ("1", "true", "True"):
+            return []
+
+        # Guard: Tor transport required (invariant) — check circuit per Onion pattern
+        try:
+            from hledac.universal.transport.tor_transport import TorTransport
+            tor = TorTransport()
+            if not tor.available:
+                log.debug("[F218Z] TorTransport unavailable (deps missing)")
+                return []
+            if not await tor.is_circuit_established():
+                log.debug("[F218Z] Tor circuit not established — skipping IPFS discovery")
+                return []
+        except Exception as e:
+            log.debug("[F218Z] Tor availability check failed: %s", e)
+            return []
+
+        # Guard: memory pressure < 0.75 (M1 8GB safety)
+        try:
+            governor = getattr(self, "_governor", None)
+            if governor is not None:
+                snap = await governor.evaluate()
+                uma_state = getattr(snap, "state", "normal") if snap else "normal"
+                if uma_state in ("critical", "emergency"):
+                    return []
+        except Exception:
+            pass
+
+        log.debug("[F218Z] Starting IPFS discovery sidecar")
+
+        try:
+            from hledac.universal.network.ipfs_client import (
+                ipfs_fetch_as_findings,
+                ipfs_search_as_findings,
+            )
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+            findings: list = []
+
+            if cids:
+                # Fetch specified CIDs via Tor transport
+                self._result.ipfs_cids_attempted = len(cids)
+                for cid in cids[:20]:  # Cap at 20 CIDs for M1 safety
+                    try:
+                        results = await ipfs_fetch_as_findings(cid, query_context, timeout=120)
+                        if results:
+                            findings.extend(results)
+                    except Exception as e:
+                        log.debug("[F218Z] CID fetch failed for %s: %s", cid, e)
+                        continue
+            elif query_context:
+                # Search-based discovery fallback
+                self._result.ipfs_cids_attempted += 1
+                try:
+                    search_results = await ipfs_search_as_findings(query_context, timeout_per_result=120)
+                    if search_results:
+                        findings.extend(search_results)
+                except Exception as e:
+                    log.debug("[F218Z] IPFS search failed: %s", e)
+
+            # Ingest through canonical write path
+            if findings and self._duckdb is not None:
+                await self._duckdb.async_ingest_findings_batch(findings)
+                log.debug("[F218Z] Ingested %d IPFS findings", len(findings))
+                self._result.ipfs_findings_accepted = len(findings)
+
+            return findings
+
+        except Exception as e:
+            log.warning("[F218Z] IPFS sidecar failed: %s", e)
+            return []
 
     # ── F198A: Cross-Sprint Graph Accumulation ───────────────────────────────
 
@@ -10220,7 +10546,6 @@ class SprintScheduler:
             from hledac.universal.enhanced_research import (
                 DeepResearchRequest,
                 DeepResearchResponse,
-                TriadAdmissionDescriptor,
                 deep_research_provider_seam,
             )
             from hledac.universal.enhanced_research import ResearchDepth
@@ -10231,10 +10556,20 @@ class SprintScheduler:
         # Gate: preset must be DEEP/EXTREME/AUTONOMOUS (check via extreme_mode flag)
         if not self._config.deep_research_enabled:
             return []
-        # Triad admission — max 1 concurrent (M1 constraint)
-        triad_admission = TriadAdmissionDescriptor()
-        if hasattr(triad_admission, 'max_concurrent_research'):
-            triad_admission.max_concurrent_research = 1
+        # Sprint F11: require minimum accepted findings for deep research context
+        if getattr(self._result, 'accepted_findings', 0) < 3:
+            return []
+        # RAM guard: block if UMA > 75% (strict 75% cap per GHOST_INVARIANTS)
+        # GHOST_INVARIANTS: use is_warn as the strict cap boundary
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            snap = get_uma_snapshot()
+            if snap.get('is_warn') or snap.get('is_critical') or snap.get('is_emergency'):
+                level = snap.get('uma_pressure_level', 'unknown')
+                log.debug("[F11] Deep research blocked — RAM pressure: %s", level)
+                return []
+        except Exception:
+            pass  # fail-safe: guard is advisory
         # Build request
         query = getattr(self._result, 'sprint_query', '') or getattr(self._config, 'query', '')
         depth = ResearchDepth.EXHAUSTIVE if self._config.extreme_mode else ResearchDepth.DEEP
@@ -11798,9 +12133,14 @@ class SprintScheduler:
                 return "tor"
         except Exception:
             pass
-        # Check I2P
+        # Check I2P — use singleton first, fallback to instantiation
         try:
             from hledac.universal.transport.i2p_transport import I2PTransport
+            from hledac.universal.transport.transport_resolver import get_i2p_transport_singleton
+            singleton = get_i2p_transport_singleton()
+            if singleton is not None and singleton.is_running():
+                return "i2p"
+            # Fallback: instantiate to check is_running()
             i2p = I2PTransport()
             if i2p.is_running():
                 return "i2p"
@@ -12410,6 +12750,111 @@ class SprintScheduler:
             .write_parquet(out, compression="snappy")
         )
         return out
+
+    # ── Sprint F214: DHT KademliaNode singleton background init ─────────────
+
+    async def _init_dht_node_background(self) -> None:
+        """Background init — DHT node singleton (F214). Fire-and-forget."""
+        try:
+            from hledac.universal.dht.kademlia_node import (
+                KademliaNode,
+                DHT_BOOTSTRAP_PEERS,
+                DHT_REAL_UDP,
+            )
+            from hledac.universal.core.resource_governor import ResourceGovernor
+            import uuid
+
+            gov = self._governor or ResourceGovernor()
+            node = KademliaNode(
+                node_id=f"hledac-sprint-{uuid.uuid4().hex[:8]}",
+                governor=gov,
+                bootstrap_nodes=list(DHT_BOOTSTRAP_PEERS),
+            )
+            await node.start()
+            self._dht_node = node
+            log.info("[DHT] singleton started (real_udp=%s)", DHT_REAL_UDP)
+        except Exception as e:
+            log.debug("[DHT] background init failed (non-fatal): %s", e)
+            self._dht_node = None
+
+    # ── Sprint F250: I2PTransport background init ────────────────────────────
+
+    async def _init_i2p_background(self) -> None:
+        """Background init — I2PTransport singleton (F250). Fire-and-forget."""
+        try:
+            from hledac.universal.transport.i2p_transport import I2PTransport
+
+            transport = I2PTransport()
+            await transport.start()
+            self._i2p_transport = transport
+            log.info("[I2P] background transport started")
+            # F250: Register singleton so transport_resolver/router share same session
+            try:
+                from hledac.universal.transport.transport_resolver import set_i2p_transport_singleton
+                set_i2p_transport_singleton(self._i2p_transport)
+            except Exception:
+                pass
+            try:
+                from hledac.universal.transport.transport_router import set_i2p_transport_singleton
+                set_i2p_transport_singleton(self._i2p_transport)
+            except Exception:
+                pass
+        except Exception as e:
+            log.debug("[I2P] background init failed (non-fatal): %s", e)
+            if self._i2p_transport is not None:
+                try:
+                    self._i2p_transport.available = False
+                except Exception:
+                    pass
+
+    # ── Sprint F214Q B.3: TorTransport background init ─────────────────────────
+
+    async def _init_tor_background(self) -> None:
+        """Background init — TorTransport singleton (F214Q). Fire-and-forget."""
+        try:
+            from hledac.universal.transport.tor_transport import TorTransport, set_tor_transport_singleton
+
+            transport = TorTransport()
+            started = await transport.start()
+            if not started:
+                set_tor_transport_singleton(None)
+                log.debug("[Tor] start failed — transport disabled")
+                return
+            self._tor_transport = transport
+            set_tor_transport_singleton(self._tor_transport)
+            log.info("[Tor] background transport started")
+        except Exception as e:
+            log.debug("[Tor] background init failed (non-fatal): %s", e)
+            if self._tor_transport is not None:
+                try:
+                    self._tor_transport.available = False
+                except Exception:
+                    pass
+
+    # ── Sprint F250: NymTransport background init ───────────────────────────
+
+    async def _init_nym_background(self) -> None:
+        """Background init — NymTransport singleton (F250). Fire-and-forget."""
+        try:
+            from hledac.universal.transport.nym_transport import NymTransport, NYM_CLIENT_AVAILABLE
+
+            if not NYM_CLIENT_AVAILABLE:
+                from hledac.universal.transport.nym_transport import set_nym_transport_singleton
+                set_nym_transport_singleton(None)
+                log.debug("[Nym] nym-client not available — transport disabled")
+                return
+
+            transport = NymTransport()
+            await transport.start()
+            self._nym_transport = transport
+            log.info("[Nym] background transport started")
+        except Exception as e:
+            log.debug("[Nym] background init failed (non-fatal): %s", e)
+            if self._nym_transport is not None:
+                try:
+                    self._nym_transport.available = False
+                except Exception:
+                    pass
 
     # ── Sprint 8VD §C: Memory pressure loop ────────────────────────────────
 

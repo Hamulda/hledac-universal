@@ -21,9 +21,11 @@ M1 Optimized: Streaming processing, lazy loading, minimal memory footprint
 from __future__ import annotations
 
 import asyncio
+import io
 import hashlib
 import json
 import logging
+import os
 import re
 import socket
 import ssl
@@ -48,6 +50,19 @@ except ImportError:
 from ..types import RiskLevel, StealthConfig
 
 logger = logging.getLogger(__name__)
+
+# Optional deps for image extraction
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
+    import numpy as np
+    NP_AVAILABLE = True
+except ImportError:
+    NP_AVAILABLE = False
 
 
 class DarkWebSource(Enum):
@@ -460,6 +475,127 @@ class DarkWebCrawler:
             magnet_links=magnet_links
         )
 
+    async def extract_and_encode_images(
+        self,
+        html: str,
+        page_url: str,
+        sprint_id: str,
+        fetch_coordinator,
+        vision_encoder,
+        vector_store,
+    ) -> List[dict]:
+        """
+        Sprint F214R: Extract images from crawled HTML and store VisionEncoder embeddings.
+
+        Gate: HLEDAC_ENABLE_IMAGE_OSINT=1 (default: off).
+        Bounded: max 3 images per page, 512KB per image, 8s timeout.
+        Fail-soft: any exception → log warning, return [].
+        """
+        if not os.getenv("HLEDAC_ENABLE_IMAGE_OSINT"):
+            return []
+
+        if not PIL_AVAILABLE or not NP_AVAILABLE:
+            logger.warning("PIL or numpy not available, skipping image extraction")
+            return []
+
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            # Cap before iteration to avoid unbounded parse on gallery pages
+            img_tags = soup.find_all("img", src=True)[:10]
+        except Exception as exc:
+            logger.warning("BeautifulSoup parse failed for %s: %s", page_url, exc)
+            return []
+
+        # Filter: skip data URIs, #, empty, tracking pixels (width+height < 20px)
+        candidates: List[str] = []
+        for img in img_tags:
+            src = img.get("src", "").strip()
+            if not src or src.startswith("data:") or src.startswith("#"):
+                continue
+            w = img.get("width")
+            h = img.get("height")
+            try:
+                if w and h and int(w) < 20 and int(h) < 20:
+                    continue
+            except (ValueError, TypeError):
+                pass
+            candidates.append(urljoin(page_url, src))
+            if len(candidates) >= 3:
+                break
+
+        if not candidates:
+            return []
+
+        results: List[dict] = []
+        for img_url in candidates:
+            try:
+                # Download via FetchCoordinator —JA3 stealth transport
+                # Content-Length check (>512KB) handled by fetch_coordinator
+                resp = await fetch_coordinator.fetch(img_url, timeout=8.0)
+                if resp is None:
+                    continue
+                body = resp.get("body") if isinstance(resp, dict) else None
+                if body is None:
+                    continue
+                if isinstance(body, str):
+                    body = body.encode()
+                if len(body) > 512 * 1024:
+                    logger.debug("Image exceeds 512KB limit: %s", img_url)
+                    continue
+
+                # Validate PIL-openable
+                try:
+                    pil_img = Image.open(io.BytesIO(body))
+                    pil_img = pil_img.convert("RGB")
+                except Exception:
+                    logger.debug("Not a valid image: %s", img_url)
+                    continue
+
+                # Encode batch (VisionEncoder handles CoreML/ANE internally)
+                embeddings = vision_encoder.encode_batch([body])
+                if not embeddings or embeddings[0] is None:
+                    logger.warning("VisionEncoder returned None for: %s", img_url)
+                    continue
+
+                emb = embeddings[0]
+                if hasattr(emb, "tolist"):
+                    emb = emb.tolist()
+
+                # Store via vector_store.add_vectors — table="image"
+                try:
+                    import numpy as np
+
+                    vec_id = f"img_{sprint_id}_{hashlib.md5(img_url.encode()).hexdigest()[:12]}"
+                    vector_store.add_vectors(
+                        ids=[vec_id],
+                        vectors=np.array([emb], dtype=np.float32),
+                        index_type="image",
+                    )
+                    stored = True
+                except Exception as exc:
+                    logger.warning("Vector store write failed for %s: %s", img_url, exc)
+                    stored = False
+
+                results.append(
+                    {
+                        "img_url": img_url,
+                        "embedding_dim": len(emb),
+                        "stored": stored,
+                    }
+                )
+            except Exception as exc:
+                logger.warning("Image extract/encode failed for %s: %s", img_url, exc)
+                continue
+
+        logger.debug(
+            "Image extraction: %d/%d images processed for %s",
+            len(results),
+            len(candidates),
+            page_url,
+        )
+        return results
+
     def _extract_links(self, html: str, base_domain: str) -> List[str]:
         """Extract .onion links from content."""
         from bs4 import BeautifulSoup
@@ -692,6 +828,8 @@ __all__ = [
     "DarkWebSource",
     "OnionType",
     "darkweb_content_to_canonical",
+    "DHTFinding",
+    "dht_content_to_canonical",
 ]
 
 
@@ -722,5 +860,57 @@ def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> "Canoni
         confidence=confidence,
         ts=content.extracted_at,
         provenance=(content.url,),
+        payload_text=payload,
+    )
+
+
+# =============================================================================
+# DHT Discovery Adapter — Sprint F214Q
+# =============================================================================
+@dataclass
+class DHTFinding:
+    """Structured output from DHT crawl operations."""
+    info_hash: str
+    name: str = ""
+    files: list[dict] = field(default_factory=list)
+    size_bytes: int = 0
+    peers: int = 0
+    source: str = "dht"
+
+
+def dht_content_to_canonical(dht_result: DHTFinding, query: str) -> "CanonicalFinding":
+    """
+    Sprint F214Q: Map DHT crawl result → CanonicalFinding for sprint ingestion.
+
+    Bounded: payload_text truncated to 3000 chars, fail-safe.
+    INVARIANT: DHT queries NEVER go over Tor — clearnet UDP only.
+    """
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    name = dht_result.name or "dht_torrent"
+    # Build magnet URI from info_hash
+    magnet = f"magnet:?xt=urn:btih:{dht_result.info_hash}"
+    if dht_result.name:
+        magnet += f"&dn={dht_result.name}"
+
+    body = f"info_hash={dht_result.info_hash} peers={dht_result.peers} size={dht_result.size_bytes}"
+    if dht_result.files:
+        file_names = ", ".join(f.get("name", "") for f in dht_result.files[:10])
+        body += f"\nfiles: {file_names}"
+    payload = f"{name}\n{magnet}\n{body[:3000]}"
+
+    # confidence based on peer count (more peers = more confirmed)
+    confidence = min(0.9, 0.3 + (dht_result.peers / 100))
+    confidence = max(0.0, min(1.0, confidence))
+
+    finding_id = f"dht_{hashlib.md5(dht_result.info_hash.encode()).hexdigest()[:16]}"
+
+    return CanonicalFinding(
+        finding_id=finding_id,
+        query=query,
+        source_type="dht_discovery",
+        confidence=confidence,
+        ts=time.time(),
+        provenance=(f"info_hash:{dht_result.info_hash}",),
         payload_text=payload,
     )

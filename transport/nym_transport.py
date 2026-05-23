@@ -2,6 +2,8 @@ import asyncio
 import logging
 import json
 import time
+import os
+import shutil
 from hledac.universal.utils.uuid7 import new_runtime_id
 from typing import Dict, Callable, Optional, Any
 from pathlib import Path
@@ -9,6 +11,20 @@ from pathlib import Path
 from .base import Transport
 
 logger = logging.getLogger(__name__)
+
+# Sprint F250: Nym client availability check
+NYM_CLIENT_AVAILABLE: bool = shutil.which("nym-client") is not None
+# Fallback: check HLEDAC_NYM_SOCKS_PROXY env var
+if not NYM_CLIENT_AVAILABLE:
+    NYM_CLIENT_AVAILABLE = bool(os.environ.get("HLEDAC_NYM_SOCKS_PROXY"))
+
+# Module-level singleton
+_NYM_TRANSPORT_SINGLETON: Any = None
+
+
+def set_nym_transport_singleton(transport: Any) -> None:
+    global _NYM_TRANSPORT_SINGLETON
+    _NYM_TRANSPORT_SINGLETON = transport
 
 
 class NymTransport(Transport):
@@ -50,6 +66,12 @@ class NymTransport(Transport):
         self.circuit_breaker_last_failure = 0.0
 
     async def start(self):
+        # Sprint F250: fail-soft if nym-client not available
+        if not NYM_CLIENT_AVAILABLE:
+            logger.info("[Nym] nym-client not found — transport disabled")
+            self.available = False
+            return
+
         try:
             self.client_process = await asyncio.create_subprocess_exec(
                 self.nym_client_path,
@@ -60,8 +82,11 @@ class NymTransport(Transport):
                 stderr=asyncio.subprocess.PIPE
             )
         except FileNotFoundError:
-            raise RuntimeError(f"nym-client not found at {self.nym_client_path}")
-        logger.info("Nym client process started")
+            logger.info("[Nym] nym-client not found at %s — transport disabled", self.nym_client_path)
+            self.available = False
+            return
+        self.available = True
+        set_nym_transport_singleton(self)
 
         self._stdout_task = asyncio.create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name="nym:stdout_drain")
         self._stderr_task = asyncio.create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name="nym:stderr_drain")

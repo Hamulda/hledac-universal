@@ -19,7 +19,7 @@ NOT AUTHORITY FOR:
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +320,20 @@ def get_transport_hint_string(url: str) -> str:
     if transport == Transport.FREENET:
         return "clearnet"  # Freenet uses HTTP proxy, treated as clearnet
     return "clearnet"
+
+
+_I2P_TRANSPORT_SINGLETON: Any = None
+
+
+def set_i2p_transport_singleton(transport: Any) -> None:
+    """F250: Register I2PTransport singleton so all consumers share one session."""
+    global _I2P_TRANSPORT_SINGLETON
+    _I2P_TRANSPORT_SINGLETON = transport
+
+
+def get_i2p_transport_singleton() -> Any:
+    """F250: Return registered I2PTransport singleton, or None."""
+    return _I2P_TRANSPORT_SINGLETON
 
 
 # Backwards compatibility alias

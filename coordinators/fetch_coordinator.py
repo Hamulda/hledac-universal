@@ -69,6 +69,14 @@ from urllib.parse import urlparse
 from .base import UniversalCoordinator
 from ..tools.url_dedup import RotatingBloomFilterAdapter, DeduplicationStrategy
 
+# Sprint F214: Zero-attribution HTTP header randomization
+try:
+    from ..security.zero_attribution_engine import ZeroAttributionEngine
+
+    _ZERO_ATTR_ENGINE = ZeroAttributionEngine()
+except Exception:
+    _ZERO_ATTR_ENGINE = None
+
 
 def _create_dedup_strategy():
     # type: () -> DeduplicationStrategy
@@ -300,6 +308,18 @@ class FetchCoordinator(UniversalCoordinator):
                 logger.warning(f"GopherTransport init failed: {e}")
                 self._gopher_transport_enabled = False
 
+        # Sprint P3: CAPTCHA pre-filter (gated, PIL-only heuristics)
+        self._captcha_detector: Optional[Any] = None
+        self._captcha_detections: int = 0
+        if os.environ.get("HLEDAC_ENABLE_CAPTCHA_DETECTION") == "1":
+            try:
+                from ..security.captcha_detector import CaptchaDetector
+                self._captcha_detector = CaptchaDetector()
+                logger.info("CaptchaDetector enabled via HLEDAC_ENABLE_CAPTCHA_DETECTION=1")
+            except Exception as e:
+                logger.warning(f"CaptchaDetector init failed: {e}")
+                self._captcha_detector = None
+
         # Sprint F214AD: Race condition guard for dedup check+add
         self._dedup_lock = asyncio.Lock()
 
@@ -464,6 +484,13 @@ class FetchCoordinator(UniversalCoordinator):
         """Returns {domain: unblock_timestamp} for currently blocked domains."""
         now = time.time()
         return {d: t for d, t in self._domain_blocked_until.items() if t > now}
+
+    def get_captcha_stats(self) -> Dict[str, Any]:
+        """Sprint P3: Return CAPTCHA detection stats for RL telemetry."""
+        return {
+            'captcha_detections_total': self._captcha_detections,
+            'captcha_detector_enabled': self._captcha_detector is not None,
+        }
 
     def get_canonical_breaker_stats(self) -> Dict[str, Any]:
         """
@@ -885,10 +912,14 @@ class FetchCoordinator(UniversalCoordinator):
                 return {
                     'url': url,
                     'final_url': url,
-                    'content': (result.content or '').encode('utf-8', errors='replace'),
+                    'content': _ZERO_ATTR_ENGINE.strip_metadata(
+                        (result.content or '').encode('utf-8', errors='replace'),
+                        (result.headers or {}).get('content-type', 'text/html'),
+                    ),
                     'status_code': result.status_code or 200,
                     'content_type': (result.headers or {}).get('content-type', 'text/html'),
-                    'headers': result.headers or {},
+                    # Sprint F214: rotate HTTP headers for zero-attribution
+                    'headers': _ZERO_ATTR_ENGINE.fingerprint_rotate_headers(result.headers or {}),
                     'js_rendered': False,
                     'success': True,
                 }
@@ -1381,6 +1412,25 @@ class FetchCoordinator(UniversalCoordinator):
                     result['paywall'] = bypass_result.get('paywall')
 
         trace_fetch_end(url, "none", "done", 0.0)
+
+        # Sprint P3: CAPTCHA pre-filter — skip image/* responses flagged as CAPTCHA
+        if (
+            self._captcha_detector is not None
+            and result
+            and result.get("content")
+        ):
+            ct = result.get("content_type", "")
+            content_bytes = result["content"]
+            if ct.startswith("image/") and len(content_bytes) < 200 * 1024:
+                url_for_check = result.get("final_url") or result.get("url") or url
+                try:
+                    if self._captcha_detector.is_captcha(content_bytes, url_for_check):
+                        logger.debug(f"[CAPTCHA] CAPTCHA detected at {url_for_check}, skipping")
+                        self._captcha_detections += 1
+                        return None
+                except Exception:
+                    pass  # fail-soft
+
         return result
 
     # ==========================================================================

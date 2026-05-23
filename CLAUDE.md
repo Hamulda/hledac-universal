@@ -104,6 +104,16 @@ Zero-knowledge, zero-logging policy for sensitive operations.
 
 ---
 
+## Import Health
+
+Verify import correctness before committing:
+
+```bash
+python scripts/verify_imports.py
+```
+
+Generates `IMPORT_HEALTH_REPORT.json` — per-file status: `ok`, `compile_error`, or `import_error`.
+
 ## Testing
 
 Run only tests that exist within `hledac/universal/`:

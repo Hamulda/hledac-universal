@@ -166,11 +166,20 @@ class MobileCLIPFusion:
         self._tokenizer = None
         self.embed_dim = 512
         self.__lock = None
+        self._vision_encoder: Optional[Any] = None
 
     def _lock(self):
         if self.__lock is None:
             self.__lock = asyncio.Lock()
         return self.__lock
+
+    def _get_vision_encoder(self):
+        """Lazy-load VisionEncoder singleton (P0 canonical)."""
+        if self._vision_encoder is None:
+            from multimodal.vision_encoder import VisionEncoder
+            self._vision_encoder = VisionEncoder()
+            # VisionEncoder.load() is idempotent — singleton guard inside VisionEncoder
+        return self._vision_encoder
 
     async def _lazy_load(self) -> None:
         async with self._lock():
@@ -199,11 +208,12 @@ class MobileCLIPFusion:
         return mx_mod.random.normal(shape=(self.embed_dim,))
 
     async def encode_image(self, image_bytes: bytes):
+        """Encode image via VisionEncoder (1024d) — replaces random stub."""
         await self._lazy_load()
-        mx_mod = _get_mlx_core()
-        if mx_mod is None:
-            raise RuntimeError("MLX core not available")
-        return mx_mod.random.normal(shape=(self.embed_dim,))
+        encoder = self._get_vision_encoder()
+        # VisionEncoder.encode_batch() is async — await directly
+        result = await encoder.encode_batch([image_bytes])
+        return result[0]  # np.ndarray (1024d)
 
     async def fuse(self, text_emb, image_emb):
         return (text_emb + image_emb) / 2

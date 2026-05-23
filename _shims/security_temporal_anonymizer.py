@@ -1,10 +1,4 @@
-"""
-Stub for hledac.security.temporal_anonymizer — module does not exist.
-Created as ghost stub per Sprint F214 sibling import fix.
-"""
-class TemporalAnonymizer:
-    """STUB: hledac.security.temporal_anonymizer not found. Replace when implemented."""
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError("TemporalAnonymizer stub — real implementation missing")
+"""Re-export — real implementation lives in security/temporal_anonymizer.py."""
+from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
 
 __all__ = ["TemporalAnonymizer"]

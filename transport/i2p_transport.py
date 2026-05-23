@@ -202,6 +202,7 @@ class I2PTransport(Transport):
                 await writer.wait_closed()
                 return True
 
+            logger.debug("I2P SAM mode: DEST GENERATE succeeded but STREAM CONNECT not implemented — disabling SAM")
             writer.close()
             await writer.wait_closed()
         except Exception as e:

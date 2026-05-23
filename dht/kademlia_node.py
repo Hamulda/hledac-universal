@@ -297,7 +297,7 @@ async def crawl_dht_for_keyword(
     node = KademliaNode(
         node_id=f"hledac-crawl-{uuid.uuid4().hex[:8]}",
         governor=governor,
-        bootstrap_nodes=[f"{h}:{p}" for h, p in BOOTSTRAP_PEERS],
+        bootstrap_nodes=BOOTSTRAP_PEERS,
     )
 
     duckdb_store = None
@@ -427,7 +427,7 @@ class KademliaNode:
         self,
         node_id: str,
         governor: ResourceGovernor,
-        bootstrap_nodes: Optional[List[str]] = None,
+        bootstrap_nodes: Optional[List[Tuple[str, int]]] = None,
         k: int = 20,
         alpha: int = 3,
     ):
@@ -467,10 +467,10 @@ class KademliaNode:
             except Exception as e:
                 logger.debug(f"[DHT] real UDP bootstrap failed (non-fatal): {e}")
         else:
-            for peer in self.bootstrap_nodes:
-                if peer == self.node_id:
+            for host, _port in self.bootstrap_nodes:
+                if f"{host}:{_port}" == self.node_id:
                     continue
-                await self._ping(peer)
+                await self._ping(host)
 
     async def _dht_bootstrap_real(self) -> None:
         """
@@ -507,7 +507,7 @@ class KademliaNode:
                 bencoded = self._bencode(find_msg) + b"\n"
 
                 pending = []
-                for host, port in DHT_BOOTSTRAP_PEERS:
+                for host, port in self.bootstrap_nodes:
                     try:
                         _, sent = await asyncio.wait_for(
                             protocol.send(bencoded, (host, port)),
@@ -910,11 +910,10 @@ class KademliaNode:
             "a": {"id": self.node_id.encode()[:20].ljust(20, b'\x00')}
         }
         try:
-            await asyncio.get_running_loop().sock_sendall(
-                sock, self._bencode(ping_msg) + b"\n"
-            )
+            loop = asyncio.get_running_loop()
+            await loop.sock_sendto(sock, self._bencode(ping_msg) + b"\n", (host, port))
             data = await asyncio.wait_for(
-                asyncio.get_running_loop().sock_recv(sock, 65535),
+                loop.sock_recv(sock, 65535),
                 timeout=2.0
             )
             if data:
@@ -937,11 +936,10 @@ class KademliaNode:
             }
         }
         try:
-            await asyncio.get_running_loop().sock_sendall(
-                sock, self._bencode(msg) + b"\n"
-            )
+            loop = asyncio.get_running_loop()
+            await loop.sock_sendto(sock, self._bencode(msg) + b"\n", (host, port))
             data = await asyncio.wait_for(
-                asyncio.get_running_loop().sock_recv(sock, 65535),
+                loop.sock_recv(sock, 65535),
                 timeout=2.0
             )
             if data:
@@ -1022,8 +1020,8 @@ class KademliaNode:
                 timeout=5.0
             )
 
-            # BitTorrent handshake
-            protocol = b"BitTorrent protocol"
+            # BitTorrent handshake (BEP-10: 19-byte protocol name length prefix)
+            protocol = bytes([19]) + b"BitTorrent protocol"
             handshake = (
                 protocol +
                 bytes(8) +  # reserved bytes (extensions)

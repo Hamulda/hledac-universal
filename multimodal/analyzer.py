@@ -233,7 +233,7 @@ class MultimodalEnricher:
     def __init__(
         self,
         governor: Any,
-        embedding_dim: int = 1280,
+        embedding_dim: int = 1024,
         batch_size: int = 4,
     ):
         """

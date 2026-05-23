@@ -359,9 +359,16 @@ class Hypothesis:
 
         self.confidence = weighted_confidence / total_weight if total_weight > 0 else 0.5
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert hypothesis to dictionary."""
-        return {
+    def to_dict(self, ds_engine: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Convert hypothesis to dictionary.
+
+        Args:
+            ds_engine: Optional DempsterShafer engine for DS second-opinion fields.
+                      When provided, includes ds_belief_support, ds_belief_conflict,
+                      ds_conflict_mass, and ds_contradiction.
+        """
+        result = {
             "id": self.id,
             "statement": self.statement,
             "hypothesis_type": self.hypothesis_type,
@@ -386,6 +393,14 @@ class Hypothesis:
             "parent_hypotheses": self.parent_hypotheses,
             "metadata": self.metadata,
         }
+        # Dempster-Shafer second-opinion fields (supplementary, non-destructive)
+        # Only include when ds_engine is explicitly provided (backward compat)
+        if ds_engine is not None:
+            result["ds_belief_support"] = ds_engine.belief("support")
+            result["ds_belief_conflict"] = ds_engine.belief("conflict")
+            result["ds_conflict_mass"] = ds_engine.conflict_mass()
+            result["ds_contradiction"] = ds_engine.detect_contradiction()
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Hypothesis:

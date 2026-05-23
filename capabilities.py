@@ -95,6 +95,7 @@ class Capability(Enum):
     SHODAN = "shodan"
     CENSYS = "censys"
     GREYNOISE = "greynoise"
+    DHT = "dht"
 
     # Analysis
     TEMPORAL = "temporal"
@@ -322,6 +323,8 @@ def _get_tool_capability_declarations() -> dict[str, set[str]]:
         "web_search": {"reranking"},
         "academic_search": {"reranking", "entity_linking"},
         "entity_extraction": {"entity_linking"},
+        # F218Z: IPFS discovery via Tor transport
+        "ipfs_discovery": set(),
     }
 
     # Return the curated declarations
@@ -897,6 +900,15 @@ def create_default_registry() -> CapabilityRegistry:
         available=_gn_env and bool(_gn_key),
         reason=f"GreyNoise enabled (key present: {bool(_gn_key)})" if _gn_env else "GreyNoise disabled via HLEDAC_ENABLE_GREYNOISE",
         module_path="hledac.universal.intelligence.greynoise_lane"
+    )
+
+    # F214Q: DHT discovery — gate on HLEDAC_ENABLE_DHT=1
+    _dht_env = os.environ.get("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on")
+    registry.register(
+        capability=Capability.DHT,
+        available=_dht_env,
+        reason=f"DHT enabled (HLEDAC_ENABLE_DHT=1)" if _dht_env else "DHT disabled via HLEDAC_ENABLE_DHT",
+        module_path="hledac.universal.dht.kademlia_node"
     )
 
     return registry
