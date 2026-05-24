@@ -252,6 +252,61 @@ class ZeroAttributionEngine:
             return []
 
     # ------------------------------------------------------------------
+    # 2b. Cover traffic URL generation (transport-aware)
+    # ------------------------------------------------------------------
+    def generate_cover_traffic_urls(
+        self, n_decoys: int = 3, transport: str = "clearnet"
+    ) -> list[str]:
+        """Generate n_decoy Wikipedia/archive URLs for cover traffic.
+
+        Transport-aware mapping:
+        - clearnet / unknown → Wikipedia article + Archive.org fallback
+        - tor → Ahmia .onion search (no clearnet leak)
+        - i2p → legwork.i2p search
+
+        M1 constraint: < 2ms — pure sync URL construction, no I/O.
+        """
+        from urllib.parse import quote
+
+        if not self._enabled or n_decoys <= 0:
+            return []
+        try:
+            # Get decoy query strings from existing method
+            decoy_queries = self.generate_cover_traffic(n_decoys=n_decoys)
+            if not decoy_queries:
+                return []
+
+            urls: list[str] = []
+            transport_lower = transport.lower()
+
+            if transport_lower in ("clearnet", "unknown"):
+                # Map each query to Wikipedia article URL
+                for query in decoy_queries[:n_decoys]:
+                    safe_topic = query.replace(" ", "_").replace('"', "")
+                    urls.append(f"https://en.wikipedia.org/wiki/{quote(safe_topic, safe='')}")
+                # Archive.org fallback for extra decoys beyond Wikipedia
+                for query in decoy_queries[n_decoys:]:
+                    safe_topic = query.replace(" ", "+").replace('"', "")
+                    urls.append(f"https://archive.org/search?query={quote(safe_topic)}")
+
+            elif transport_lower == "tor":
+                # Ahmia .onion search — OPSEC: no clearnet URLs for Tor cover traffic
+                onion_base = "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/"
+                for query in decoy_queries[:n_decoys]:
+                    urls.append(f"{onion_base}?q={quote(query)}")
+                # If no queries (pool exhausted), fail-soft → empty list
+
+            elif transport_lower == "i2p":
+                # legwork.i2p search
+                i2p_base = "http://legwork.i2p/search?q="
+                for query in decoy_queries[:n_decoys]:
+                    urls.append(f"{i2p_base}{quote(query)}")
+
+            return urls
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
     # 3. Header fingerprint randomization
     # ------------------------------------------------------------------
     def fingerprint_rotate_headers(self, headers: dict | None = None) -> dict:

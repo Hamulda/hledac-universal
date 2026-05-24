@@ -115,15 +115,14 @@ osint-html = [
     "selectolax>=0.3.21",   # Rust parser; 10-50x faster than BS4
     "xxhash>=3.6.0,<4.0.0", # fast non-crypto hash for IOC deduplication
     "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
-
+]
 # --- pq: post-quantum cryptography via liboqs (Apple Silicon homebrew) ---
 # Requires: brew install liboqs && uv pip install liboqs-python
 pq = [
     "liboqs-python>=0.10.0",  # ML-KEM-768 + ML-DSA-65 via Open Quantum Safe
 ]
-]
 
-# --- graph-storage: columnar + DuckDB + LanceDB ---
+# --- graph-storage ---
 graph-storage = [
     "duckdb>=1.2.0",
     "lancedb>=0.2.5",
@@ -235,6 +234,12 @@ transport = [
 # Default/m1-local: NO kuzu/igraph dependency (both are fully lazy/fail-soft).
 graph-truth = [
     "kuzu>=0.6.0",
+]
+
+# --- dspy: DSPy prompt optimization (optional, for OSINT synthesis) ---
+# Enables MIPROv2-optimized prompts for hypothesis generation and dark queries.
+dspy = [
+    "dspy>=2.5.0",
 ]
 
 # --- m1-local: ergonomic default for MacBook Air M1 8GB (no torch, no browser, no heavy OCR) ---

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Dict, Any
 import math
+import os
 
 try:
     import compression.zstd as _zstd
@@ -59,6 +60,7 @@ class SprintPolicyState:
     # QMIX network weights (serialized MLX arrays when MLX available)
     qmix_weights: Optional[Dict[str, Any]] = None
     last_train_sprint: int = -1
+    last_action: int = 0  # F228F: last RL action taken
 
 
 def _serialize_weights(weights: Any) -> Dict[str, Any]:
@@ -132,9 +134,13 @@ class SprintPolicyManager:
         self._state_extractor = None
         self._qmix_trainer = None
         self._agents = None
+        self._reward_history: list = []  # F257FIX: always initialize (used in update regardless of rl_train_mode)
 
         if self._enabled:
             self._load()
+            # F228F: initialize reward_history from loaded sprint_rewards
+            if self._state.sprint_rewards:
+                self._reward_history = list(self._state.sprint_rewards[-100:])
 
     # ── QMIX Initialization ─────────────────────────────────────────────────
 
@@ -143,9 +149,9 @@ class SprintPolicyManager:
         if not self._enabled:
             return
         try:
-            from hledac.universal.rl.replay_buffer import MARLReplayBuffer
-            from hledac.universal.rl.state_extractor import StateExtractor
-            from hledac.universal.rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
+            from rl.replay_buffer import MARLReplayBuffer
+            from rl.state_extractor import StateExtractor
+            from rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
 
             self._state_extractor = StateExtractor(state_dim=12)
 
@@ -170,6 +176,20 @@ class SprintPolicyManager:
                 gamma=0.99,
                 tau=0.005,
             )
+
+            # F257FIX: Load persisted weights into joint_model after init
+            # _load() ran earlier and set self._state.qmix_weights from disk
+            # but weights were never deserialized and applied to the model
+            if self._state.qmix_weights and hasattr(self._qmix_trainer, 'joint_model'):
+                try:
+                    loaded = _deserialize_weights(self._state.qmix_weights)
+                    if loaded:
+                        current_params = dict(self._qmix_trainer.joint_model.parameters())
+                        updated_params = {k: loaded.get(k, v) for k, v in current_params.items()}
+                        self._qmix_trainer.joint_model.update(updated_params)
+                        log.debug("[SprintPolicyManager] Loaded %d weight tensors into joint_model", len(loaded))
+                except Exception as e:
+                    log.debug("[SprintPolicyManager] Weight loading failed (safe to ignore): %s", e)
 
             log.info("[SprintPolicyManager] QMIX components initialized (rl_train_mode=%s)", self._rl_train_mode)
 
@@ -325,6 +345,10 @@ class SprintPolicyManager:
         # GHOST_INVARIANTS: sprint_rewards bounded — prevents unbounded list growth
         if len(self._state.sprint_rewards) > 100:
             self._state.sprint_rewards = self._state.sprint_rewards[-100:]
+        # F228F: reward_history ring buffer update
+        self._reward_history.append(reward)
+        if len(self._reward_history) > 100:
+            self._reward_history = self._reward_history[-100:]
 
         # ── Replay buffer storage ────────────────────────────────────────────
         if self._replay_buffer is not None and self._state_extractor is not None:
@@ -334,11 +358,13 @@ class SprintPolicyManager:
                 next_state = self._state_extractor.extract_next(result)
 
                 # Last action (from result if available, else default)
+                # F257FIX: Store as 5-element vector (one per QMIX agent) — matches replay_buffer shape (n_agents,)
                 last_action = getattr(result, "last_rl_action", 0) % 5
+                action_vector = [last_action] * 5  # broadcast scalar to all agents
 
                 self._replay_buffer.add(
                     state=state,
-                    action=last_action,
+                    action=action_vector,
                     reward=reward,
                     next_state=next_state,
                     done=False,
@@ -392,7 +418,12 @@ class SprintPolicyManager:
             if batch is None or batch["states"].shape[0] < _MIN_REPLAY_SIZE:
                 return
 
-            loss = self._qmix_trainer.train_step(batch)
+            # F257FIX: QMIXJointTrainer.update() not train_step() — defensive hasattr
+            _train = getattr(self._qmix_trainer, 'update', None) or getattr(self._qmix_trainer, 'train_step', None)
+            if _train is None:
+                log.error("[SprintPolicyManager] No training method found on QMIXJointTrainer")
+                return
+            loss = _train(batch)
 
             # Persist updated weights
             if hasattr(self._qmix_trainer, "joint_model"):
@@ -451,11 +482,11 @@ class SprintPolicyManager:
         Only valid to call when enabled; otherwise returns ACTION_CONTINUE.
         """
         if not self._enabled:
-            from hledac.universal.rl.actions import ACTION_CONTINUE
+            from rl.actions import ACTION_CONTINUE
             return ACTION_CONTINUE
 
         if self.should_explore():
-            from hledac.universal.rl.actions import ACTION_DEEP_DIVE
+            from rl.actions import ACTION_DEEP_DIVE
             return ACTION_DEEP_DIVE
 
         # QMIX inference: if weights loaded and agents available, use argmax Q
@@ -475,13 +506,13 @@ class SprintPolicyManager:
                                 best_q = q_val
                                 best_action = int(agent_id)
                         # Map to action constants
-                        from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_BRANCH, ACTION_YIELD
+                        from rl.actions import ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_BRANCH, ACTION_YIELD
                         ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}
                         return ACTION_MAP.get(best_action, ACTION_CONTINUE)
             except Exception:
                 pass
 
-        from hledac.universal.rl.actions import ACTION_CONTINUE
+        from rl.actions import ACTION_CONTINUE
         return ACTION_CONTINUE
 
     def update_with_quality_decisions(self, decisions: list, feed_url: str = "") -> None:
@@ -583,6 +614,21 @@ class SprintPolicyManager:
             "rl_epsilon": self._epsilon,
             "rl_total_reward": self._state.total_reward,
             "rl_last_action": self._state.last_action,
+        }
+
+    def get_reward_stats(self) -> dict[str, Any]:
+        """
+        F228F: Return reward distribution statistics.
+        """
+        if not self._reward_history:
+            return {"mean": 0.0, "min": 0.0, "max": 0.0, "last_10": [], "count": 0}
+        last_10 = self._reward_history[-10:]
+        return {
+            "mean": sum(self._reward_history) / len(self._reward_history),
+            "min": min(self._reward_history),
+            "max": max(self._reward_history),
+            "last_10": last_10,
+            "count": len(self._reward_history),
         }
 
     def attach_scheduler(self, scheduler) -> None:

@@ -214,3 +214,30 @@ that Google does not crawl. All integration follows these invariants:
 - GREYNOISE: enabled when query has IP/CIDR indicator (`ctx.has_ip`)
 - Both run via `_run_shodan_lane`, `_run_censys_lane`, `_run_greynoise_lane`
   in `run_enabled_acquisition_lanes()` inner closure
+
+---
+
+## Sprint F214Q: Cover Traffic OPSEC Noise
+
+Cover traffic is probabilistic inline injection (not background task — too complex for M1).
+
+#### Invariant: Cover traffic NESMÍ go to storage pipeline
+Cover traffic is OPSEC noise, not data. Fire-and-forget only. Never ingested into DuckDB.
+
+#### Transport matching
+Cover traffic MUST use identical transport as real request:
+- Tor URL → Tor cover traffic
+- Clearnet URL → Clearnet cover traffic
+- .onion → Tor, .i2p → I2P
+
+#### Rate & limits
+- `HLEDAC_COVER_TRAFFIC_RATE=0.15` (15% chance after each successful real fetch)
+- Max 2 cover traffic fires per sprint (M1 RAM protection)
+- Short random delay (0.5–3s) to desynchronize cover from real request
+
+#### Implementation
+- `FetchCoordinator._maybe_fire_cover_traffic(transport)` — probabilistic check
+- `FetchCoordinator._fire_cover_traffic(url, delay, transport)` — fire-and-forget
+- Uses `curl_cffi.AsyncSession` with JA3 fingerprint (same as real requests)
+- `MetricsRegistry.inc("cover_traffic_fired")` for observability
+- Fail-soft: all errors are silent (cover traffic failures are expected behavior)

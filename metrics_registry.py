@@ -88,6 +88,8 @@ METRIC_NAMES = frozenset([
     # Dark surface pivot metrics (F214K)
     "dark_surface_pivots_attempted",
     "dark_surface_pivots_successful",
+    # Sprint F214Q: Cover traffic OPSEC noise
+    "cover_traffic_fired",
 ])
 
 

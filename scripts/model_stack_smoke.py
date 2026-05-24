@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,22 @@ def check_embeddings() -> dict:
             else:
                 coreml_active_path = "not_initialized"
             notes.append(f"ANE BGE CoreMLEmbedder path={coreml_active_path}")
+
+            # CoreML real embed test (if mlpackage exists)
+            try:
+                from hledac.universal.embedding_pipeline import get_ane_embedder
+                bge = get_ane_embedder()
+                if bge is not None and bge.is_loaded:
+                    t0 = time.monotonic()
+                    vec = bge.embed("OSINT test query")
+                    elapsed = time.monotonic() - t0
+                    notes.append(f"CoreML embed OK shape={vec.shape} time={elapsed*1000:.1f}ms")
+                    if vec.shape != (1, 384):
+                        notes.append(f"WARN: expected (1,384) got {vec.shape}")
+                else:
+                    notes.append("CoreML BGE not loaded (smoke test skipped)")
+            except Exception as e:
+                notes.append(f"CoreML BGE smoke test: {e}")
         except ImportError:
             notes.append("CoreMLEmbedder=N/A (coremltools not installed)")
         except Exception as e:

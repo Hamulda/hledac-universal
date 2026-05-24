@@ -111,7 +111,13 @@ def _load_metadata_extractor():
 
 
 def _load_steganography_detector():
-    """Lazy load steganography detector module."""
+    """Lazy load steganography detector module.
+
+    NOTE: forensics/steganography_detector.py is a lightweight wrapper.
+    CANONICAL implementation is security/stego_detector.py (StatisticalStegoDetector).
+    The forensics wrapper is kept for backward compatibility with metadata_extractor/enrichment_service.
+    For new code, prefer security.stego_detector.StatisticalStegoDetector.
+    """
     global STEGANOGRAPHY_AVAILABLE
     global analyze_image_steganography
     global SteganalysisResult
@@ -130,7 +136,13 @@ def _load_steganography_detector():
 
 
 def _load_digital_ghost_detector():
-    """Lazy load digital ghost detector module."""
+    """Lazy load digital ghost detector module.
+
+    NOTE: forensics/digital_ghost_detector.py is a lightweight standalone implementation.
+    CANONICAL implementation is security/digital_ghost_detector.py (DigitalGhostDetector class).
+    The forensics version provides standalone functions (analyze_file_ghosts, etc.) without the
+    DigitalGhostDetector class wrapper. For new code, prefer security.digital_ghost_detector.
+    """
     global DIGITAL_GHOST_AVAILABLE
     global analyze_file_ghosts
     global DigitalGhostResult

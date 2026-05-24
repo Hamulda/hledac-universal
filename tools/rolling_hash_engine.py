@@ -15,7 +15,9 @@ from __future__ import annotations
 # -----------------------------------------------------------------------------
 _RUST_RH_AVAILABLE = False
 try:
-    from hledac.rust_extensions.rolling_hash import RollingHashEngine as _RustRhEngine
+    import hledac_rust_extensions
+    # Expose Rust RollingHashEngine for API compatibility
+    _RustRhEngine = hledac_rust_extensions.RollingHashEngine
     _RUST_RH_AVAILABLE = True
 except ImportError:
     _RustRhEngine = None

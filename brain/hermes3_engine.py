@@ -52,6 +52,29 @@ try:
 except ImportError:
     sanitize_prompt_injection_patterns = None  # type: ignore
 
+import re as _re_pi  # dedikovaný alias pro injection patterns
+
+_INJECTION_PATTERNS: list = [
+    _re_pi.compile(r"ignore\s+(?:all\s+)?previous\s+(?:instructions?|commands?)", _re_pi.I),
+    _re_pi.compile(r"(?:system|prompt)\s*:\s*you\s+are\s+(?:now\s+)?a", _re_pi.I),
+    _re_pi.compile(r"#{3,}\s*system\s*[:\s]", _re_pi.I),
+    _re_pi.compile(r"<\|system\|>", _re_pi.I),
+    _re_pi.compile(r"\bROLE\s*:\s*(?:admin|root|superuser)", _re_pi.I),
+    _re_pi.compile(r"(?:jailbreak|DAN|do\s+anything\s+now)", _re_pi.I),
+    _re_pi.compile(r"```\s*system", _re_pi.I),
+]
+
+def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
+    """GAP-5: Detect prompt injection patterns in user-controlled input.
+    Returns (is_injection, matched_pattern_descriptions).
+    Fail-soft: returns (False, []) on any error.
+    """
+    try:
+        matched = [p.pattern for p in _INJECTION_PATTERNS if p.search(prompt)]
+        return (bool(matched), matched)
+    except Exception:
+        return (False, [])
+
 # P1A: Model-level inference guard (circuit breaker)
 try:
     from hledac.universal.brain.model_inference_guard import (
@@ -108,6 +131,26 @@ def _get_hermes_timeout_s() -> float:
         return max(HERMES_TIMEOUT_MIN_S, min(raw, HERMES_TIMEOUT_MAX_S))
     except (ValueError, TypeError):
         return HERMES_TIMEOUT_DEFAULT_S
+
+
+# DSPy integration — fail-soft, only activated when HLEDAC_ENABLE_DSPY=1
+_DSPY_AVAILABLE = False
+try:
+    import dspy
+
+    from .dspy_signatures import (
+        DarkQuerySignature,
+        HypothesisSignature,
+        is_dspy_available,
+    )
+
+    _DSPY_AVAILABLE = is_dspy_available()
+except ImportError:
+    DarkQuerySignature = None  # type: ignore
+    HypothesisSignature = None  # type: ignore
+    _DSPY_AVAILABLE = False
+
+HLEDAC_ENABLE_DSPY = os.environ.get("HLEDAC_ENABLE_DSPY", "0") == "1" and _DSPY_AVAILABLE
 
 
 # F219B: Safe MLX eval + clear cache helper
@@ -321,6 +364,14 @@ class Hermes3Engine:
 
         # GPU memory tracking
         self._last_gpu_memory: int = 0
+
+        # GAP-3/1: Per-model inference circuit breaker
+        self._model_breaker: "ModelCircuitBreaker | None" = None
+
+    def init_model_breaker(self, model_id: str) -> None:
+        """GAP-3/1: Initialize per-model circuit breaker."""
+        from transport.circuit_breaker import ModelCircuitBreaker
+        self._model_breaker = ModelCircuitBreaker(model_id=model_id)
 
     async def _ensure_batch_worker(self) -> None:
         """Ensure batch worker is started (lazy start)."""
@@ -1161,6 +1212,14 @@ class Hermes3Engine:
                     f"model inference blocked: hermes, retry after {decision.retry_after_s:.1f}s"
                 )
 
+        # GAP-3/1: Per-model circuit breaker — block if model is open
+        if self._model_breaker is not None and self._model_breaker.is_open():
+            snap = self._model_breaker.get_snapshot()
+            raise RuntimeError(
+                f"GAP-3/1: ModelCircuitBreaker OPEN for {snap['model_id']!r} "
+                f"(failures={snap['failure_count']}, last={snap['last_failure_kind']!r})"
+            )
+
         try:
             temp = temperature or self.config.temperature
             max_tok = max_tokens or self.config.max_tokens
@@ -1216,6 +1275,17 @@ class Hermes3Engine:
                     )
                 # Use validated text for downstream sanitizers
                 prompt = validation_result.safe_text
+
+            # GAP-5: Additional injection detection (independent layer)
+            is_injection, patterns = _detect_prompt_injection(
+                prompt if isinstance(prompt, str) else str(prompt)
+            )
+            if is_injection:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"GAP-5: Prompt injection patterns detected: {patterns[:3]}"
+                    " — proceeding with sanitized input (fail-soft)"
+                )
 
             if self._sanitize_for_llm is not None:
                 # Use injected sanitizer from orchestrator (preferred path)
@@ -1277,6 +1347,9 @@ class Hermes3Engine:
             # P1A: Record successful inference
             if record_model_success is not None:
                 record_model_success("hermes")
+            # GAP-3/1: Record success in per-model breaker
+            if self._model_breaker is not None:
+                self._model_breaker.record_success()
             return response
 
         except asyncio.TimeoutError:
@@ -1296,6 +1369,17 @@ class Hermes3Engine:
             if record_model_failure is not None and classify_failure_kind is not None:
                 kind = classify_failure_kind(e)
                 record_model_failure("hermes", failure_kind=kind)
+            # GAP-3/1: Record failure in per-model breaker
+            if self._model_breaker is not None:
+                err_str = str(e).lower()
+                if "memory" in err_str or "oom" in err_str or "alloc" in err_str:
+                    self._model_breaker.record_failure("oom")
+                elif "timeout" in err_str or "deadline" in err_str:
+                    self._model_breaker.record_failure("timeout")
+                elif "metal" in err_str or "gpu" in err_str:
+                    self._model_breaker.record_failure("metal_driver")
+                else:
+                    self._model_breaker.record_failure("runtime_error")
             logger.error(f"Generation failed: {e}")
             return f"Error: {str(e)}"
 
@@ -2394,6 +2478,24 @@ Do not include any other text. Output valid JSON only."""
         import re
         import time
         import orjson
+
+        # DSPy path: ChainOfThought with OSINT signatures (M1-safe, fail-soft)
+        if HLEDAC_ENABLE_DSPY and DarkQuerySignature is not None:
+            try:
+                copilot = dspy.ChainOfThought(DarkQuerySignature)
+                raw_pred = copilot(context=prompt)
+                if raw_pred and raw_pred.dark_queries:
+                    import json as _json
+                    q_list = raw_pred.dark_queries
+                    if isinstance(q_list, str):
+                        q_list = _json.loads(q_list)
+                    logger.debug(f"[DSPY] Generated {len(q_list)} dark queries via ChainOfThought")
+                    # Informational-only: DSPy CoT runs to validate signatures work end-to-end.
+                    # Full MIPROv2 prompt optimization → brain/dspy_optimizer.py → synthesis_runner.py
+                    # Actual structured generation uses Outlines/json path below.
+                    # TODO(dspy-cot): cot_context prepared below, inject at outlines call site when refactoring
+            except Exception as _e:
+                logger.debug(f"[DSPY] ChainOfThought failed: {_e}, falling back to standard path")
 
         # Path 1: Outlines
         if self._probe_outlines_capability():

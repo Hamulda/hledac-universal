@@ -78,6 +78,16 @@ except Exception:
     _ZERO_ATTR_ENGINE = None
 
 
+# Sprint F214Q: Cover traffic probabilistic inline injection
+# Pattern: probabilistic inline (not background task — too complex for M1)
+# Rate: 15% chance after each successful real fetch
+# Limit: max 2 cover traffic requests per sprint (M1 RAM protection)
+# Invariant: cover traffic MUST use identical transport as real request
+_COVER_RATE = float(os.environ.get("HLEDAC_COVER_TRAFFIC_RATE", "0.15"))
+_COVER_RATE = min(max(_COVER_RATE, 0.0), 1.0)  # rate guard: clamp to [0.0, 1.0]
+_COVER_MAX = 2  # max cover traffic fires per sprint
+
+
 def _create_dedup_strategy():
     # type: () -> DeduplicationStrategy
     """Create the dedup strategy used by FetchCoordinator.
@@ -350,6 +360,9 @@ class FetchCoordinator(UniversalCoordinator):
             'circuit_breaker_blocks': 0,
             'circuit_breaker_active': 0,
         }
+
+        # Sprint F214Q: Cover traffic counter (reset each sprint via reset_sprint_state())
+        self._cover_count: int = 0
 
         # F206AS: Canonical circuit breaker adapter (lazy, fail-soft)
         # References canonical transport/circuit_breaker.py domain_breaker_check / record functions
@@ -1368,6 +1381,10 @@ class FetchCoordinator(UniversalCoordinator):
                 self._aimd_release_success()
                 # F206AS: Record success to canonical circuit breaker if available
                 self._record_canonical_success(domain)
+                # Sprint F214Q: Cover traffic — probabilistic inline OPSEC noise
+                # Invariant: MUST use identical transport as real request (Tor→Tor, clearnet→clearnet)
+                # Cover traffic NESMÍ go to storage pipeline — fire-and-forget only
+                self._maybe_fire_cover_traffic(transport=url_transport.name.lower())
             elif result is None or result.get('error'):
                 # Failure path already handled by _aimd_release_failure in fetch methods
                 # F206AS: Record failure to canonical circuit breaker if available
@@ -1509,6 +1526,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier.clear()
         # Recreate bloom filter instead of clear() (not available in RotatingBloomFilter)
         self._processed_urls = _create_dedup_strategy()
+        self._cover_count = 0  # reset per-sprint cover counter
 
         # F300M: Cleanup SessionManager and LMDB env — correct order:
         # 1. SessionManager.close() first (closes ThreadPoolExecutor)
@@ -1554,3 +1572,124 @@ class FetchCoordinator(UniversalCoordinator):
 
         # Sprint 4B: Small drain to allow SSL/TCP to flush
         await asyncio.sleep(0.25)
+
+    # ==========================================================================
+    # Sprint F214Q: Cover traffic — probabilistic inline OPSEC noise
+    # Invariant: cover traffic NESMÍ go to storage pipeline. Fire-and-forget only.
+    # ==========================================================================
+
+    def reset_cover_count(self) -> None:
+        """Reset per-sprint cover traffic counter. Call at sprint teardown."""
+        self._cover_count = 0
+
+    async def _maybe_fire_cover_traffic(self, transport: str) -> None:
+        """Probabilistically fire cover traffic after a successful real fetch.
+
+        Pattern: probabilistic inline injection (not background task — too complex for M1).
+        Rate: HLEDAC_COVER_TRAFFIC_RATE (default 0.15 = 15% chance per success).
+        Limit: max _COVER_MAX fires per sprint (M1 RAM protection).
+        Transport: MUST use identical transport as real request (Tor→Tor, clearnet→clearnet).
+
+        Cover traffic URL goes to DuckDB via _cover_traffic_sink flag on CanonicalFinding.
+        """
+        if _COVER_RATE <= 0 or self._cover_count >= _COVER_MAX:
+            return
+        if not _ZERO_ATTR_ENGINE:
+            return
+
+        try:
+            if random.random() < _COVER_RATE:
+                # Generate transport-aware cover URLs (not query strings)
+                cover_urls = _ZERO_ATTR_ENGINE.generate_cover_traffic_urls(
+                    n_decoys=1, transport=transport
+                )
+                if not cover_urls:
+                    return  # fail-soft: no URLs for this transport
+                cover_url = cover_urls[0]
+                self._cover_count += 1
+
+                # Fire cover traffic with short random delay to desynchronize
+                delay = random.uniform(0.5, 3.0)
+                asyncio.create_task(
+                    self._fire_cover_traffic_url(cover_url, delay, transport)
+                )
+
+                # Increment metrics counter
+                get_metrics_registry().inc("cover_traffic_fired")
+                logger.debug(f"[COVER] fired cover traffic #{self._cover_count} for transport={transport}")
+        except Exception:
+            pass  # fail-soft — cover traffic errors are silent
+
+    async def _fire_cover_traffic_url(
+        self, url: str, delay: float, transport: str
+    ) -> None:
+        """Fire a single cover traffic URL via the appropriate transport layer.
+
+        Circuit breaker: skip if domain is blocked.
+        Transport-aware: Tor→Tor SOCKS, I2P→I2P, clearnet→curl_cffi.
+        Cover traffic is best-effort — never propagates exceptions.
+        """
+        try:
+            await asyncio.sleep(delay)
+        except Exception:
+            return  # delay interrupted — skip
+
+        try:
+            from urllib.parse import urlparse as _urlparse
+        except Exception:
+            return
+
+        try:
+            domain = _urlparse(url).netloc
+        except Exception:
+            return
+
+        # Circuit breaker check
+        if hasattr(self, "_domain_blocked_until"):
+            if self._domain_blocked_until.get(domain, 0) > time.time():
+                return  # circuit open — skip cover fetch
+
+        try:
+            transport_lower = transport.lower()
+
+            if transport_lower == "tor":
+                # Tor SOCKS proxy — never curl_cffi directly for Tor
+                try:
+                    from ..transport.tor_transport import get_tor_transport
+                    from ..transport.base import TransportConfig
+                    tor = get_tor_transport()
+                    if tor and await tor.is_running():
+                        config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
+                        await tor.fetch(config)
+                except Exception:
+                    pass  # Tor unavailable — skip silently
+
+            elif transport_lower == "i2p":
+                try:
+                    from ..transport.i2p_transport import get_i2p_transport
+                    from ..transport.base import TransportConfig
+                    i2p = get_i2p_transport()
+                    if i2p and i2p.is_running():
+                        config = TransportConfig(url=url, method="GET", headers=None, body=None, timeout=10.0)
+                        await i2p.fetch(config)
+                except Exception:
+                    pass  # I2P unavailable — skip silently
+
+            else:
+                # clearnet / unknown — use curl_cffi
+                try:
+                    import curl_cffi.requests as _cffi
+
+                    async with _cffi.AsyncSession(
+                        impersonate="chrome120"
+                    ) as session:
+                        await session.get(url, timeout=10.0)
+                except Exception:
+                    pass  # cover fetch failures are silent
+
+        except Exception:
+            pass  # fail-soft — cover traffic never crashes sprint
+
+    async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
+        """Legacy wrapper — redirect to transport-aware implementation."""
+        await self._fire_cover_traffic_url(url, delay, transport)

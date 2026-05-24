@@ -8,10 +8,12 @@ name = "hledac_rust_extensions"
 crate-type = ["cdylib"]
 
 [dependencies]
-ahocorasick = "2.1"
-pyO3 = { version = "0.24", features = ["extension-module"] }
+aho-corasick = "1.1"
+bloomfilter = "3.0"
+pyo3 = "0.28"
 thiserror = "2"
 
 [profile.release]
 opt-level = 3
 lto = true
+codegen-units = 1

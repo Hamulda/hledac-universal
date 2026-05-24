@@ -86,7 +86,8 @@ def export_bge_to_coreml(
     output_path: Path | None = None,
     compute_units: ComputeUnit = ComputeUnit.ALL,
     quantize: bool = False,
-) -> Path:
+    dry_run: bool = False,
+) -> Path | dict:
     """
     Export BGE ONNX model to CoreML mlpackage.
 
@@ -95,9 +96,11 @@ def export_bge_to_coreml(
         output_path: Output path for mlpackage (default: MODELS_ROOT / bge-small-en-v1.5.mlpackage)
         compute_units: CoreML compute units (ALL = ANE + GPU + CPU)
         quantize: Apply quantization to reduce size
+        dry_run: If True, validate model loads correctly and print config summary.
+                 Does NOT save the mlmodel. Returns dict with validation results.
 
     Returns:
-        Path to exported mlpackage
+        Path to exported mlpackage (dry_run=False), or dict with validation results (dry_run=True)
     """
     from sentence_transformers import SentenceTransformer
 
@@ -117,6 +120,23 @@ def export_bge_to_coreml(
     model = SentenceTransformer(model_id)
 
     print(f"[EXPORT] Model loaded. Embedding dim: {model.get_sentence_embedding_dimension()}")
+    embedding_dim = model.get_sentence_embedding_dimension()
+
+    # dry_run: validate config only, no save
+    if dry_run:
+        result = {
+            "status": "ok",
+            "model_id": model_id,
+            "embedding_dim": embedding_dim,
+            "compute_units": str(compute_units),
+            "quantize": quantize,
+            "output_path": str(output_path),
+        }
+        print(f"[DRY-RUN] Config validated — model_id={model_id}")
+        print(f"[DRY-RUN] embedding_dim={embedding_dim}, compute_units={compute_units}")
+        print(f"[DRY-RUN] quantize={quantize}, output_path={output_path}")
+        print("[DRY-RUN] No mlmodel saved (dry_run=True)")
+        return result
 
     # Convert to CoreML
     # coremltools.convert() accepts a HuggingFace model or local path
@@ -147,6 +167,12 @@ def export_bge_to_coreml(
 
 def main() -> int:
     """CLI entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Export BGE to CoreML")
+    parser.add_argument("--dry-run", action="store_true", help="Validate config only, do not save mlmodel")
+    args = parser.parse_args()
+
     print("=== BGE → CoreML Export ===")
     print(f"coremltools version: {ct.__version__}")
 
@@ -161,8 +187,11 @@ def main() -> int:
         return 0
 
     try:
-        path = export_bge_to_coreml()
-        print(f"\n[SUCCESS] CoreML model exported to:\n  {path}")
+        result = export_bge_to_coreml(dry_run=args.dry_run)
+        if args.dry_run:
+            print(f"\n[DRY-RUN] Validation complete: {result}")
+        else:
+            print(f"\n[SUCCESS] CoreML model exported to:\n  {result}")
         return 0
     except Exception as e:
         print(f"\n[FAILED] Export failed: {e}")

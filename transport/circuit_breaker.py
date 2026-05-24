@@ -424,6 +424,81 @@ async def checked_aiohttp_get(
         return None, "unknown_error"
 
 
+import time as _time
+from dataclasses import dataclass, field as _field
+
+@dataclass
+class ModelCircuitBreaker:
+    """"GAP-3/1: Per-model inference failure circuit breaker.
+
+    Tracks OOM, timeout, and Metal driver failures per model_id.
+    Independent of domain CircuitBreaker (transport layer).
+    M1 8GB: failure_threshold=3 trips after 3 consecutive failures.
+    recovery_timeout_s=30 allows HALF_OPEN probe after 30s.
+    """
+    model_id: str
+    failure_threshold: int = 3
+    recovery_timeout_s: float = 30.0
+    _failure_count: int = _field(default=0, init=False, repr=False)
+    _last_failure_time: float = _field(default=0.0, init=False, repr=False)
+    _last_failure_kind: str = _field(default="", init=False, repr=False)
+    _state: object = _field(default=None, init=False, repr=False)  # CBState or str
+
+    def __post_init__(self) -> None:
+        # Resolve state enum at runtime to avoid circular import
+        try:
+            from transport.circuit_breaker import CBState
+            self._state = CBState.CLOSED
+            self._CLOSED = CBState.CLOSED
+            self._OPEN = CBState.OPEN
+            self._HALF_OPEN = CBState.HALF_OPEN
+        except (ImportError, AttributeError):
+            self._state = "CLOSED"
+            self._CLOSED = "CLOSED"
+            self._OPEN = "OPEN"
+            self._HALF_OPEN = "HALF_OPEN"
+
+
+    def record_failure(self, kind: str = "unknown") -> None:
+        """Record inference failure. Trips breaker at failure_threshold."""
+        self._failure_count += 1
+        self._last_failure_time = _time.monotonic()
+        self._last_failure_kind = kind
+        if self._failure_count >= self.failure_threshold:
+            self._state = self._OPEN
+            import logging
+            logging.getLogger(__name__).warning(
+                f"ModelCircuitBreaker OPEN: model={self.model_id!r} "
+                f"after {self._failure_count} failures, last={kind!r}"
+            )
+
+    def record_success(self) -> None:
+        """Reset breaker on successful inference."""
+        self._failure_count = 0
+        self._state = self._CLOSED
+        self._last_failure_kind = ""
+
+    def is_open(self) -> bool:
+        """True if inference should be blocked. Auto-transitions to HALF_OPEN after timeout."""
+        if self._state == self._OPEN:
+            elapsed = _time.monotonic() - self._last_failure_time
+            if elapsed >= self.recovery_timeout_s:
+                self._state = self._HALF_OPEN
+            return True
+        return False
+
+    def get_snapshot(self) -> dict:
+        """Structured snapshot for telemetry/scorecard."""
+        return {
+            "model_id": self.model_id,
+            "state": str(self._state),
+            "failure_count": self._failure_count,
+            "last_failure_kind": self._last_failure_kind,
+            "last_failure_age_s": round(_time.monotonic() - self._last_failure_time, 1)
+            if self._last_failure_time > 0 else None,
+        }
+
+
 async def checked_aiohttp_post(
     session: "aiohttp.ClientSession",
     url: str,

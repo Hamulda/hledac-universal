@@ -1219,7 +1219,7 @@ async def run_sprint(
     # Sprint F223K + RL F257: Opt-in RL feedback loop — enables quality-weighted source selection
     # RL F257: --rl-train flag enables QMIX training (Q-network weight updates every 10 sprints)
     policy_manager = SprintPolicyManager(
-        enabled=os.environ.get("ENABLE_RL_FEEDBACK", "false").lower() == "true",
+        enabled=True,  # F257FIX: RL is opt-out (not opt-in) — rl_train_mode gate controls training vs inference
         rl_train_mode=rl_train_mode,
     )
     scheduler.inject_policy_manager(policy_manager)

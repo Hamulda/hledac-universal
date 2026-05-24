@@ -31,6 +31,7 @@ import asyncio
 import gc
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, TYPE_CHECKING, Union
 
@@ -194,11 +195,19 @@ class EmbeddingRouter:
         # === F216B: Try BGE CoreMLEmbedder (ANE primary) first ===
         bge = get_ane_embedder()
         if bge is not None and bge.is_loaded:
+            t0 = time.monotonic()
+            _ = bge.embed(["warmup"])
+            elapsed = time.monotonic() - t0
+            logger.debug(f"[EMBED] backend={type(bge).__name__} time={elapsed*1000:.1f}ms warmup")
             logger.debug("[EMBED:ROUTER] sync: using BGE CoreML/ANE")
             return bge
 
         # ANE is already loaded → use it (ANE + MLX UMA are separate, not additive)
         if self._ane is not None and self._ane.is_loaded:
+            t0 = time.monotonic()
+            _ = self._ane.embed(["warmup"])
+            elapsed = time.monotonic() - t0
+            logger.debug(f"[EMBED] backend={type(self._ane).__name__} time={elapsed*1000:.1f}ms warmup")
             logger.debug("[EMBED:ROUTER] sync: using cached ANE")
             return self._ane
 
@@ -206,6 +215,10 @@ class EmbeddingRouter:
         if self._check_mlx_loaded():
             try:
                 mb = self._load_modernbert()
+                t0 = time.monotonic()
+                _ = mb.embed(["warmup"])
+                elapsed = time.monotonic() - t0
+                logger.debug(f"[EMBED] backend={type(mb).__name__} time={elapsed*1000:.1f}ms warmup")
                 logger.debug("[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT")
                 return mb
             except Exception:
@@ -214,6 +227,10 @@ class EmbeddingRouter:
         # Fallback to MLX ModernBERT (normal path when nothing loaded)
         try:
             mb = self._load_modernbert()
+            t0 = time.monotonic()
+            _ = mb.embed(["warmup"])
+            elapsed = time.monotonic() - t0
+            logger.debug(f"[EMBED] backend={type(mb).__name__} time={elapsed*1000:.1f}ms warmup")
             logger.debug("[EMBED:ROUTER] sync: falling back to MLX ModernBERT")
             return mb
         except Exception as e:
@@ -259,7 +276,12 @@ class EmbeddingRouter:
 
         # Final fallback: MLXEmbeddingManager (CPU sentence-transformers)
         from hledac.universal.core.mlx_embeddings import get_embedding_manager
-        return get_embedding_manager()
+        embedder = get_embedding_manager()
+        t0 = time.monotonic()
+        _ = embedder.embed("warmup")
+        elapsed = time.monotonic() - t0
+        logger.debug(f"[EMBED] backend={type(embedder).__name__} time={elapsed*1000:.1f}ms warmup")
+        return embedder
 
     async def warmup(self):
         """Warmup the selected embedder. Called after model selection."""
@@ -312,6 +334,14 @@ class CoreMLEmbedder:
 
         try:
             import coremltools as ct
+            import psutil
+
+            # RAM guard: skip ANE load if RAM > 80%
+            if psutil.virtual_memory().percent > 80:
+                self._last_error = "RAM >80%, skipping ANE load"
+                self._available = False
+                self._loaded = False
+                return
 
             if mlpackage_path is None:
                 mlpackage_path = _MODELS_DIR / "bge-small-en-v1.5.mlpackage"
@@ -377,6 +407,9 @@ class CoreMLEmbedder:
             mx.metal.clear_cache()
         except Exception:
             pass
+        # Free memory after ANE unload
+        import gc
+        gc.collect()
         logger.debug("[CoreMLEmbedder] Unloaded")
 
 
@@ -972,6 +1005,9 @@ def load_embedding_model() -> bool:
         return True
     except MemoryPressureError:
         logger.warning(f"[EMBED] Memory pressure - skipping embedder load (RSS={rss_before:.2f}GB)")
+        # F197C: Decrement depth even on MemoryPressureError to keep pair balanced
+        with _embedding_depth_lock:
+            _embedding_depth -= 1
         return False
     except Exception as e:
         logger.error(f"[EMBED] Failed to load embedding model: {e}")

@@ -412,10 +412,32 @@ class ForensicsEnricher:
                 forensics_result.dns = dns_data
                 forensics_result.enrichment_available = True
 
+
             rdns_data = await self._rdns_lookup(domain)
             if rdns_data:
                 forensics_result.rdns = rdns_data
                 forensics_result.enrichment_available = True
+
+        # F3FORENSICS: FOCA x_originating_ip bridge
+        if hasattr(finding, 'payload'):
+            payload = finding.payload or {}
+            email_meta = payload.get('email_metadata', {}) or payload.get('email', {})
+            x_originating_ip = email_meta.get('originating_ip') or email_meta.get('x_originating_ip')
+            if x_originating_ip:
+                try:
+                    import ipaddress
+                    ip = ipaddress.ip_address(x_originating_ip)
+                    if not ip.is_private and not ip.is_loopback and not ip.is_reserved:
+                        whois_ip = await self._whois_lookup(x_originating_ip)
+                        rdns_ip = await self._rdns_lookup(x_originating_ip)
+                        enrichment['x_originating_ip_enrichment'] = {
+                            'ip': x_originating_ip,
+                            'whois': whois_ip,
+                            'rdns': rdns_ip,
+                        }
+                        forensics_result.enrichment_available = True
+                except Exception:
+                    pass  # Fail-soft: invalid IP or lookup failed
 
         # Mark enrichment available if any module produced data
         if any(v is not None for k, v in enrichment.items() if k not in ("finding_id", "file_path", "enrichment_available")):

@@ -47,6 +47,15 @@ from brain.evidence_fusion import DempsterShafer
 
 import numpy as np
 
+# DSPy gate — import protected, dspy not in requirements.txt
+try:
+    import dspy as _dspy
+
+    DSPY_AVAILABLE = True
+except ImportError:
+    DSPY_AVAILABLE = False
+    _dspy = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -2646,6 +2655,22 @@ Formát (pouze seznam, žádný další text):
                 system_msg="Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
             )
 
+            # DSPy integration: use compiled program if enabled and available
+            if DSPY_AVAILABLE and os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
+                from brain.dspy_programs import get_program
+                program = get_program("hypothesis_generator")
+                if program is not None:
+                    rag_context_str = context.get("rag_context_str", rag_context[:2000])
+                    pred = program.forward(
+                        research_query=query,
+                        rag_context=rag_context_str,
+                        graph_summary=graph_summary,
+                        reward_context=reward_context,
+                        existing_hypotheses=list(existing),
+                    )
+                    if hasattr(pred, "answer") and pred.answer:
+                        response = pred.answer
+
             # Parse hypotheses from response
             hypotheses = []
             for line in response.strip().split("\n"):
@@ -4625,6 +4650,28 @@ Zajimave patterny k hledani:
                     max_tokens=1024,
                     system_msg="Jsi OSINT dark surface research assistant.",
                 )
+
+                # DSPy integration: use compiled program if enabled and available
+                if DSPY_AVAILABLE and os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
+                    from brain.dspy_programs import get_program
+                    program = get_program("dark_query")
+                    if program is not None:
+                        pred = program.forward(
+                            ioc_brief=ioc_brief,
+                            available_transports=transport_str,
+                            max_queries=self.MAX_DARK_QUERIES_PER_SPRINT,
+                        )
+                        # DSPy Prediction.answer is JSON string → parse for structured result
+                        if hasattr(pred, "answer") and pred.answer:
+                            try:
+                                import json as _json
+
+                                queries_data = _json.loads(pred.answer)
+                                if isinstance(queries_data, list):
+                                    result = type("Result", (), {"queries": queries_data})()
+                            except Exception:
+                                pass  # keep original result
+
                 dark_queries: List[DarkQuery] = []
                 for item in (result.queries if hasattr(result, 'queries') else []):
                     dt = DarkQueryType(item.get('type', 'onion'))

@@ -382,7 +382,6 @@ class SidecarOrchestrator:
                     TargetMemoryService,
                     TargetMemoryUpdate,
                 )
-
                 update = TargetMemoryUpdate(
                     target_id=target_id,
                     sprint_id=sprint_id,
@@ -397,6 +396,8 @@ class SidecarOrchestrator:
                     self._target_memory_service = service
                 merged = service.mrg_update(update)
                 await store.async_upsert_target_memory(merged)
+            except (ImportError, ModuleNotFoundError):
+                pass  # fail-safe: target_memory_service unavailable
             except Exception:
                 pass  # Fail-soft
 
@@ -430,12 +431,10 @@ class SidecarOrchestrator:
             from hledac.universal.intelligence.bgp_advisor_adapter import (
                 create_bgp_advisor_adapter,
             )
-
             adapter = create_bgp_advisor_adapter()
             _ = adapter.analyze(self._result)
-            # Results written to result telemetry inside the adapter
-        except Exception:
-            pass  # Fail-soft
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass  # fail-safe: intelligence module unavailable
 
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
         """F234: Deep Wayback CDX analysis for URL history. Fail-soft."""
@@ -443,12 +442,10 @@ class SidecarOrchestrator:
             from hledac.universal.intelligence.wayback_cdx_deep_adapter import (
                 create_wayback_cdx_deep_adapter,
             )
-
             adapter = create_wayback_cdx_deep_adapter()
             _ = await adapter.analyze(self._result)
-            # Results written to result telemetry inside the adapter
-        except Exception:
-            pass  # Fail-soft
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass  # fail-safe: intelligence module unavailable
 
     # ── F229: IPFS Discovery Sidecar ─────────────────────────────────────────
 

@@ -20,7 +20,7 @@ except ImportError:
     tree_unflatten = None
 
 from typing import Dict, List, Optional
-from hledac.universal.rl.actions import ACTION_DIM, ACTION_FETCH_MORE
+from rl.actions import ACTION_DIM, ACTION_FETCH_MORE
 
 
 if MLX_AVAILABLE:

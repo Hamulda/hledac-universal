@@ -2371,10 +2371,13 @@ class SprintSchedulerResult:
     return_guard_errors: dict[str, str] = field(default_factory=dict)
 
     # Sprint F214K: Dark surface pivot telemetry
-
     dark_surface_pivots_attempted: int = 0
-
     dark_surface_pivots_accepted: int = 0
+
+    # Sprint F214Q/R: Gopher/BGP/Banner sidecar telemetry
+    gopher_findings_ingested: int = 0
+    bgp_enrichment_findings_ingested: int = 0
+    banner_grab_findings_ingested: int = 0
 
     # Sprint F207V-A: Scheduler exit path tracer
 
@@ -6881,6 +6884,10 @@ class SprintScheduler:
             # Sprint F205H: Close metrics registry at teardown (flush + non-tail-loss)
 
             await self._close_metrics_registry()
+
+            # F214Q: Reset cover traffic counter per sprint
+            if hasattr(self._fetch_coordinator, 'reset_cover_count'):
+                self._fetch_coordinator.reset_cover_count()
 
     
 
@@ -16654,6 +16661,7 @@ class SprintScheduler:
         except Exception as e:
             log.warning("[F214R] Gopher sidecar failed: %s", e)
 
+        self._result.gopher_findings_ingested = len(findings)
         return findings
 
 
@@ -16849,6 +16857,207 @@ class SprintScheduler:
 
 
 
+
+    # ── F3FORENSICS: Digital Ghost Detection Sidecar ────────────────────────
+
+    async def _run_digital_ghost_sidecar(
+        self,
+        file_findings: list,
+    ) -> list:
+        """
+        Sprint F3FORENSICS: Digital ghost detection on file findings.
+        Gate: HLEDAC_ENABLE_DIGITAL_GHOST=1, max_files=10, max_file_size=50MB.
+        Fail-soft: errors logged, never crash sprint.
+        """
+        findings = []
+        try:
+            if os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "").lower() not in ("1", "true"):
+                return findings
+
+            # RAM guard at 80% (not 85% — leave margin for main pipeline)
+            if self._governor:
+                uma = self._governor.get_uma_snapshot()
+                if uma.high_water >= 80.0:
+                    log.debug("[F3FORENSICS] Digital ghost skipped — RAM pressure")
+                    return findings
+
+            # Extract file paths from file findings
+            from forensics.enrichment_service import _extract_file_path_from_payload
+            from security.digital_ghost_detector import analyze_file_ghosts
+
+            MAX_FILES = 10
+            MAX_FILE_SIZE_MB = 50
+
+            file_paths = []
+            for f in file_findings:
+                fp = _extract_file_path_from_payload(getattr(f, "payload_text", "") or "")
+                if fp:
+                    file_paths.append((fp, getattr(f, "confidence", 0.5)))
+
+            # Sort by confidence descending, take top MAX_FILES
+            file_paths.sort(key=lambda x: x[1], reverse=True)
+            file_paths = file_paths[:MAX_FILES]
+
+            if not file_paths:
+                return findings
+
+            log.debug("[F3FORENSICS] Starting digital ghost detection on %d files", len(file_paths))
+
+            async def analyze_one(path_and_conf):
+                path, _ = path_and_conf
+                try:
+                    import asyncio
+                    result = await asyncio.to_thread(analyze_file_ghosts, path)
+                    return result
+                except Exception as e:
+                    log.debug("[F3FORENSICS] Ghost analysis failed for %s: %s", path, e)
+                    return None
+
+            results = await asyncio.gather(
+                *[analyze_one(fp) for fp in file_paths],
+                return_exceptions=True
+            )
+
+            from core.findings import CanonicalFinding
+
+            for r in results:
+                if r is None or isinstance(r, Exception):
+                    continue
+                try:
+                    if hasattr(r, 'ghost_signals') and len(r.ghost_signals) > 0:
+                        finding = CanonicalFinding(
+                            source_type="digital_ghost_detection",
+                            ioc_type="file",
+                            ioc_value=getattr(r, 'file_path', ""),
+                            confidence=getattr(r, 'overall_confidence', 0.5),
+                            payload={
+                                "ghost_signals_count": len(getattr(r, 'ghost_signals', [])),
+                                "ghost_signals": [gs.__dict__ if hasattr(gs, '__dict__') else str(gs) for gs in getattr(r, 'ghost_signals', [])],
+                                "deletion_indicators": getattr(r, 'deletion_indicators', False),
+                                "recovered_content_count": len(getattr(r, 'recovered_content', [])),
+                            },
+                            tags=["digital_ghost", "forensics"],
+                        )
+                        findings.append(finding)
+                except Exception:
+                    pass
+
+            # Ingest findings through canonical write path
+            if findings and self._duckdb is not None:
+                await self._duckdb.async_ingest_findings_batch(findings)
+                log.debug("[F3FORENSICS] Ingested %d digital ghost findings", len(findings))
+
+        except Exception as e:
+            log.warning("[F3FORENSICS] Digital ghost sidecar failed: %s", e)
+
+        return findings
+
+
+    # ── F3FORENSICS: Steganography Detection Sidecar ───────────────────────
+
+    async def _run_steganography_sidecar(
+        self,
+        image_findings: list,
+    ) -> list:
+        """
+        Sprint F3FORENSICS: Steganography detection on image findings.
+        Gate: HLEDAC_ENABLE_STEGANOGRAPHY=1, max_images=10, max_image_size=50MB.
+        Only emit findings if overall_suspicious > 0.3.
+        Fail-soft: errors logged, never crash sprint.
+        """
+        findings = []
+        try:
+            if os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "").lower() not in ("1", "true"):
+                return findings
+
+            # RAM guard at 80%
+            if self._governor:
+                uma = self._governor.get_uma_snapshot()
+                if uma.high_water >= 80.0:
+                    log.debug("[F3FORENSICS] Stego skipped — RAM pressure")
+                    return findings
+
+            from pathlib import Path
+            import shutil
+            from security.stego_detector import StatisticalStegoDetector, StegoConfig
+
+            MAX_IMAGES = 10
+            MAX_IMAGE_SIZE_MB = 50
+            IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+
+            # Filter for image findings
+            image_paths = []
+            for f in image_findings:
+                fp = getattr(f, 'ioc_value', '') or ''
+                ext = Path(fp).suffix.lower() if fp else ''
+                if ext in IMAGE_EXTENSIONS:
+                    image_paths.append((fp, getattr(f, "confidence", 0.5)))
+
+            # Sort by confidence descending, take top MAX_IMAGES
+            image_paths.sort(key=lambda x: x[1], reverse=True)
+            image_paths = image_paths[:MAX_IMAGES]
+
+            if not image_paths:
+                return findings
+
+            log.debug("[F3FORENSICS] Starting steganalysis on %d images", len(image_paths))
+
+            async def analyze_one(path_and_conf):
+                path, _ = path_and_conf
+                try:
+                    config = StegoConfig(max_image_size=MAX_IMAGE_SIZE_MB * 1024 * 1024)
+                    detector = StatisticalStegoDetector(config)
+                    await detector.initialize()
+                    result = await detector.analyze_image(path)
+                    await detector.cleanup()
+                    return result
+                except Exception as e:
+                    log.debug("[F3FORENSICS] Stego analysis failed for %s: %s", path, e)
+                    return None
+
+            results = await asyncio.gather(
+                *[analyze_one(fp) for fp in image_paths],
+                return_exceptions=True
+            )
+
+            from core.findings import CanonicalFinding
+
+            for r in results:
+                if r is None or isinstance(r, Exception):
+                    continue
+                try:
+                    suspicious = getattr(r, 'overall_suspicious', False)
+                    confidence = getattr(r, 'confidence', 0.0)
+                    # Only emit if suspicious > 0.3
+                    if suspicious and confidence > 0.3:
+                        finding = CanonicalFinding(
+                            source_type="steganography_detection",
+                            ioc_type="file",
+                            ioc_value=getattr(r, 'file_path', ""),
+                            confidence=confidence,
+                            payload={
+                                "chi_square_score": getattr(r, 'chi_square_score', 0.0),
+                                "entropy_score": getattr(r, 'entropy_score', 0.0),
+                                "lsb_suspicious": getattr(r, 'lsb_suspicious', False),
+                                "stegdetect_available": getattr(r, 'stegdetect_available', False),
+                                "stegdetect_result": getattr(r, 'stegdetect_result', None),
+                            },
+                            tags=["steganography", "forensics"],
+                        )
+                        findings.append(finding)
+                except Exception:
+                    pass
+
+            # Ingest findings through canonical write path
+            if findings and self._duckdb is not None:
+                await self._duckdb.async_ingest_findings_batch(findings)
+                log.debug("[F3FORENSICS] Ingested %d steganography findings", len(findings))
+
+        except Exception as e:
+            log.warning("[F3FORENSICS] Steganography sidecar failed: %s", e)
+
+        return findings
+
     # ── F214Q: BGP Enrichment Sidecar ──────────────────────────────────────────
 
     async def _run_bgp_enrichment_sidecar(self) -> list[CanonicalFinding]:
@@ -16869,7 +17078,10 @@ class SprintScheduler:
 
         from hledac.universal.network.bgp_monitor import bgp_enrich_to_canonical
 
-        from hledac.universal.types import IOC_TYPES
+        try:
+            from hledac.universal.types import IOC_TYPES
+        except (ImportError, ModuleNotFoundError):
+            IOC_TYPES = ["ip", "asn", "ipv6", "cidr"]
 
         
 
@@ -16977,7 +17189,7 @@ class SprintScheduler:
 
             log.debug("[F214Q] Ingested %d BGP enrichment findings", len(findings))
 
-        
+            self._result.bgp_enrichment_findings_ingested = len(findings)
 
         return findings[:20]
 
@@ -17121,7 +17333,7 @@ class SprintScheduler:
 
             log.debug("[F214Q] Ingested %d banner grab findings", len(findings))
 
-        
+            self._result.banner_grab_findings_ingested = len(findings)
 
         return findings[:50]
 

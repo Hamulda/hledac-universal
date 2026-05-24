@@ -1,6 +1,6 @@
 # Production Runtime Gap Matrix — Hledac Universal
 
-**Date**: 2026-05-14
+**Date**: 2026-05-14 (Reviewed 2026-05-24)
 **Scope**: `hledac/universal/` only
 **M1 Target**: MacBook Air M1 8GB UMA
 **Source**: `MODEL_INTEGRATION_PLAN.md`, `MODEL_INTEGRATION_REVIEW_NOTES.md`, source code audit
@@ -22,6 +22,7 @@
 ## 1. model-level InferenceGuard
 
 **Status**: missing
+**Status 2026-05-24**: OPEN — No InferenceGuard or ModelCircuitBreaker class found in brain/
 
 **Existing files/symbols**: None found in `brain/`
 
@@ -52,6 +53,7 @@
 ## 2. timeout and retry policy
 
 **Status**: partially implemented
+**Status 2026-05-24**: RESOLVED — Outlines 30s timeout is the production default
 
 **Existing files/symbols**:
 - `brain/hermes3_engine.py:2246–2330` — `generate_structured_safe()` with fallback chain: Outlines (30s timeout) → xgrammar (not implemented) → JSON prompt + `orjson.loads()` + retry 3x with backoff [0.5, 1.0, 2.0]s
@@ -87,6 +89,7 @@
 ## 3. model-level circuit breaker
 
 **Status**: missing
+**Status 2026-05-24**: OPEN — Per-model circuit breaker not implemented (only domain-level fetch breaker exists)
 
 **Existing files/symbols**:
 - `transport/circuit_breaker.py` — domain-level fetch circuit breaker
@@ -153,7 +156,7 @@
 
 ## 5. prompt injection sandbox
 
-**Status**: partially implemented
+**Status**: partially implemented — Status 2026-05-24: OPEN (P1)
 
 **Existing files/symbols**:
 - `brain/hermes3_engine.py:1117–1119` — `_sanitize_for_llm` in `generate_structured_safe()`:
@@ -188,7 +191,7 @@
 
 ## 6. evidence block isolation
 
-**Status**: missing
+**Status**: missing — Status 2026-05-24: PARTIAL (evidence envelope exists, full sandbox not needed on M1 8GB)
 
 **Existing files/symbols**: None
 
@@ -217,7 +220,7 @@
 
 ## 7. output schema validator
 
-**Status**: partially implemented
+**Status**: partially implemented — Status 2026-05-24: OPEN (P1)
 
 **Existing files/symbols**:
 - `brain/hermes3_engine.py:48` — `# Sprint 33: outlines for grammar-constrained decoding`
@@ -252,7 +255,7 @@
 
 ## 8. evidence grounding validator
 
-**Status**: missing
+**Status**: missing — Status 2026-05-24: OPEN (P1-CRITICAL)
 
 **Existing files/symbols**: None in production code paths
 
@@ -513,7 +516,7 @@
 
 ## 17. model integrity checker
 
-**Status**: missing
+**Status**: missing — Status 2026-05-24: OPEN (P2)
 
 **Existing files/symbols**:
 - `brain/ane_embedder.py` — `hash` and `model_hash` references in search, but appears in pycache only
@@ -685,9 +688,9 @@
 
 ## 23. benchmark harness
 
-**Status**: missing
+**Status**: missing — Status 2026-05-24: OPEN (P2)
 
-**Existing files/symbols**: None found in production code paths. The plan references benchmark matrices and A/B tests, but no `benchmark/` directory or `benchmark_harness.py` in `hledac/universal/`.
+**Existing files/symbols**: None found in production code paths.
 
 **What currently exists**: No benchmark harness. The `tests/probe_*` directories contain integration tests, not performance benchmarks. `MODEL_INTEGRATION_PLAN.md:382–415` outlines a benchmark plan but it is unimplemented.
 

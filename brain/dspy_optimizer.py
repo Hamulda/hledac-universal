@@ -79,7 +79,7 @@ class DSPyOptimizer:
         if psutil.cpu_percent(interval=0.5) > 15:
             return False
 
-        if psutil.virtual_memory().available / (1024**3) < 4.0:
+        if psutil.virtual_memory().available / (1024**3) < 2.0:
             return False
 
         # Energy‑aware scheduling – preferujeme _memory_mgr, fallback na psutil
@@ -326,11 +326,36 @@ class DSPyOptimizer:
                     # Penalize non‑JSON but long answers
                     return 0.3 if len(answer) > 100 else 0.0
 
+            if not trainset or len(trainset) == 0:
+                logger.warning(f"DSPy MIPROv2: trainset is empty for task_key={task_key!r} — skipping optimization")
+                return {}
+
             with dspy.context(lm=lm):
                 optimizer = MIPROv2(metric=_osint_metric)
                 optimized = optimizer.compile(program, trainset=trainset)
 
-            instr = str(optimized.predictors()[0].signature.instructions)
+            instr = None
+            # DSPy 2.x API introspection — try multiple access patterns
+            try:
+                instr = str(optimized.predictors()[0].signature.instructions)
+            except (AttributeError, IndexError):
+                pass
+            if instr is None:
+                try:
+                    # DSPy 2.5+ pattern: direct module access
+                    predictor = list(optimized.named_predictors())[0][1]
+                    instr = str(predictor.signature.instructions)
+                except (AttributeError, IndexError, StopIteration):
+                    pass
+            if instr is None:
+                try:
+                    # Fallback: serialize entire signature as instructions
+                    instr = str(optimized.signature)
+                except AttributeError:
+                    pass
+            if instr is None:
+                logger.warning("DSPy optimizer: could not extract instructions from optimized module — using task_key as fallback")
+                instr = f"optimized:{task_key}"
             # Pro zjednodušení ukládáme stejnou instrukci pro všechny complexity
             return {
                 'analysis:medium': instr,

@@ -35,7 +35,9 @@ __all__ = [
 # -----------------------------------------------------------------------------
 _RUST_ACO_AVAILABLE = False
 try:
-    from hledac.rust_extensions.aho_corasick import RustAhoCorasickMatcher
+    import hledac_rust_extensions
+    # Expose Rust classes as RustAhoCorasickMatcher for API compatibility
+    RustAhoCorasickMatcher = hledac_rust_extensions.AhoCorasickMatcher
     _RUST_ACO_AVAILABLE = True
 except ImportError:
     pass

@@ -36,7 +36,9 @@ except ImportError:
 # -----------------------------------------------------------------------------
 _RUST_BLOOM_AVAILABLE = False
 try:
-    from hledac.rust_extensions.bloom_filter import RustRotatingBloomFilter
+    import hledac_rust_extensions
+    # Expose Rust BloomFilter as RustRotatingBloomFilter for API compatibility
+    RustRotatingBloomFilter = hledac_rust_extensions.BloomFilter
     _RUST_BLOOM_AVAILABLE = True
 except ImportError:
     pass

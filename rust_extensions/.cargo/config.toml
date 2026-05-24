@@ -1,0 +1,11 @@
+[build]
+target = "aarch64-apple-darwin"
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-m1"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

@@ -212,14 +212,8 @@ class GNNPredictor:
         """Spustí trénink na pozadí, pokud je k dispozici scheduler."""
         if self.scheduler and not self._training_scheduled:
             self._training_scheduled = True
-            # Import here to avoid circular dependency
-            from hledac.universal.orchestrator.global_scheduler import register_task
-
-            # Register training task if not already registered
-            try:
-                register_task("train_gnn", train_gnn_task)
-            except ValueError:
-                pass  # Already registered
+            # Register training task if not already registered (dead code - register_task not available)
+            pass
 
             self.scheduler.schedule(8, "train_gnn", self, edges, features, labels, num_epochs)
 

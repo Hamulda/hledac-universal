@@ -51,6 +51,105 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 import hashlib
 import threading as _threading
+import re as _re_synth
+
+_MAX_VALIDATION_FINDINGS = 100  # bounded — M1 8GB guard
+
+def _extract_text_iocs_from_finding(finding: dict) -> set[str]:
+    """Extract IOC-like strings from a single finding dict.
+    Scans structured IOC fields AND raw content via regex.
+    Fail-soft: returns empty set on any error.
+    """
+    iocs: set[str] = set()
+    try:
+        for field in ('ioc_val', 'val', 'value', 'indicator', 'ioc', 'hash', 'ip', 'domain'):
+            v = finding.get(field)
+            if v and isinstance(v, str):
+                iocs.add(v.strip())
+        content = (finding.get('content') or finding.get('raw_content')
+                   or finding.get('text') or finding.get('snippet') or '')
+        if content:
+            iocs.update(_re_synth.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', content))
+            iocs.update(_re_synth.findall(
+                r'\b[a-zA-Z0-9][a-zA-Z0-9\-]{1,61}\.[a-zA-Z]{2,}\b', content))
+            iocs.update(_re_synth.findall(r'\b[a-fA-F0-9]{32,64}\b', content))
+            iocs.update(_re_synth.findall(r'CVE-\d{4}-\d{4,7}', content, _re_synth.I))
+    except Exception as e:
+        logger.debug(f"_extract_text_iocs_from_finding failed: {e}")
+    return iocs
+
+
+def validate_evidence_grounding(
+    report: "OSINTReport",
+    findings: list[dict],
+) -> tuple[bool, list[str]]:
+    """GAP-8: Validate that IOCEntity values in report appear in source findings.
+
+    Returns (True, []) on clean pass.
+    Returns (True, [list of unmatched IOC values]) on mismatch — FAIL-SOFT.
+    Never raises. Never returns False (fail-soft per M1 GHOST_INVARIANTS).
+    """
+    if not findings:
+        return (True, ["no findings to validate against"])
+    try:
+        evidence_set: set[str] = set()
+        for f in findings[:_MAX_VALIDATION_FINDINGS]:
+            evidence_set.update(_extract_text_iocs_from_finding(f))
+        ioc_entities = getattr(report, 'ioc_entities', None) or []
+        unmatched = [
+            str(ioc.value)
+            for ioc in ioc_entities
+            if hasattr(ioc, 'value') and str(ioc.value) not in evidence_set
+        ]
+        if unmatched:
+            logger.warning(
+                f"GAP-8 grounding: {len(unmatched)}/{len(ioc_entities)} IOCs unverified "
+                f"in findings — values: {unmatched[:5]}"
+            )
+        return (True, unmatched)
+    except Exception as e:
+        logger.debug(f"validate_evidence_grounding exception (fail-soft): {e}")
+        return (True, [])
+
+
+def validate_report_semantics(report: "OSINTReport") -> tuple[bool, list[str]]:
+    """GAP-7: Semantic constraint validation for OSINTReport fields.
+
+    Validates value ranges that msgspec.Struct cannot enforce.
+    Returns (True, []) on pass.
+    Returns (False, [error list]) on violation — CALLER decides whether to log or block.
+    Never raises.
+    """
+    errors: list[str] = []
+    try:
+        conf = getattr(report, 'confidence', None)
+        if conf is not None and not (0.0 <= float(conf) <= 1.0):
+            errors.append(f"confidence {conf} out of range [0.0, 1.0]")
+
+        sc = getattr(report, 'sources_count', None)
+        if sc is not None and int(sc) < 0:
+            errors.append(f"sources_count {sc} is negative")
+
+        ts = getattr(report, 'timestamp', None)
+        if ts is not None and float(ts) <= 0:
+            errors.append(f"timestamp {ts} invalid (must be positive unix epoch)")
+
+        ioc_entities = getattr(report, 'ioc_entities', None) or []
+        if len(ioc_entities) == 0 and sc is not None and int(sc) > 0:
+            errors.append(
+                f"ioc_entities empty but sources_count={sc} — possible generation failure")
+
+        threat_summary = getattr(report, 'threat_summary', None)
+        if (not threat_summary or not isinstance(threat_summary, str)
+                or not threat_summary.strip()):
+            errors.append("threat_summary is empty or whitespace-only")
+
+    except Exception as e:
+        logger.debug(f"validate_report_semantics exception (fail-soft): {e}")
+        return (True, [])  # fail-soft on introspection error
+
+    return (len(errors) == 0, errors)
+
 
 _GRAMMAR_CACHE: dict[str, object] = {}
 _GRAMMAR_CACHE_LOCK = _threading.RLock()
@@ -350,7 +449,8 @@ class SynthesisRunner:
                  "_stix_status", "_stix_reason", "_stix_backend",
                  "_lifecycle_gate_source", "_lifecycle_gate_mode", "_lifecycle_adapter",
                  "_stix_graph", "_last_synthesis_outcome",
-                 "_compression_threshold", "_compressor")
+                 "_compression_threshold", "_compressor",
+                 "_hypothesis_engine")
 
     def __init__(self, lifecycle: "ModelLifecycle") -> None:
         self._lifecycle = lifecycle
@@ -807,6 +907,19 @@ class SynthesisRunner:
             if report is not None:
                 report.confidence = self._compute_confidence(report, used_outlines)
 
+                # GAP-8: Evidence grounding validation (fail-soft)
+                _, grounding_warnings = validate_evidence_grounding(report, findings)
+                if grounding_warnings:
+                    logger.warning(
+                        f"[SYNTHESIS] GAP-8 grounding warnings: "
+                        f"{len(grounding_warnings)} unverified IOCs"
+                    )
+
+                # GAP-7: Semantic constraint validation (fail-soft — log only, never block)
+                sem_ok, sem_errors = validate_report_semantics(report)
+                if not sem_ok:
+                    logger.warning(f"[SYNTHESIS] GAP-7 semantic errors: {sem_errors}")
+
                 # Sprint F234: Update bandit UCB1 reward — reward = response_length_normalized × confidence
                 # Note: LinUCB update() is NOT called — select_arm() uses UCB1 algorithm.
                 # UCB1 state (arm_counts, arm_rewards) requires persistence fix — see prompt_bandit.py.
@@ -921,11 +1034,15 @@ class SynthesisRunner:
             logger.warning("[SYNTHESIS] Model load failed: %s", e)
             return None
 
-        system_prompt = (
-            "You are a cybersecurity analyst. "
-            "Extract IOC entities from findings. "
-            "Respond with valid JSON matching the schema exactly."
-        )
+        if self._custom_synthesis_prompt:
+            # DSPy MIPROv2 optimized prompt takes precedence over default
+            system_prompt = self._custom_synthesis_prompt
+        else:
+            system_prompt = (
+                "You are a cybersecurity analyst. "
+                "Extract IOC entities from findings. "
+                "Respond with valid JSON matching the schema exactly."
+            )
         full_prompt = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
 
         # Pokus o chat template

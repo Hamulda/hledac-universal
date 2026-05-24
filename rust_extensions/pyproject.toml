@@ -3,7 +3,7 @@ requires = ["maturin>=1.0"]
 build-backend = "maturin"
 
 [project]
-name = "hledac_rust_ext"
+name = "hledac-rust-extensions"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = []
