@@ -1357,6 +1357,87 @@ class DuckPGQGraph:
                 result[v] = self.find_connected(v, max_hops=max_hops)
             return result
 
+    async def find_paths_between_iocs(
+        self,
+        source_ioc: str,
+        target_ioc: str,
+        max_hops: int = 4,
+    ) -> list[list[str]]:
+        """Find quantum-inspired paths between two IOCs.
+
+        Args:
+            source_ioc: Source IOC value
+            target_ioc: Target IOC value
+            max_hops: Maximum path length (default 4, M1-safe)
+
+        Returns:
+            List of paths, each path is a list of IOC values (empty on fail-soft)
+        """
+        try:
+            import asyncio as _a
+            return await _a.to_thread(
+                _find_paths_between_iocs_sync,
+                self.con,
+                source_ioc,
+                target_ioc,
+                max_hops,
+            )
+        except Exception as e:
+            logger.W(f"[GRAPH] find_paths_between_iocs failed: {e}")
+            return []
+
+
+def _find_paths_between_iocs_sync(
+    con,
+    source_ioc: str,
+    target_ioc: str,
+    max_hops: int = 4,
+) -> list[list[str]]:
+    """Sync BFS implementation (module-level for to_thread)."""
+    try:
+        sql = """
+            SELECT e.src_id, e.dst_id, n_src.val as src_val, n_dst.val as dst_val
+            FROM ioc_edges e
+            JOIN ioc_nodes n_src ON n_src.id = e.src_id
+            JOIN ioc_nodes n_dst ON n_dst.id = e.dst_id
+            LIMIT 5000
+        """
+        rows = con.execute(sql).fetchdf()
+        if rows.empty:
+            return []
+
+        adj: dict[str, list[str]] = {}
+        for _, row in rows.iterrows():
+            src_val = str(row["src_val"])
+            dst_val = str(row["dst_val"])
+            if src_val not in adj:
+                adj[src_val] = []
+            if dst_val not in adj[src_val]:
+                adj[src_val].append(dst_val)
+
+        paths: list[list[str]] = []
+        stack: list[tuple[str, list[str]]] = [(source_ioc, [source_ioc])]
+        visited: dict[str, int] = {source_ioc: 0}
+
+        while stack and len(paths) < 10:
+            cur, path = stack.pop()
+            if len(path) > max_hops:
+                continue
+            if cur == target_ioc and len(path) > 1:
+                paths.append(path)
+                continue
+            neighbors = adj.get(cur, [])
+            for neighbor in neighbors:
+                if neighbor not in visited or visited[neighbor] > len(path):
+                    visited[neighbor] = len(path)
+                    stack.append((neighbor, path + [neighbor]))
+
+        return paths
+
+    except Exception as e:
+        logger.W(f"[GRAPH] _find_paths_between_iocs_sync failed: {e}")
+        return []
+
     def stats(self) -> dict:
         nodes = self.con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()[0]
         edges = self.con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()[0]

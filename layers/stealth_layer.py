@@ -2424,7 +2424,21 @@ class StealthLayer:
         return ''
     
     def rotate_fingerprint(self) -> Optional[BrowserProfile]:
-        """Force rotation to new browser fingerprint"""
+        """Force rotation to new browser fingerprint.
+
+        Rotates both HTTP headers (via ZeroAttributionEngine) and browser JA3
+        fingerprint (via FingerprintRandomizer) for full layer-7 anonymity.
+        Fail-soft: never break stealth rotation on any exception.
+        """
+        # 1. Header-level rotation via ZeroAttributionEngine
+        # Pattern follows intelligence/data_leak_hunter.py — local instance
+        from hledac.universal.security.zero_attribution_engine import ZeroAttributionEngine
+        try:
+            _header_engine = ZeroAttributionEngine()
+            _header_engine.fingerprint_rotate_headers()
+        except Exception:
+            pass  # fail-soft: header rotation is advisory
+        # 2. JA3/browser-profile rotation via FingerprintRandomizer
         if self._fingerprint_randomizer:
             return self._fingerprint_randomizer.rotate()
         return None

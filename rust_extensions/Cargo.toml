@@ -1,0 +1,17 @@
+[package]
+name = "hledac-rust-extensions"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "hledac_rust_extensions"
+crate-type = ["cdylib"]
+
+[dependencies]
+ahocorasick = "2.1"
+pyO3 = { version = "0.24", features = ["extension-module"] }
+thiserror = "2"
+
+[profile.release]
+opt-level = 3
+lto = true

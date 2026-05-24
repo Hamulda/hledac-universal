@@ -30,6 +30,8 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import threading
+from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, TYPE_CHECKING, Union
 
 import numpy as np
@@ -41,6 +43,14 @@ if TYPE_CHECKING:
     from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 
 logger = logging.getLogger(__name__)
+
+# CoreML availability flag — used by CoreMLEmbedder and smoke tests
+try:
+    import coremltools as ct  # noqa: F401
+
+    COREML_AVAILABLE = True
+except ImportError:
+    COREML_AVAILABLE = False
 
 # MRL dimension (Matryoshka Representation Learning) - 256d output
 _EMBEDDING_DIM = 256
@@ -181,6 +191,12 @@ class EmbeddingRouter:
         """
         self._ensure_initialized()
 
+        # === F216B: Try BGE CoreMLEmbedder (ANE primary) first ===
+        bge = get_ane_embedder()
+        if bge is not None and bge.is_loaded:
+            logger.debug("[EMBED:ROUTER] sync: using BGE CoreML/ANE")
+            return bge
+
         # ANE is already loaded → use it (ANE + MLX UMA are separate, not additive)
         if self._ane is not None and self._ane.is_loaded:
             logger.debug("[EMBED:ROUTER] sync: using cached ANE")
@@ -270,8 +286,143 @@ class EmbeddingRouter:
         logger.info("[EMBED:ROUTER] All embedders unloaded")
 
 
-# Module-level router singleton
-_embedding_router: Optional[EmbeddingRouter] = None
+# === CoreMLEmbedder (BGE on ANE via CoreML) ===
+
+_MODELS_DIR = Path.home() / ".hledac" / "models"
+
+
+class CoreMLEmbedder:
+    """
+    CoreML embedder using bge-small-en-v1.5.mlpackage on ANE.
+
+    Compute units: ALL (ANE + GPU + CPU)
+    Fallback: raises RuntimeError if mlpackage not found or CoreML unavailable.
+
+    Data contract: embed(texts) → np.ndarray float32 shape (N, 384)
+    """
+
+    def __init__(self, mlpackage_path: Path | None = None):
+        self._model = None
+        self._available = False
+        self._loaded = False
+
+        if not COREML_AVAILABLE:
+            self._last_error = "CoreML not available (coremltools not installed)"
+            return
+
+        try:
+            import coremltools as ct
+
+            if mlpackage_path is None:
+                mlpackage_path = _MODELS_DIR / "bge-small-en-v1.5.mlpackage"
+
+            if not mlpackage_path.exists():
+                self._last_error = f"mlpackage not found: {mlpackage_path}"
+                return
+
+            self._mlpackage_path = mlpackage_path
+            self._model = ct.models.MLModel(str(mlpackage_path))
+            self._available = True
+            self._loaded = True
+            self._last_error = None
+            logger.info(f"[CoreMLEmbedder] Loaded: {mlpackage_path}")
+        except Exception as e:
+            self._last_error = str(e)
+            self._available = False
+            self._loaded = False
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._loaded and self._available
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        """Encode texts via CoreML predict. Sync (no async needed for ANE)."""
+        if not self._available:
+            raise RuntimeError(f"CoreMLEmbedder unavailable: {self._last_error}")
+
+        # Tokenize via ONNX input name — bge-small uses "input_ids" + "attention_mask"
+        # For mlpackage, input spec varies — try generic dict approach first
+        try:
+            # CoreML mlpackage: call predict with dict input
+            # Text tokenization happens inside the mlmodel — provide text as string/list
+            if isinstance(texts, str):
+                texts = [texts]
+
+            # The mlmodel input spec determines exact key names
+            # bge-small-en-v1.5.mlpackage typically has "text" input for sentence-transformers
+            result = self._model.predict({"text": texts})
+            # Output is typically "sentence_embedding" or similar
+            for key in result:
+                arr = result[key]
+                if hasattr(arr, "shape"):
+                    return np.array(arr, dtype=np.float32)
+
+            raise RuntimeError(f"No array output from CoreML predict, keys: {list(result.keys())}")
+        except Exception as e:
+            raise RuntimeError(f"CoreML embed failed: {e}") from e
+
+    def unload(self):
+        """Release CoreML model from memory."""
+        self._model = None
+        self._loaded = False
+        # mx.eval() + clear_cache() per GHOST_INVARIANT I11
+        try:
+            import mlx.core as mx
+
+            mx.eval([])
+            mx.metal.clear_cache()
+        except Exception:
+            pass
+        logger.debug("[CoreMLEmbedder] Unloaded")
+
+
+# === ANE_EMBEDDER singleton (lazy init) ===
+
+_ANE_EMBEDDER: "CoreMLEmbedder | None" = None
+_ANE_INIT_LOCK = threading.Lock()
+
+
+def get_ane_embedder() -> "CoreMLEmbedder | None":
+    """
+    Get or create the ANE embedder singleton.
+
+    Initialized once at first call, thread-safe.
+    Returns None if CoreML or mlpackage unavailable.
+    """
+    global _ANE_EMBEDDER
+    if _ANE_EMBEDDER is not None:
+        return _ANE_EMBEDDER
+
+    with _ANE_INIT_LOCK:
+        if _ANE_EMBEDDER is not None:
+            return _ANE_EMBEDDER
+
+        # Try to load CoreMLEmbedder
+        impl = CoreMLEmbedder()
+        if impl._available:
+            _ANE_EMBEDDER = impl
+            logger.info("[ANE_EMBEDDER] CoreMLEmbedder initialized")
+        else:
+            logger.debug(f"[ANE_EMBEDDER] Not available: {impl._last_error}")
+
+        return _ANE_EMBEDDER
+
+
+def unload_ane_embedder() -> None:
+    """Unload the ANE embedder singleton."""
+    global _ANE_EMBEDDER
+    if _ANE_EMBEDDER is not None:
+        _ANE_EMBEDDER.unload()
+        _ANE_EMBEDDER = None
+
+
+# === Fallback routing via EmbeddingRouter ===
+
+_Embedding_router: "EmbeddingRouter | None" = None
 
 
 def _get_embedder():

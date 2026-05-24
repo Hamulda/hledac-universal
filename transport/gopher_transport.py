@@ -384,6 +384,65 @@ class GopherTransport:
         """Graceful GopherTransport shutdown — no-op since connections are per-request."""
         pass
 
+    # ── Veronica-2 Search ────────────────────────────────────────────────────────
+    VERONICA_HOST = "gopher.floodgap.com"
+    VERONICA_PORT = 70
+    VERONICA_SELECTOR_PREFIX = "/7/v2/vs?"
+
+    async def search(self, query: str, *, timeout_s: float = 30.0) -> GopherResponse:
+        """
+        Perform Veronica-2 search via Floodgap Gopher proxy.
+
+        Args:
+            query: Search query string
+            timeout_s: Timeout in seconds (default 30s)
+
+        Returns:
+            GopherResponse with search results (items)
+        """
+        selector = f"{self.VERONICA_SELECTOR_PREFIX}{query}"
+        return await self._fetch(self.VERONICA_HOST, self.VERONICA_PORT, selector, timeout_s, max_bytes=1_000_000)
+
+    # ── CanonicalFinding adapter ───────────────────────────────────────────────
+
+    def item_to_finding(
+        self,
+        item: GopherItem,
+        *,
+        query: str | None = None,
+        sprint_id: str | None = None,
+    ) -> dict:
+        """
+        Convert a GopherItem to a CanonicalFinding-style dict.
+
+        Returns dict with fields matching CanonicalFinding for sidecar ingestion.
+        """
+        from hledac.universal.knowledge.duckdb_store import (
+            SprintSchedulerResult,
+        )
+        finding = {
+            "source_type": "gopher_discovery",
+            "ioc_type": "url",
+            "ioc_value": f"gopher://{item.host}:{item.port}/{item.selector}",
+            "confidence": 0.6,
+            "confidence_signal": "gopher_menu_item",
+            "finding_data": {
+                "item_type": item.item_type,
+                "display_string": item.display_string,
+                "selector": item.selector,
+                "host": item.host,
+                "port": item.port,
+                "is_directory": item.is_directory,
+                "is_file": item.is_file,
+            },
+            "payload_text": f"[Gopher] {item.display_string} ({item.item_type}) — gopher://{item.host}:{item.port}/{item.selector}",
+        }
+        if query:
+            finding["finding_data"]["search_query"] = query
+        if sprint_id:
+            finding["sprint_id"] = sprint_id
+        return finding
+
 
 # ── Canonical singleton ───────────────────────────────────────────────────────
 

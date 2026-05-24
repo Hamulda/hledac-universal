@@ -4985,6 +4985,16 @@ class DuckDBShadowStore:
                     self._record_quality_rejection(f, decision)
                     results[i] = decision
                 else:
+                    # Sprint F216K §1: TemporalAnonymizer — pre-write timestamp anonymization
+                    # Fail-soft: use original timestamp if anonymizer unavailable or throws
+                    if os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1":
+                        try:
+                            from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+                            if not hasattr(self, "_temporal_anonymizer"):
+                                self._temporal_anonymizer = TemporalAnonymizer()
+                            f.timestamp = self._temporal_anonymizer.anonymize_timestamp(f.timestamp)
+                        except Exception:
+                            pass  # fail-soft: keep original timestamp
                     accepted_findings.append(f)
                     accepted_indices.append(i)
 

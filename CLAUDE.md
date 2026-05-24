@@ -123,6 +123,21 @@ pytest hledac/universal/ -v
 pytest hledac/universal/ -m unit
 pytest hledac/universal/ -m security -v
 pytest hledac/universal/ -v -n auto
+
+## Post-Quantum Crypto Setup (Apple Silicon)
+
+To enable real ML-KEM-768 + ML-DSA-65 post-quantum cryptography:
+
+```bash
+brew install liboqs
+uv pip install liboqs-python
+export HLEDAC_PQ_MODE=real  # enables real PQ crypto (simulation is default)
+```
+
+**Note**: When `liboqs-python` is not installed, `quantum_safe.py` runs in SIMULATION mode (not cryptographically secure — only for development/testing).
+
+---
+
 Before Starting Any Task
  Confirm task scope is entirely within hledac/universal/
 

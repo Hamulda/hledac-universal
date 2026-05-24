@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.0"]
+build-backend = "maturin"
+
+[project]
+name = "hledac_rust_ext"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.maturin]
+manifest-path = "Cargo.toml"

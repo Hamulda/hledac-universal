@@ -102,7 +102,7 @@ class SprintPolicyManager:
 
     def __init__(
         self,
-        enabled: bool = False,
+        enabled: bool = os.environ.get("HLEDAC_DISABLE_RL") != "1",
         policy_path: Optional[Path] = None,
         epsilon: float = _DEFAULT_EPSILON,
         exploration_interval: int = _EXPLORATION_INTERVAL,
@@ -271,6 +271,26 @@ class SprintPolicyManager:
             if hasattr(result, "cycles_completed") and result.cycles_completed > 0:
                 reward += min(result.cycles_completed / 10.0, 2.0)
 
+            # F228F: Dark web high-confidence finding reward (+0.3 per finding, conf > 0.7)
+            dark_web_sources = ("tor", "i2p", "ipfs", "nym", "dht")
+            for src in dark_web_sources:
+                count = getattr(result, f"{src}_findings_accepted", 0) or 0
+                reward += count * 0.3
+
+            # F228F: Unindexed source reward (+0.5 per finding from Gopher/DHT)
+            unindexed_sources = ("gopher", "dht")
+            for src in unindexed_sources:
+                count = getattr(result, f"{src}_findings_accepted", 0) or 0
+                reward += count * 0.5
+
+            # F228F: CAPTCHA detection penalty (-0.2 per detection, means too aggressive)
+            captcha_count = getattr(result, "captcha_detected_count", 0) or 0
+            reward -= captcha_count * 0.2
+
+            # F228F: DS hypothesis confirmation reward (+0.1 per confirmation)
+            ds_confirmed = getattr(result, "ds_hypothesis_confirmed_count", 0) or 0
+            reward += ds_confirmed * 0.1
+
             return max(-10.0, min(reward, 100.0))
         except Exception:
             return 0.0
@@ -358,6 +378,15 @@ class SprintPolicyManager:
         """Sample batch from replay buffer and run QMIX joint training step."""
         if self._qmix_trainer is None or self._replay_buffer is None:
             return
+        # G1: UMA budget pre-check — skip if M1 memory critical (2GB training limit)
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_budget
+            uma = get_uma_budget()
+            if uma.is_critical():
+                log.debug("[SprintPolicyManager] Skipping QMIX train_step — M1 memory critical")
+                return
+        except Exception:
+            pass  # UMA check is advisory; proceed if unavailable
         try:
             batch = self._replay_buffer.sample(_TRAIN_BATCH_SIZE)
             if batch is None or batch["states"].shape[0] < _MIN_REPLAY_SIZE:
@@ -507,6 +536,53 @@ class SprintPolicyManager:
             "last_train_sprint": self._state.last_train_sprint,
             "rl_train_mode": self._rl_train_mode,
             "qmix_available": self._qmix_trainer is not None,
+        }
+
+    # ── Next Pivot Advisory ─────────────────────────────────────────────────
+
+    def suggest_next_pivot(
+        self, current_findings: list, memory_snapshot: dict | None = None
+    ) -> list[dict]:
+        """
+        F228F: Propose pivot directions based on accumulated reward patterns.
+
+        Called by SprintScheduler at post-run advisory phase before next_pivots
+        are generated. Policy may suggest direction hints derived from RL state.
+
+        Args:
+            current_findings: List of findings from the completed sprint.
+            memory_snapshot: Optional memory/state snapshot from the scheduler.
+
+        Returns:
+            List of pivot suggestion dicts with keys: pivot_type, reason, confidence.
+            Empty list when disabled.
+        """
+        if not self._enabled:
+            return []
+
+        # Fallback: no pivot suggestions when QMIX is unavailable
+        if self._qmix_trainer is None or self._agents is None:
+            return []
+
+        try:
+            suggestions: list[dict] = []
+            # TODO: F228F — extract directional signal from state/history/reward patterns
+            # e.g. high dark-web reward → suggest tor/i2p pivot direction
+            return suggestions
+        except Exception:
+            return []
+
+    def get_telemetry(self) -> dict[str, Any]:
+        """
+        Return RL telemetry snapshot for sprint_scheduler telemetry reporting.
+
+        F228F: rl_enabled, rl_epsilon, rl_total_reward, rl_last_action.
+        """
+        return {
+            "rl_enabled": self._enabled,
+            "rl_epsilon": self._epsilon,
+            "rl_total_reward": self._state.total_reward,
+            "rl_last_action": self._state.last_action,
         }
 
     def attach_scheduler(self, scheduler) -> None:

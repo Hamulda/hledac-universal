@@ -115,6 +115,12 @@ osint-html = [
     "selectolax>=0.3.21",   # Rust parser; 10-50x faster than BS4
     "xxhash>=3.6.0,<4.0.0", # fast non-crypto hash for IOC deduplication
     "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
+
+# --- pq: post-quantum cryptography via liboqs (Apple Silicon homebrew) ---
+# Requires: brew install liboqs && uv pip install liboqs-python
+pq = [
+    "liboqs-python>=0.10.0",  # ML-KEM-768 + ML-DSA-65 via Open Quantum Safe
+]
 ]
 
 # --- graph-storage: columnar + DuckDB + LanceDB ---
@@ -146,6 +152,8 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.9.0",
     "pytest-asyncio>=1.3.0",
+    # --- rust: PyO3 extension build ---
+    "maturin>=1.0.0",          # Rust Python extensions via PyO3
     # numpy>=1.24: required by 50+ production modules and test files
     # (lancedb/duckdb ship it as transitive; explicit dep ensures clean dev env)
     "numpy>=1.24.0",

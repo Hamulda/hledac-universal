@@ -32,8 +32,12 @@ try:
     import oqs as _oqs
 
     REAL_PQ_AVAILABLE = True
+    _KYBER_ALG = "ML-KEM-768"
+    _DILITHIUM_ALG = "ML-DSA-65"
 except ImportError:
     REAL_PQ_AVAILABLE = False
+    _KYBER_ALG = None
+    _DILITHIUM_ALG = None
     _oqs = None
 
 if not REAL_PQ_AVAILABLE:
@@ -798,7 +802,7 @@ class QuantumSafeVault:
         
         # REAL PQ: ML-KEM-768 + ML-DSA-65 keypairs via liboqs
         if not REAL_PQ_AVAILABLE:
-            # FALLBACK: simulation mode — NOT cryptographically secure
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             self._keypair = {
                 "public": secrets.token_bytes(32),
                 "secret": secrets.token_bytes(32),
@@ -808,12 +812,12 @@ class QuantumSafeVault:
                 "secret": secrets.token_bytes(64),
             }
         else:
-            with _oqs.KeyEncapsulation("ML-KEM-768") as kem:
+            with _oqs.KeyEncapsulation(_KYBER_ALG) as kem:
                 self._keypair = {
                     "public": kem.generate_keypair(),
                     "secret": kem.export_secret_key(),
                 }
-            with _oqs.Signature("ML-DSA-65") as sig:
+            with _oqs.Signature(_DILITHIUM_ALG) as sig:
                 self._signing_keypair = {
                     "public": sig.generate_keypair(),
                     "secret": sig.export_secret_key(),
@@ -845,10 +849,10 @@ class QuantumSafeVault:
         
         # REAL ML-KEM encapsulation via liboqs
         if REAL_PQ_AVAILABLE:
-            with _oqs.KeyEncapsulation("ML-KEM-768", self._keypair["secret"]) as kem:
+            with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair["secret"]) as kem:
                 encapsulated_key, shared_secret = kem.encap_secret(self._keypair["public"])
         else:
-            # FALLBACK: simulation mode — NOT cryptographically secure
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             shared_secret = secrets.token_bytes(32)
             encapsulated_key = secrets.token_bytes(32)
         
@@ -885,10 +889,10 @@ class QuantumSafeVault:
         
         # REAL ML-KEM decapsulation via liboqs
         if REAL_PQ_AVAILABLE:
-            with _oqs.KeyEncapsulation("ML-KEM-768", self._keypair["secret"]) as kem:
+            with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair["secret"]) as kem:
                 shared_secret = kem.decap_secret(container.encapsulated_key)
         else:
-            # FALLBACK: simulation mode — NOT cryptographically secure
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             shared_secret = secrets.token_bytes(32)
         
         # AES-256-GCM decryption
@@ -913,10 +917,10 @@ class QuantumSafeVault:
         
         # REAL ML-DSA signature via liboqs
         if REAL_PQ_AVAILABLE:
-            with _oqs.Signature("ML-DSA-65", self._signing_keypair["secret"]) as sig:
+            with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair["secret"]) as sig:
                 return sig.sign(message)
         else:
-            # FALLBACK: simulation mode — NOT cryptographically secure
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             return secrets.token_bytes(64)
 
     async def verify(self, message: bytes, signature: bytes) -> bool:
@@ -926,10 +930,10 @@ class QuantumSafeVault:
 
         # REAL ML-DSA verification via liboqs
         if REAL_PQ_AVAILABLE:
-            with _oqs.Signature("ML-DSA-65", self._signing_keypair["secret"]) as sig:
+            with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair["secret"]) as sig:
                 return sig.verify(message, signature, self._signing_keypair["public"])
         else:
-            # FALLBACK: simulation mode — NOT cryptographically secure
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             return True
 
     async def _get_neuro_engine(self) -> NeuromorphicCryptoEngine:

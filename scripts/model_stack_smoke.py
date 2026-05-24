@@ -110,25 +110,23 @@ def check_embeddings() -> dict:
         from hledac.universal.brain.ane_embedder import ANEEmbedder, ANE_AVAILABLE
         notes.append(f"ANEEmbedder import=OK (ANE_AVAILABLE={ANE_AVAILABLE})")
 
-        # Sprint F228B: CoreMLEmbedder check
+        # Sprint F216B: CoreMLEmbedder (BGE on ANE) check via embedding_pipeline
         coreml_active_path = "unavailable"
         try:
-            from hledac.universal.brain.coreml_embedder import (
-                get_coreml_embedder,
-                ANE_AVAILABLE as _CA,
-                CoreMLEmbedder,
-            )
-            ce = get_coreml_embedder()
-            if ce is not None:
-                if ce._backend == "coreml" and ce._model is not None:
+            from hledac.universal.embedding_pipeline import get_ane_embedder, COREML_AVAILABLE
+
+            notes.append(f"CoreML available={COREML_AVAILABLE}")
+            bge = get_ane_embedder()
+            if bge is not None:
+                if bge._available and bge._loaded:
                     coreml_active_path = "coreml_ane"
-                elif ce._backend == "onnx" and ce._model is not None:
-                    coreml_active_path = "onnx_cpu"
-                elif ce._is_loaded:
-                    coreml_active_path = "hash_fallback"
+                elif bge._available:
+                    coreml_active_path = "coreml_loaded_not_ready"
                 else:
-                    coreml_active_path = "not_loaded"
-            notes.append(f"CoreMLEmbedder active_path={coreml_active_path}")
+                    coreml_active_path = f"not_available ({bge._last_error})"
+            else:
+                coreml_active_path = "not_initialized"
+            notes.append(f"ANE BGE CoreMLEmbedder path={coreml_active_path}")
         except ImportError:
             notes.append("CoreMLEmbedder=N/A (coremltools not installed)")
         except Exception as e:

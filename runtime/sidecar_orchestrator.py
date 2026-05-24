@@ -267,6 +267,12 @@ class SidecarOrchestrator:
             )
             bg_tasks.add(_dht_task)
             _dht_task.add_done_callback(bg_tasks.discard)
+            # F214R: Gopher discovery sidecar
+            _gopher_task = _asyncio.create_task(
+                self._run_gopher_sidecar(), name="sprint:gopher_sidecar"
+            )
+            bg_tasks.add(_gopher_task)
+            _gopher_task.add_done_callback(bg_tasks.discard)
 
     async def run_target_memory_update(
         self,

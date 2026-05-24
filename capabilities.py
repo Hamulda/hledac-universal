@@ -96,6 +96,7 @@ class Capability(Enum):
     CENSYS = "censys"
     GREYNOISE = "greynoise"
     DHT = "dht"
+    GOPHER = "gopher"
 
     # Analysis
     TEMPORAL = "temporal"
@@ -111,6 +112,7 @@ class Capability(Enum):
     SNN = "snn"
     FEDERATED = "federated"
     QUANTUM_PATH = "quantum_path"
+    QUANTUM_PQ = "quantum_pq"  # Post-quantum crypto via liboqs (ML-KEM-768 + ML-DSA-65)
     META_OPTIMIZER = "meta_optimizer"
 
     # Tree of Thoughts
@@ -909,6 +911,35 @@ def create_default_registry() -> CapabilityRegistry:
         available=_dht_env,
         reason=f"DHT enabled (HLEDAC_ENABLE_DHT=1)" if _dht_env else "DHT disabled via HLEDAC_ENABLE_DHT",
         module_path="hledac.universal.dht.kademlia_node"
+    )
+
+    # Post-quantum crypto — available when liboqs-python is installed
+    _pq_available = False
+    try:
+        import oqs as _oqs_lib  # noqa: F401
+        _pq_available = True
+    except ImportError:
+        pass
+    registry.register(
+        capability=Capability.QUANTUM_PQ,
+        available=_pq_available,
+        reason=f"Real PQ crypto available (ML-KEM-768 + ML-DSA-65)" if _pq_available else "PQ crypto in SIMULATION mode (liboqs-python not installed)",
+        module_path="hledac.universal.security.quantum_safe"
+    )
+
+    _gopher_env = os.environ.get("HLEDAC_ENABLE_GOPHER", "").lower() in ("1", "true", "yes", "on")
+    _gopher_available = False
+    if _gopher_env:
+        try:
+            from hledac.universal.transport.gopher_transport import GopherTransport
+            _gopher_available = True
+        except ImportError:
+            pass
+    registry.register(
+        capability=Capability.GOPHER,
+        available=_gopher_available,
+        reason=f"Gopher transport enabled (env: {_gopher_env})" if _gopher_available else f"Gopher transport disabled (env: {_gopher_env})",
+        module_path="hledac.universal.transport.gopher_transport"
     )
 
     return registry
