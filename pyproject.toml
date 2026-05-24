@@ -115,6 +115,10 @@ osint-html = [
     "selectolax>=0.3.21",   # Rust parser; 10-50x faster than BS4
     "xxhash>=3.6.0,<4.0.0", # fast non-crypto hash for IOC deduplication
     "curl_cffi>=0.7.0",     # JA3 TLS fingerprint impersonation
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 ]
 # --- pq: post-quantum cryptography via liboqs (Apple Silicon homebrew) ---
 # Requires: brew install liboqs && uv pip install liboqs-python
