@@ -4624,9 +4624,45 @@ Formát (pouze seznam, žádný další text):
             available_transports.append("I2P")
         transport_str = "+".join(available_transports)
 
+        # Sprint F250F: ResearchLayer hunt() expansion BEFORE LLM call (M1-safe, max_depth=2)
+        context_hints: list[str] = []
+        if os.environ.get("HLEDAC_ENABLE_RESEARCH_LAYER") == "1" and hermes_engine is not None:
+            try:
+                from hledac.universal.layers.layer_manager import LayerManager
+                _lm = LayerManager(config=None)
+                _research = _lm.research()
+                if _research and hasattr(_research, 'hunt') and findings:
+                    _seed_text = ""
+                    for f in findings:
+                        _c = getattr(f, 'content', None) or ''
+                        if _c:
+                            _seed_text = _c[:200]
+                            break
+                    if _seed_text:
+                        _raw_results: list[dict[str, Any]] = await asyncio.to_thread(
+                            _research.hunt, _seed_text, 2
+                        )
+                        if _raw_results:
+                            # Sprint F250F: PII filter — sanitize hints before injection
+                            _safe_hints: list[str] = []
+                            if _research and hasattr(_research, 'has_pii'):
+                                for r in _raw_results[:5]:
+                                    _txt = str(r.get('url', r.get('title', '')))[:100]
+                                    if not _research.has_pii(_txt):
+                                        _safe_hints.append(_txt)
+                            else:
+                                _safe_hints = [str(r.get('url', r.get('title', '')))[:100] for r in _raw_results[:5]]
+                            context_hints = _safe_hints
+            except Exception as _e:
+                logger.debug("[DARK_SURFACE] research_layer hunt failed: %s", _e)
+
         # Use Hermes for LLM-assisted expansion if available
         if hermes_engine is not None:
-            prompt = f"""Z techto IOC z aktualniho sprintu: {ioc_brief}
+            # Inject research hints into prompt if available
+            _research_hint_section = ""
+            if context_hints:
+                _research_hint_section = f"\n\nDOPLNUJICI KONTEXT (research layer):\n" + "\n".join(f"- {h}" for h in context_hints)
+            prompt = f"""Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}
 
 Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).
 Pro kazdy dotaz uved:

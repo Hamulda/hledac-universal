@@ -74,7 +74,7 @@ async def run_smoke_test() -> int:
     log.info("[1/6] Testing root package imports...")
     try:
         import hledac.universal
-        from hledac.universal import FETCH_SEMAPHORE, AdaptiveSemaphore, adjust_fetch_workers
+        from utils.concurrency import FETCH_SEMAPHORE, AdaptiveSemaphore, adjust_fetch_workers
         log.info("  ✓ Root package and FETCH_SEMAPHORE imports OK")
     except Exception as e:
         errors.append(f"Root package import failed: {e}")

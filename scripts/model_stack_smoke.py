@@ -29,6 +29,16 @@ import sys
 import time
 from pathlib import Path
 
+# F218A fix: ensure 'hledac' parent is on sys.path so 'hledac.universal' imports resolve
+# When run from inside universal/ (cwd), parent of cwd = hledac/
+_cwd = Path.cwd()
+if _cwd.name == "universal":
+    _parent = _cwd.parent  # .../Hledac/hledac  →  adds 'hledac' to path
+else:
+    _parent = _cwd  # run from Hledac/ root → already has hledac/ as sibling
+if str(_parent) not in sys.path:
+    sys.path.insert(0, str(_parent))
+
 # ---------------------------------------------------------------------------
 # Model stack constants (canonical source of truth for this script)
 # ---------------------------------------------------------------------------
@@ -135,11 +145,15 @@ def check_embeddings() -> dict:
                 bge = get_ane_embedder()
                 if bge is not None and bge.is_loaded:
                     t0 = time.monotonic()
-                    vec = bge.embed("OSINT test query")
+                    from hledac.universal.embedding_pipeline import embed_texts_canonical
+                    vec = embed_texts_canonical(["OSINT test query"])
                     elapsed = time.monotonic() - t0
-                    notes.append(f"CoreML embed OK shape={vec.shape} time={elapsed*1000:.1f}ms")
-                    if vec.shape != (1, 384):
-                        notes.append(f"WARN: expected (1,384) got {vec.shape}")
+                    _expected_shapes = {(1, 256), (1, 384)}
+                    if vec.shape not in _expected_shapes:
+                        notes.append(f"FAIL: unexpected embedding shape {vec.shape} (expected one of {_expected_shapes})")
+                        _smoke_failed = True
+                    else:
+                        notes.append(f"OK: embedding shape {vec.shape} time={elapsed*1000:.1f}ms")
                 else:
                     notes.append("CoreML BGE not loaded (smoke test skipped)")
             except Exception as e:

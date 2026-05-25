@@ -259,6 +259,14 @@ class SprintPolicyManager:
 
     # ── Reward computation ───────────────────────────────────────────────────
 
+    def _get_finding_count(self, result: "SprintSchedulerResult", prefix: str) -> int:
+        """F235: Fallback chain for finding count fields — M1 memory safe."""
+        for suffix in ("accepted", "produced", "ingested"):
+            val = getattr(result, f"{prefix}_findings_{suffix}", None)
+            if val is not None:
+                return val
+        return 0
+
     def _compute_reward(self, result: "SprintSchedulerResult") -> float:
         """
         Compute reward from real SprintSchedulerResult fields.
@@ -269,12 +277,12 @@ class SprintPolicyManager:
         """
         try:
             findings_accepted = getattr(result, "findings_accepted", 0) or 0
-            runtime = getattr(result, "runtime_seconds", 0) or 0
-            total_findings = getattr(result, "findings_total", 0) or 0
+            runtime = getattr(result, "actual_duration_s", 0.0) or 0.0
+            total_in = findings_accepted + getattr(result, 'findings_deduplicated', 0)
 
             # Source quality multiplier from acceptance ratio
-            if total_findings > 0:
-                accepted_ratio = findings_accepted / max(total_findings, 1)
+            if total_in > 0:
+                accepted_ratio = findings_accepted / total_in
                 source_quality_mult = 0.5 + 1.5 * accepted_ratio  # ∈ [0.5, 2.0]
             else:
                 source_quality_mult = 1.0
@@ -291,27 +299,41 @@ class SprintPolicyManager:
             if hasattr(result, "cycles_completed") and result.cycles_completed > 0:
                 reward += min(result.cycles_completed / 10.0, 2.0)
 
-            # F228F: Dark web high-confidence finding reward (+0.3 per finding, conf > 0.7)
-            dark_web_sources = ("tor", "i2p", "ipfs", "nym", "dht")
-            for src in dark_web_sources:
-                count = getattr(result, f"{src}_findings_accepted", 0) or 0
+            # F228F/F235: Dark web high-confidence finding reward (+0.3 per finding)
+            for src in ("tor", "i2p", "nym", "dht"):
+                count = self._get_finding_count(result, src)
                 reward += count * 0.3
 
-            # F228F: Unindexed source reward (+0.5 per finding from Gopher/DHT)
-            unindexed_sources = ("gopher", "dht")
-            for src in unindexed_sources:
-                count = getattr(result, f"{src}_findings_accepted", 0) or 0
-                reward += count * 0.5
+            # ipfs exists as findings_accepted directly
+            reward += (getattr(result, 'ipfs_findings_accepted', 0) or 0) * 0.3
 
-            # F228F: CAPTCHA detection penalty (-0.2 per detection, means too aggressive)
-            captcha_count = getattr(result, "captcha_detected_count", 0) or 0
-            reward -= captcha_count * 0.2
+            # F228F/F235: Unindexed source reward (+0.5 per finding from Gopher)
+            reward += self._get_finding_count(result, 'gopher') * 0.5
 
-            # F228F: DS hypothesis confirmation reward (+0.1 per confirmation)
-            ds_confirmed = getattr(result, "ds_hypothesis_confirmed_count", 0) or 0
-            reward += ds_confirmed * 0.1
+            # ── F235: KVALITATIVNÍ METRIKY ────────────────────────────────
+            # Dedup efficiency — higher dedup ratio = more wasted work
+            if total_in > 0:
+                dedup_ratio = findings_accepted / total_in
+                reward += dedup_ratio * 0.5
 
-            return max(-10.0, min(reward, 100.0))
+            # BGP enrichment bonus
+            bgp_enrich = getattr(result, 'bgp_enrichment_findings_ingested', 0) or 0
+            reward += bgp_enrich * 0.2
+
+            # OPSEC cover traffic bonus
+            cover_fired = getattr(result, 'cover_traffic_fired', 0) or 0
+            reward += cover_fired * 0.1
+
+            # Hypothesis contradiction penalty
+            contradictions = getattr(result, 'hypothesis_contradictions_detected', 0) or 0
+            reward -= contradictions * 0.2
+
+            # Circuit breaker penalty
+            cb_opens = getattr(result, 'circuit_breaker_opens', 0) or 0
+            reward -= cb_opens * 0.1
+
+            # Clamp to [-3.0, 5.0] per F235 spec
+            return max(-3.0, min(5.0, reward))
         except Exception:
             return 0.0
 
@@ -597,8 +619,42 @@ class SprintPolicyManager:
 
         try:
             suggestions: list[dict] = []
-            # TODO: F228F — extract directional signal from state/history/reward patterns
-            # e.g. high dark-web reward → suggest tor/i2p pivot direction
+
+            if self._state_extractor is None:
+                return []
+
+            # F235: RL-guided pivot from Q-values
+            try:
+                state = self._state_extractor.extract(memory_snapshot or {})
+            except Exception:
+                state = None
+
+            if state is not None:
+                # Get Q-values from each agent, pick argmax
+                best_action = 0
+                best_q = float('-inf')
+                for agent_id, agent in self._agents.items():
+                    q_val = float(agent.q_net(state)[0].item())
+                    if q_val > best_q:
+                        best_q = q_val
+                        best_action = int(agent_id)
+
+                pivot_map = {
+                    0: "standard",
+                    1: "dark_surface",
+                    2: "gopher",
+                    3: "bgp_enrichment",
+                    4: "academic",
+                }
+                pivot_type = pivot_map.get(best_action, "standard")
+                confidence = float(best_q)
+
+                suggestions.append({
+                    "pivot_type": pivot_type,
+                    "confidence": confidence,
+                    "reason": f"Q={confidence:.3f} eps={self._epsilon:.3f}",
+                })
+
             return suggestions
         except Exception:
             return []

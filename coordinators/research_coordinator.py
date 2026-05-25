@@ -270,7 +270,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         
         # Try UnifiedAIOrchestrator
         try:
-            from hledac.core.unified_ai_orchestrator import UnifiedAIOrchestrator
+            from _shims.core_unified_ai_orchestrator import UnifiedAIOrchestrator
             self._unified_orchestrator = UnifiedAIOrchestrator()
             if hasattr(self._unified_orchestrator, 'initialize'):
                 await self._unified_orchestrator.initialize()

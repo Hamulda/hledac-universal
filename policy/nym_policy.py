@@ -8,7 +8,7 @@ from typing import Dict, Optional, Tuple
 from enum import Enum
 
 from hledac.universal.core.resource_governor import ResourceGovernor, Priority
-from hledac.universal.transport import Transport, TransportResolver, TransportContext
+from transport.transport_resolver import Transport, TransportResolver, TransportContext
 
 logger = logging.getLogger(__name__)
 

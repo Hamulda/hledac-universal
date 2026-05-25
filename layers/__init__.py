@@ -186,3 +186,40 @@ __all__ = [
     "TemporalEdgeCandidate",
     "event_from_finding_like",
 ]
+
+# ---------------------------------------------------------------------------
+# Layer factory getters — lazy singletons for fetch pipeline injection
+# ---------------------------------------------------------------------------
+
+
+def get_stealth_layer() -> "StealthLayer | None":
+    """Lazy singleton StealthLayer accessor.
+
+    Returns None if layers are disabled or init fails (fail-soft).
+    Caller is responsible for calling .initialize() if returning a new instance.
+    """
+    try:
+        from hledac.universal.layers.stealth_layer import StealthLayer
+    except Exception:
+        return None
+    try:
+        instance = StealthLayer()
+        return instance
+    except Exception:
+        return None
+
+
+def get_content_layer() -> "ContentCleaner | None":
+    """Lazy singleton ContentCleaner accessor.
+
+    Returns None if content_layer init fails (fail-soft).
+    ContentCleaner.clean_html() is sync — safe to call from async fetch pipeline.
+    """
+    try:
+        from hledac.universal.layers.content_layer import ContentCleaner
+    except Exception:
+        return None
+    try:
+        return ContentCleaner()
+    except Exception:
+        return None

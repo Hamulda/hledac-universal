@@ -43,7 +43,7 @@ class TestEmbeddingRouterSync(unittest.TestCase):
             mock_mb.is_loaded = True
             router._modernbert = mock_mb
 
-            # MLX is loaded, ANE not cached
+            # MLX is loaded, ANE not cached — use ModernBERT
             with patch.object(router, '_check_mlx_loaded', return_value=True):
                 with patch.object(router, '_load_modernbert', return_value=mock_mb):
                     result = router._get_embedder_sync()

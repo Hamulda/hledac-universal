@@ -283,7 +283,7 @@ class LanceDBIdentityStore:
         # 1. MLXEmbeddingManager on GPU (primary) - Sprint 81 Fáze 4
         # Use shared singleton to avoid duplicate model loads
         try:
-            from hledac.core.mlx_embeddings import get_embedding_manager
+            from _shims.core_mlx_embeddings import get_embedding_manager
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'

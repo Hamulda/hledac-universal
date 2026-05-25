@@ -191,7 +191,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         
         # Try Watchdog
         try:
-            from hledac.core.watchdog import Watchdog
+            from _shims.core_watchdog import Watchdog
             self._watchdog = Watchdog()
             if hasattr(self._watchdog, 'start'):
                 await self._watchdog.start()

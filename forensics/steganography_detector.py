@@ -3,17 +3,21 @@ from pathlib import Path
 from typing import Opt
 
 try:
-    from hledac_rust_ext import chi_square as _rust_chi_square, entropy as _rust_entropy
+    from hledac_rust_extensions import chi_square as _rust_chi_square, entropy as _rust_entropy
     try:
-        from hledac_rust_ext import extract_iocs as _rust_extract_iocs
+        from hledac_rust_extensions import fast_ioc_extract_batch as _rust_extract_iocs
     except ImportError:
         _rust_extract_iocs = None
     try:
-        from hledac_rust_ext import normalize_url as _rust_normalize_url
+        from hledac_rust_extensions import url_normalize_batch as _rust_normalize_url
     except ImportError:
         _rust_normalize_url = None
     try:
-        from hledac_rust_ext import batch_sha256 as _rust_batch_sha256
+        from hledac_rust_extensions import bloom_check_batch as _rust_bloom_check
+    except ImportError:
+        _rust_bloom_check = None
+    try:
+        from hledac_rust_extensions import batch_sha256 as _rust_batch_sha256
     except ImportError:
         _rust_batch_sha256 = None
     _RUST_AVAILABLE = True
@@ -21,6 +25,7 @@ except ImportError:
     _RUST_AVAILABLE = False
     _rust_extract_iocs = None
     _rust_normalize_url = None
+    _rust_bloom_check = None
     _rust_batch_sha256 = None
 
 # opt dep
@@ -126,6 +131,16 @@ def normalize_url(url: str) -> str:
     if _RUST_AVAILABLE and _rust_normalize_url is not None:
         return _rust_normalize_url(url)
     return _python_normalize_url(url)
+
+
+def bloom_check(items: list[str], capacity: int = 100_000, fp_rate: float = 0.01) -> list[bool]:
+    """Batch Bloom filter check for URL dedup pre-screening."""
+    if _RUST_AVAILABLE and _rust_bloom_check is not None:
+        try:
+            return _rust_bloom_check(items, capacity)
+        except Exception:
+            pass
+    return [False] * len(items)
 
 
 def batch_sha256(items: list[str]) -> list[str]:

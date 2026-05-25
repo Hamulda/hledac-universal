@@ -36,8 +36,8 @@ except ImportError:
 
 # Security imports
 try:
-    from hledac.security.temporal_anonymizer import TemporalAnonymizer
-    from hledac.security.zero_attribution_engine import ZeroAttributionEngine
+    from _shims.security_temporal_anonymizer import TemporalAnonymizer
+    from _shims.security_zero_attribution_engine import ZeroAttributionEngine
     SECURITY_AVAILABLE = True
 except ImportError:
     SECURITY_AVAILABLE = False
@@ -903,7 +903,7 @@ async def load_api_keys_from_keymanager(
     config = BreachAPIConfig()
 
     try:
-        from hledac.security.key_manager import KeyManager
+        from security.key_manager import KeyManager
         km = KeyManager()
 
         key, _ = await km.get_bucket_key(bucket_id)

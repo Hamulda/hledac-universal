@@ -1,0 +1,23 @@
+bun = "1.2.0"
+node = "26.2.0"
+python = "3.14.5"
+uv = "0.11.16"
+claude-code = "2.1.150"
+
+[plugins.tools]
+claude-code = "github://BarretoTech/proto-claude-code-plugin"
+[env]
+file = ".env.example"  # nebo ".env" pokud existuje
+
+# Python specifická konfigurace
+[tools.python.env]
+PYTHONDONTWRITEBYTECODE = "1"   # nevytvářej __pycache__ binárky
+PYTHONUNBUFFERED = "1"          # unbuffered výstup (lepší pro logy)
+
+# Strategie detekce verzí
+[settings]
+detect-strategy  = "prefer-prototools"  # .prototools má přednost před .python-version
+auto-clean       = true                  # automaticky maže staré verze nástrojů
+pin-latest       = "local"               # při install latest → připne do lokálního .prototools
+telemetry        = false                 # vypne sběr dat
+unstable-lockfile = true                 # vytvoří .protolock s checksums (jako uv.lock pro nástroje)

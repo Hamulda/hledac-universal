@@ -1849,12 +1849,12 @@ def _build_pq_extension(bundle: dict[str, Any], backend: PostQuantumBackend, key
 
         return {
             "extension_type": "hledac:pq-signature",
-            "ml_dsa_signature": sig.signature_bytes.hex(),
-            "ml_dsa_level": sig.level,
-            "key_id": sig.key_id,
+            "ml_dsa_signature": sig.signature.hex(),
+            "ml_dsa_level": sig.security_level,
+            "key_id": key_id,
             "bundle_sha256": digest,
             "backend": backend.name(),
-            "hybrid": sig.has_mldsa(),
+            "hybrid": True,
         }
     except Exception:
         return None

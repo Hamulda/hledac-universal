@@ -1868,6 +1868,8 @@ class SprintSchedulerResult:
 
     # Sprint 8XE: Public discovery pipeline results (canonical path parity)
 
+    pii_findings_anonymized: int = 0
+
     public_discovered: int = 0
 
     public_fetched: int = 0
@@ -2097,6 +2099,14 @@ class SprintSchedulerResult:
     public_branch_timed_out: bool = False
 
     ct_branch_timed_out: bool = False
+
+    # Sprint F235: RL quality telemetry
+    findings_deduplicated: int = 0
+    hypothesis_contradictions_detected: int = 0
+    cover_traffic_fired: int = 0
+    captcha_hits: int = 0
+    circuit_breaker_opens: int = 0
+    rl_suggested_pivot: str = ""
 
     # Sprint F195C: Forensics enrichment — CT findings enriched before storage
 
@@ -4239,6 +4249,9 @@ class SprintScheduler:
 
         self._layer_manager: Any = None
 
+        # Sprint F250F: Privacy layer context ID for lifecycle management
+        self._privacy_context_id: str | None = None
+
         # Sprint F214: DHT KademliaNode singleton (real UDP, background init)
 
         self._dht_node: Any = None
@@ -4264,6 +4277,75 @@ class SprintScheduler:
         self._hypothesis_depth: int = 0        # current depth of hypothesis-driven pivot chain
 
         self._hypothesis_query_count: int = 0  # total hypothesis-driven queries enqueued
+
+        # Sprint F250F: Privacy context ID — created at STARTUP, closed at TEARDOWN
+        self._privacy_context_id: str | None = None
+
+        async def _run_privacy_gate(
+            self,
+            findings: list,
+            privacy_layer,
+        ) -> tuple[list, int]:
+            """Pre-storage PII anonymization gate.
+
+            Runs BEFORE async_ingest_findings_batch() for ALL storage paths.
+            Returns (anonymized_findings, pii_count).
+
+            Scopes: content, raw_content, payload_text, title, summary.
+            Fail-soft: never raises — findings pass through unmodified on any error.
+
+            INVARIANT: Never raises. Always returns input findings on error.
+            """
+            if privacy_layer is None:
+                return findings, 0
+
+            pii_count = 0
+            anonymized = []
+            _ctx_id = getattr(self, '_privacy_context_id', None)
+
+            for f in findings:
+                try:
+                    text_fields = {
+                        'content': getattr(f, 'content', None) or "",
+                        'raw_content': getattr(f, 'raw_content', None) or "",
+                        'payload_text': getattr(f, 'payload_text', None) or "",
+                        'title': getattr(f, 'title', None) or "",
+                        'summary': getattr(f, 'summary', None) or "",
+                    }
+
+                    has_pii = False
+                    for field_name, field_value in text_fields.items():
+                        if not field_value:
+                            continue
+                        pii_result = privacy_layer.detect_pii(field_value)
+                        field_has_pii = (
+                            bool(pii_result) if isinstance(pii_result, bool)
+                            else any(v for v in pii_result.values() if v)
+                        )
+
+                        if field_has_pii:
+                            has_pii = True
+                            anon_text = privacy_layer.anonymize_text(field_value)
+                            try:
+                                setattr(f, field_name, anon_text)
+                            except Exception:
+                                pass
+
+                    if has_pii:
+                        pii_count += 1
+                        if _ctx_id:
+                            try:
+                                f._privacy_context_id = _ctx_id
+                            except Exception:
+                                pass
+
+                    anonymized.append(f)
+
+                except Exception as _e:
+                    _logger.debug("privacy_gate finding error: %s", _e)
+                    anonymized.append(f)
+
+            return anonymized, pii_count
 
         # Sprint 8VI §C: All findings collected during sprint
 
@@ -5041,7 +5123,14 @@ class SprintScheduler:
 
         self._run_started_at: float = _time.monotonic()
 
-
+        # Sprint F250F: Privacy context — created at STARTUP, closed at TEARDOWN
+        try:
+            _privacy = getattr(self._layer_manager, 'privacy', None)
+            if _privacy and hasattr(_privacy, 'create_privacy_context'):
+                self._privacy_context_id = await _privacy.create_privacy_context()
+                _logger.debug("privacy_context created: %s", self._privacy_context_id)
+        except Exception as _e:
+            _logger.debug("privacy_context init failed: %s", _e)
 
         # Sprint F202J: Initialize M1 resource governor (lazy, advisory only)
 
@@ -5089,10 +5178,18 @@ class SprintScheduler:
 
                 log.info("layers LayerManager initialized")
 
+                # Sprint F250F: Create privacy context at startup (fail-soft)
+                try:
+                    _privacy = getattr(self._layer_manager, 'privacy', None)
+                    if _privacy and hasattr(_privacy, 'create_privacy_context'):
+                        self._privacy_context_id = await _privacy.create_privacy_context()
+                        log.info("layers privacy_context created: %s", self._privacy_context_id)
+                except Exception as _e:
+                    log.W("layers privacy_context init failed: %s", _e)
+
             except Exception as _e:
 
                 log.W("layers LayerManager init failed: %s", _e)
-
 
 
         # Sprint F228F: Wrap ALL body statements in defensive try/except so any
@@ -5825,7 +5922,7 @@ class SprintScheduler:
 
             # Sprint F214: DHT background init (non-blocking)
 
-            if os.environ.get("HLEDAC_ENABLE_DHT") == "1":
+            if os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on"):
 
                 _dht_t = asyncio.create_task(self._init_dht_node_background(), name="sprint:dht_init")
 
@@ -6775,7 +6872,15 @@ class SprintScheduler:
 
                 await self._enrichment_services.close()
 
-    
+
+                # Sprint F250F: Close privacy context at TEARDOWN (fail-soft)
+                if os.environ.get("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+                    try:
+                        _privacy = getattr(self._layer_manager, 'privacy', None)
+                        if _privacy and hasattr(self, '_privacy_context_id') and self._privacy_context_id:
+                            await _privacy.close_privacy_context(self._privacy_context_id)
+                    except Exception as _e:
+                        _logger.debug("privacy_context close failed: %s", _e)
 
             # Sprint F206D: Run all advisory steps via SidecarOrchestrator (canonical owner)
 
@@ -7049,6 +7154,12 @@ class SprintScheduler:
                     _pivot_policy_suggestions = self._policy_manager.suggest_next_pivot(
                         [], None
                     )
+                    # F235: Log + persist RL pivot decision
+                    if _pivot_policy_suggestions:
+                        first = _pivot_policy_suggestions[0]
+                        if first.get("pivot_type") == "dark_surface":
+                            log.INFO("RL suggests dark_surface pivot: %s", first.get("reason", ""))
+                        self._result.rl_suggested_pivot = first.get("pivot_type", "unknown")
                 except Exception:
                     pass  # fail-soft: pivot planning is advisory
 
@@ -15617,7 +15728,23 @@ class SprintScheduler:
 
                         )
 
+                    # Sprint F250F: Privacy gate — run BEFORE all storage paths
+                    if os.environ.get("HLEDAC_ENABLE_PRIVACY_LAYER") == "1":
+                        try:
+                            _privacy = getattr(self._layer_manager, 'privacy', None)
+                            if _privacy and accepted_findings:
+                                accepted_findings, _pii_count = await self._run_privacy_gate(
+                                    accepted_findings, _privacy
+                                )
+                                if _pii_count > 0:
+                                    self._result.pii_findings_anonymized = (
+                                        getattr(self._result, 'pii_findings_anonymized', 0) + _pii_count
+                                    )
+                        except Exception as _e:
+                            _logger.debug("privacy_gate call failed: %s", _e)
 
+                    # Sprint F250F: Privacy layer PII check — NOW WIRED VIA _run_privacy_gate()
+                    # Legacy inline block replaced 2026-05-25 — see sprint_scheduler.py:_run_privacy_gate()
 
                 # Sprint F250: Post-ingest layer hooks — Ghost/Temporal/Security (opt-in advisory)
 
@@ -16315,7 +16442,7 @@ class SprintScheduler:
 
         # Guard: HLEDAC_ENABLE_DHT gate
 
-        if not os.environ.get("HLEDAC_ENABLE_DHT", "").strip() in ("1", "true", "True"):
+        if os.getenv("HLEDAC_ENABLE_DHT", "").lower() not in ("1", "true", "yes", "on"):
 
             return
 

@@ -69,7 +69,7 @@ MAX_CACHE_SIZE = 1000
 
 # Optional imports for enhanced functionality
 try:
-    from hledac.core.http import fetch_json, safe_fetch
+    from _shims.core_http import fetch_json, safe_fetch
     HTTP_UTILS_AVAILABLE = True
 except ImportError:
     HTTP_UTILS_AVAILABLE = False

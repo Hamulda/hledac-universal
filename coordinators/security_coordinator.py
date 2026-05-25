@@ -134,7 +134,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         """Initialize security subsystems with graceful degradation."""
         initialized_any = False
         
-        # Try StealthEngine
+        # Try StealthEngine — adapter in _shims wraps canonical StealthSession
         try:
             from hledac.security.stealth_engine import StealthEngine
             self._stealth_engine = StealthEngine()
@@ -150,7 +150,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         
         # Try ThreatIntelligence
         try:
-            from hledac.security.threat_intelligence import ThreatIntelligence
+            from _shims.security_threat_intelligence import ThreatIntelligence
             self._threat_intelligence = ThreatIntelligence()
             if hasattr(self._threat_intelligence, 'initialize'):
                 await self._threat_intelligence.initialize()
@@ -164,21 +164,21 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         
         # Try QuantumResistantCrypto
         try:
-            from hledac.security.quantum_resistant_crypto import QuantumResistantCrypto
-            self._quantum_crypto = QuantumResistantCrypto()
-            if hasattr(self._quantum_crypto, 'initialize'):
-                await self._quantum_crypto.initialize()
-            self._crypto_available = True
+            from hledac.universal.security.pq_crypto import create_post_quantum_backend
+            from hledac.universal.security.pq_crypto import PQAvailability
+            self._pq_backend, pq_status = await create_post_quantum_backend(enabled=True, key_id="hledac.security.v1")
+            self._crypto_available = pq_status.availability.value in ("available", "signed", "fail_soft")
+            self._pq_crypto_available = self._crypto_available
             initialized_any = True
-            logger.info("SecurityCoordinator: QuantumResistantCrypto initialized")
+            logger.info(f"SecurityCoordinator: PQ backend initialized ({pq_status.availability.value})")
         except ImportError:
-            logger.warning("SecurityCoordinator: QuantumResistantCrypto not available")
+            logger.warning("SecurityCoordinator: PQ backend not available")
         except Exception as e:
-            logger.warning(f"SecurityCoordinator: QuantumCrypto init failed: {e}")
+            logger.warning(f"SecurityCoordinator: PQ backend init failed: {e}")
         
         # Try ZKPResearchEngine
         try:
-            from hledac.security.zkp_research_engine import ZKPResearchEngine
+            from _shims.security_zkp_research_engine import ZKPResearchEngine
             self._zkp_engine = ZKPResearchEngine()
             if hasattr(self._zkp_engine, 'initialize'):
                 await self._zkp_engine.initialize()
@@ -206,11 +206,11 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             except Exception as e:
                 logger.error(f"Error cleaning up ThreatIntelligence: {e}")
         
-        if self._quantum_crypto and hasattr(self._quantum_crypto, 'cleanup'):
+        if self._pq_backend and hasattr(self._pq_backend, 'cleanup'):
             try:
-                await self._quantum_crypto.cleanup()
+                await self._pq_backend.cleanup()
             except Exception as e:
-                logger.error(f"Error cleaning up QuantumCrypto: {e}")
+                logger.error(f"Error cleaning up PQ backend: {e}")
         
         if self._zkp_engine and hasattr(self._zkp_engine, 'cleanup'):
             try:
@@ -424,29 +424,28 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         decision: DecisionResponse,
         security_level: SecurityLevel
     ) -> SecurityResult:
-        """Execute quantum-resistant cryptographic operation."""
+        """Execute quantum-resistant cryptographic operation using PQ backend."""
         start_time = time.time()
-        
-        if not self._quantum_crypto:
-            raise RuntimeError("QuantumResistantCrypto not available")
-        
-        # Perform cryptographic operation
-        crypto_result = await self._quantum_crypto.perform_secure_operation(
-            operation_type=decision.chosen_option,
-            security_level=security_level.value,
-            data=decision.metadata.get('data')
-        )
-        
+
+        backend = self._pq_backend
+        pq_status = backend.pq_status()
+        if pq_status.availability == PQAvailability.DISABLED:
+            raise RuntimeError("PQ backend not available")
         execution_time = time.time() - start_time
         self._crypto_operations += 1
-        
+
         return SecurityResult(
             operation_type='crypto',
-            success=crypto_result.get('success', False),
-            summary=f"Crypto: {crypto_result.get('algorithm', 'unknown')} algorithm used",
+            success=pq_status.availability.value in ("available", "signed", "fail_soft"),
+            summary=f"PQ: {pq_status.backend_name} ({pq_status.availability.value}), ML-DSA={backend.has_mldsa()})",
             security_level=security_level,
             execution_time=execution_time,
-            result_data=crypto_result
+            result_data={
+                'availability': pq_status.availability.value,
+                'backend': pq_status.backend_name,
+                'has_mldsa': backend.has_mldsa(),
+                'mldsa_key_id': pq_status.mldsa_key_id,
+            }
         )
 
     async def _execute_zkp_operation(

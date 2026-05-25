@@ -82,6 +82,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from hledac.universal.core.resource_governor import ResourceGovernor, Priority
+from hledac.universal.dht.local_graph import LocalGraphStore
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ MAX_PENDING_RPC_TTL_S = 60.0
 #   - LMDB routing table persistence via LocalGraphStore
 # =============================================================================
 
-DHT_REAL_UDP = bool(os.getenv("HLEDAC_ENABLE_DHT", "0") == "1")
+DHT_REAL_UDP = os.getenv("HLEDAC_ENABLE_DHT", "").lower() in ("1", "true", "yes", "on")
 MAX_DHT_PROBE_DURATION_S = 120
 DHT_BOOTSTRAP_TIMEOUT_S = 5.0
 DHT_BOOTSTRAP_SEMAPHORE = asyncio.Semaphore(2)  # M1: max 2 concurrent bootstraps
@@ -307,14 +308,17 @@ async def crawl_dht_for_keyword(
 
     try:
         for host, port in BOOTSTRAP_PEERS:
+            sock = None
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.settimeout(2.0)
                 sock.connect((host, port))
-                sock.close()
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} reachable")
             except OSError as e:
                 logger.debug(f"[DHT] Bootstrap peer {host}:{port} unreachable: {e}")
+            finally:
+                if sock:
+                    sock.close()
 
         keyword_lower = keyword.lower()
         searched_tokens: set[str] = set()
@@ -430,12 +434,15 @@ class KademliaNode:
         bootstrap_nodes: Optional[List[Tuple[str, int]]] = None,
         k: int = 20,
         alpha: int = 3,
+        local_graph_store: "LocalGraphStore | None" = None,  # F214Q: LMDB routing table persistence
     ):
         self.node_id = node_id
         self.governor = governor
         self.bootstrap_nodes = bootstrap_nodes or []
         self.k = k
         self.alpha = alpha
+        self.local_graph_store = local_graph_store
+        self._routing_loaded = False
 
         self.routing_table: Dict[int, List[Dict[str, Any]]] = {}
         self.data_store: "OrderedDict[str, tuple[Any, float]]" = OrderedDict()
@@ -460,6 +467,9 @@ class KademliaNode:
 
     async def start(self):
         self._refresh_task = asyncio.create_task(self._refresh_loop(), name="kademlia:refresh_loop")
+        # F214Q: load persisted routing table from LMDB before bootstrap
+        if self.local_graph_store:
+            await self._load_routing_from_lmdb()
         if DHT_REAL_UDP:
             # F214: Real UDP bootstrap using asyncio.DatagramProtocol
             try:
@@ -504,7 +514,7 @@ class KademliaNode:
                     "q": "find_node",
                     "a": {"id": our_id, "target": our_id},
                 }
-                bencoded = self._bencode(find_msg) + b"\n"
+                bencoded = self._bencode(find_msg)
 
                 pending = []
                 for host, port in self.bootstrap_nodes:
@@ -556,8 +566,39 @@ class KademliaNode:
         bucket = [p for p in bucket if p.get("id") != peer_id]
         bucket.append({"id": peer_id, **peer_info, "last_seen": time.time()})
         if len(bucket) > self.k:
-            bucket = bucket[-self.k:]
+            bucket = bucket[:self.k]   # keep OLDEST (proven-live) nodes — BEP-5
         self.routing_table[b] = bucket
+        # F214Q: persist newly discovered node to LMDB (fire-and-forget)
+        if peer_info.get("host") and peer_info.get("port"):
+            self._persist_node_async(peer_id, peer_info["host"], peer_info["port"])
+
+    def _persist_node_async(self, node_id: str, host: str, port: int) -> None:
+        """Persist a DHT node to LMDB via LocalGraphStore (fire-and-forget)."""
+        if not self.local_graph_store:
+            return
+        try:
+            asyncio.create_task(
+                self.local_graph_store.put_dht_node(node_id, host, port)
+            )
+        except Exception:
+            pass
+
+    async def _load_routing_from_lmdb(self) -> None:
+        """Load persisted DHT nodes from LMDB into routing table on startup."""
+        if not self.local_graph_store or self._routing_loaded:
+            return
+        try:
+            nodes = await self.local_graph_store.get_all_dht_nodes(limit=1000)
+            for n in nodes:
+                nid = n.get("id", "")
+                if nid and len(nid) == 40:
+                    host = n.get("host", "")
+                    port = n.get("port", 0)
+                    if host and port:
+                        self._update_routing(nid, {"host": host, "port": port})
+            self._routing_loaded = True
+        except Exception:
+            pass  # Fail-soft: LMDB load never blocks DHT
 
     def _find_closest_nodes(self, key: str, count: int) -> List[Dict[str, Any]]:
         candidates: List[Dict[str, Any]] = []
@@ -799,6 +840,93 @@ class KademliaNode:
     # P10: Real BEP-9/10 DHT Implementation
     # -------------------------------------------------------------------------
 
+    async def get_peers(self, info_hash: str) -> List[Tuple[str, int]]:
+        """
+        F214Q: BEP-5 get_peers — find peer addresses for an info_hash.
+
+        Queries bootstrap peers for the info_hash. Returns raw (ip, port)
+        peer addresses without attempting metadata download (unlike crawl()).
+        Uses existing routing table from bootstrap for routing queries.
+
+        Args:
+            info_hash: 40-char hex torrent info hash
+
+        Returns:
+            List of (ip_address, port) tuples for peers advertising the hash.
+            Empty list on timeout or error (fail-soft).
+        """
+        peers: List[Tuple[str, int]] = []
+        try:
+            ih_bytes = bytes.fromhex(info_hash)
+        except ValueError:
+            logger.debug(f"[DHT] invalid info_hash hex: {info_hash!r}")
+            return peers
+        ih_bytes = ih_bytes[:20].ljust(20, b"\x00")
+
+        # Use routing table nodes if available, otherwise bootstrap peers
+        sources = list(self.bootstrap_nodes)
+        if self.routing_table:
+            for bucket in self.routing_table.values():
+                for node in bucket:
+                    host = node.get("host")
+                    port = node.get("port")
+                    if host and port:
+                        sources.append((host, port))
+
+        if not sources:
+            return peers
+
+        async def _query_peer(host: str, port: int) -> Optional[Tuple[str, int]]:
+            try:
+                msg = {
+                    "t": "gp",
+                    "y": "q",
+                    "q": "get_peers",
+                    "a": {"id": self.node_id.encode()[:20].ljust(20, b"\x00"), "info_hash": ih_bytes},
+                }
+                loop = asyncio.get_running_loop()
+                sock = None
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(2.0)
+                    sock.setblocking(False)
+                    await loop.sock_sendto(sock, self._bencode(msg), (host, port))
+                    data = await loop.sock_recv(sock, 65535)
+                    if data:
+                        res = self._bdecode(data)
+                        if res and isinstance(res, dict):
+                            r = res.get("r", {})
+                            # Extract peer addresses from 'values' field (BEP-5)
+                            for val in r.get("values", []) or []:
+                                if isinstance(val, bytes) and len(val) == 6:
+                                    ip = ".".join(str(b) for b in val[:4])
+                                    p = int.from_bytes(val[4:6], "big")
+                                    peers.append((ip, p))
+                            # Also collect nodes for routing table refresh
+                            for i in range(0, len(r.get("nodes", b"")), 26):
+                                chunk = r["nodes"][i : i + 26]
+                                if len(chunk) == 26:
+                                    nid = chunk[:20].hex()
+                                    nip = ".".join(str(b) for b in chunk[20:24])
+                                    nport = int.from_bytes(chunk[24:26], "big")
+                                    self._update_routing(nid, {"host": nip, "port": nport})
+                finally:
+                    if sock:
+                        sock.close()
+            except Exception:
+                pass
+            return None
+
+        # Race N queries against 5s timeout, stop early when we have peers
+        tasks = [_query_peer(h, p) for h, p in sources[:10]]
+        done, pending = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=5.0,
+        )
+        for t in pending:
+            t.cancel()
+        return peers[:50]
+
     async def crawl(self, keyword: str, duration_s: int = 120, max_results: int = 50) -> list[dict]:
         """
         P10: Real DHT crawl for keyword-based torrent discovery.
@@ -828,12 +956,13 @@ class KademliaNode:
         seen_hashes: set[str] = set()
 
         # P10: Real UDP socket for DHT communication
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2.0)
-        sock.setblocking(False)
-        loop = asyncio.get_running_loop()
-
+        sock = None
         try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(2.0)
+            sock.setblocking(False)
+            loop = asyncio.get_running_loop()
+
             # Bootstrap: ping known peers and populate routing table
             for peer_host, peer_port in BOOTSTRAP_PEERS:
                 try:
@@ -887,7 +1016,8 @@ class KademliaNode:
                 await asyncio.sleep(1.0)
 
         finally:
-            sock.close()
+            if sock:
+                sock.close()
 
         # Store results to knowledge if available
         if results:
@@ -911,7 +1041,7 @@ class KademliaNode:
         }
         try:
             loop = asyncio.get_running_loop()
-            await loop.sock_sendto(sock, self._bencode(ping_msg) + b"\n", (host, port))
+            await loop.sock_sendto(sock, self._bencode(ping_msg), (host, port))
             data = await asyncio.wait_for(
                 loop.sock_recv(sock, 65535),
                 timeout=2.0
@@ -937,7 +1067,7 @@ class KademliaNode:
         }
         try:
             loop = asyncio.get_running_loop()
-            await loop.sock_sendto(sock, self._bencode(msg) + b"\n", (host, port))
+            await loop.sock_sendto(sock, self._bencode(msg), (host, port))
             data = await asyncio.wait_for(
                 loop.sock_recv(sock, 65535),
                 timeout=2.0

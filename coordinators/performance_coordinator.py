@@ -38,7 +38,7 @@ except ImportError:
     get_settings = None
 
 try:
-    from hledac.core.resilience import AgentExecutionError, CircuitBreakerOpen
+    from _shims.core_resilience import AgentExecutionError, CircuitBreakerOpen
 except ImportError:
     # Define fallback exception classes
     class AgentExecutionError(Exception):

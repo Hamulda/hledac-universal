@@ -176,6 +176,33 @@ class EmbeddingRouter:
         # Fallback
         return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
 
+    def _get_legacy_ane_embedder(self) -> "CoreMLEmbedder | None":
+        """
+        F218A: Load legacy AllMiniLML6V2 ANE embedder as fallback.
+
+        Called when bge-small-en-v1.5.mlpackage is unavailable but
+        AllMiniLML6V2.mlmodel exists. Falls back to MLX if ANEEmbedder
+        reports is_loaded == False.
+
+        Returns:
+            ANEEmbedder instance or None.
+        """
+        from hledac.universal.brain.ane_embedder import ANEEmbedder
+
+        legacy = ANEEmbedder()
+        if legacy.is_loaded:
+            return legacy
+        # ANEEmbedder not loaded — fall back to MLXEmbeddingManager
+        legacy = None
+        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+        try:
+            manager = MLXEmbeddingManager(lazy_load=True)
+            if manager.is_loaded:
+                return manager
+        except Exception:
+            pass
+        return None  # Will trigger zero-array in generate_embeddings
+
     def _get_embedder_sync(self):
         """
         Internal sync embedder selection — returns the raw embedder instance.
@@ -187,29 +214,39 @@ class EmbeddingRouter:
         hardware), so if ANE is already cached, prefer it. ModernBERT is only chosen
         when ANE is not yet loaded.
 
+        F218A: Memory-adaptive — at RAM >= 80% skip ANE entirely, go direct to MLX.
+        Legacy AllMiniLML6V2.mlmodel is fallback if bge mlpackage is missing.
+
         Returns:
             Embedder instance with .encode() / .embed() / .embed_batch() methods.
         """
+        import psutil as _psutil
+
         self._ensure_initialized()
+        _ram_pct = _psutil.virtual_memory().percent
+
+        # === F218A: RAM >= 80% — skip ANE, continue to legacy/MLX paths ===
+        if _ram_pct >= 80.0:
+            logger.debug("[EMBED:ROUTER] RAM %.1f%% >= 80%%, skipping ANE", _ram_pct)
+            pass  # Fall through to legacy ANE / MLX fallback chain
 
         # === F216B: Try BGE CoreMLEmbedder (ANE primary) first ===
-        bge = get_ane_embedder()
-        if bge is not None and bge.is_loaded:
-            t0 = time.monotonic()
-            _ = bge.embed(["warmup"])
-            elapsed = time.monotonic() - t0
-            logger.debug(f"[EMBED] backend={type(bge).__name__} time={elapsed*1000:.1f}ms warmup")
-            logger.debug("[EMBED:ROUTER] sync: using BGE CoreML/ANE")
-            return bge
+        _mlpkg = Path.home() / ".hledac/models/bge-small-en-v1.5.mlpackage"
+        if _mlpkg.exists() and _ram_pct < 75.0:
+            bge = get_ane_embedder()
+            if bge is not None and bge.is_loaded:
+                t0 = time.monotonic()
+                _ = bge.embed(["warmup"])
+                elapsed = time.monotonic() - t0
+                logger.debug(f"[EMBED] backend={type(bge).__name__} time={elapsed*1000:.1f}ms warmup")
+                logger.debug("[EMBED:ROUTER] sync: using BGE CoreML/ANE")
+                return bge
 
-        # ANE is already loaded → use it (ANE + MLX UMA are separate, not additive)
-        if self._ane is not None and self._ane.is_loaded:
-            t0 = time.monotonic()
-            _ = self._ane.embed(["warmup"])
-            elapsed = time.monotonic() - t0
-            logger.debug(f"[EMBED] backend={type(self._ane).__name__} time={elapsed*1000:.1f}ms warmup")
-            logger.debug("[EMBED:ROUTER] sync: using cached ANE")
-            return self._ane
+        # === F218A: Try legacy AllMiniLML6V2 if bge mlpackage missing ===
+        if not _mlpkg.exists():
+            _legacy_mlmodel = Path.home() / ".hledac/models/AllMiniLML6V2.mlmodel"
+            if _legacy_mlmodel.exists():
+                return self._get_legacy_ane_embedder()
 
         # ANE not loaded but MLX is loaded → stick with MLX (don't load another model)
         if self._check_mlx_loaded():
@@ -234,7 +271,7 @@ class EmbeddingRouter:
             logger.debug("[EMBED:ROUTER] sync: falling back to MLX ModernBERT")
             return mb
         except Exception as e:
-            logger.warning(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
+            logger.W(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
 
         # Final fallback: MLXEmbeddingManager
         from hledac.universal.core.mlx_embeddings import get_embedding_manager
@@ -455,7 +492,7 @@ def unload_ane_embedder() -> None:
 
 # === Fallback routing via EmbeddingRouter ===
 
-_Embedding_router: "EmbeddingRouter | None" = None
+_embedding_router: "EmbeddingRouter | None" = None
 
 
 def _get_embedder():
@@ -680,7 +717,7 @@ def _release_embedder() -> None:
         logger.debug(f"[EMBED] Failed to unload embedder: {e}")
 
 
-def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False) -> np.ndarray:
+def generate_embeddings(texts: List[str], batch_size: int | None = None, keep_loaded: bool = False) -> np.ndarray:
     """
     Generate embeddings for a list of texts using ModernBERT via MLX.
 
@@ -702,6 +739,10 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE, keep_lo
     """
     if not texts:
         return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
+
+    # F218A KROK 4: Use adaptive batch size if caller didn't specify
+    if batch_size is None:
+        batch_size = get_adaptive_batch_size()
 
     # AREA J: xxhash dedup — avoid embedding identical texts twice
     original_to_unique: List[int] = []
@@ -738,6 +779,9 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE, keep_lo
         return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
 
     embedder = _get_embedder()
+    if embedder is None:
+        logger.warning("[EMBED] No embedder available — returning zero array")
+        return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
     try:
         # Use encode with truncate_dim for MRL 256d output
@@ -747,6 +791,29 @@ def generate_embeddings(texts: List[str], batch_size: int = _BATCH_SIZE, keep_lo
             normalize=True,
             truncate_dim=_EMBEDDING_DIM,
         )
+
+        # === F218A: embed_backend_telemetry ===
+        try:
+            import psutil as _psutil
+            backend_name = type(embedder).__name__.lower()
+            if "coreml" in backend_name:
+                backend_name = "coreml_bge"
+            elif "ane" in backend_name or "allminilm" in backend_name.lower():
+                backend_name = "ane_allminilm"
+            elif "modernbert" in backend_name.lower():
+                backend_name = "mlx_modernbert"
+            else:
+                backend_name = "cpu"
+            _ram = _psutil.virtual_memory().percent
+            logger.debug(
+                "EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%",
+                backend_name,
+                len(texts_to_embed),
+                embeddings.shape,
+                _ram,
+            )
+        except Exception:
+            pass  # Telemetry failures never crash embedding
 
         # Ensure float32 dtype
         if embeddings.dtype != np.float32:

@@ -368,7 +368,7 @@ class SemanticDeduplicator(BaseDeduplicator):
         # Sprint 81 Fáze 4: Try MLXEmbeddingManager first (ModernBERT via MLX)
         # Use shared singleton to avoid duplicate model loads
         try:
-            from hledac.core.mlx_embeddings import get_embedding_manager
+            from _shims.core_mlx_embeddings import get_embedding_manager
 
             self._embedding_model = get_embedding_manager()
             self._model_loaded = True

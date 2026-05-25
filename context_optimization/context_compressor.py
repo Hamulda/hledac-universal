@@ -42,7 +42,7 @@ except ImportError:
 
 # MLX Embedding Manager (primary for M1)
 try:
-    from hledac.core.mlx_embeddings import MLXEmbeddingManager
+    from _shims.core_mlx_embeddings import MLXEmbeddingManager
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -214,7 +214,7 @@ class ContextCompressor:
         # Use shared singleton to avoid duplicate model loads
         if MLX_EMBED_AVAILABLE:
             try:
-                from hledac.core.mlx_embeddings import get_embedding_manager
+                from _shims.core_mlx_embeddings import get_embedding_manager
                 self._mlx_manager = get_embedding_manager()
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM

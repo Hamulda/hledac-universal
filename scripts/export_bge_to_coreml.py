@@ -51,6 +51,21 @@ def _get_hf_cache_path(model_id: str) -> Path:
     return None
 
 
+import psutil
+
+
+def _check_ram_before_export() -> None:
+    """F218A: Verify sufficient RAM before export to avoid crash on M1 8GB."""
+    ram = psutil.virtual_memory()
+    if ram.percent > 75.0:
+        print(f"WARNING: RAM usage {ram.percent:.1f}% > 75%")
+        print("Export may fail. Close other applications and retry.")
+        print(f"Available: {ram.available // (1024**3)} GB")
+        response = input("Continue anyway? [y/N]: ")
+        if response.lower() != "y":
+            sys.exit(0)
+
+
 def _find_onnx_model() -> Path | None:
     """Locate downloaded ONNX model from FastEmbed."""
     hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
@@ -168,6 +183,9 @@ def export_bge_to_coreml(
 def main() -> int:
     """CLI entry point."""
     import argparse
+
+    # === F218A: RAM pre-check before export ===
+    _check_ram_before_export()
 
     parser = argparse.ArgumentParser(description="Export BGE to CoreML")
     parser.add_argument("--dry-run", action="store_true", help="Validate config only, do not save mlmodel")

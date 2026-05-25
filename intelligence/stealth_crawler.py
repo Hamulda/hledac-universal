@@ -1798,8 +1798,8 @@ class StealthWebScraper:
             
             # Initialize security components
             try:
-                from hledac.security.temporal_anonymizer import TemporalAnonymizer
-                from hledac.security.zero_attribution_engine import ZeroAttributionEngine
+                from _shims.security_temporal_anonymizer import TemporalAnonymizer
+                from _shims.security_zero_attribution_engine import ZeroAttributionEngine
                 self._anonymizer = TemporalAnonymizer()
                 self._zero_attribution = ZeroAttributionEngine()
             except Exception as e:

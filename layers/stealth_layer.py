@@ -1984,7 +1984,29 @@ class StealthLayer:
         self._evasions_applied = 0
         
         logger.info("StealthLayer initialized")
-    
+
+    # -------------------------------------------------------------------------
+    # Timing jitter — human-like inter-request delays (network fingerprint defense)
+    # -------------------------------------------------------------------------
+
+    def get_timing_jitter(self) -> float:
+        """Return random jitter delay in seconds for fetch timing.
+
+        Uses Gaussian distribution to simulate human-like inter-request timing.
+        Returns 0.0 if stealth is disabled or unavailable.
+
+        Jitter is NON-BLOCKING when used with asyncio.sleep() — safe for async.
+        """
+        if not getattr(self, "_enabled", True):
+            return 0.0
+        try:
+            import random
+
+            # Gaussian: mean=0.5s, std=0.3s, clamped [0.0, 2.0]
+            return max(0.0, min(2.0, random.gauss(0.5, 0.3)))
+        except Exception:
+            return 0.0
+
     async def initialize(self) -> bool:
         """
         Initialize StealthLayer components.

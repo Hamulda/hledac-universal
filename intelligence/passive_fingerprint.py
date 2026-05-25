@@ -1126,6 +1126,8 @@ def to_canonical_findings(
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
+_GLOBAL_STATS: dict[str, float] = {}
+
 def correlate_passive_fingerprints(
     findings: list["CanonicalFinding"],
     query: str,
@@ -1153,6 +1155,7 @@ def correlate_passive_fingerprints(
         List of CanonicalFinding with source_type="passive_fingerprint".
     """
     try:
+        t0 = time.monotonic()
         if not findings:
             return []
 
@@ -1160,6 +1163,7 @@ def correlate_passive_fingerprints(
         scanned = 0
         skipped = 0
 
+        extract_start = t0
         for finding in findings[:MAX_FINGERPRINT_FINDINGS]:
             scanned += 1
             try:
@@ -1168,6 +1172,16 @@ def correlate_passive_fingerprints(
             except Exception:
                 skipped += 1
                 continue
+        extract_elapsed = time.monotonic() - extract_start
+
+        canon_start = time.monotonic()
+        canonical = to_canonical_findings(fingerprints, query)
+        canon_elapsed = time.monotonic() - canon_start
+
+        total_elapsed = time.monotonic() - t0
+        _GLOBAL_STATS["correlate_extract_ms"] = extract_elapsed * 1000
+        _GLOBAL_STATS["correlate_canonical_ms"] = canon_elapsed * 1000
+        _GLOBAL_STATS["correlate_total_ms"] = total_elapsed * 1000
 
         _stats["findings_scanned"] = scanned
         _stats["findings_skipped"] = skipped
@@ -1175,7 +1189,6 @@ def correlate_passive_fingerprints(
         if not fingerprints:
             return []
 
-        canonical = to_canonical_findings(fingerprints, query)
         return canonical
 
     except Exception as e:
@@ -1384,6 +1397,7 @@ def _extract_tech_stack_findings(
     seen: set[tuple[str, str]] = set()  # (tech, source_url) dedup
     ts = time.time()
 
+    loop_start = time.monotonic()
     for finding in findings[:_MAX_TECH_STACK_FINDINGS * 2]:  # pre-cap scan
         if len(candidates) >= _MAX_TECH_STACK_FINDINGS:
             break
@@ -1485,6 +1499,8 @@ def _extract_tech_stack_findings(
         except Exception:
             continue
 
+    loop_elapsed = time.monotonic() - loop_start
+    _GLOBAL_STATS["extract_tech_stack_loop_ms"] = loop_elapsed * 1000
     return candidates[:_MAX_TECH_STACK_FINDINGS]
 
 

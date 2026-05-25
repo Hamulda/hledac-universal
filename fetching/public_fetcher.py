@@ -1971,6 +1971,16 @@ async def async_fetch_public_text(
         try:
             async with asyncio.timeout(timeout_s):
                 async with _semaphore:
+                    # --- F214Q: Timing jitter — non-blocking, fail-soft ---
+                    if os.environ.get("HLEDAC_ENABLE_STEALTH_LAYER", "0") == "1":
+                        try:
+                            from layers import get_stealth_layer
+
+                            _sl = get_stealth_layer()
+                            if _sl:
+                                await asyncio.sleep(_sl.get_timing_jitter())
+                        except Exception:
+                            pass  # fail-soft
                     async with session.get(url, **request_kwargs) as resp:
                         final_url = str(resp.url)
                         last_status_code = resp.status
@@ -2160,6 +2170,22 @@ async def async_fetch_public_text(
                                 body_bytes = b"".join(body_chunks)
                                 # F178E: detect decode quality — replacement count for truth
                                 text, decode_replaced, decode_replacement_count = _try_decode(body_bytes)
+                                # --- F214Q: ContentLayer HTML cleaning — fail-soft ---
+                                if (
+                                    text
+                                    and os.environ.get("HLEDAC_ENABLE_CONTENT_LAYER", "0") == "1"
+                                ):
+                                    try:
+                                        from layers import get_content_layer
+
+                                        _cl = get_content_layer()
+                                        if _cl:
+                                            _cleaned = _cl.clean_html(text)
+                                            # preserve cleaned text if successful
+                                            if _cleaned and _cleaned.cleaned_html:
+                                                text = _cleaned.cleaned_html
+                                    except Exception:
+                                        pass  # fail-soft: preserve original text
                             except Exception as e:
                                 logger.warning("Decode error in _try_decode: %s", e)
                                 text = None

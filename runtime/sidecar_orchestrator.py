@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio as _asyncio
 import logging
+import os as _os
 import time as _time
 from typing import Any
 
@@ -273,6 +274,23 @@ class SidecarOrchestrator:
             )
             bg_tasks.add(_gopher_task)
             _gopher_task.add_done_callback(bg_tasks.discard)
+
+            # F3FORENSICS: File forensics sidecars (non-blocking, env-gated)
+            _dg_env = _os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "0")
+            if _dg_env == "1":
+                _dg_task = _asyncio.create_task(
+                    self._run_digital_ghost_sidecar(), name="sprint:digital_ghost_sidecar"
+                )
+                bg_tasks.add(_dg_task)
+                _dg_task.add_done_callback(bg_tasks.discard)
+
+            _stego_env = _os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "0")
+            if _stego_env == "1":
+                _stego_task = _asyncio.create_task(
+                    self._run_steganography_sidecar(), name="sprint:stego_sidecar"
+                )
+                bg_tasks.add(_stego_task)
+                _stego_task.add_done_callback(bg_tasks.discard)
 
     async def run_target_memory_update(
         self,
@@ -505,5 +523,25 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_dht_sidecar()
+        except Exception:
+            pass  # Fail-soft
+
+    # F3FORENSICS: Digital ghost forensics sidecar
+    async def _run_digital_ghost_sidecar(self) -> None:
+        """F3FORENSICS: Digital ghost detection on file artifacts. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_digital_ghost_sidecar([])
+        except Exception:
+            pass  # Fail-soft
+
+    # F3FORENSICS: Steganography forensics sidecar
+    async def _run_steganography_sidecar(self) -> None:
+        """F3FORENSICS: Steganography detection on image artifacts. Fail-soft."""
+        if self._scheduler is None:
+            return
+        try:
+            await self._scheduler._run_steganography_sidecar([])
         except Exception:
             pass  # Fail-soft

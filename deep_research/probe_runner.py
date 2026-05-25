@@ -37,7 +37,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import time
+import uuid
 from typing import Optional, Tuple, List, Any
 
 logger = logging.getLogger(__name__)
@@ -73,13 +75,15 @@ async def run_deep_probe(
 
     Returns:
         dict with keys: urls_discovered, buckets_scanned, ipfs_results,
-                        probe_duration_s, probe_source_type, findings_ingested
+                        probe_duration_s, probe_source_type, findings_ingested,
+                        dht_peers
 
     Invariants enforced:
       - All findings use source_type="deep_probe"
       - Timeout bounds probe runtime
       - All external calls are fail-safe
       - Findings persisted ONLY via async_ingest_findings_batch()
+      - DHT findings use source_type="dht_discovery" (NOT persisted — invariant_7)
     """
     from hledac.universal.deep_probe import (
         DeepProbeScanner,
@@ -94,6 +98,7 @@ async def run_deep_probe(
         "urls_discovered": 0,
         "buckets_scanned": 0,
         "ipfs_results": 0,
+        "dht_peers": 0,
         "probe_duration_s": 0.0,
         "probe_source_type": "deep_probe",
         "findings_ingested": 0,
@@ -189,11 +194,24 @@ async def run_deep_probe(
                 logger.debug(f"IPFS scan failed: {e}")
                 return ("ipfs", 0, [])
 
+        # 4. DHT peer discovery (BEP-5, real UDP — gated by HLEDAC_ENABLE_DHT)
+        async def _run_dht():
+            """F214Q: Find peers for query via real BitTorrent DHT."""
+            try:
+                dht_findings = await _scan_dht(query)
+                if dht_findings:
+                    _index_probe_results_to_seam(local_seam, dht_findings, query)
+                return ("dht", len(dht_findings), dht_findings)
+            except Exception as e:
+                logger.debug(f"DHT scan failed: {e}")
+                return ("dht", 0, [])
+
         # Race all tasks against timeout using gather
         all_results = await asyncio.gather(
             _run_discovery(),
             _run_bucket_scan(),
             _run_ipfs(),
+            _run_dht(),
             return_exceptions=True,
         )
 
@@ -220,6 +238,10 @@ async def run_deep_probe(
                 elif tag == "ipfs":
                     result["ipfs_results"] = count
                     all_findings.extend(findings)
+                elif tag == "dht":
+                    # DHT findings are added to all_findings but NOT persisted
+                    # (DHT is ephemeral — invariant_7)
+                    result["dht_peers"] = count
             elif isinstance(res, Exception):
                 logger.debug(f"Probe task raised exception: {res}")
                 result["errors"].append(str(res))
@@ -442,6 +464,79 @@ def _index_urls_to_seam(
             logger.debug(f"[DEEP_PROBE] indexed {len(documents)} URLs to LocalSearchSeam")
         except Exception as e:
             logger.debug(f"[DEEP_PROBE] seam index failed: {e}")
+
+
+async def _scan_dht(query: str) -> List["CanonicalFinding"]:
+    """
+    F214Q: Find peers for query via real BitTorrent DHT (BEP-5).
+
+    Gated by HLEDAC_ENABLE_DHT=1. Uses KademliaNode with real UDP
+    asyncio.DatagramProtocol. Persists discovered nodes to LMDB via
+    LocalGraphStore.put_dht_node (fire-and-forget). Results are returned
+    as CanonicalFinding with source_type="dht_discovery" but are NOT
+    persisted to DuckDB (DHT is ephemeral — invariant_7).
+
+    Args:
+        query: Search query (used as infohash seed for DHT get_peers)
+
+    Returns:
+        List of CanonicalFinding (one per discovered peer, max 50).
+    """
+    if os.getenv("HLEDAC_ENABLE_DHT", "").lower() not in ("1", "true", "yes", "on"):
+        return []
+
+    from hledac.universal.core.resource_governor import ResourceGovernor
+    from hledac.universal.dht.kademlia_node import KademliaNode
+    from hledac.universal.dht.local_graph import LocalGraphStore
+    from hledac.universal.security.key_manager import KeyManager
+
+    try:
+        # Lazy singleton LocalGraphStore (shared across DHT operations)
+        if not hasattr(_scan_dht, "_lgs"):
+            try:
+                km = KeyManager()
+                _scan_dht._lgs = LocalGraphStore(km)
+            except Exception:
+                return []
+        lgs = _scan_dht._lgs
+
+        node = KademliaNode(
+            node_id=f"hledac-probe-{uuid.uuid4().hex[:8]}",
+            governor=ResourceGovernor(),
+            local_graph_store=lgs,
+        )
+        await node.start()  # F214Q: init routing table from LMDB + start refresh loop
+        try:
+            peers = await asyncio.wait_for(
+                node.get_peers(info_hash),
+                timeout=120.0,
+            )
+        finally:
+            await node.stop()
+
+        findings = []
+        for ip, port in peers[:50]:
+            fid = hashlib.sha256(f"{ip}:{port}:{info_hash}".encode()).hexdigest()[:16]
+            findings.append(
+                CanonicalFinding(
+                    finding_id=fid,
+                    query=query,
+                    source_type="dht_discovery",
+                    confidence=0.6,
+                    ts=time.time(),
+                    provenance=("deep_probe", "dht", f"{ip}:{port}"),
+                    payload_text=f"DHT peer {ip}:{port} for {info_hash}",
+                    metadata={"infohash": info_hash, "peer_ip": ip, "peer_port": port},
+                )
+            )
+        return findings
+
+    except asyncio.TimeoutError:
+        logger.debug(f"DHT scan_dht timeout for query={query}")
+        return []
+    except Exception as e:
+        logger.debug(f"DHT scan_dht failed: {e}")
+        return []
 
 
 async def run_deep_probe_if_enabled(

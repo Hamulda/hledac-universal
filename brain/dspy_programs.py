@@ -165,7 +165,11 @@ def load_compiled_program(name: str) -> Optional[Any]:
 
     path = _DSPY_DIR / f"{name}.json"
     if not path.exists():
-        logger.debug(f"No compiled DSPy program at {path}")
+        logger.info(
+            "DSPy: No compiled program for '%s' — running zero-shot. "
+            "Compile with: python scripts/dspy_compile.py --program %s --train gold_data/dark_queries.jsonl",
+            name, name
+        )
         return None
 
     try:
