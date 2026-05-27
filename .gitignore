@@ -102,10 +102,10 @@ probe_*/
 .claude_consciousness.m8
 .temporal_store/
 
-# Runtime data — generated at runtime, lives under project dir
-# runtime/
-*.tgz
-*.duckdb
-cache_storage/
+# Root anomalies — F223 cleanup 2026-05-25
+:memory:/
+*.bak_*
+better-sqlite3-*.tgz
 # Added by code-review-graph
 .code-review-graph/
+cache_storage/
